@@ -1,0 +1,9 @@
+---
+description: Regler for Tauri Frontend og IPC broen
+globs: "src/**/*.{ts,tsx,html,css}"
+---
+# Tauri UI Safety
+
+- **Data Isolation:** Send aldrig rå kryptografiske nøgler eller passwords fra Rust til UI.
+- **State Management:** UI må kun kende til krypterede "vault-IDs" og status-beskeder.
+- **Input Sanitization:** Alle brugerinputs skal vaskes, før de sendes via IPC til Rust-backend.

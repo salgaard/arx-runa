@@ -1,0 +1,31 @@
+{
+    // --- RUST SPECIFIC (Fra dokumentationen) ---
+    "rust-analyzer.check.command": "clippy",
+    "editor.inlayHints.enabled": "on",
+    "editor.semanticTokenColorCustomizations": {
+        "rules": {
+            "*.mutable": {
+                "fontStyle": "underline"
+            }
+        }
+    },
+    "editor.formatOnSave": true,
+    "editor.codeActionWidget.includeNearbyQuickFixes": true,
+    // --- CURSOR & EDITOR OPTIMIZATION ---
+    "files.autoSave": "afterDelay",
+    "editor.tabCompletion": "on",
+    "workbench.startupEditor": "none",
+    "explorer.confirmDragAndDrop": false,
+    // --- GIT & WORKBENCH ---
+    "git.confirmSync": false,
+    "git.enableSmartCommit": true,
+    "workbench.colorTheme": "Default Dark+",
+    "typescript.updateImportsOnFileMove.enabled": "always",
+    // --- CLEANUP (Fjernet de "off" indstillinger der blokerer Cursor) ---
+    "editor.suggest.showInlineDetails": true,
+    "editor.quickSuggestions": {
+        "other": true,
+        "comments": false,
+        "strings": true
+    }
+}

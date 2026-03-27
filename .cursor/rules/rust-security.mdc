@@ -1,0 +1,11 @@
+---
+description: Sikkerhedskritiske regler for Rust-backend (Zero-Trace)
+globs: "src-tauri/**/*.rs"
+---
+# Rust Security & Zero-Trace Rules
+
+- **Memory Safety:** Brug aldrig `.unwrap()`. Brug `Result` og `thiserror`/`anyhow`.
+- **Zeroize:** Alle structs med nøgler eller passwords SKAL implementere `Zeroize` og `ZeroizeOnDrop`.
+- **No Strings for Secrets:** Brug `secrecy::SecretString` i stedet for `String` til følsom data.
+- **Streaming:** Filer > 5MB må aldrig indlæses fuldt i RAM. Brug `std::io::BufReader` og chunking.
+- **Crypto:** Brug kun `Argon2id` til KDF og `AES-256-GCM` eller `ChaCha20-Poly1305` til kryptering.
