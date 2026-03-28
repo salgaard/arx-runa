@@ -1,7 +1,8 @@
 {
     "recommendations": [
         "rust-lang.rust-analyzer",
-        "anysphere.cpptools",
+        "ms-vscode.cpptools",
         "vadimcn.vscode-lldb",
+        "tauri-apps.tauri-vscode"
     ]
 }
