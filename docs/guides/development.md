@@ -11,7 +11,7 @@
 
 ## 1. Install Rust
 
-Download and run `rustup-init.exe` from the official site, then verify:
+Download and run `rustup-init.exe` from the [official site](https://rust-lang.org/learn/get-started/), then verify:
 
 ```bash
 cargo --version
