@@ -81,7 +81,7 @@ Example: `2026-03-28-223045-xchacha20-nonce-strategy-decision.md`
 
 Keep the kebab title short (3-6 words). Use the `docs/report-log/` directory.
 
-### Step 6 — Write the entry
+### Step 6 — Write the entry 
 
 Use the structure from `docs/report-log/_template.md`. Rules:
 
