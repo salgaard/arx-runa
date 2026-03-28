@@ -1,4 +1,4 @@
-# VoidGate
+# VoidGate — Copilot Instructions
 
 ## What this is
 VoidGate is a zero-knowledge cloud storage system. The core philosophy: data
@@ -16,18 +16,18 @@ Core pillars:
 ## Stack
 - Language: Rust (edition 2024)
 - UI: Tauri (web frontend + Rust backend)
-- KDF: Argon2id (OWASP minimums: m≥19456, t≥2, p=1)
+- KDF: Argon2id (OWASP minimums: m>=19456, t>=2, p=1)
 - Key derivation tree: Argon2id produces master_key; HKDF-SHA256 (RFC 5869)
   derives purpose-specific keys:
-  - `hkdf(master, info=b"voidgate-chunk-encryption")`  → chunk_key
-  - `hkdf(master, info=b"voidgate-sqlcipher")`          → sqlcipher_key
-  - `hkdf(master, info=b"voidgate-manifest-backup")`    → manifest_key
+  - `hkdf(master, info=b"voidgate-chunk-encryption")` -> chunk_key
+  - `hkdf(master, info=b"voidgate-sqlcipher")` -> sqlcipher_key
+  - `hkdf(master, info=b"voidgate-manifest-backup")` -> manifest_key
 - Encryption: XChaCha20-Poly1305 (AEAD) via `chacha20poly1305` crate
   (`XChaCha20Poly1305` type) — chosen for 192-bit nonce enabling safe random
   nonce generation per chunk without state tracking, and for defensive
   robustness against nonce-reuse (less catastrophic than AES-256-GCM)
 - Chunk wire format: [24-byte nonce | ciphertext | 16-byte Poly1305 tag]
-  - Nonce: 192-bit, random per chunk via CSPRNG (birthday bound at 2⁹⁶)
+  - Nonce: 192-bit, random per chunk via CSPRNG (birthday bound at 2^96)
   - AAD: file_id || chunk_index bound as authenticated associated data to
     prevent chunk reordering/swapping by a malicious cloud provider
   - BLAKE3 checksum per encrypted blob for pre-decrypt integrity verification
@@ -110,7 +110,7 @@ Core pillars:
 ## Testing standards
 - Unit tests: inline `#[cfg(test)]` module at the bottom of each source file
 - Integration tests: `tests/` directory at crate root for cross-module flows
-  (e.g., full encrypt → upload → download → decrypt pipeline)
+  (e.g., full encrypt -> upload -> download -> decrypt pipeline)
 - Naming: `test_<unit>_<scenario>_<expected_outcome>` — descriptive enough
   to understand the test without reading the body
 - `unwrap()` and `expect()` are permitted in test code (not production)
@@ -137,7 +137,7 @@ Core pillars:
 - `src-tauri/src/storage/`  — chunking, SQLCipher metadata, sync
 - `src-tauri/src/ui/`       — Tauri commands and frontend bridge
 - `src/`                    — frontend (web UI, ignore for Rust context)
-- `docs/architecture-decisions/`              — Architecture Decision Records
+- `docs/architecture-decisions/` — Architecture Decision Records
 - `docs/architecture/`     — system design, key derivation, data flow
 - `docs/threat-model/`     — threat model and security boundaries
 - `docs/guides/`           — development setup, workflows
@@ -164,20 +164,6 @@ Application:
 - `anyhow` — error handling for Tauri command layer
 - `serde` + `serde_json` — serialisation (vault header, IPC)
 
-## Sub-agent routing
-Parallel dispatch — ALL must be true:
-- 3+ independent tasks with no shared state
-- Clear file boundaries, no overlap
-
-Sequential dispatch — ANY triggers it:
-- Task B depends on output from task A
-- Shared files or mutable state
-- Scope unclear — explore first
-
-Background dispatch:
-- Research, doc lookups, security audits
-- Results are not immediately blocking
-
 ## Hard rules
 - Never write sensitive data to /tmp or any persistent path unencrypted
 - Never commit secrets, key files, or test credentials
@@ -185,3 +171,24 @@ Background dispatch:
   is sound and what the invariants are
 - Every AEAD encrypt/decrypt call MUST include AAD (file_id || chunk_index)
 - Nonces MUST be generated randomly via CSPRNG — never sequential or derived
+
+## Note on `.claude/skills/`
+The `.claude/skills/` directory does not exist in this project. No skills
+to reference.
+
+## Translation notes (from Claude Code environment)
+This file mirrors CLAUDE.md. The following Claude Code concepts have no
+direct Copilot equivalent and are documented here for awareness:
+- **settings.json hooks** (PostToolUse clippy auto-run, PreToolUse
+  pipe-to-shell blocking, sensitive file access blocking) — Copilot has no
+  hook system. Rely on CI and pre-commit hooks instead.
+- **permissions.deny / permissions.ask** — Copilot has no permission model.
+  Sensitive file exclusion must be enforced via `.gitignore` and CI checks.
+- **output-styles** (report-mode.md) — Copilot has no output style switching.
+  Use the report-writing prompt instead when academic register is needed.
+- **agent memory** (`.claude/memory/MEMORY.md`) — Copilot agents do not
+  persist memory across sessions. Architecture decisions and gotchas are
+  documented in `docs/` and inline in instructions instead.
+- **Sub-agent routing** (parallel/sequential/background dispatch) — Copilot
+  does not support multi-agent orchestration. Prompts reference agents by
+  name but orchestration is manual.

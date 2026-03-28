@@ -9,5 +9,6 @@
             }
         }
     },
-    "editor.codeActionWidget.includeNearbyQuickFixes": true
+    "editor.codeActionWidget.includeNearbyQuickFixes": true,
+    "claudeCode.useTerminal": true
 }

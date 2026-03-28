@@ -1,0 +1,58 @@
+---
+name: crypto-roundtrip-test
+description: Write the canonical VoidGate crypto adversarial test suite. Use when adding tests to any module in src-tauri/src/crypto/.
+---
+
+Write all of the following test cases for the crypto function under test. Do not skip cases — every thiserror variant must have at least one test that triggers it.
+
+**Boilerplate helpers (add to the `#[cfg(test)]` module):**
+```rust
+fn test_chunk_key() -> Secret<[u8; 32]> { Secret::new([0x42u8; 32]) }
+fn wrong_chunk_key() -> Secret<[u8; 32]> { Secret::new([0xFFu8; 32]) }
+fn test_file_id() -> Uuid { Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap() }
+```
+
+**Required test cases:**
+
+1. **Happy path** — encrypt then decrypt returns original plaintext.
+
+2. **Wrong key** — encrypt with `test_chunk_key()`, decrypt with `wrong_chunk_key()`, assert error.
+
+3. **AAD mismatch: wrong chunk index** — encrypt as chunk 0, decrypt with chunk_index 1, assert error.
+
+4. **AAD mismatch: wrong file_id** — encrypt with file_id A, decrypt with file_id B, assert error.
+
+5. **Tag tampering** — flip a bit in the last 16 bytes of `wire_blob`, recompute BLAKE3 so the checksum passes, assert AEAD error.
+
+6. **Ciphertext corruption** — flip a bit at byte 25 (after the 24-byte nonce), recompute BLAKE3, assert AEAD error.
+
+7. **Checksum mismatch** — corrupt the stored checksum by one bit, assert `ChecksumMismatch` is returned *before* decryption (verify the variant, not just `is_err()`).
+
+8. **Nonce uniqueness** — encrypt the same plaintext twice with the same key and AAD, assert the two `wire_blob` values differ.
+
+9. **Zeroize after drop** — use raw pointer inspection to verify key bytes are zeroed:
+```rust
+let key_bytes = [0x42u8; 32];
+let ptr: *const u8;
+{ let key = ChunkKey::new(key_bytes); ptr = key.as_bytes().as_ptr(); }
+let after_drop = unsafe { std::slice::from_raw_parts(ptr, 32) };
+assert!(after_drop.iter().all(|&b| b == 0));
+```
+
+10. **Chunk boundary cases** — write a `round_trip_test(plaintext: &[u8])` helper and call it for: `b""`, `b"x"`, `vec![0u8; CHUNK_SIZE - 1]`, `vec![0u8; CHUNK_SIZE]`, `vec![0u8; CHUNK_SIZE + 1]`.
+
+11. **Proptest arbitrary round-trip:**
+```rust
+proptest! {
+    #[test]
+    fn test_encrypt_decrypt_arbitrary_plaintext(
+        plaintext in proptest::collection::vec(any::<u8>(), 0..=8192)
+    ) {
+        let encrypted = encrypt_chunk(&plaintext, &test_chunk_key(), test_file_id(), 0).unwrap();
+        let decrypted = decrypt_chunk(&encrypted.wire_blob, &encrypted.checksum, &test_chunk_key(), test_file_id(), 0).unwrap();
+        prop_assert_eq!(decrypted, plaintext);
+    }
+}
+```
+
+Name every test `test_<unit>_<scenario>_<expected_outcome>`.
