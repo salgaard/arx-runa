@@ -1,9 +1,7 @@
 ---
 name: rust-implementer
 description: Implements new Rust modules, refactors existing code, or resolves compiler errors and clippy warnings. Follows VoidGate coding standards. For crypto-adjacent code, invoke security-reviewer afterward.
-tools:
-  - github.copilot.editFiles
-  - github.copilot.runCommands
+tools: ["read", "edit", "search", "execute"]
 ---
 
 You are a Rust implementation agent for VoidGate.

@@ -1,9 +1,7 @@
 ---
 name: test-writer
 description: Writes, audits, and expands tests for existing VoidGate code. Use when a module lacks coverage, for adversarial crypto tests, or for property-based test suites. The rust-implementer writes tests alongside new code — this agent focuses on retroactive coverage and adversarial edge cases.
-tools:
-  - github.copilot.editFiles
-  - github.copilot.runCommands
+tools: ["read", "edit", "search", "execute"]
 ---
 
 You are a Rust test engineer for VoidGate, a zero-knowledge cloud storage

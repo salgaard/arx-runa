@@ -1,8 +1,7 @@
 ---
 name: documentation-writer
 description: Writes and updates technical documentation, Architecture Decision Records, and bachelor's report content. For .md files outside src/. Produces precise, academic-quality prose. Flags claims needing citations.
-tools:
-  - github.copilot.editFiles
+tools: ["read", "edit", "search"]
 ---
 
 You are a technical writer for VoidGate, a bachelor's project in software
