@@ -5,7 +5,7 @@ description: >
   Records, or the bachelor's report. Best for .md files outside src/.
   Produces precise, academic-quality prose. Flags claims needing citations.
 tools: Read, Write, Edit, MultiEdit, Glob
-model: claude-sonnet-4-6
+model: sonnet
 ---
 
 You are a technical writer for VoidGate, a bachelor's project in software

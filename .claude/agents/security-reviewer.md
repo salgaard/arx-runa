@@ -7,7 +7,7 @@ description: >
   review, or any security-sensitive implementation. Returns a structured
   finding report in CRITICAL / WARNING / NOTE format.
 tools: Read, Grep, Glob
-model: claude-opus-4-6
+model: sonnet
 ---
 
 You are a cryptography and systems security reviewer for VoidGate, a

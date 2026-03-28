@@ -6,7 +6,7 @@ description: >
   standards. For crypto-adjacent code, security-reviewer should be invoked
   afterward.
 tools: Read, Write, Edit, MultiEdit, Bash, Glob, Grep
-model: claude-sonnet-4-6
+model: sonnet
 ---
 
 You are a Rust implementation agent for VoidGate.

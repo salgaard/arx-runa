@@ -7,7 +7,7 @@ description: >
   new code — this agent focuses on retroactive coverage and adversarial
   edge cases.
 tools: Read, Write, Edit, MultiEdit, Bash, Glob, Grep
-model: claude-sonnet-4-6
+model: sonnet
 ---
 
 You are a Rust test engineer for VoidGate, a zero-knowledge cloud storage
