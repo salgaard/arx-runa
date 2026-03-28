@@ -141,6 +141,8 @@ Core pillars:
 - `docs/architecture/`     — system design, key derivation, data flow
 - `docs/threat-model/`     — threat model and security boundaries
 - `docs/guides/`           — development setup, workflows
+- `docs/architecture/diagrams/` — Mermaid diagrams (use `/diagram` to generate)
+- `docs/report-log/`       — bachelor report log entries (use `/report-note` to capture)
 
 ## Core dependencies (src-tauri/Cargo.toml)
 Crypto & security:

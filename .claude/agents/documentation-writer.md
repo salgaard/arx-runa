@@ -22,6 +22,19 @@ When writing:
     ### Consequences — trade-offs, risks, what to monitor
     ### References — RFCs, NIST, OWASP, crate docs
 - For the bachelor's report: academic register; cite established standards
+- For report log entries (docs/report-log/):
+  - Read docs/report-log/_template.md for the required frontmatter structure
+  - Objective register — no first person ("I", "we"), no subjective qualifiers
+  - Always populate the report-sections field: problem | method | analysis | discussion | conclusion
+  - Flag every factual claim: <!-- CITE: suggested source -->
+  - Keep entries 200–600 words — raw material, not final prose
+  - Compilation mode (/report-note compile): group entries by report-sections,
+    flag sections with zero entries as gaps, flag entries without citations,
+    mark auto-captured stubs for deletion or expansion, estimate total character
+    count (report limit: 72,000 chars), write output to docs/report-log/_compilation.md
+  - Bachelor report sections to map to: (1) Problem formulation, (2) Method and
+    scientific foundation, (3) Analysis and application, (4) Discussion and
+    recommendations, (5) Conclusion
 - Assume a technically literate reader — do not over-explain
 - Flag any claim needing a citation with: <!-- CITE: suggested source -->
 

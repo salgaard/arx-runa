@@ -38,6 +38,10 @@
           {
             "type": "command",
             "command": "file=$(jq -r '.tool_input.file_path // .tool_input.path // empty'); if echo \"$file\" | grep -q '\\.rs$'; then cargo clippy --quiet 2>&1 | head -30; fi"
+          },
+          {
+            "type": "command",
+            "command": "file=$(jq -r '.tool_input.file_path // .tool_input.path // empty'); if echo \"$file\" | grep -qE '(/\\.claude/(agents|commands)/|CLAUDE\\.md$)'; then echo 'Reminder: .github/ counterpart may need updating — run /copilot-sync-check to review'; fi"
           }
         ]
       }
@@ -58,16 +62,6 @@
           {
             "type": "command",
             "command": "path=$(jq -r '.tool_input.file_path // .tool_input.path // empty'); if echo \"$path\" | grep -qE '(\\.env$|\\.env\\.|/secrets/)'; then echo 'Blocked: sensitive file access rejected by hook'; exit 2; fi"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo \"[$(date '+%Y-%m-%d %H:%M:%S')] Session ended\" >> $CLAUDE_PROJECT_DIR/.claude/session.log"
           }
         ]
       }

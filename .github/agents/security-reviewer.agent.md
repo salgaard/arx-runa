@@ -81,6 +81,13 @@ Structure all findings as:
 
 Include file path and line number for each finding where possible.
 
+## After review
+
+After completing a review, if any CRITICAL or WARNING findings represent novel
+security decisions, accepted limitations, or threat model updates, note them
+explicitly as candidates for documentation in the bachelor report (report type:
+`security-trade-off` or `limitation`).
+
 ## Known gotchas (from project memory)
 - The `chacha20poly1305` crate returns ciphertext || tag as one blob from
   `encrypt()` — do not manually append the tag or you will double it

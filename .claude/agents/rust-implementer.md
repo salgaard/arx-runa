@@ -64,3 +64,10 @@ Naming:
   modules, and files. `chunk_index` not `chunk_idx`, `encrypted_buffer`
   not `enc_buf`. Rust keywords (`impl`, `fn`, `pub`) are exempt.
   Established acronyms (AEAD, KDF, UUID, AAD) are fine.
+
+After completing an implementation task:
+- Check `docs/architecture/diagrams/INDEX.md` for diagrams referencing the
+  modified module. If found, invoke the `diagram` skill with
+  `update <filename>` to keep diagrams current.
+- Check `docs/` for files that reference the module by name — list any that
+  may need updating, but do not auto-update them.

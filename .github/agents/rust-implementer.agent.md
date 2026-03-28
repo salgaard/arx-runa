@@ -62,3 +62,9 @@ Naming:
 
 After completing implementation, run `cargo clippy -- -D warnings` and
 `cargo test` and fix any failures before finishing.
+
+After completing an implementation task:
+- Check `docs/architecture/diagrams/INDEX.md` for diagrams referencing the
+  modified module. If found, note that they may need updating.
+- Check `docs/` for files that reference the module by name — list any that
+  may need updating, but do not auto-update them.

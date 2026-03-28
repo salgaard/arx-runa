@@ -86,3 +86,8 @@ Output format:
 
 After each review, append significant findings to `.claude/memory/MEMORY.md`
 under "Known gotchas" or "Patterns and conventions discovered".
+
+After completing a review, if any CRITICAL or WARNING findings represent novel
+security decisions, accepted limitations, or threat model updates worth
+capturing for the bachelor report, invoke the `report-note` skill with the
+appropriate type (`security-trade-off` or `limitation`).
