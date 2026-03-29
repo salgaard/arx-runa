@@ -1,0 +1,73 @@
+name: Documentation Gap Check
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [master, development]
+
+jobs:
+  documentation-gap-check:
+    name: Documentation Gap Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for documentation gaps
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            CHANGED=$(git diff --name-only origin/master...HEAD 2>/dev/null || echo "")
+          else
+            CHANGED=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")
+          fi
+
+          COMMIT_MSG=$(git log -1 --pretty=%s)
+          if echo "$COMMIT_MSG" | grep -q '\[skip-docs\]'; then
+            echo "Documentation check skipped: [skip-docs] in commit message."
+            exit 0
+          fi
+
+          MODULES_CHANGED=""
+          for module in crypto auth storage ui; do
+            if echo "$CHANGED" | grep -q "^src-tauri/src/$module/"; then
+              MODULES_CHANGED="$MODULES_CHANGED $module"
+            fi
+          done
+
+          if [ -z "$MODULES_CHANGED" ]; then
+            echo "No module-level source changes -- documentation check skipped."
+            exit 0
+          fi
+
+          DOC_CHANGED=$(echo "$CHANGED" | grep -E "^docs/(architecture-decisions|report-log|architecture/diagrams)/" || true)
+
+          if [ -n "$DOC_CHANGED" ]; then
+            echo "Documentation updated alongside code changes:"
+            echo "$DOC_CHANGED"
+            exit 0
+          fi
+
+          echo ""
+          echo "DOCUMENTATION GAP DETECTED"
+          echo "=========================="
+          echo ""
+          echo "Source modules changed without documentation updates:"
+          for module in $MODULES_CHANGED; do
+            echo "  src-tauri/src/$module/"
+          done
+          echo ""
+          echo "At least one of the following must be updated alongside module changes:"
+          echo "  docs/architecture-decisions/    Architecture Decision Records"
+          echo "  docs/report-log/                Bachelor report log entries"
+          echo "  docs/architecture/diagrams/     Architecture diagrams"
+          echo ""
+          echo "To generate documentation: run '/document phase N' or '/report-note <topic>'"
+          echo "The post-commit hook creates stubs automatically when configured."
+          echo "To bypass for minor commits: include [skip-docs] in the commit message."
+          exit 1

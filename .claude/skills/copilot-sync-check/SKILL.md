@@ -2,77 +2,77 @@
 name: copilot-sync-check
 description: >
   Check whether .github/ Copilot counterpart files are in sync with .claude/
-  config files after any edit to agents, commands, skills, or CLAUDE.md.
-  Invoke proactively after editing .claude/agents/, .claude/commands/,
-  .claude/skills/, or CLAUDE.md. Also invokable manually via
-  /copilot-sync-check.
+  after a command or rule is added, changed, or removed.
+  Invoke proactively after editing any file in .claude/commands/ or .claude/rules/.
+  Also invokable manually via /copilot-sync-check.
+  Note: CLAUDE.md, .claude/agents/, and .claude/skills/ are read natively
+  by Copilot and need no sync.
 ---
 
 Check `.github/` counterparts for divergence from `.claude/` config files.
 
-## Counterpart mapping
+## What is shared vs. what needs syncing
 
-| Claude Code file | GitHub Copilot counterpart |
-|------------------|---------------------------|
-| `CLAUDE.md` | `.github/copilot-instructions.md` |
-| `.claude/agents/<name>.md` | `.github/agents/<name>.agent.md` |
-| `.claude/commands/<name>.md` | `.github/prompts/<name>.prompt.md` |
+GitHub Copilot reads the following directly — no `.github/` counterpart needed:
 
-**Skills are shared** — `.claude/skills/` follows an open standard read by both
-Claude Code and GitHub Copilot. `SKILL.md` files in `.claude/skills/` require
-no `.github/` counterpart. Do not check or sync skills.
+| Shared resource | Path |
+|----------------|------|
+| Project instructions | `CLAUDE.md` |
+| Agent personas | `.claude/agents/*.md` (VS Code auto-maps tool names) |
+| Skills | `.claude/skills/*/SKILL.md` (open standard) |
+| Saved plans | `.claude/plans/*.md` (plain markdown — reference directly in Copilot chat) |
+
+**Two things need syncing:**
+
+| Claude Code | GitHub Copilot counterpart | Frontmatter difference |
+|-------------|---------------------------|------------------------|
+| `.claude/commands/<name>.md` | `.github/prompts/<name>.prompt.md` | `$ARGUMENTS` vs `{{input}}` |
+| `.claude/rules/<name>.md` | `.github/instructions/<name>.instructions.md` | `paths: [list]` vs `applyTo: "glob"` |
 
 ## Steps
 
 ### Step 1 — Identify what changed
 
-If invoked proactively (after an edit), note which `.claude/` file was just
-modified. Skills (`.claude/skills/`) are shared with Copilot and need no sync —
-skip them. Only check agents, commands, and `CLAUDE.md`.
+If invoked proactively, note which `.claude/` file was just modified — a
+command (`.claude/commands/`) or a rule (`.claude/rules/`).
 
-If invoked manually without arguments, check all counterpart pairs (excluding
-skills).
+If invoked manually without arguments, check all pairs across both mappings.
 
 ### Step 2 — Check counterpart existence
 
-For each `.claude/` file being checked:
-1. Compute the expected `.github/` counterpart path using the mapping above
-2. Check whether that file exists
-3. If it does not exist, flag it: `MISSING counterpart: <path>`
+For each `.claude/commands/<name>.md`:
+- Expected counterpart: `.github/prompts/<name>.prompt.md`
+- Flag missing: `MISSING prompt: .github/prompts/<name>.prompt.md`
+
+For each `.claude/rules/<name>.md`:
+- Expected counterpart: `.github/instructions/<name>.instructions.md`
+- Flag missing: `MISSING instructions: .github/instructions/<name>.instructions.md`
 
 ### Step 3 — Diff semantic content
 
-For each pair that exists:
-1. Read both files
-2. Compare the **intent and content** — not exact text (formats differ)
-3. Flag differences in:
-   - Behaviour described (steps, rules, output format)
-   - Scope or trigger conditions
-   - Agent tool access
-   - Security rules or coding standards
+For each pair that exists, read both files and compare **intent and content**
+— not exact text (frontmatter keys and placeholder syntax differ by design).
 
-Do NOT flag superficial format differences (YAML vs markdown frontmatter,
-`{{input}}` vs `$ARGUMENTS`, heading styles).
+Flag differences in:
+- Rules or steps described
+- Glob patterns / file scope
+- Security rules or coding standards
+
+Do NOT flag: `paths:` vs `applyTo:`, `$ARGUMENTS` vs `{{input}}`, heading style.
 
 ### Step 4 — Report findings
 
-Output a compact report:
-
 ```
 Copilot sync check:
-  IN SYNC:   <filename pairs that are equivalent>
-  DIVERGED:  <filename pairs with semantic differences — describe what changed>
-  MISSING:   <Claude files with no .github/ counterpart>
-  NOTE:      Skills have no Copilot counterpart — this is expected.
+  IN SYNC:   <pairs that are semantically equivalent>
+  DIVERGED:  <pairs with content differences — describe what changed>
+  MISSING:   <.claude/ files with no .github/ counterpart>
 ```
 
-Do NOT auto-update `.github/` files. The formats differ and auto-updates risk
-introducing errors. List what needs updating so the user can review.
+Do NOT auto-update `.github/` files. Formats differ and auto-updates risk
+errors. List what needs updating so the user can review.
 
-### Step 5 — Suggest update
+### Step 5 — Suggest updates
 
-For each DIVERGED pair, briefly describe what the `.github/` counterpart needs:
-- What section to add or change
-- What the new behaviour should say
-
-Keep suggestions actionable and short (1-3 bullet points per file).
+For each DIVERGED or MISSING pair, describe what the `.github/` counterpart
+needs in 1-3 bullet points.

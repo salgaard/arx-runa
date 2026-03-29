@@ -1,5 +1,6 @@
 ---
-applyTo: "src-tauri/src/auth/**"
+paths:
+  - "src-tauri/src/auth/**"
 ---
 
 # Auth module — scoped rules

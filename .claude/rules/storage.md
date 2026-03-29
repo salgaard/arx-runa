@@ -1,5 +1,6 @@
 ---
-applyTo: "src-tauri/src/storage/**"
+paths:
+  - "src-tauri/src/storage/**"
 ---
 
 # Storage module — scoped rules

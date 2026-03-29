@@ -1,5 +1,6 @@
 ---
-applyTo: "src-tauri/**/*.rs"
+paths:
+  - "src-tauri/**/*.rs"
 ---
 
 # Rust — project-wide scoped rules

@@ -1,5 +1,6 @@
 ---
-applyTo: "src-tauri/src/crypto/**"
+paths:
+  - "src-tauri/src/crypto/**"
 ---
 
 # Crypto module — scoped rules

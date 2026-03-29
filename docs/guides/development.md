@@ -84,7 +84,26 @@ cargo install cargo-audit
 
 ---
 
-## 6. Hook prerequisites
+## 6. Git hooks (documentation stubs)
+
+A post-commit hook automatically creates a report-log stub whenever a commit
+touches `src-tauri/src/`. Configure it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+chmod +x .githooks/post-commit
+```
+
+The hook writes a stub to `docs/report-log/` and stages it for the next
+commit. Expand the stub with `/report-note <topic>` or delete it if the
+commit does not warrant a report entry.
+
+To skip the hook for a specific commit, include `[skip-docs]` in the
+commit message.
+
+---
+
+## 7. Hook prerequisites
 
 Claude Code hooks use `jq` to parse tool input. Install it:
 

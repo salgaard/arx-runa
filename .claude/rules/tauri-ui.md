@@ -1,5 +1,6 @@
 ---
-applyTo: "src-tauri/src/ui/**"
+paths:
+  - "src-tauri/src/ui/**"
 ---
 
 # Tauri UI / IPC layer — scoped rules

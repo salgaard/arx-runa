@@ -1,5 +1,6 @@
 ---
-applyTo: "docs/**"
+paths:
+  - "docs/**"
 ---
 
 # Documentation — scoped rules
