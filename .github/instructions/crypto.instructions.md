@@ -35,9 +35,12 @@ These rules apply to all files under `src-tauri/src/crypto/`.
 
 ## Key derivation
 - master_key must NEVER be used directly for encryption
-- Use HKDF-SHA256 to derive: chunk_key, sqlcipher_key, manifest_key
+- Use HKDF-SHA256 to derive: key_encryption_key, sqlcipher_key, manifest_key
 - Each derived key uses a distinct `info` parameter (see CLAUDE.md for values)
 - Compromise of one derived key must not compromise others
+- Per-file keys: generate a random 256-bit `file_key` via CSPRNG for each file;
+  store it wrapped with `key_encryption_key` in SQLCipher. Encrypt/decrypt
+  chunks with `file_key`, not with a vault-wide key.
 
 ## Memory
 - All key types must implement `ZeroizeOnDrop`

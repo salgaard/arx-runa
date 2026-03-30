@@ -2,7 +2,7 @@ Recommended model: `/model sonnet`
 
 Update documentation for: $ARGUMENTS
 
-Use the documentation-writer subagent.
+Use the `documentation-writer` agent.
 
 If $ARGUMENTS names a specific doc (e.g. "key-derivation", "threat-model"):
 - Find the matching file in docs/ and update it

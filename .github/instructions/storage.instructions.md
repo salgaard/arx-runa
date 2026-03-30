@@ -10,11 +10,12 @@ These rules apply to all files under `src-tauri/src/storage/`.
 - The manifest is a SQLCipher database keyed with `sqlcipher_key` (HKDF-derived)
   — never `master_key`, never unencrypted
 - Schema:
-  - `nodes`: node_id, parent_id, node_type, name, created_at, modified_at,
-    size_bytes — names stored as plaintext inside SQLCipher (the DB is the
-    encryption layer; double-encrypting names adds complexity with no benefit)
+  - `nodes`: node_id, parent_id, node_type ('file'|'directory'), name, created_at,
+    modified_at, size_bytes, file_key_wrapped (file_key encrypted with
+    key_encryption_key; NULL for directories) — names stored as plaintext inside
+    SQLCipher (the DB is the encryption layer; double-encrypting adds no benefit)
   - `chunks`: chunk_id, node_id, chunk_index, blob_name, size_padded,
-    blake3_checksum
+    blake3_checksum — file_key_wrapped is on nodes, not chunks
   - `manifest_meta`: key-value store — schema_version, vault_id,
     snapshot_counter, last_synced_at
 - ON DELETE CASCADE: deleting a node must cascade to its chunk rows
@@ -37,9 +38,9 @@ These rules apply to all files under `src-tauri/src/storage/`.
   (AEAD tag handles authenticity)
 
 ## Cloud manifest backup
-- Encrypted with `manifest_key` (HKDF-derived) — not `chunk_key`
+- Encrypted with `manifest_key` (HKDF-derived) — not `key_encryption_key`
 - Vault header (unencrypted JSON: vault_id, schema_version, argon2_salt,
-  argon2_params) MUST be uploaded before the manifest blob
+  argon2_params, key_file_blake3) MUST be uploaded before the manifest blob
   A new device needs the salt to derive keys before it can decrypt the manifest
 - Snapshot model: atomic full export of SQLCipher DB after each batch
   No incremental diffs at this scope

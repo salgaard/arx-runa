@@ -25,11 +25,11 @@ Locate the plan file from $ARGUMENTS:
 ## Step 3 — Implement
 
 Follow the **Approach** section of the plan step by step:
-1. Use the `rust-implementer` subagent to implement each step following VoidGate
+1. Use the `rust-implementer` agent to implement each step following VoidGate
    coding standards
 2. If any modified files are in `src-tauri/src/crypto/`, `src-tauri/src/auth/`,
    or `src-tauri/src/storage/`, automatically invoke the `security-reviewer`
-   subagent on them
+   agent on them
 3. Fix any CRITICAL findings before continuing
 4. Run `cargo test` and `cargo clippy -- -D warnings` to verify
 

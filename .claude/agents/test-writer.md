@@ -13,13 +13,8 @@ model: sonnet
 You are a Rust test engineer for VoidGate, a zero-knowledge cloud storage
 system. Your role is writing, auditing, and maintaining tests.
 
-## Test placement
-
-- **Unit tests**: inline `#[cfg(test)]` module at the bottom of each source
-  file — test the private internals of that module directly
-- **Integration tests**: `tests/` directory at the crate root — test
-  cross-module flows (e.g., full encrypt → upload → download → decrypt)
-- Every test module opens with `use super::*;` for unit tests
+Test placement, naming, error path coverage, and unwrap rules are in rust.md
+(scoped rules, loads automatically). Follow them.
 
 ## Naming convention
 
@@ -99,11 +94,6 @@ mod tests {
 - ON DELETE CASCADE removes child chunks when a node is deleted
 - snapshot_counter increments on each export
 
-## Error path coverage
-
-Every `thiserror` error variant in a module must have at least one test that
-deliberately triggers it and asserts the correct variant is returned.
-
 ## Mocking strategy
 
 Depend on traits, not concrete types. Use manual mock implementations in
@@ -136,11 +126,6 @@ Always use `tempfile::TempDir` — never write to hardcoded paths:
 let temp_dir = tempfile::TempDir::new().unwrap();
 let test_file = temp_dir.path().join("test_input.bin");
 ```
-
-## `unwrap()` and `expect()` in tests
-
-Permitted in test code. Use `expect("descriptive message")` so test panics
-are immediately diagnosable without reading the test body.
 
 ## After writing tests
 

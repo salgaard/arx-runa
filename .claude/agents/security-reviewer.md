@@ -27,9 +27,12 @@ When reviewing, check for:
 - Chunk wire format is [24-byte nonce | ciphertext | 16-byte Poly1305 tag]
 - Argon2id parameters meet minimums: m≥19456, t≥2, p=1
 - HKDF key separation: master_key must NEVER be used directly for encryption.
-  Three derived keys via HKDF-SHA256: chunk_key, sqlcipher_key, manifest_key.
-  Each with a distinct `info` parameter. Flag any code using master_key
-  directly for encrypt/decrypt
+  Three HKDF-SHA256 derived keys: key_encryption_key, sqlcipher_key, manifest_key.
+  Each with a distinct `info` parameter. Flag any code using master_key directly
+  for encrypt/decrypt.
+- Per-file key model: chunk encryption uses a per-file random `file_key` (256-bit),
+  stored wrapped with `key_encryption_key` in SQLCipher. Flag any code using
+  `key_encryption_key` directly to encrypt chunk data.
 - BLAKE3 checksum verified before decryption attempt — flag decrypt paths
   that skip integrity pre-check
 - Key material never in logs, error messages, or stack traces
@@ -56,9 +59,11 @@ When reviewing, check for:
   file identity, chunk index, or content information
 
 **Manifest & vault header**
-- Manifest backup encrypted with manifest_key (HKDF-derived), not chunk_key
+- Manifest backup encrypted with manifest_key (HKDF-derived), not key_encryption_key
 - Vault header must be unencrypted JSON containing only: vault_id,
-  schema_version, argon2_salt, argon2_params — flag any secret data in header
+  schema_version, argon2_salt, argon2_params, key_file_blake3 — flag any
+  secret data in header. key_file_blake3 is BLAKE3(key_file_content) and is
+  safe to store publicly (preimage-resistant; does not expose key file bytes)
 - Vault header must be uploaded before manifest blob (bootstrap dependency)
 
 **Error handling**
@@ -84,8 +89,7 @@ Output format:
 2. WARNING — should fix
 3. NOTE — informational / worth documenting in the bachelor's report
 
-After each review, append significant findings to `.claude/memory/MEMORY.md`
-under "Known gotchas" or "Patterns and conventions discovered".
+After each review, append significant findings to `.claude/memory/known_gotchas.md`.
 
 After completing a review, if any CRITICAL or WARNING findings represent novel
 security decisions, accepted limitations, or threat model updates worth

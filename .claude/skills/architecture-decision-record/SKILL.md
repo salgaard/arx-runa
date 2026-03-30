@@ -59,11 +59,7 @@ explain why this option was selected over them.
 - Standards, RFCs, crate docs, or prior art that informed this decision.
 ```
 
-Rules:
-- Objective register — no first person
-- Flag every factual claim needing a source: `<!-- CITE: suggested source -->`
-- Use full words — no abbreviations in prose (Rust keywords exempt)
-- 300–800 words total
+Follow docs.md register, citation, and naming rules. 300–800 words total.
 
 ### Step 4 — Cross-reference report-log entries
 

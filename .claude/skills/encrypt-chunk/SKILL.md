@@ -25,11 +25,14 @@ let nonce = XNonce::from(nonce_bytes);
 
 **3. Encrypt using `XChaCha20Poly1305` (not `ChaCha20Poly1305`) with AAD:**
 ```rust
-let cipher = XChaCha20Poly1305::new(chunk_key.expose_secret().into());
+let cipher = XChaCha20Poly1305::new(file_key.expose_secret().into());
 let ciphertext_and_tag = cipher.encrypt(&nonce, Payload { msg: plaintext, aad: &aad })
     .map_err(|_| EncryptionError::AeadFailed)?;
 ```
 `encrypt()` returns `ciphertext || tag` as one blob. Do not append the tag again.
+Note: `file_key` is the per-file random 256-bit key, fetched from SQLCipher and
+unwrapped with `key_encryption_key` before use. Never pass `key_encryption_key`
+directly to `XChaCha20Poly1305`.
 
 **4. Assemble wire format `[24B nonce | ciphertext | 16B Poly1305 tag]`:**
 ```rust

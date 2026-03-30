@@ -41,7 +41,7 @@
           },
           {
             "type": "command",
-            "command": "file=$(jq -r '.tool_input.file_path // .tool_input.path // empty'); if echo \"$file\" | grep -qE '/\\.claude/(commands|rules)/'; then echo 'Reminder: .github/ counterpart may need updating — run /copilot-sync-check to review'; fi"
+            "command": "file=$(jq -r '.tool_input.file_path // .tool_input.path // empty'); if echo \"$file\" | grep -qE '/\\.claude/rules/'; then echo 'Reminder: .github/instructions/ counterpart may need updating — run /copilot-sync'; fi"
           }
         ]
       }

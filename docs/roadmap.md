@@ -41,19 +41,20 @@
 **Objective**: implement the foundational cryptographic operations that all other modules depend on — HKDF key derivation, XChaCha20-Poly1305 AEAD encrypt/decrypt, chunk wire format, and BLAKE3 checksums.
 
 **Deliverables**:
-1. HKDF-SHA256 key derivation producing the three purpose-specific keys (`chunk_key`, `sqlcipher_key`, `manifest_key`) with distinct `info` strings as specified in `CLAUDE.md`.
-2. `encrypt_chunk` and `decrypt_chunk` implementing the wire format `[24-byte nonce | ciphertext | 16-byte Poly1305 tag]` with mandatory AAD (`file_id || chunk_index`).
-3. BLAKE3 checksum computation over encrypted blobs.
-4. `ZeroizeOnDrop` and `Secret<T>` wrappers on all key types.
-5. Full adversarial test suite: encrypt/decrypt round-trip, AAD mismatch, wrong key, corrupted ciphertext, tag tampering, nonce uniqueness, and zeroize verification.
-6. Property-based tests via `proptest` for encrypt/decrypt round-trips across arbitrary inputs.
+1. HKDF-SHA256 key derivation producing the three vault-level keys (`key_encryption_key`, `sqlcipher_key`, `manifest_key`) with distinct `info` strings as specified in `CLAUDE.md`.
+2. Per-file key generation: random 256-bit `file_key` via CSPRNG; wrapping and unwrapping with `key_encryption_key` (XChaCha20-Poly1305).
+3. `encrypt_chunk` and `decrypt_chunk` implementing the wire format `[24-byte nonce | ciphertext | 16-byte Poly1305 tag]` with mandatory AAD (`file_id || chunk_index`), accepting a `file_key` per invocation.
+4. BLAKE3 checksum computation over encrypted blobs.
+5. `ZeroizeOnDrop` and `Secret<T>` wrappers on all key types (`KeyEncryptionKey`, `FileKey`, `SqlcipherKey`, `ManifestKey`).
+6. Full adversarial test suite: encrypt/decrypt round-trip, AAD mismatch, wrong key, corrupted ciphertext, tag tampering, nonce uniqueness, and zeroize verification.
+7. Property-based tests via `proptest` for encrypt/decrypt round-trips across arbitrary inputs.
 
 **Documentation**:
 - ADR `002-cipher-selection.md` — XChaCha20-Poly1305 rationale and alternatives considered.
 - ADR `003-nonce-strategy.md` — random 192-bit nonce, birthday bound analysis, rejection of sequential nonces.
-- ADR `004-key-derivation-tree.md` — HKDF key separation rationale.
+- ADR `004-key-derivation-tree.md` — HKDF key separation rationale, per-file key model, and the decision to adopt per-file keys from Phase 1.
 - Update `docs/architecture/diagrams/key-derivation-tree.md` if implementation diverges from design.
-- Report-log entries: cipher trade-offs, nonce strategy, key separation design.
+- Report-log entries: cipher trade-offs, nonce strategy, key separation design, per-file key rationale.
 - Report sections: Method (cryptographic foundations), Analysis (adversarial test results).
 
 ---
@@ -62,21 +63,27 @@
 
 **Depends on**: Phase 1
 
-**Objective**: implement the full authentication flow — USB key file reading, Argon2id KDF producing `master_key`, session lifecycle with mlocked memory, and session timeout with zeroization.
+**Objective**: implement the full authentication flow — USB key file generation and auto-detection, Argon2id KDF producing `master_key`, session lifecycle with mlocked memory, session timeout with zeroization, and vault creation/password-change/key-rotation flows.
+
+**Design document**: `docs/architecture/designs/authentication-and-session-management.md`
 
 **Deliverables**:
-1. `KeySource` trait and concrete USB key file reader (32-byte random entropy file).
+1. `KeySource` trait and concrete USB key file reader (32-byte random entropy file, selected via file picker or auto-detected).
 2. `MockKeySource` implementation for deterministic testing without physical hardware.
-3. Argon2id KDF combining `password || key_file_bytes` as input, using salt from the vault header, with OWASP-minimum parameters (m >= 19456, t >= 2, p = 1).
-4. Session struct holding derived keys in mlocked memory (`mlock` on Linux, `VirtualLock` on Windows), with `Drop` calling `zeroize()`.
-5. Session timeout mechanism that zeroes all keys and requires re-authentication with password and USB.
-6. Tests: correct credentials succeed, wrong password fails, wrong key file fails, session timeout zeroes memory (verified via `unsafe` pointer inspection).
+3. `DeviceMonitor` trait with OS-native implementations: `WindowsDeviceMonitor` (WMI / `RegisterDeviceNotification`) and `LinuxDeviceMonitor` (`udev` crate). `MockDeviceMonitor` for testing. Auto-detection scans for 32-byte files and matches against `key_file_blake3` in the vault header.
+4. Argon2id KDF: input = `password_utf8 || key_file_bytes`, salt from vault header, parameters m≥19456, t≥2, p=1. Output: `master_key` (32 bytes).
+5. HKDF expansion of `master_key` → `key_encryption_key`, `sqlcipher_key`, `manifest_key`. Zeroize `master_key` immediately after expansion.
+6. `SessionKeys` struct: all three derived keys in mlocked memory (`mlock` on Linux, `VirtualLock` on Windows), `ZeroizeOnDrop`. Hard failure if memory locking is unavailable.
+7. Activity-based session timeout (default 15 min, configurable). Background `tokio` task zeroes `SessionKeys` on expiry. Frontend notified 60 seconds before timeout.
+8. Vault creation flow: generate key file → write to USB → compute `key_file_blake3` → generate salt → Argon2id + HKDF → create SQLCipher DB → generate X25519 identity keypair (store private key wrapped with `key_encryption_key`) → write vault header.
+9. Password change and key file rotation flows: re-derive keys with new credentials, re-wrap all `file_key` values and X25519 private key, re-key SQLCipher, update vault header. No chunk re-encryption required.
+10. Tests: correct credentials succeed, wrong password fails, wrong key file fails, session timeout zeroes memory (verified via `unsafe` pointer inspection), `DeviceMonitor` mock triggers auto-detection flow, mlock failure returns error.
 
 **Documentation**:
-- ADR `005-usb-key-file-design.md` — key file as cryptographic factor, rejection of device serial numbers and TOTP, resolution of the pending fixed-filename vs. arbitrary-file decision.
-- ADR `006-session-model.md` — single-read USB, mlocked session keys, timeout semantics.
-- `docs/threat-model/session-boundaries.md` — what `mlock` protects against and what is explicitly out of scope (cold boot, compromised kernel).
-- Report-log entries: UX-vs-security trade-off, USB factor design rationale.
+- ADR `005-usb-key-file-design.md` — key file as cryptographic factor, BLAKE3 auto-detection, rejection of fixed filename and device serial numbers.
+- ADR `006-session-model.md` — mlocked session keys, activity-based timeout, hard failure on mlock unavailability.
+- `docs/threat-model/session-boundaries.md` — what `mlock` protects against (swap eviction) and what is explicitly out of scope (cold boot, compromised kernel).
+- Report-log entries: USB auto-detection design, mlock hard failure rationale, vault creation flow.
 - Report sections: Method (authentication design), Analysis (MFA factor strength).
 
 ---
@@ -87,19 +94,23 @@
 
 **Objective**: implement the fixed-size chunking pipeline, the SQLCipher manifest database, and the local file-to-chunk-to-blob workflow (without cloud sync — that is Phase 4).
 
+**Design document**: `docs/architecture/designs/chunking-and-manifest.md`
+
 **Deliverables**:
-1. Fixed-size chunking with uniform padding — streaming via `BufReader` / `BufWriter` and `tokio::io`, never loading entire files into memory.
-2. `MetadataStore` trait and SQLCipher implementation: `nodes`, `chunks`, and `manifest_meta` tables with `ON DELETE CASCADE`.
-3. Encrypt pipeline: file read (streaming) -> chunk -> pad to fixed size -> encrypt -> BLAKE3 -> write encrypted blob to local staging directory -> record in manifest.
-4. Decrypt pipeline: read manifest -> fetch blob -> verify BLAKE3 -> decrypt -> unpad -> reassemble (streaming).
-5. Resolve the pending chunk size decision (4 MB vs. 8 MB) with quantified padding waste analysis.
-6. Tests: chunk boundary cases (0 bytes, 1 byte, chunk\_size-1, chunk\_size, chunk\_size+1, exact multiples), SQLCipher wrong-key rejection, CASCADE deletion, BLAKE3 mismatch rejection, UUID v4 blob naming.
+1. Fixed-size chunking at **4 MiB** with zero-pad to `chunk_size`, truncate on reassembly using `size_bytes` — streaming via `BufReader`/`BufWriter` and `tokio::io`, never loading entire files into memory.
+2. `MetadataStore` trait and SQLCipher implementation: `nodes` (with `file_key_wrapped`), `chunks`, `manifest_meta` tables with `ON DELETE CASCADE`. `MockMetadataStore` for testing.
+3. Encrypt pipeline: `encrypt_file(source, file_id, file_key, chunk_size, staging_dir)` → `Vec<ChunkRecord>`. Per chunk: read → zero-pad → encrypt → BLAKE3 → write blob to staging → return `ChunkRecord`.
+4. Decrypt pipeline: `decrypt_file(destination, file_id, file_key, file_size, chunks, blob_dir)`. Per chunk: read blob → verify BLAKE3 → decrypt → write (last chunk truncated to `file_size mod chunk_size`).
+5. File key lifecycle: generate `file_key` → wrap with `key_encryption_key` → store `file_key_wrapped` in nodes table → use `file_key` for all chunks → zeroize.
+6. Staging directory management: app data subdirectory, cleanup orphaned blobs on startup.
+7. Error recovery: SQLCipher transactions wrap all manifest mutations; orphan blob scan on startup removes blobs not in `chunks` table.
+8. Tests: chunk boundary cases (0 bytes, 1 byte, 4 MiB-1, 4 MiB, 4 MiB+1, exact multiples), SQLCipher wrong-key rejection, CASCADE deletion, BLAKE3 mismatch rejection before decrypt, UUID v4 blob naming, 0-byte file edge case, staging orphan cleanup.
 
 **Documentation**:
-- ADR `007-fixed-size-chunking.md` — rejection of content-defined chunking, padding overhead trade-off, chosen chunk size with waste quantification.
-- ADR `008-manifest-database.md` — SQLCipher schema design, rejection of JSON and sled alternatives.
+- ADR `007-fixed-size-chunking.md` — rejection of content-defined chunking, 4 MiB chunk size with quantified padding waste table.
+- ADR `008-manifest-database.md` — SQLCipher schema design, `file_key_wrapped` on nodes table, rejection of JSON and sled alternatives.
 - Architecture diagram: chunk pipeline data flow (encrypt path and decrypt path).
-- Report-log entries: chunking trade-offs, storage overhead measurements.
+- Report-log entries: chunk size decision with waste analysis, schema design rationale.
 - Report sections: Method (chunking and metadata design), Analysis (padding overhead quantification).
 
 ---
@@ -110,13 +121,17 @@
 
 **Objective**: implement the `CloudTransport` trait backed by Rclone, vault header upload/download, manifest cloud backup, and the full upload/download cycle against a real cloud provider.
 
+**Design document**: `docs/architecture/designs/cloud-synchronisation.md`
+
 **Deliverables**:
 1. `CloudTransport` trait: `upload_blob`, `download_blob`, `delete_blob`, `list_blobs`.
-2. Rclone concrete implementation: subprocess invocation with sanitised arguments — no shell injection, no plaintext logging of remote paths.
-3. Vault header: generate, upload (before manifest), download, and parse (`vault_id`, `schema_version`, `argon2_salt`, `argon2_params` — stored as plaintext JSON by design).
-4. Manifest cloud backup: encrypt the SQLCipher export with `manifest_key`, upload as a blob; download and decrypt for new-device recovery.
-5. `snapshot_counter` increment on each push to enable conflict detection.
-6. Tests: mock `CloudTransport` for unit tests; integration test with a local Rclone remote (local filesystem backend or `rclone serve webdav`).
+2. `RcloneTransport` concrete implementation: Rclone bundled as a Tauri sidecar binary, invoked via `tokio::process::Command` (no shell), with remote path sanitisation and stderr sanitisation.
+3. Guided setup wizard: provider selection UI calling `rclone config create` for S3-compatible providers (AWS S3, MinIO, Backblaze B2, Wasabi) and Google Drive (OAuth flow).
+4. Vault header: generate, upload, download, and parse (`vault_id`, `schema_version`, `argon2_salt`, `argon2_params`, `key_file_blake3` — plaintext JSON by design).
+5. Manifest cloud backup: `VACUUM INTO` export, encrypt with `manifest_key` (XChaCha20-Poly1305, random nonce, no AAD), upload as `manifest/manifest-backup.blob`; download and decrypt for new-device recovery.
+6. `snapshot_counter` increment on each push; detect-and-block conflict detection (abort if cloud counter exceeds local).
+7. Upload order randomisation (Fisher-Yates shuffle) to prevent temporal correlation of blobs.
+8. Tests: `MockCloudTransport` for unit tests; integration test with a local Rclone remote (`rclone config create testremote local`).
 
 **Documentation**:
 - ADR `009-cloud-transport-rclone.md` — Rclone choice rationale, provider-agnostic design, subprocess security model.
@@ -125,13 +140,43 @@
 - Report-log entries: Rclone integration observations, provider testing notes.
 - Report sections: Method (cloud synchronisation design), Analysis (provider independence verification).
 
-**Parallelisable with**: frontend UI prototyping can begin here using mock data, provided the Tauri command signatures defined in Phase 5 are drafted first.
+**Parallelisable with**: frontend UI prototyping can begin here using mock data, provided the Tauri command signatures defined in Phase 6 are drafted first.
 
 ---
 
-## Phase 5 — Tauri IPC Layer and Frontend (`src-tauri/src/ui/` + `src/`)
+## Phase 5 — Identity and File Sharing (`src-tauri/src/sharing/`)
 
-**Depends on**: Phase 2 (auth commands), Phase 3 (storage commands), Phase 4 (sync commands)
+**Depends on**: Phase 1 (per-file keys, ECIES primitives), Phase 3 (manifest schema, MetadataStore), Phase 4 (CloudTransport)
+
+**Objective**: implement the file sharing layer — X25519 local identity, contact management, ECIES share package creation and import, shared blob cloud layout, and revocation.
+
+**Deliverables**:
+1. X25519 keypair generation on first run; store private key in SQLCipher wrapped with `key_encryption_key`.
+2. Contact management: import a contact's X25519 public key (from file or QR code), store in `contacts` table with display name and optional email label.
+3. ECIES share package creation:
+   - Retrieve `file_key` for the target file from SQLCipher (unwrap with `key_encryption_key`)
+   - Generate ephemeral X25519 keypair → ECDH with recipient's public key → HKDF → symmetric key
+   - Encrypt `file_key` with that symmetric key (XChaCha20-Poly1305)
+   - Assemble share package JSON: `share_id`, `file_id`, `file_name`, `chunk_count`, `chunk_size`, `chunk_uuids`, `file_key_wrapped`, `ephemeral_public_key`, `cloud_endpoint`
+   - Encrypt the entire package as an ECIES envelope; export as a file
+4. Share package import: parse and decrypt the ECIES envelope using the local X25519 private key; store in the recipient's `received_shares` table; fetch blobs via Rclone.
+5. Cloud layout: copy shared chunks to `shared/<file_share_id>/` with public read access; record `file_share_id` in the `shares` table.
+6. Revocation: delete `shared/<file_share_id>/` from cloud; set `revoked_at` in the `shares` table. Optional re-encryption flow: generate new `file_key`, re-encrypt all chunks, upload under new `file_share_id`, issue new share packages to remaining recipients.
+7. `shares`, `contacts`, and `received_shares` schema additions via SQLCipher migration.
+8. Tests: ECIES round-trip (encrypt with recipient public key, decrypt with private key), wrong-recipient rejection, revocation verification (blobs deleted, share marked revoked), corrupted share package, MITM-substituted ephemeral key rejection.
+
+**Documentation**:
+- ADR `012-sharing-architecture.md` — per-file keys, ECIES construction, shared blob storage, snapshot share semantics.
+- ADR `013-identity-model.md` — X25519 local identity, no central server, out-of-band key exchange, trust assumptions.
+- Threat model addition: MITM on key exchange (fingerprint verification as mitigation), ciphertext exposure via public blobs.
+- `docs/architecture/designs/file-sharing.md` — primary design document (already written).
+- Report sections: Method (sharing design), Analysis (sharing verification), Discussion (comparison with OneDrive/Cryptomator sharing — sub-question 5).
+
+---
+
+## Phase 6 — Tauri IPC Layer and Frontend (`src-tauri/src/ui/` + `src/`)
+
+**Depends on**: Phase 2 (auth commands), Phase 3 (storage commands), Phase 4 (sync commands), Phase 5 (sharing commands)
 
 **Objective**: expose backend functionality to the frontend through Tauri commands with proper error sanitisation, and build a minimal but functional web UI for authentication, vault browsing, upload, and download.
 
@@ -150,18 +195,20 @@
 
 ---
 
-## Phase 6 — End-to-End Integration Testing
+## Phase 7 — End-to-End Integration Testing
 
-**Depends on**: Phases 1 through 5
+**Depends on**: Phases 1 through 6
 
-**Objective**: validate the complete pipeline from authentication through file upload, cloud sync, and recovery on a simulated new device, confirming all modules interoperate correctly and adversarial scenarios are handled.
+**Objective**: validate the complete pipeline from authentication through file upload, cloud sync, sharing, and recovery on a simulated new device, confirming all modules interoperate correctly and adversarial scenarios are handled.
 
 **Deliverables**:
 1. Integration test: authenticate -> upload file -> verify manifest -> sync to cloud -> verify blobs exist -> simulate new device (fresh local state) -> download vault header -> re-authenticate -> recover manifest -> download and decrypt file -> verify content matches original.
-2. Integration test: session timeout during an operation -> verify keys are zeroed -> verify partial state is cleaned up.
-3. Integration test: file deletion -> verify blob removal from cloud and manifest CASCADE cleanup.
-4. Adversarial integration tests: corrupted blob (BLAKE3 mismatch), swapped blob (AAD mismatch), tampered vault header.
-5. CI pipeline verification: all integration tests pass in GitHub Actions.
+2. Integration test: share a file -> recipient imports share package -> recipient fetches and decrypts blobs -> verify content matches original.
+3. Integration test: revoke a share -> verify blobs deleted from cloud -> verify share package is now inoperative.
+4. Integration test: session timeout during an operation -> verify keys are zeroed -> verify partial state is cleaned up.
+5. Integration test: file deletion -> verify blob removal from cloud and manifest CASCADE cleanup.
+6. Adversarial integration tests: corrupted blob (BLAKE3 mismatch), swapped blob (AAD mismatch), tampered vault header, wrong-recipient share package.
+7. CI pipeline verification: all integration tests pass in GitHub Actions.
 
 **Documentation**:
 - `docs/threat-model/attack-scenarios.md` — document the adversarial integration tests as concrete attack scenario mitigations.
@@ -170,36 +217,36 @@
 
 ---
 
-## Phase 7 — Threat Model, Architectural Comparison, and Report Consolidation
+## Phase 8 — Threat Model, Sharing Architecture Comparison, and Report Consolidation
 
-**Depends on**: Phase 6
+**Depends on**: Phase 7
 
-**Objective**: complete the formal documentation deliverables — threat model, architectural comparison with OneDrive and Cryptomator, and consolidate report-log entries into the bachelor report structure.
+**Objective**: complete the formal documentation deliverables — threat model, sharing architecture comparison with OneDrive and Cryptomator, and consolidate report-log entries into the bachelor report structure.
 
 **Deliverables**:
-1. `docs/threat-model/threat-model.md` — trust boundaries, threat actors, attack vectors, mitigations, and explicit out-of-scope declarations (cold boot, compromised OS kernel, multi-device conflict resolution).
+1. `docs/threat-model/threat-model.md` — trust boundaries, threat actors, attack vectors, mitigations, and explicit out-of-scope declarations (cold boot, compromised OS kernel, multi-device conflict resolution, MITM on key exchange without fingerprint verification).
 2. `docs/architecture/system-overview.md` — consolidated architecture document with all diagrams, module descriptions, and data flows.
-3. Architectural comparison: VoidGate vs. OneDrive (provider-trust model) vs. Cryptomator (client-side encryption, virtual filesystem) — addressing sub-question 5.
+3. Sharing architecture comparison: VoidGate sharing (ECIES, per-file keys, shared blob storage) vs. OneDrive sharing links (server-side ACL, provider holds keys) vs. Cryptomator shared vaults (vault-level sharing, not file-granularity) — addressing sub-question 5.
 4. Run `/report-note compile` to aggregate all report-log entries into a structured report outline.
 5. Verify all ADRs are complete and cross-referenced.
 
 **Documentation**:
 - Threat model documents (primary deliverable of this phase).
 - Architecture overview (primary deliverable of this phase).
-- Report sections: Discussion (comparison and extensibility — sub-question 5), Conclusion (sub-conclusions per module).
+- Report sections: Discussion (sharing comparison — sub-question 5), Conclusion (sub-conclusions per module).
 
-**Parallelisable with**: documentation accumulation in this phase can begin as early as Phase 4; the formal consolidation depends on Phase 6 results.
+**Parallelisable with**: documentation accumulation in this phase can begin as early as Phase 4; the formal consolidation depends on Phase 7 results.
 
 ---
 
-## Phase 8 — Hardening, Polish, and Submission Preparation
+## Phase 9 — Hardening, Polish, and Submission Preparation
 
-**Depends on**: Phase 7
+**Depends on**: Phase 8
 
 **Objective**: final quality pass — resolve remaining open decisions, address security review findings, ensure CI is clean, and prepare for submission.
 
 **Deliverables**:
-1. Security review pass: run `/review` on all security-critical modules (`crypto/`, `auth/`, `storage/`); address all CRITICAL findings.
+1. Security review pass: run `/review` on all security-critical modules (`crypto/`, `auth/`, `storage/`, `sharing/`); address all CRITICAL findings.
 2. `cargo audit` — resolve any known vulnerabilities in dependencies.
 3. Resolve any remaining open decisions accumulated during development.
 4. Final `cargo clippy -- -D warnings`, `cargo fmt`, `cargo test` — CI clean.
@@ -219,7 +266,7 @@
 Phase 0  (scaffolding)
     │
     v
-Phase 1  (crypto primitives)
+Phase 1  (crypto primitives + per-file keys)
     │
     v
 Phase 2  (auth + session)
@@ -228,19 +275,22 @@ Phase 2  (auth + session)
 Phase 3  (chunking + manifest)
     │
     v
-Phase 4  (cloud sync)       ← frontend mock work can begin here
+Phase 4  (cloud sync)            ← frontend mock work can begin here
     │
     v
-Phase 5  (Tauri IPC + frontend)
+Phase 5  (identity + file sharing)
     │
     v
-Phase 6  (integration testing)
+Phase 6  (Tauri IPC + frontend)
     │
     v
-Phase 7  (threat model + report consolidation)
+Phase 7  (integration testing)
     │
     v
-Phase 8  (hardening + submission)
+Phase 8  (threat model + report consolidation)
+    │
+    v
+Phase 9  (hardening + submission)
 ```
 
 ---
@@ -251,8 +301,7 @@ The following decisions remain open and must be resolved during the indicated ph
 
 | Decision | Resolution phase | Impact |
 |----------|-----------------|--------|
-| USB key file: fixed filename vs. arbitrary file (plausible deniability) | Phase 2 | ADR required; affects `KeySource` trait design |
-| Chunk size: 4 MB vs. 8 MB | Phase 3 | ADR required; affects padding waste analysis and upload latency |
+| *(no pending decisions)* | — | All Phase 0–3 architectural decisions resolved |
 
 ---
 
@@ -262,8 +311,8 @@ Each phase contributes to specific sections of the bachelor report, ensuring the
 
 | Report section | Contributing phases |
 |---------------|-------------------|
-| Problem formulation | Phase 0 (existing), refined in Phase 7 |
-| Method and scientific foundation | Phases 1, 2, 3, 4 |
-| Analysis and application | Phases 1, 2, 3, 4, 5, 6 |
-| Discussion and recommendations | Phases 5, 6, 7 |
-| Conclusion | Phase 7 |
+| Problem formulation | Phase 0 (existing), refined in Phase 8 |
+| Method and scientific foundation | Phases 1, 2, 3, 4, 5 |
+| Analysis and application | Phases 1, 2, 3, 4, 5, 6, 7 |
+| Discussion and recommendations | Phases 5, 6, 7, 8 |
+| Conclusion | Phase 8 |

@@ -6,7 +6,7 @@ description: Safely add a new purpose-specific HKDF key to the VoidGate key deri
 Follow every step in order. Do not skip the documentation updates — stale key derivation trees cause security review failures.
 
 **Existing info strings (must not be reused):**
-- `b"voidgate-chunk-encryption"` → chunk_key
+- `b"voidgate-key-encryption"` → key_encryption_key (wraps per-file file_keys at rest)
 - `b"voidgate-sqlcipher"` → sqlcipher_key
 - `b"voidgate-manifest-backup"` → manifest_key
 
@@ -37,12 +37,11 @@ fn derive_new_purpose_key(master_key: &Secret<[u8; 32]>) -> Result<NewPurposeKey
 
 **Step 4: Add the new key to `SessionKeys` in `src-tauri/src/auth/` and derive it alongside the existing keys.** The `master_key` must be zeroed at the end of that same scope — it must never be stored.
 
-**Step 5: Update all four of these files to include the new key and its info string:**
+**Step 5: Update all of these files to include the new key and its info string:**
 - `CLAUDE.md` — key derivation tree section
-- `.github/copilot-instructions.md` — same section
 - `.github/instructions/crypto.instructions.md` — key derivation section
 - `.claude/agents/security-reviewer.md` — HKDF checklist
-- `.claude/memory/MEMORY.md` — key derivation tree under "Architecture decisions made"
+- `.claude/memory/architecture_rationale.md` — key derivation tree section
 
 **Step 6: Write a zeroize verification test for the new key type** (see the `crypto-roundtrip-test` skill for the pattern).
 

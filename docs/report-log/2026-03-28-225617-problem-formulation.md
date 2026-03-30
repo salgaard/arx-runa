@@ -46,9 +46,10 @@ The approved problem formulation (Danish original, advisor-approved):
    <!-- SOURCE: RAM Forensics: Tools, Techniques, and Best Practices — https://belkasoft.com/ram-forensics-tools-techniques — Belkasoft: documents what evidence exists only in volatile memory and is unrecoverable after power-off; supports the Zero-Trace argument for RAM-based UI -->
    <!-- SOURCE: Harnessing MFT Parsing for Incident Response Investigations — https://www.magnetforensics.com/blog/harnessing-mft-parsing-for-incident-response-investigations/ — Magnet Forensics: demonstrates the breadth of forensic data recoverable from NTFS MFT when files are accessed through the native filesystem -->
 
-5. **Architectural comparison and extensibility:** How does the proposed solution differ architecturally from existing market solutions such as OneDrive and Cryptomator, and what technical challenges are associated with extending the system to support secure data sharing between independent users?
-   <!-- SOURCE: Cryptomator Security Architecture — https://docs.cryptomator.org/security/architecture — documents client-side AES-256 encryption with a virtual filesystem layer; primary architectural comparison target -->
-   <!-- SOURCE: Protect your OneDrive files in Personal Vault — https://support.microsoft.com/en-us/office/protect-your-onedrive-files-in-personal-vault-6540ef37-e9bf-4121-a773-56f98dce78c4 — "Personal Vault is a protected area in OneDrive where you can store your most important or sensitive files" — provider-trust model, not client-side zero-knowledge -->
+5. **File sharing in a zero-trust system:** What cryptographic and protocol-level challenges arise when enabling file-granularity sharing between independent users in a zero-trust client-side encrypted system, and how does the proposed sharing architecture compare to existing approaches such as OneDrive sharing links and Cryptomator shared vaults?
+   <!-- SOURCE: Cryptomator Security Architecture — https://docs.cryptomator.org/security/architecture — documents client-side AES-256 encryption with a virtual filesystem layer; primary architectural comparison target for sharing model -->
+   <!-- SOURCE: Protect your OneDrive files in Personal Vault — https://support.microsoft.com/en-us/office/protect-your-onedrive-files-in-personal-vault-6540ef37-e9bf-4121-a773-56f98dce78c4 — "Personal Vault is a protected area in OneDrive where you can store your most important or sensitive files" — provider-trust model sharing links, not zero-knowledge sharing -->
+   <!-- SOURCE: age encryption tool — https://github.com/FiloSottile/age — reference implementation of X25519-based ECIES used by VoidGate sharing layer for share package encryption -->
 
 ## Implications
 
@@ -60,7 +61,7 @@ Each sub-question maps to a distinct module in the VoidGate architecture:
 | 2 — USB hardware factor | `src-tauri/src/auth/` | Method, Analysis |
 | 3 — Chunking & sync | `src-tauri/src/storage/` | Method, Analysis |
 | 4 — RAM-based UI vs. FUSE | `src-tauri/src/ui/` | Discussion |
-| 5 — Comparison & extensibility | Cross-cutting | Discussion |
+| 5 — File sharing | `src-tauri/src/sharing/` | Method, Analysis, Discussion |
 
 This mapping provides the structural backbone ("rød tråd") for the report: the problem formulation drives the architecture, the architecture drives the implementation, and sub-conclusions per module feed the final conclusion.
 

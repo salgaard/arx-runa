@@ -7,6 +7,22 @@ paths:
 
 These rules apply to all `.rs` files under `src-tauri/`.
 
+## Code structure
+- One-concern-per-file: each `.rs` file focuses on a single type, trait, or
+  function (e.g., `encrypt_chunk.rs`, `key_source.rs`)
+- Module layout: `mod.rs` + `error.rs` + `types/` subfolder
+- `mod.rs` re-exports public API only — internal helpers stay private
+- Newtypes live in `types/` subfolders: `crypto/types/file_key.rs`
+
+## Patterns
+- Newtype pattern for domain types: `FileId`, `ChunkIndex`, `NodeId`, `VaultId`,
+  `BlobName`, `FileKey`, `KeyEncryptionKey`
+- RAII guards with `ZeroizeOnDrop` for all key types
+- Builder pattern for complex configs: `VaultConfig::builder().build()`
+- Borrowed types in signatures: `&[u8]` not `&Vec<u8>`, `&str` not `&String`
+- `mem::take` for key rotation and state transitions
+- Trait boundaries for external deps: `CloudTransport`, `KeySource`, `MetadataStore`
+
 ## Error handling
 - No `unwrap()` or `expect()` in production code — use `?` and propagate
 - `unwrap()` and `expect()` are permitted in `#[cfg(test)]` code
@@ -57,6 +73,18 @@ These rules apply to all `.rs` files under `src-tauri/`.
   `MetadataStore`
 - Code depends on the trait, not the concrete type
 - Prefer `impl Trait` or `dyn Trait` over deep struct hierarchies
+
+## Testing
+- Naming: `test_<unit>_<scenario>_<expected_outcome>`
+- Unit tests: inline `#[cfg(test)]` module at the bottom of each source file
+- Integration tests: `tests/` directory at crate root for cross-module flows
+- `unwrap()` and `expect()` are permitted in `#[cfg(test)]` code only
+- Every `thiserror` error variant must have at least one test that triggers it
+- Use `proptest` for property-based testing of crypto round-trips
+- Use `tempfile` for filesystem tests — never write to real paths in tests
+- Mock external boundaries via trait implementations, not internal functions
+- Verify sensitive buffers contain zeros after drop via unsafe pointer inspection
+- Test chunk boundary cases: smaller than chunk_size, exactly chunk_size, one byte over
 
 ## Formatting and linting
 - `cargo fmt` before committing
