@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability
+    url: https://github.com/Chorizzio/void-gate/security/policy
+    about: Report security vulnerabilities through our security policy
+  - name: Discussions
+    url: https://github.com/Chorizzio/void-gate/discussions
+    about: Ask questions and discuss ideas
