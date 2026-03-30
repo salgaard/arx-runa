@@ -173,3 +173,40 @@ Use this checklist to verify your setup:
 - [ ] Project board created and linked
 - [ ] Auto-delete head branches enabled
 - [ ] Required status checks configured
+- [ ] GitHub Pages enabled (source: GitHub Actions)
+
+## GitHub Pages
+
+Navigate to: **Settings → Pages**
+
+### Setup
+
+1. **Source**: Select "GitHub Actions"
+2. Wait for the first deployment after pushing to `master`
+3. Your documentation will be available at: `https://chorizzio.github.io/void-gate/`
+
+### How It Works
+
+The documentation is built using [mdBook](https://rust-lang.github.io/mdBook/)
+with Mermaid diagram support. The workflow:
+
+1. Triggered on push to `master` (when `docs/` changes)
+2. Installs `mdbook` and `mdbook-mermaid`
+3. Builds the book from `docs/`
+4. Deploys to GitHub Pages
+
+### Local Preview
+
+To preview documentation locally:
+
+```bash
+# Install mdBook
+cargo install mdbook mdbook-mermaid
+
+# Build and serve
+cd docs
+mdbook-mermaid install
+mdbook serve --open
+```
+
+The local server runs at `http://localhost:3000`.

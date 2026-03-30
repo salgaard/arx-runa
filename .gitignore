@@ -13,3 +13,5 @@
 secrets/
 # Cursor IDE — not shared
 .cursor/
+# mdBook build output
+docs/book/

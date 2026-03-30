@@ -1,0 +1,32 @@
+[book]
+title = "VoidGate Documentation"
+authors = ["Chorizzio"]
+description = "Zero-knowledge cloud storage — technical documentation"
+src = "."
+language = "en"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/Chorizzio/void-gate"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/Chorizzio/void-gate/edit/master/docs/{path}"
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+enable = true
+limit-results = 20
+use-hierarchical-headings = true
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html.playground]
+editable = false
