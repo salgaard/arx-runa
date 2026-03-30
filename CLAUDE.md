@@ -55,6 +55,7 @@ Core pillars:
 - `src-tauri/src/auth/`     — USB key file, Argon2id, session keys
 - `src-tauri/src/storage/`  — chunking, SQLCipher metadata, sync
 - `src-tauri/src/sharing/`  — identity (X25519), contacts, share packages, revocation
+- `src-tauri/src/memory/`   — secure buffers, mlock/VirtualLock, platform-specific memory protection
 - `src-tauri/src/ui/`       — Tauri commands and frontend bridge
 - `src/`                    — frontend (web UI, ignore for Rust context)
 - `docs/architecture-decisions/`   — Architecture Decision Records

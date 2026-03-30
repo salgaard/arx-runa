@@ -22,6 +22,14 @@ These rules apply to all `.rs` files under `src-tauri/`.
 - Borrowed types in signatures: `&[u8]` not `&Vec<u8>`, `&str` not `&String`
 - `mem::take` for key rotation and state transitions
 - Trait boundaries for external deps: `CloudTransport`, `KeySource`, `MetadataStore`
+- Return consumed argument on error: if a fallible function moves an argument,
+  return it inside the error so callers can retry without cloning
+- Pass variables to closure with rebinding: use a scoped block to control what
+  closures capture (move, clone, or borrow) — keeps async task setup clear
+- Temporary mutability: after setup, rebind `let mut x` to `let x` so the
+  compiler enforces immutability for the rest of the scope
+- On-stack dynamic dispatch: use `&mut dyn Trait` instead of `Box<dyn Trait>`
+  when both branches return the same trait — avoids heap allocation
 
 ## Error handling
 - No `unwrap()` or `expect()` in production code — use `?` and propagate
@@ -50,6 +58,9 @@ These rules apply to all `.rs` files under `src-tauri/`.
 - Default to `pub(crate)` or private — only use `pub` for the module's
   external API surface
 - Re-export the public API from `mod.rs`
+- Use `#[non_exhaustive]` on public error enums and config structs to allow
+  adding variants/fields without breaking downstream — external code must
+  handle unknown variants with `_` wildcard
 
 ## Memory
 - Sensitive types must implement `zeroize::ZeroizeOnDrop`
@@ -73,6 +84,8 @@ These rules apply to all `.rs` files under `src-tauri/`.
   `MetadataStore`
 - Code depends on the trait, not the concrete type
 - Prefer `impl Trait` or `dyn Trait` over deep struct hierarchies
+- Struct decomposition: if borrow checker complains about borrowing multiple
+  fields, consider splitting the struct into smaller logical units
 
 ## Testing
 - Naming: `test_<unit>_<scenario>_<expected_outcome>`
@@ -89,3 +102,11 @@ These rules apply to all `.rs` files under `src-tauri/`.
 ## Formatting and linting
 - `cargo fmt` before committing
 - `cargo clippy -- -D warnings` must pass with zero warnings
+- Do NOT use `#![deny(warnings)]` in source code — new compiler versions may
+  add warnings and break builds. Use `RUSTFLAGS="-D warnings"` in CI instead
+
+## Anti-patterns to avoid
+- **Clone to satisfy borrow checker**: don't use `.clone()` to make borrow
+  errors disappear — understand ownership and fix the design
+- **Deref polymorphism**: do NOT implement `Deref` to "inherit" methods from
+  another type. `Deref` is for smart pointers, not fake inheritance
