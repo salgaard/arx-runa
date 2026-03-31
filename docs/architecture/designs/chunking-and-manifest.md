@@ -15,7 +15,7 @@
 
 ---
 
-## Chunk Size: 4 MB
+## Chunk Size: 4 MiB
 
 **Decision**: 4 MiB (4,194,304 bytes) fixed chunk size.
 

@@ -22,7 +22,7 @@ VoidGate requires a file sharing mechanism that preserves the zero-trust model: 
 The single vault-wide `chunk_key` was replaced with a two-level key structure:
 
 1. `key_encryption_key` — HKDF-SHA256 derived from `master_key` (info: `"voidgate-key-encryption"`); replaces the `chunk_key` HKDF branch
-2. `file_key` — random 256-bit key generated per file via CSPRNG; stored wrapped (encrypted) with `key_encryption_key` in the SQLCipher `chunks` table
+2. `file_key` — random 256-bit key generated per file via CSPRNG; stored wrapped (encrypted) with `key_encryption_key` in the SQLCipher `nodes` table (per file, not per chunk — see [chunking design report](2026-03-29-211003-chunking-manifest-design.md) for schema evolution)
 
 All chunk encryption uses `file_key`. The `key_encryption_key` is never used directly for chunk encryption — it only wraps and unwraps `file_key` values. This is the standard key-wrapping pattern used by LUKS key slots and age.
 
@@ -99,7 +99,7 @@ A relay or directory server for key exchange and blob mediation. Rejected: viola
 - Phase 1 (cryptographic primitives) now includes per-file key generation and wrapping, not just HKDF derivation of vault-level keys
 - Phase 5 is a new roadmap phase dedicated to identity and file sharing implementation
 - Sub-question 5 of the problem formulation is revised to: "What cryptographic and protocol-level challenges arise when enabling file-granularity sharing between independent users in a zero-trust client-side encrypted system, and how does the proposed sharing architecture compare to existing approaches such as OneDrive sharing links and Cryptomator shared vaults?"
-- The `chunks` table gains a `file_key_wrapped` column
+- The `nodes` table gains a `file_key_wrapped` column (originally proposed for `chunks` table, moved to `nodes` in [chunking design](2026-03-29-211003-chunking-manifest-design.md))
 - A new `src-tauri/src/sharing/` module is introduced
 - Open decisions: enterprise key distribution, fingerprint verification UX, folder sharing UX, identity keypair rotation on USB key file replacement
 

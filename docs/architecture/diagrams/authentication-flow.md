@@ -99,4 +99,4 @@ The authentication flow covers four scenarios:
 ## Related
 
 - Design document: [../../architecture/designs/authentication-and-session-management.md](../../architecture/designs/authentication-and-session-management.md)
-- Report log: [../../report-log/2026-03-29-194331-file-sharing-architecture-design.md](../../report-log/)
+- Report log: [../../report-log/2026-03-29-204153-authentication-session-design.md](../../report-log/2026-03-29-204153-authentication-session-design.md)

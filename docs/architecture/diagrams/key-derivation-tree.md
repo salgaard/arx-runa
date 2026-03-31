@@ -29,7 +29,7 @@ flowchart TD
 
     subgraph PER_FILE ["Per-File Keys (generated at file creation)"]
         FK["file_key\n(random 256-bit via CSPRNG)\nXChaCha20-Poly1305 chunk encryption"]:::secret
-        FKW["file_key_wrapped\n(file_key encrypted with key_encryption_key)\nstored in SQLCipher chunks table"]:::storage
+        FKW["file_key_wrapped\n(file_key encrypted with key_encryption_key)\nstored in SQLCipher nodes table"]:::storage
     end
 
     PW -->|"combined input"| ARGON

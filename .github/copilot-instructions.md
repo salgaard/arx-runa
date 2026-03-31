@@ -16,6 +16,52 @@ defined there.
 | Skills | `.claude/skills/*/SKILL.md` | ✓ Yes — invokable |
 | Commands | `.claude/commands/*.md` | ✓ Yes — as skills |
 | Path-specific rules | `.github/instructions/*.instructions.md` | ✓ Yes |
+| Memory files | `.claude/memory/*.md` | ✓ Yes — read at session start |
+
+## Using `.claude/memory/` files
+
+The `.claude/memory/` directory contains **read-only reference material** for
+agents. These files capture architecture rationale, known gotchas, and pending
+decisions that persist across sessions.
+
+**Purpose**: Provide context continuity between sessions — not agent-writable
+storage.
+
+**How to use**:
+
+1. **At session start**: Read `.claude/memory/MEMORY.md` for an index of what's
+   available, then read specific files as needed for the task at hand.
+
+2. **During implementation**: Reference `architecture_rationale.md` when making
+   design decisions to ensure consistency with established patterns.
+
+3. **Before adding new features**: Check `pending_decisions.md` to see if there
+   are open questions that affect your work.
+
+4. **When debugging**: Consult `known_gotchas.md` for common pitfalls.
+
+**What these files contain**:
+
+| File | Content |
+|------|---------|
+| `MEMORY.md` | Index and quick reference for all memory files |
+| `architecture_rationale.md` | Why each major design decision was made, rejected alternatives, trade-offs |
+| `pending_decisions.md` | Open design questions not yet resolved |
+| `known_gotchas.md` | Implementation pitfalls discovered during development |
+
+**Source of truth hierarchy**:
+
+1. `docs/architecture/designs/*.md` — authoritative design specifications
+2. `docs/architecture-decisions/*.md` — ADRs with full context
+3. `.claude/memory/*.md` — quick reference summaries (derived from above)
+
+If `.claude/memory/` conflicts with `docs/architecture/designs/`, the design
+document is correct. Report the inconsistency and update the memory file.
+
+**Do NOT**:
+- Treat memory files as writable session state
+- Add new memory files without updating `MEMORY.md` index
+- Duplicate information already in design documents
 
 ## Syncing rules
 

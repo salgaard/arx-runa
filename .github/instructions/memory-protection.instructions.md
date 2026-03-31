@@ -64,13 +64,18 @@ Safe wrapper types (`SecureBuffer`, `SecureVec`) must:
 ## Error handling
 
 - mlock/VirtualLock can fail (ulimit, insufficient permissions)
-- Failure to lock memory is a **warning**, not a fatal error — the application
-  should continue but log the degraded security posture
-- Do NOT panic on mlock failure in production code
+- **For session keys (authentication)**: mlock failure is a **hard error** — VoidGate
+  refuses to create the session and returns a clear error message explaining how
+  to fix it (see `docs/architecture/designs/authentication-and-session-management.md`)
+- **Rationale**: a security product that silently degrades memory protection for
+  session keys is not trustworthy. The required memory is < 1 KiB, well within
+  default limits
+- Do NOT panic on mlock failure — return `Result::Err` with actionable guidance
+- Do NOT silently continue with unprotected memory for security-critical keys
 
 ## Required tests
 
 - SecureBuffer zeroes memory on drop (verify via unsafe pointer inspection)
 - SecureBuffer unlocks memory on drop (verify via platform API if possible)
-- mlock failure does not panic, returns error or logs warning
+- mlock failure returns error (not panic), error message includes fix instructions
 - SecureBuffer cannot be cloned (sensitive data should not be duplicated)

@@ -58,7 +58,7 @@ master_key  (Argon2id output, mlocked memory, never stored)
 
 Per file (generated at file creation):
     file_key  (random 256-bit via CSPRNG)
-        └─ stored encrypted with key_encryption_key in SQLCipher chunks table
+        └─ stored encrypted with key_encryption_key in SQLCipher nodes table
         └─ used for all XChaCha20-Poly1305 chunk encryption of that file
 ```
 
