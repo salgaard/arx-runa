@@ -7,7 +7,6 @@
 # Architecture
 
 - [Overview](architecture/README.md)
-- [Design System](architecture/design-system.md)
 - [Designs](architecture/designs/README.md)
   - [Authentication & Session Management](architecture/designs/authentication-and-session-management.md)
   - [Chunking & Manifest](architecture/designs/chunking-and-manifest.md)

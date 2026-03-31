@@ -41,13 +41,14 @@ with only the frontmatter key changed:
 | Claude Code | Copilot Instructions |
 |-------------|---------------------|
 | `paths:\n  - "<glob>"` | `applyTo: "<glob>"` |
+| `paths:\n  - "<glob1>"\n  - "<glob2>"` | `applyTo:\n  - "<glob1>"\n  - "<glob2>"` |
 
 **Sync procedure:**
 1. Read `.claude/rules/<name>.md`
-2. Replace `paths:` block with `applyTo:` (flatten YAML list to single value)
+2. Replace `paths:` key with `applyTo:` key (preserve YAML list structure)
 3. Write to `.github/instructions/<name>.instructions.md`
 
-After transformation, files should be byte-identical except for the frontmatter.
+After transformation, files should be byte-identical except for the frontmatter key name.
 
 ---
 

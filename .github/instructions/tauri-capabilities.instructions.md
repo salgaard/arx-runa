@@ -1,5 +1,7 @@
 ---
-applyTo: "src-tauri/capabilities/**"
+applyTo:
+  - "src-tauri/capabilities/**"
+  - "src-tauri/tauri.conf.json"
 ---
 
 # Tauri capabilities — scoped rules

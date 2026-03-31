@@ -38,6 +38,7 @@ What trade-offs did we accept? What risks exist?
 | ID | Title | Date | Status |
 |----|-------|------|--------|
 | [001](001-code-structure-and-patterns.md) | Code Structure and Patterns | 2026-03-29 | Accepted |
+| [002](002-frontend-stack-selection.md) | Frontend Stack Selection | 2026-03-30 | Accepted |
 
 ## Creating New ADRs
 

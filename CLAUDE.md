@@ -16,6 +16,7 @@ Core pillars:
 ## Stack
 - Language: Rust (edition 2024)
 - UI: Tauri (web frontend + Rust backend)
+- Frontend: Leptos (Rust + WASM) + Tailwind CSS — see ADR-002 for rationale
 - KDF: Argon2id (OWASP minimums: m≥19456, t≥2, p=1)
 - Key derivation tree: HKDF-SHA256 (RFC 5869) from Argon2id master_key:
   - `hkdf(master, info=b"voidgate-key-encryption")`  → key_encryption_key

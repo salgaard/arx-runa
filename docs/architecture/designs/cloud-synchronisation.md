@@ -252,6 +252,68 @@ Rclone stderr is captured. Before including it in `CloudTransportError::RclonePr
 
 Rclone is invoked with `--retries 3` (the default). VoidGate does not add a separate retry layer on top of individual blob operations; retry at the push/pull flow level is left to the user.
 
+### Rclone configuration file location
+
+VoidGate uses an **isolated `rclone.conf`** in the VoidGate application data directory, not the system default:
+
+- **Windows**: `%APPDATA%/voidgate/rclone.conf`
+- **Linux**: `~/.local/share/voidgate/rclone.conf`
+
+Every Rclone invocation includes `--config <voidgate_rclone_conf_path>`.
+
+**Rationale**:
+- Prevents interference with user's existing Rclone remotes
+- Avoids credential conflicts if user has a personal Rclone setup
+- Makes VoidGate self-contained — uninstall removes all config
+- User cannot accidentally expose VoidGate remotes to other Rclone tools
+
+**Trade-off**: Users cannot reuse existing Rclone remotes. This is acceptable — the guided wizard handles initial setup, and VoidGate remotes have security requirements (no caching, specific flags) that ad-hoc remotes may not meet.
+
+### Operation timeouts
+
+| Operation | Default timeout | Rationale |
+|-----------|----------------|-----------|
+| Upload (per blob) | 5 minutes | 4 MiB blob completes in < 1 min on 10 Mbps upload; allows for slow connections |
+| Download (per blob) | 5 minutes | Same as upload |
+| Delete | 30 seconds | Lightweight metadata operation |
+| List | 60 seconds | May enumerate thousands of blobs; provider API latency varies |
+
+Timeouts are passed to `tokio::time::timeout` wrapping the Rclone subprocess. If the timeout expires, the Rclone process is killed (`kill` on Unix, `TerminateProcess` on Windows) and `CloudTransportError::Timeout` is returned.
+
+Rclone's internal `--timeout` flag is **not used** — VoidGate manages timeouts externally for consistent behaviour across all operations.
+
+### Concurrency configuration
+
+```rust
+/// Synchronisation behaviour settings, separate from cloud endpoint identity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncConfig {
+    /// Maximum concurrent Rclone processes during push/pull.
+    /// Default: 4. Range: 1–16.
+    pub max_concurrent: u32,
+
+    /// Per-operation timeout in seconds.
+    /// Default: 300 (5 minutes). Range: 60–3600.
+    pub operation_timeout_seconds: u64,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent: 4,
+            operation_timeout_seconds: 300,
+        }
+    }
+}
+```
+
+`SyncConfig` is stored in `%APPDATA%/voidgate/sync-config.json` (or Linux equivalent). It is user-editable but not exposed in the initial UI — advanced users can modify it directly.
+
+**Why separate from `CloudEndpoint`**: `CloudEndpoint` describes *where* to sync (provider, bucket, credentials). `SyncConfig` describes *how* to sync (concurrency, timeouts). Keeping them separate allows:
+- Same sync behaviour across multiple vaults
+- Endpoint changes without losing tuning
+- Sensible defaults that work for most users
+
 ---
 
 ## Guided Setup Wizard
@@ -487,7 +549,37 @@ Cost: a `Fisher-Yates` shuffle on a `Vec<String>` is O(n) with negligible overhe
 
 ### Concurrency
 
-Uploads are issued as parallel `tokio::JoinSet` tasks. The default concurrency is 4 simultaneous Rclone processes. This is configurable in `CloudEndpoint` (or a separate sync config).
+Uploads are issued as parallel `tokio::JoinSet` tasks. The default concurrency is 4 simultaneous Rclone processes. This is configurable via `SyncConfig.max_concurrent`.
+
+### First Push (Vault Initialisation)
+
+When a user creates a new vault locally and pushes for the first time, the cloud has no prior state. The push flow handles this via step 2: "If cloud download fails with NotFound: first push, skip conflict check."
+
+**First push sequence**:
+
+1. User creates vault locally (Phase 2 auth flow):
+   - Generate key file, salt, vault header struct
+   - Create SQLCipher DB with `sqlcipher_key`
+   - `snapshot_counter` initialised to 0 in `manifest_meta`
+
+2. User adds files locally (Phase 3 storage flow):
+   - Files encrypted, chunks staged in `staging_dir/`
+   - Manifest updated with node and chunk rows
+
+3. User triggers first push:
+   - Step 2: `download_blob("manifest/manifest-backup.blob")` returns `NotFound`
+   - Conflict check skipped (no prior cloud state)
+   - Steps 5–8: upload all staged blobs to `vault/`
+   - Step 9: `snapshot_counter` incremented to 1
+   - Step 11: manifest backup uploaded (first cloud manifest)
+   - Step 12: vault header uploaded (first cloud header)
+
+4. Cloud now contains:
+   - `vault-header.json` (plaintext, accessible for new-device bootstrap)
+   - `manifest/manifest-backup.blob` (encrypted, `snapshot_counter = 1`)
+   - `vault/<uuid>.blob` files (encrypted chunks)
+
+**Invariant**: after the first successful push, the cloud is in a consistent state. A new device can pull the vault header, authenticate, and restore the full vault.
 
 ---
 
@@ -557,6 +649,32 @@ When a file is deleted from the vault:
 ```
 
 **Best-effort semantics.** An orphaned blob in the cloud is opaque ciphertext with no manifest entry to contextualise it. It costs storage space but does not compromise security. The user can clean orphans via Rclone directly if desired.
+
+---
+
+## Vault Deletion (Full Cloud Cleanup)
+
+When the user permanently deletes a vault, all cloud data must be removed. This is distinct from file-level deletion — it removes the entire vault from the cloud.
+
+```
+1. Authenticate (user must have valid session to delete)
+2. list_blobs("vault/") → all_vault_blobs
+3. For each blob in all_vault_blobs:
+   delete_blob("vault/<blob_name>")
+4. delete_blob("manifest/manifest-backup.blob")
+5. delete_blob("vault-header.json")
+6. (Optional) Delete shared/<file_share_id>/ directories if Phase 5 sharing is active
+7. Delete local SQLCipher DB
+8. Delete local staging directory
+9. Delete local cloud-config.json and sync-config.json
+10. Zero and drop session keys
+```
+
+**Failure handling**: If any cloud deletion fails, VoidGate reports partial deletion status. The user can retry or manually clean via Rclone. A partially deleted vault cannot be recovered — the manifest backup and vault header are deleted early in the flow, so even if some blobs remain, they are orphaned ciphertext.
+
+**Confirmation UX (Phase 6)**: Vault deletion is irreversible. The UI must require explicit confirmation (e.g., type vault name to confirm). This is a Phase 6 concern.
+
+**Rclone remote cleanup**: The `rclone.conf` entry for this vault's remote is optionally deleted. If the user has other vaults on the same remote, the remote should be preserved. This requires tracking which vaults use which remotes.
 
 ---
 
@@ -630,6 +748,95 @@ An attacker who controls the cloud storage could replace `manifest/manifest-back
 
 This is an inherent limitation of the "bring your own cloud" model: the cloud provider is trusted for availability but not integrity. VoidGate declares this out of scope in the threat model, consistent with Tahoe-LAFS's server threat model.
 <!-- SOURCE: Tahoe – The Least-Authority Filesystem — Wilcox-O'Hearn & Warner, StorageSS '08 — https://eprint.iacr.org/2012/524 — "The only thing you ask of the servers is that they can (usually) provide the shares when you ask for them: you aren't relying upon them for confidentiality, integrity, or absolute availability." -->
+
+---
+
+## Progress Reporting (Phase 6 Stub)
+
+For large vaults with many blobs, users need feedback during push/pull operations. This section defines the data model; UI implementation is Phase 6.
+
+```rust
+/// Progress update sent from the sync layer to the Tauri frontend.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
+pub enum SyncProgress {
+    /// Push/pull operation started.
+    Started {
+        operation: SyncOperation,
+        total_blobs: u64,
+        total_bytes: u64,
+    },
+
+    /// A single blob completed (uploaded or downloaded).
+    BlobCompleted {
+        blob_index: u64,       // 1-based for display
+        total_blobs: u64,
+        bytes_transferred: u64,
+    },
+
+    /// Operation finished successfully.
+    Completed {
+        operation: SyncOperation,
+        blobs_transferred: u64,
+        total_bytes: u64,
+        duration_seconds: f64,
+    },
+
+    /// Operation failed.
+    Failed {
+        operation: SyncOperation,
+        blobs_completed: u64,
+        error_message: String,  // Sanitised, no credentials
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub enum SyncOperation {
+    Push,
+    Pull,
+}
+```
+
+**Tauri IPC**: The push/pull Tauri commands accept a `tauri::ipc::Channel<SyncProgress>` parameter. The Rust backend sends progress updates via `channel.send(&progress)?`. The frontend subscribes and updates the UI.
+
+**Frequency**: One `BlobCompleted` event per blob. For very large vaults (1000+ blobs), consider batching (e.g., every 10 blobs) to reduce IPC overhead — this is a Phase 6 tuning decision.
+
+---
+
+## Conflict Representation (Phase 6 Stub)
+
+When a conflict is detected (step 3 of push flow), the user must be informed and guided to resolution. This section defines the data model; UI implementation is Phase 6.
+
+```rust
+/// Conflict detected during push attempt.
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncConflict {
+    /// Local snapshot counter at time of push attempt.
+    pub local_counter: u64,
+
+    /// Cloud snapshot counter (from downloaded manifest backup).
+    pub cloud_counter: u64,
+
+    /// Timestamp of last successful sync on this device.
+    pub local_last_synced: Option<i64>,  // Unix timestamp
+
+    /// Timestamp in the cloud manifest (when another device pushed).
+    pub cloud_last_synced: Option<i64>,
+}
+```
+
+**Resolution flow (Phase 6 UI)**:
+
+1. Push returns `Err(SyncError::Conflict(SyncConflict { ... }))`
+2. Frontend displays: "Another device synced changes. Your local changes: X files. Pull to see remote changes, then push again."
+3. User clicks "Pull" — manifest is updated, `snapshot_counter` synced
+4. If file-level conflicts exist (same `node_id` modified in both), VoidGate lists them:
+   - "File `documents/report.pdf` was modified on both devices"
+   - Options: "Keep Local", "Keep Remote", "Keep Both (rename local)"
+5. User resolves each conflict
+6. User pushes again
+
+**File-level conflict detection** (future enhancement): After pull, compare `modified_at` timestamps for nodes that exist in both local (pre-pull) and remote manifests. If both changed since last sync, flag as file-level conflict. This is **out of scope** for the bachelor project — the current design only detects manifest-level conflicts via `snapshot_counter`.
 
 ---
 
@@ -718,10 +925,13 @@ Cleanup:
 |----------|--------|-----------|
 | Rclone distribution | Tauri sidecar (bundled binary) | No user installation step; Tauri handles platform detection and path resolution; MIT license permits bundling |
 | Rclone invocation | `tokio::process::Command`, no shell | Prevents shell injection; arguments are separate OS strings |
+| Rclone config location | VoidGate-specific `%APPDATA%/voidgate/rclone.conf` | Isolated from system Rclone; prevents credential conflicts; self-contained uninstall |
 | Remote path validation | Regex allowlist `^[a-zA-Z0-9._/-]+$`, reject `..` | Prevents path traversal from crafted manifest data |
 | Cloud storage layout | `vault-header.json` at root, `vault/` for blobs, `manifest/` for backup | Vault header accessible before auth; clean separation of concerns |
 | Upload order | Randomised (Fisher-Yates shuffle) | Breaks temporal correlation that could link blobs to files |
 | Upload concurrency | `tokio::JoinSet`, default 4 concurrent tasks | Maximises throughput; each task runs one Rclone sidecar process |
+| Concurrency/timeout config | Separate `SyncConfig` struct | Separates "where" (CloudEndpoint) from "how" (SyncConfig); allows same tuning across vaults |
+| Operation timeouts | 5 min (upload/download), 30 sec (delete), 60 sec (list) | Generous for slow connections; managed by Tokio, not Rclone internal timeout |
 | Manifest backup format | Single file, overwritten on each push | Simple; logical version is `snapshot_counter` inside the manifest |
 | Manifest backup encryption | XChaCha20-Poly1305, `manifest_key`, random nonce, no AAD | Manifest is a singleton; no file_id or chunk_index for AAD binding |
 | Manifest I/O | Full buffer (explicit streaming exception) | Manifests are small (< 10 MiB); single AEAD operation is simpler and correct |
@@ -732,3 +942,4 @@ Cleanup:
 | Stderr sanitisation | Strip lines containing credential keywords | Prevents `rclone.conf` leakage through error messages surfaced to frontend |
 | Cloud blob deletion | Best-effort; failures logged, not blocking | Orphaned ciphertext is harmless; availability is more important than strict cleanup |
 | Vault header upload on every push | Yes (unconditional, idempotent) | Ensures cloud header stays current after password change or key rotation without a separate trigger |
+| Vault deletion | Explicit flow: delete all blobs, manifest backup, vault header | Clean cloud state; user must confirm (Phase 6 UX) |
