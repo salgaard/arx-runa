@@ -17,6 +17,21 @@ defined there.
 | Commands | `.claude/commands/*.md` | ✓ Yes — as skills |
 | Path-specific rules | `.github/instructions/*.instructions.md` | ✓ Yes |
 | Memory files | `.claude/memory/*.md` | ✓ Yes — read at session start |
+| Hooks | `.github/hooks/hooks.json` | ✓ Yes — quality gates |
+
+## Hooks
+
+Copilot CLI supports hooks via `.github/hooks/hooks.json`. VoidGate uses hooks for:
+
+**PreToolUse hooks** (block dangerous operations):
+- Block `curl|sh` and `wget|sh` pipe-to-shell patterns
+- Block access to `.env` files and `secrets/` directory
+
+**PostToolUse hooks** (quality gates):
+- Run `cargo clippy` on Rust file edits
+- Remind about `/copilot-sync` when `.claude/rules/` files change
+
+Hook scripts are in `scripts/hooks/` with both Bash and PowerShell versions.
 
 ## Using `.claude/memory/` files
 
@@ -87,14 +102,25 @@ The sync is a direct transformation: only the frontmatter key changes
 | `rust` | `src-tauri/**/*.rs` |
 | `docs` | `docs/**` |
 
-## Claude Code features not available in Copilot CLI
+## Claude Code features with different Copilot CLI equivalents
 
-- **`settings.json` hooks** — Copilot CLI has no hook system. Quality gates
-  are enforced via CI (`.github/workflows/`).
-
-- **`permissions.deny` / `permissions.ask`** — Copilot CLI has no permission
-  model. Sensitive file exclusion is enforced via `.gitignore` and CI.
+- **`settings.json` permissions** — Copilot CLI has no permission model.
+  Sensitive file exclusion is enforced via hooks (`.github/hooks/hooks.json`)
+  and CI (`.github/workflows/`).
 
 - **Agent memory persistence** — Copilot CLI does not persist memory across
   sessions. Architecture decisions and gotchas are documented in `docs/` and
   `.claude/memory/MEMORY.md` (which you can read at session start).
+
+## Advanced Copilot CLI features
+
+These features are available for future consideration as VoidGate matures:
+
+| Feature | Description | Use case |
+|---------|-------------|----------|
+| **Plugins** | Shareable packages of skills, hooks, and agents | Could publish VoidGate security patterns as a reusable plugin |
+| **Chronicle** | Export session data for debugging/auditing | Post-incident analysis, documenting complex implementations |
+| **Fleet mode** | Parallel task execution across agents | Large refactoring, multi-module test generation |
+| **MCP servers** | Model Context Protocol for external integrations | Integration with security scanning tools, cloud APIs |
+
+For details, see: https://docs.github.com/copilot/how-tos/copilot-cli

@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "./scripts/hooks/block-pipe-to-shell.sh",
+        "powershell": "./scripts/hooks/block-pipe-to-shell.ps1",
+        "timeoutSec": 10,
+        "comment": "Block curl|sh and wget|sh pipe-to-shell patterns"
+      },
+      {
+        "type": "command",
+        "bash": "./scripts/hooks/block-sensitive-files.sh",
+        "powershell": "./scripts/hooks/block-sensitive-files.ps1",
+        "timeoutSec": 10,
+        "comment": "Block access to .env files and secrets/"
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "./scripts/hooks/run-clippy.sh",
+        "powershell": "./scripts/hooks/run-clippy.ps1",
+        "timeoutSec": 60,
+        "comment": "Run cargo clippy on Rust file edits"
+      },
+      {
+        "type": "command",
+        "bash": "./scripts/hooks/copilot-sync-reminder.sh",
+        "powershell": "./scripts/hooks/copilot-sync-reminder.ps1",
+        "timeoutSec": 10,
+        "comment": "Remind about copilot-sync when rules are edited"
+      }
+    ]
+  }
+}
