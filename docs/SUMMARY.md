@@ -7,6 +7,7 @@
 # Architecture
 
 - [Overview](architecture/README.md)
+- [Design System](architecture/design-system.md)
 - [Designs](architecture/designs/README.md)
   - [Authentication & Session Management](architecture/designs/authentication-and-session-management.md)
   - [Chunking & Manifest](architecture/designs/chunking-and-manifest.md)
@@ -25,6 +26,7 @@
 
 - [Architecture Decisions](architecture-decisions/README.md)
   - [001: Code Structure and Patterns](architecture-decisions/001-code-structure-and-patterns.md)
+  - [002: Frontend Stack Selection](architecture-decisions/002-frontend-stack-selection.md)
 
 ---
 
