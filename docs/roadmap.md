@@ -23,7 +23,7 @@
 **Deliverables**:
 1. Run `cargo tauri init` to generate `src-tauri/` with `tauri.conf.json`, `src-tauri/src/main.rs`, and the frontend scaffold under `src/`.
 2. Populate `src-tauri/Cargo.toml` with all core and dev-dependencies from `CLAUDE.md` (`chacha20poly1305`, `argon2`, `hkdf`, `blake3`, `rand`, `zeroize`, `secrecy`, `rusqlite`, `tokio`, `uuid`, `tauri`, `thiserror`, `anyhow`, `serde`, `serde_json`, `proptest`, `tempfile`, `assert_matches`).
-3. Create module directory structure: `src-tauri/src/crypto/mod.rs`, `src-tauri/src/auth/mod.rs`, `src-tauri/src/storage/mod.rs`, `src-tauri/src/ui/mod.rs` — each with a placeholder public API and module-level doc comment.
+3. Create module directory structure: `src-tauri/src/crypto/mod.rs`, `src-tauri/src/auth/mod.rs`, `src-tauri/src/storage/mod.rs`, `src-tauri/src/memory/mod.rs`, `src-tauri/src/ui/mod.rs` — each with a placeholder public API and module-level doc comment. The `sharing/` module is created in Phase 5.
 4. Verify CI passes: `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`, `cargo build --release` all succeed on the empty skeleton.
 5. Remove or repurpose the top-level `src/main.rs` / `Cargo.toml` (the bare Rust binary is superseded by the Tauri workspace).
 6. Update `docs/guides/development.md` with Tauri-specific build and run instructions.
@@ -146,7 +146,7 @@
 
 ## Phase 5 — Identity and File Sharing (`src-tauri/src/sharing/`)
 
-**Depends on**: Phase 1 (per-file keys, ECIES primitives), Phase 3 (manifest schema, MetadataStore), Phase 4 (CloudTransport)
+**Depends on**: Phase 1 (per-file keys, HKDF, XChaCha20-Poly1305), Phase 3 (manifest schema, MetadataStore), Phase 4 (CloudTransport)
 
 **Objective**: implement the file sharing layer — X25519 local identity, contact management, ECIES share package creation and import, shared blob cloud layout, and revocation.
 
@@ -181,7 +181,7 @@
 **Objective**: expose backend functionality to the frontend through Tauri commands with proper error sanitisation, and build a minimal but functional web UI for authentication, vault browsing, upload, and download.
 
 **Deliverables**:
-1. Tauri command definitions: `authenticate`, `lock_session`, `list_vault_contents`, `upload_file`, `download_file`, `delete_file`, `sync_to_cloud`, `recover_from_cloud`.
+1. Tauri command definitions: `authenticate`, `lock_session`, `get_session_status`, `list_directory`, `upload_file`, `download_file`, `delete_file`, `sync_to_cloud`, `recover_from_cloud`, `get_sync_status`.
 2. Error sanitisation layer: map `thiserror` enums from library modules to generic user-safe IPC responses via `anyhow`; no partial keys, file paths, or memory addresses reach the frontend.
 3. Input validation on all Tauri command parameters.
 4. Frontend pages: login screen (password + USB key file selection), vault browser (file list, folder navigation), upload/download controls, session status indicator.
