@@ -121,7 +121,7 @@ A healthcare, legal, or financial services organization operates under strict da
 
 ### Threats Addressed
 
-- **Cloud provider breach**: Encrypted data not subject to breach notification (HIPAA Safe Harbor)
+- **Cloud provider breach**: Encrypted data rendered unusable/indecipherable may not be subject to breach notification under HIPAA Safe Harbor (45 CFR § 164.402) <!-- CITE: 45 CFR § 164.402; HHS Guidance on Risk Analysis -->
 - **Insider threats at provider**: Provider employees cannot access PHI/PII
 - **Unauthorized AI processing**: Cloud cannot run ML on encrypted records (privacy preserved)
 - **Traffic analysis**: Fixed-size chunks prevent file size inference (no distinguishing MRI vs. prescription)

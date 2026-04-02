@@ -129,7 +129,7 @@ An individual user wants to back up sensitive personal files (documents, tax rec
 This is the canonical use case for VoidGate — individual privacy against untrusted cloud providers. It demonstrates all core features: zero-knowledge encryption, hardware MFA, fixed-size chunking, and BYOC flexibility.
 
 **Future Enhancements**:
-- Multi-device sync (current design is single-device)
+- Advanced multi-device state management remains future work; see [UC-IND-002](UC-IND-002-cross-device-access.md) for the active cross-device access/synchronization use case. Not yet supported in this use case: automatic conflict resolution, seamless device provisioning, and fully transparent background sync.
 - Incremental backup with deduplication (currently full-file re-upload)
 - Automated backup scheduling (currently manual)
 

@@ -31,7 +31,7 @@ Each use case follows a standardized format (see `_template.md`):
 Use cases for individuals who don't trust cloud providers with their sensitive data.
 
 | ID | Title | Key Features |
-|----|-------|--------------|
+| ---- | ------- | -------------- |
 | [UC-IND-001](UC-IND-001-personal-file-backup.md) | Personal File Backup with Zero-Knowledge Encryption | XChaCha20-Poly1305 encryption, fixed-size chunks, hardware MFA |
 | [UC-IND-002](UC-IND-002-cross-device-access.md) | Cross-Device Secure File Access | Multi-device sync, conflict detection, portable USB key |
 | [UC-IND-003](UC-IND-003-photo-storage.md) | Privacy-Focused Photo Storage | EXIF metadata protection, size padding, in-memory viewing |
@@ -42,7 +42,7 @@ Use cases for individuals who don't trust cloud providers with their sensitive d
 Use cases for organizations requiring compliance, multi-user access, or BYOC flexibility.
 
 | ID | Title | Key Features |
-|----|-------|--------------|
+| ---- | ------- | -------------- |
 | [UC-BIZ-001](UC-BIZ-001-confidential-byoc.md) | Confidential Document Storage with BYOC | Bring Your Own Cloud, compliance-ready, cloud migration |
 | [UC-BIZ-002](UC-BIZ-002-secure-sharing.md) | Secure File Sharing Within Organization | Share key wrapping, revocation, expiration, audit trails |
 | [UC-BIZ-003](UC-BIZ-003-regulated-storage.md) | Regulated Industry Cloud Storage | HIPAA/GDPR/FINRA compliance, breach notification exemption |
@@ -53,7 +53,7 @@ Use cases for organizations requiring compliance, multi-user access, or BYOC fle
 Use cases for technical users who want full control over cryptographic implementation.
 
 | ID | Title | Key Features |
-|----|-------|--------------|
+| ---- | ------- | -------------- |
 | [UC-DEV-001](UC-DEV-001-secret-storage.md) | Cryptographic Secret Storage | API keys/certificates backup, in-memory decryption, rotation |
 | [UC-DEV-002](UC-DEV-002-dev-backup.md) | Development Artifact Backup | Docker images, binaries, source archives, integrity checksums |
 | [UC-DEV-003](UC-DEV-003-custom-backend.md) | Custom Cloud Backend Integration | Rclone 70+ backends, self-hosted, decentralized, cost optimization |

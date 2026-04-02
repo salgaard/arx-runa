@@ -118,7 +118,7 @@ A privacy-conscious user wants multi-factor authentication for cloud storage but
 ### Threats Addressed
 
 - **Password-only attacks**: Attacker with password but no USB key cannot unlock vault
-- **USB key-only attacks**: Attacker with USB key but no password cannot brute-force vault (Argon2id cost)
+- **USB key-only attacks**: Attacker with USB key but no password faces computationally expensive offline brute-force attack due to Argon2id cost (feasibility depends on password entropy and KDF parameters)
 - **Phone compromise**: No SMS or TOTP app on phone (attacker gaining phone access does not compromise vault)
 - **Cloud authenticator breach**: No cloud-based factors (Google Authenticator, Authy synced accounts)
 - **Biometric spoofing**: No fingerprint/face recognition (no biometric database risk)
@@ -135,7 +135,7 @@ A privacy-conscious user wants multi-factor authentication for cloud storage but
 - Social engineering attacks (user coerced into providing USB key + password)
 - Malware on user's device capturing USB key file during session
 - Physical torture/coercion to extract password
-- Quantum computing attacks on key derivation (Argon2id is quantum-resistant, but future consideration)
+- Quantum computing implications for password-derived key search and key derivation parameters (future consideration; Grover-style speedups may reduce effective brute-force cost, but no claim of quantum resistance) <!-- CITE: RFC 9106; NIST post-quantum cryptography guidance -->
 - Key rotation after compromise (user must manually create new vault and re-encrypt)
 
 ## Notes

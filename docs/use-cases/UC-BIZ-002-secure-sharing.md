@@ -29,7 +29,7 @@ An organization needs to share sensitive files between employees or departments 
 3. Sender selects "Share File" in VoidGate UI
 4. Sender chooses recipient(s) from organization directory (if integrated) or enters email
 5. VoidGate generates share_key for this specific file
-6. VoidGate wraps share_key with recipient's public key (if PKI integrated) OR company-wide vault key
+6. VoidGate wraps share_key with company-wide vault key (all authorized vault users can unwrap)
 7. VoidGate adds share metadata to encrypted manifest:
    - Shared file_id
    - Share_key (wrapped)
@@ -43,8 +43,8 @@ An organization needs to share sensitive files between employees or departments 
 13. Recipient unwraps share_key using company vault key
 14. Recipient downloads encrypted chunks from cloud
 15. Recipient decrypts chunks with share_key
-16. Recipient views file (read-only or editable, depending on share permissions)
-17. If editable: recipient makes changes and re-encrypts with same share_key
+16. Recipient views file (share metadata may indicate read-only or editable intent, but current design cannot cryptographically enforce read-only access—recipient always has share_key)
+17. Recipient can make changes and re-encrypt with same share_key if share metadata permits
 18. Recipient uploads updated chunks and pushes manifest
 19. Sender sees updated version in manifest
 

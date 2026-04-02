@@ -62,12 +62,13 @@ A technically sophisticated user wants full control over the cloud storage backe
 
 **Steps**:
 1. User sets up MinIO server on home NAS or datacenter:
-   - `docker run -p 9000:9000 minio/minio server /data`
+   - Lab-only example on a trusted internal network: `docker run -p 9000:9000 minio/minio server /data`
 2. User configures Rclone to point to MinIO:
    - Type: S3
    - Provider: MinIO
-   - Endpoint: `http://192.168.1.100:9000`
-   - Access Key / Secret Key
+   - Endpoint (lab-only example): `http://192.168.1.100:9000`
+   - Access Key / Secret Key (for production, use properly generated credentials stored and rotated according to organizational secret-management policy) <!-- CITE: OWASP Secrets Management Cheat Sheet; NIST SP 800-57 -->
+   - Production deployments must use HTTPS/TLS for MinIO or other S3-compatible endpoints to protect credentials and data in transit <!-- CITE: RFC 8446; OWASP Transport Layer Security Cheat Sheet -->
 3. User creates vault with MinIO backend
 4. VoidGate uploads encrypted blobs to MinIO (on-prem)
 5. User has full control: no third-party provider, no data leaves network
