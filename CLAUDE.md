@@ -11,9 +11,9 @@ Zero-knowledge cloud storage. Data leaves encrypted, arrives as opaque blobs, re
 
 ## Stack
 - Rust 2024 + Tauri + Leptos/WASM + Tailwind
-- Argon2id (m≥19456, t≥2, p=1) → HKDF-SHA256 → {key_encryption_key, sqlcipher_key, manifest_key}
+- Argon2id + HKDF-SHA256 for key derivation (see `docs/architecture/designs/authentication-and-session-management/design.md` for parameters)
 - Per-file: random file_key wrapped with key_encryption_key
-- Wire: [24B nonce | ciphertext | 16B tag], AAD=file_id||chunk_index, BLAKE3 pre-check
+- XChaCha20-Poly1305 AEAD with mandatory AAD binding (see `docs/architecture/designs/cryptographic-primitives/design.md` for wire format)
 - SQLCipher (sqlcipher_key), Rclone (UUID blob names)
 - `zeroize`/`secrecy` crates, `mlock`/`VirtualLock` for session keys
 
@@ -30,5 +30,5 @@ No abbreviations: `chunk_index` not `chunk_idx`, `encrypted_buffer` not `enc_buf
 - Never write unencrypted sensitive data to disk
 - Never commit secrets or key files
 - `unsafe` requires `// SAFETY:` comment
-- Every AEAD call MUST include AAD (file_id || chunk_index)
+- Every AEAD call MUST include AAD (file_id || chunk_index) — see crypto design for construction
 - Nonces: random CSPRNG only — never sequential/derived

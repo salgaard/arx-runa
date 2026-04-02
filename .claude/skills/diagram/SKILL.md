@@ -6,13 +6,13 @@ description: >
   decision, or when a flow would benefit from visual documentation.
 ---
 
-Generate, update, or list Mermaid diagrams saved to `docs/architecture/diagrams/`.
+Generate, update, or list Mermaid diagrams. Design-specific diagrams are saved to `docs/architecture/designs/<design-name>/diagrams/`. Cross-cutting diagrams go to `docs/architecture/diagrams/`.
 
 ## Arguments
 
 - `<topic>` → generate a new diagram for the given component or flow
-- `list` → show all diagrams in docs/architecture/diagrams/ with their types
-- `update <filename>` → regenerate an existing diagram from current code state
+- `list` → show all diagrams (both cross-cutting and design-specific)
+- `update <path>` → regenerate an existing diagram from current code state
 
 ---
 
@@ -35,9 +35,9 @@ Select the Mermaid diagram type based on what is being visualised:
 
 Read the relevant sources before generating:
 - `CLAUDE.md` — architecture decisions, module layout, naming conventions
-- `.claude/memory/MEMORY.md` — architecture decisions already made
+- Design documents in `docs/architecture/designs/<design-name>/design.md` — canonical technical specifications
 - Source files if they exist (e.g. `src-tauri/src/crypto/`, `src-tauri/src/auth/`)
-- Existing diagrams in `docs/architecture/diagrams/` to avoid duplication
+- Existing diagrams (both design-specific and cross-cutting) to avoid duplication
 
 ### Step 3 — Generate the Mermaid diagram
 
@@ -90,9 +90,21 @@ Apply styles to categorise nodes:
 
 Apply with `:::secret` after a node definition, e.g. `MK["master_key"]:::secret`
 
-### Step 4 — Write the diagram file
+### Step 4 — Determine diagram location
 
-Save to `docs/architecture/diagrams/<kebab-name>.md`.
+**Design-specific diagrams** (relate to a single design):
+- Save to `docs/architecture/designs/<design-name>/diagrams/<kebab-name>.md`
+- Examples: Authentication Flow, Key Derivation Tree, Chunk Pipeline, Cloud Sync Sequence, File Sharing Flow
+- Index in design's `diagrams/` folder (no INDEX.md needed — just co-locate)
+
+**Cross-cutting diagrams** (span multiple designs or show system-wide concepts):
+- Save to `docs/architecture/diagrams/<kebab-name>.md`
+- Examples: SSOT Information Flow, End-to-End Encryption Flow
+- Index in `docs/architecture/diagrams/INDEX.md`
+
+When in doubt, ask: "Does this diagram illustrate concepts from a single design document?" If yes → design-specific. If it spans multiple concerns → cross-cutting.
+
+### Step 5 — Write the diagram file
 
 File structure:
 
@@ -116,17 +128,19 @@ File structure:
 - Source files: <!-- relevant src-tauri/src/ paths -->
 ```
 
-### Step 5 — Update INDEX.md
+### Step 6 — Update INDEX (cross-cutting diagrams only)
 
-Append one row to `docs/architecture/diagrams/INDEX.md`:
+**If the diagram is cross-cutting**, append one row to `docs/architecture/diagrams/INDEX.md`:
 
 ```
-| [Title](filename.md) | <type> | `filename.md` | `src-tauri/src/<module>/` |
+| [Title](filename.md) | <type> | `filename.md` | Related modules |
 ```
 
-If regenerating (`update`), overwrite the existing file and update the timestamp row in INDEX.md.
+**If the diagram is design-specific**, no INDEX update needed — it lives in the design folder and is discoverable there.
 
-### Step 6 — Confirm briefly
+If regenerating (`update`), overwrite the existing file and update the timestamp (and INDEX row if cross-cutting).
+
+### Step 7 — Confirm briefly
 
 Output one line: `Generated diagram: <title>`
 
@@ -134,19 +148,22 @@ Output one line: `Generated diagram: <title>`
 
 ## Listing diagrams (`/diagram list`)
 
-1. Read all `.md` files in `docs/architecture/diagrams/` (exclude `INDEX.md`)
+1. Read all diagrams from:
+   - `docs/architecture/diagrams/` (cross-cutting)
+   - `docs/architecture/designs/*/diagrams/` (design-specific)
 2. Extract title, type, and related module from each file
-3. Display as a table grouped by type
+3. Display as a table grouped by category (Cross-cutting vs. Design-specific)
 
 ---
 
-## Updating a diagram (`/diagram update <filename>`)
+## Updating a diagram (`/diagram update <path>`)
 
-1. Read the existing diagram file at `docs/architecture/diagrams/<filename>`
+1. Read the existing diagram file at the given path (full path or just filename)
 2. Re-read the relevant source files to pick up any changes since last generation
 3. Regenerate the Mermaid block while keeping the Description and Related sections
 4. Update the timestamp and commit hash in the header
 5. Overwrite the file — do not create a duplicate
+6. Update INDEX.md if it's a cross-cutting diagram
 
 ---
 

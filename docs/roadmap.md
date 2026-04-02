@@ -5,6 +5,19 @@
 > Documentation milestones are woven into implementation phases to ensure the
 > bachelor report is built incrementally alongside the codebase.
 
+## Documentation References
+
+**Important**: This roadmap contains implementation logistics, dependencies, and test criteria. **Technical specifications** (algorithms, parameters, schemas) are in the canonical design documents:
+
+- **Cryptographic primitives**: [`docs/architecture/designs/cryptographic-primitives/design.md`](architecture/designs/cryptographic-primitives/design.md)
+- **Authentication & session**: [`docs/architecture/designs/authentication-and-session-management/design.md`](architecture/designs/authentication-and-session-management/design.md)
+- **Chunking & manifest**: [`docs/architecture/designs/chunking-and-manifest/design.md`](architecture/designs/chunking-and-manifest/design.md)
+- **Cloud synchronization**: [`docs/architecture/designs/cloud-synchronisation/design.md`](architecture/designs/cloud-synchronisation/design.md)
+- **File sharing**: [`docs/architecture/designs/file-sharing/design.md`](architecture/designs/file-sharing/design.md)
+- **Tauri IPC & frontend**: [`docs/architecture/designs/tauri-ipc-and-frontend/design.md`](architecture/designs/tauri-ipc-and-frontend/design.md)
+
+When specifications in this roadmap conflict with design documents, **design documents are authoritative**.
+
 ## Notation
 
 - **Depends on**: phases that must be complete before this phase can begin.
@@ -38,23 +51,29 @@
 
 **Depends on**: Phase 0
 
-**Objective**: implement the foundational cryptographic operations that all other modules depend on — HKDF key derivation, XChaCha20-Poly1305 AEAD encrypt/decrypt, chunk wire format, and BLAKE3 checksums.
+**Objective**: Implement the foundational cryptographic operations per [`docs/architecture/designs/cryptographic-primitives/design.md`](architecture/designs/cryptographic-primitives/design.md).
 
 **Deliverables**:
-1. HKDF-SHA256 key derivation producing the three vault-level keys (`key_encryption_key`, `sqlcipher_key`, `manifest_key`) with distinct `info` strings as specified in `CLAUDE.md`.
-2. Per-file key generation: random 256-bit `file_key` via CSPRNG; wrapping and unwrapping with `key_encryption_key` (XChaCha20-Poly1305).
-3. `encrypt_chunk` and `decrypt_chunk` implementing the wire format `[24-byte nonce | ciphertext | 16-byte Poly1305 tag]` with mandatory AAD (`file_id || chunk_index`), accepting a `file_key` per invocation.
-4. BLAKE3 checksum computation over encrypted blobs.
-5. `ZeroizeOnDrop` and `Secret<T>` wrappers on all key types (`KeyEncryptionKey`, `FileKey`, `SqlcipherKey`, `ManifestKey`).
-6. Full adversarial test suite: encrypt/decrypt round-trip, AAD mismatch, wrong key, corrupted ciphertext, tag tampering, nonce uniqueness, and zeroize verification.
-7. Property-based tests via `proptest` for encrypt/decrypt round-trips across arbitrary inputs.
+1. **HKDF-SHA256 key derivation**: Derive vault-level keys (`key_encryption_key`, `sqlcipher_key`, `manifest_key`) from `master_key` with distinct `info` strings per design specification.
+2. **Per-file key management**: Random 256-bit `file_key` generation via CSPRNG; wrapping/unwrapping with `key_encryption_key` using XChaCha20-Poly1305.
+3. **Chunk encryption/decryption**: Implement `encrypt_chunk` and `decrypt_chunk` with wire format and AAD binding per design spec (see `cryptographic-primitives.md` for format, AAD construction, nonce generation).
+4. **BLAKE3 checksums**: Compute checksums over encrypted blobs.
+5. **Memory protection**: `ZeroizeOnDrop` and `Secret<T>` wrappers on all key types.
+6. **Adversarial test suite**: encrypt/decrypt round-trip, AAD mismatch, wrong key, corrupted ciphertext, tag tampering, nonce uniqueness, zeroize verification.
+7. **Property-based tests**: `proptest` for encrypt/decrypt round-trips across arbitrary inputs.
+
+**Test acceptance criteria**:
+- All adversarial tests pass (AAD mismatch must fail authentication)
+- Nonce uniqueness: 10,000 sequential encryptions produce 10,000 unique nonces
+- Zeroize: memory inspection shows zeroed buffers after key drop (use `miri` or manual inspection)
+- Property tests: 1000+ arbitrary inputs round-trip successfully
 
 **Documentation**:
 - ADR `002-cipher-selection.md` — XChaCha20-Poly1305 rationale and alternatives considered.
 - ADR `003-nonce-strategy.md` — random 192-bit nonce, birthday bound analysis, rejection of sequential nonces.
-- ADR `004-key-derivation-tree.md` — HKDF key separation rationale, per-file key model, and the decision to adopt per-file keys from Phase 1.
+- ADR `004-key-derivation-tree.md` — HKDF key separation rationale, per-file key model.
 - Update `docs/architecture/diagrams/key-derivation-tree.md` if implementation diverges from design.
-- Report-log entries: cipher trade-offs, nonce strategy, key separation design, per-file key rationale.
+- Report-log entries: cipher trade-offs, nonce strategy, key separation design.
 - Report sections: Method (cryptographic foundations), Analysis (adversarial test results).
 
 ---
@@ -65,7 +84,7 @@
 
 **Objective**: implement the full authentication flow — USB key file generation and auto-detection, Argon2id KDF producing `master_key`, session lifecycle with mlocked memory, session timeout with zeroization, and vault creation/password-change/key-rotation flows.
 
-**Design document**: `docs/architecture/designs/authentication-and-session-management.md`
+**Design document**: [`docs/architecture/designs/authentication-and-session-management/design.md`](architecture/designs/authentication-and-session-management/design.md)
 
 **Deliverables**:
 1. `KeySource` trait and concrete USB key file reader (32-byte random entropy file, selected via file picker or auto-detected).
@@ -94,7 +113,7 @@
 
 **Objective**: implement the fixed-size chunking pipeline, the SQLCipher manifest database, and the local file-to-chunk-to-blob workflow (without cloud sync — that is Phase 4).
 
-**Design document**: `docs/architecture/designs/chunking-and-manifest.md`
+**Design document**: [`docs/architecture/designs/chunking-and-manifest/design.md`](architecture/designs/chunking-and-manifest/design.md)
 
 **Deliverables**:
 1. Fixed-size chunking at **4 MiB** with zero-pad to `chunk_size`, truncate on reassembly using `size_bytes` — streaming via `BufReader`/`BufWriter` and `tokio::io`, never loading entire files into memory.
@@ -121,7 +140,9 @@
 
 **Objective**: implement the `CloudTransport` trait backed by Rclone, vault header upload/download, manifest cloud backup, and the full upload/download cycle against a real cloud provider.
 
-**Design document**: `docs/architecture/designs/cloud-synchronisation.md`
+**Design document**: [`docs/architecture/designs/cloud-synchronisation/design.md`](architecture/designs/cloud-synchronisation/design.md)
+
+**Sub-phase roadmap**: [`docs/architecture/designs/cloud-synchronisation/sub-phases/roadmap.md`](architecture/designs/cloud-synchronisation/sub-phases/roadmap.md) (recommended for incremental implementation)
 
 **Deliverables**:
 1. `CloudTransport` trait: `upload_blob`, `download_blob`, `delete_blob`, `list_blobs`.
@@ -169,7 +190,7 @@
 - ADR `012-sharing-architecture.md` — per-file keys, ECIES construction, shared blob storage, snapshot share semantics.
 - ADR `013-identity-model.md` — X25519 local identity, no central server, out-of-band key exchange, trust assumptions.
 - Threat model addition: MITM on key exchange (fingerprint verification as mitigation), ciphertext exposure via public blobs.
-- `docs/architecture/designs/file-sharing.md` — primary design document (already written).
+- [`docs/architecture/designs/file-sharing/design.md`](architecture/designs/file-sharing/design.md) — primary design document (already written).
 - Report sections: Method (sharing design), Analysis (sharing verification), Discussion (comparison with OneDrive/Cryptomator sharing — sub-question 5).
 
 ---
@@ -179,6 +200,10 @@
 **Depends on**: Phase 2 (auth commands), Phase 3 (storage commands), Phase 4 (sync commands), Phase 5 (sharing commands)
 
 **Objective**: expose backend functionality to the frontend through Tauri commands with proper error sanitisation, and build a minimal but functional web UI for authentication, vault browsing, upload, and download.
+
+**Design document**: [`docs/architecture/designs/tauri-ipc-and-frontend/design.md`](architecture/designs/tauri-ipc-and-frontend/design.md)
+
+**Sub-phase roadmap**: Future — Phase 6 design (879 lines) may benefit from sub-phase decomposition when implementation begins
 
 **Deliverables**:
 1. Tauri command definitions: `authenticate`, `lock_session`, `get_session_status`, `list_directory`, `upload_file`, `download_file`, `delete_file`, `sync_to_cloud`, `recover_from_cloud`, `get_sync_status`.

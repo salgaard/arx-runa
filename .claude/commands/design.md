@@ -73,7 +73,7 @@ If the design is phase-linked and `docs/roadmap.md` does not already have a
 `**Design document**:` line for this phase, add one:
 
 ```
-**Design document**: `docs/architecture/designs/<filename>.md`
+**Design document**: `docs/architecture/designs/<design-name>/design.md`
 ```
 
 Insert it after the `**Objective**:` line in the relevant phase block.

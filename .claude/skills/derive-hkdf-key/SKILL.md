@@ -6,9 +6,15 @@ description: Safely add a new purpose-specific HKDF key to the VoidGate key deri
 Follow every step in order. Do not skip the documentation updates — stale key derivation trees cause security review failures.
 
 **Existing info strings (must not be reused):**
+
+See `docs/architecture/designs/authentication-and-session-management/design.md` for the current canonical key derivation tree.
+
+As of the last update, these info strings are allocated:
 - `b"voidgate-key-encryption"` → key_encryption_key (wraps per-file file_keys at rest)
 - `b"voidgate-sqlcipher"` → sqlcipher_key
 - `b"voidgate-manifest-backup"` → manifest_key
+
+**Before proceeding, verify the current tree in the canonical source to avoid collisions.**
 
 **Step 1: Choose an info string.** Format: `b"voidgate-<purpose>"`. It must be unique, descriptive, and not a variation of an existing one.
 
@@ -37,11 +43,12 @@ fn derive_new_purpose_key(master_key: &Secret<[u8; 32]>) -> Result<NewPurposeKey
 
 **Step 4: Add the new key to `SessionKeys` in `src-tauri/src/auth/` and derive it alongside the existing keys.** The `master_key` must be zeroed at the end of that same scope — it must never be stored.
 
-**Step 5: Update all of these files to include the new key and its info string:**
-- `CLAUDE.md` — key derivation tree section
-- `.github/instructions/crypto.instructions.md` — key derivation section
-- `.claude/agents/security-reviewer.md` — HKDF checklist
-- `.claude/memory/architecture_rationale.md` — key derivation tree section
+**Step 5: Update the canonical source:**
+1. Add the new key to `docs/architecture/designs/authentication-and-session-management/design.md` — key derivation tree section
+2. Update `.claude/rules/auth.md` if needed
+3. Run `/copilot-sync` to sync to GitHub instructions
+
+**Note:** `CLAUDE.md` references the design doc for details — no direct update needed unless the high-level principle changes.
 
 **Step 6: Write a zeroize verification test for the new key type** (see the `crypto-roundtrip-test` skill for the pattern).
 

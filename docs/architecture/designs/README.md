@@ -1,24 +1,46 @@
 # Design Documents
 
-Detailed technical designs for each VoidGate subsystem. Each document follows
-a consistent format:
+Detailed technical designs for each VoidGate subsystem. Each design is organized in its own folder containing the main design document, related diagrams, and sub-phase roadmaps (for large designs).
 
-1. **Overview** — Problem statement and goals
-2. **Architecture** — Component structure and relationships
-3. **Data Model** — Rust types, SQL schemas, wire formats
-4. **Security Analysis** — Threat considerations and mitigations
-5. **Implementation Notes** — Guidance for developers
+## Folder Structure
 
-## Documents
+Each design folder contains:
+- **`design.md`** — Main design document with architecture, data models, security analysis
+- **`diagrams/`** — Mermaid diagrams specific to this design
+- **`sub-phases/`** (optional) — For large designs (>100 lines or logically separable):
+  - `roadmap.md` — Overview and dependency graph
+  - Individual sub-phase files (`4.1-cloud-transport.md`, etc.)
 
-| Design | Status | Description |
-|--------|--------|-------------|
-| [Authentication & Session](authentication-and-session-management.md) | Draft | USB key file, Argon2id KDF, session lifecycle |
-| [Chunking & Manifest](chunking-and-manifest.md) | Draft | Fixed-size chunks, SQLCipher manifest, integrity checks |
-| [Cloud Synchronisation](cloud-synchronisation.md) | Draft | Rclone transport, conflict resolution, vault header |
-| [File Sharing](file-sharing.md) | Draft | X25519 key exchange, share packages, revocation |
+## Design Documents
+
+| Design | Status | Sub-Phases | Description |
+|--------|--------|------------|-------------|
+| [Authentication & Session](authentication-and-session-management/) | Draft | No | USB key file, Argon2id KDF, session lifecycle |
+| [Chunking & Manifest](chunking-and-manifest/) | Draft | No | Fixed-size chunks, SQLCipher manifest, integrity checks |
+| [Cloud Synchronisation](cloud-synchronisation/) | Draft | **Yes** (5 phases) | Rclone transport, conflict resolution, vault header |
+| [Cryptographic Primitives](cryptographic-primitives/) | Draft | No | XChaCha20-Poly1305, HKDF, key derivation tree |
+| [File Sharing](file-sharing/) | Draft | No | X25519 key exchange, share packages, revocation |
+| [Tauri IPC & Frontend](tauri-ipc-and-frontend/) | Draft | TBD | Error sanitisation, command surface, frontend UI |
 
 ## Creating New Designs
 
-Use the `/design` skill to create new design documents following the
-established format.
+Use the `/design` command to create new design documents. The command will:
+1. Create a design folder in `docs/architecture/designs/`
+2. Generate `design.md` from the design template
+3. Create a `diagrams/` subdirectory
+4. Generate related diagrams automatically
+
+## When to Create Sub-Phases
+
+Create a sub-phase roadmap (`sub-phases/roadmap.md`) when a design exhibits:
+- **Size**: Exceeds ~100-150 lines
+- **Trait boundaries**: Multiple trait definitions implementable independently
+- **Platform splits**: OS-specific implementations (Windows/Linux)
+- **Integration breadth**: Touches 3+ existing modules
+- **Multiple flows**: Contains 3+ distinct operational flows
+
+See **[Templates](_templates/)** for sub-phase roadmap and individual sub-phase templates.
+
+## Diagram Co-Location
+
+Design-specific diagrams live in each design's `diagrams/` subdirectory. Cross-cutting diagrams (SSOT flow, etc.) remain in the central `docs/architecture/diagrams/` directory.

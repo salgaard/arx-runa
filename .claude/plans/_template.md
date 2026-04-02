@@ -34,7 +34,26 @@ should check afterward. If no, state "None."
 
 ## Testing Strategy
 
-What tests are needed. What boundary cases matter.
+**Test scope:**
+- [ ] Basic unit tests (rust-implementer writes these inline)
+- [ ] Adversarial tests (cryptographic edge cases, corrupted data, wrong keys)
+- [ ] Property-based tests (proptest for randomized input validation)
+- [ ] Integration tests
+- [ ] Boundary cases (0 bytes, 1 byte, chunk_size-1, chunk_size, chunk_size+1, exact multiples)
+
+**Coverage target:** [Specify if >80% required for security-critical modules]
+
+**Boundary cases to cover:**
+- [List specific edge cases relevant to this implementation]
+
+**Invoke test-writer agent?**
+- [ ] **YES** — requires adversarial or property-based tests
+  - Reason: [Explain why — e.g., "crypto module needs AAD mismatch, tag tampering, nonce uniqueness tests"]
+- [ ] **NO** — rust-implementer's inline tests are sufficient
+  - Reason: [Explain why — e.g., "simple CRUD operations, no security-critical edge cases"]
+
+**Test acceptance criteria:**
+- [List specific pass/fail criteria — e.g., "All adversarial tests must fail gracefully, not panic"]
 
 ## Documentation Impact
 

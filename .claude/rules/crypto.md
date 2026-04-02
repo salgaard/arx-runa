@@ -5,6 +5,8 @@ paths:
 
 # Crypto module — rules
 
+**Design specification**: `docs/architecture/designs/cryptographic-primitives/design.md`
+
 ## Cipher
 - `XChaCha20Poly1305` only (not `ChaCha20Poly1305`) — 192-bit nonce
 - AES-GCM rejected for this project
@@ -23,6 +25,7 @@ paths:
 ## Key derivation
 - Never use `master_key` directly — derive via HKDF
 - Per-file: random `file_key` wrapped with `key_encryption_key`
+- See `authentication-and-session-management.md` for HKDF tree
 
 ## Memory
 - All keys: `ZeroizeOnDrop` + `Secret<T>`
@@ -30,3 +33,4 @@ paths:
 
 ## Argon2id minimums
 - m ≥ 19456, t ≥ 2, p = 1
+- See `authentication-and-session-management.md` for full parameters

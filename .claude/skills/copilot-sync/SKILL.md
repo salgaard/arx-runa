@@ -56,7 +56,7 @@ After transformation, files should be byte-identical except for the frontmatter 
 
 ### Step 1 — Read all files
 
-1. All `.claude/rules/*.md` files
+1. All `.claude/rules/*.md` files (except README.md)
 2. All `.github/instructions/*.instructions.md` files
 
 ### Step 2 — Compare each rule
@@ -107,5 +107,6 @@ Run `/copilot-sync` to fix.
 ## When to run
 
 - After editing any `.claude/rules/*.md` file
+- After editing design documents and updating rule summaries
 - Before commits that touch rules
 - When the PostToolUse hook reminds you

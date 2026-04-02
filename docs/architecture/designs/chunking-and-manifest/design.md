@@ -37,14 +37,9 @@ Every file's last chunk is zero-padded to 4 MiB. The overhead depends on `file_s
 
 For files larger than one chunk, the maximum waste is < 4 MiB (constant, not proportional to file size). For a vault with many files, the average waste per file converges to ~2 MiB.
 
+**Rationale for 4 MiB over 8 MiB**: Half the padding waste per file (2 MiB average vs 4 MiB), lower memory per chunk buffer during encrypt/decrypt, finer-grained resume on interrupted transfers.
+
 Per-chunk crypto overhead: 24 bytes (nonce) + 16 bytes (Poly1305 tag) = 40 bytes. For a 4 MiB chunk, this is 0.001% — negligible.
-
-### Rationale for 4 MiB over 8 MiB
-
-- Half the padding waste per file (2 MiB average vs 4 MiB)
-- Lower memory per chunk buffer during encrypt/decrypt
-- Finer-grained resume on interrupted uploads/downloads
-- The cost of more chunks per large file (more manifest rows, more blob operations) is negligible — cloud upload latency dominates, and SQLCipher handles millions of rows
 <!-- CITE: Breaking and Fixing Content-Defined Chunking — https://eprint.iacr.org/2025/558.pdf — supports fixed-size chunking for metadata privacy over CDC -->
 
 ---
@@ -173,7 +168,7 @@ The root directory has `parent_id = NULL`. The tree is purely virtual — it exi
 /// Result of encrypting a single chunk.
 struct ChunkRecord {
     chunk_id: Uuid,
-    chunk_index: u64,
+    chunk_index: u32,
     blob_name: String,        // UUID v4
     size_padded: u64,         // always chunk_size
     blake3_checksum: [u8; 32],
@@ -205,7 +200,7 @@ async fn decrypt_file(
 ```
 1. BufReader reads up to chunk_size bytes from source file
 2. If bytes_read < chunk_size: zero-pad buffer to chunk_size
-3. Generate AAD = file_id (16 bytes) || chunk_index (u64 big-endian, 8 bytes)
+3. Generate AAD = file_id (16 bytes) || chunk_index (u32 big-endian, 4 bytes)
 4. encrypt_chunk(padded_buffer, file_key, file_id, chunk_index)
    → wire_blob = [24B nonce | ciphertext | 16B Poly1305 tag]
 5. blake3_checksum = blake3::hash(wire_blob)
@@ -367,7 +362,7 @@ Implementations:
 | Decision | Options | Status |
 |----------|---------|--------|
 | Upload order randomisation | Randomise blob upload order to mask which blobs belong to the same file vs. sequential for simplicity | Extension point, not blocking |
-| Maximum file size | Implicit limit from chunk_index as u64 (2^64 chunks * 4 MiB ≈ infinite) — no practical limit needed | Not blocking |
+| Maximum file size | Implicit limit from chunk_index as u32 (2^32 chunks × 4 MiB = 16 PiB per file) — no practical limit needed | Not blocking |
 
 ---
 

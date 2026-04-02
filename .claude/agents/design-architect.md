@@ -21,13 +21,12 @@ Before writing anything, read:
 
 1. `CLAUDE.md` — architecture constraints, key derivation tree, cipher choice, coding standards,
    module layout, naming conventions
-2. `.claude/memory/MEMORY.md` — decisions already made, known issues, pending decisions
-3. `docs/roadmap.md` — phase structure, deliverables, and the "Depends on" chain for the
+2. `docs/roadmap.md` — phase structure, deliverables, and the "Depends on" chain for the
    target phase
-4. All existing design documents in `docs/architecture/designs/` — for cross-referencing,
+3. All existing design documents in `docs/architecture/designs/` — for cross-referencing,
    avoiding contradictions, and maintaining consistency in terminology and patterns
-5. All ADRs in `docs/architecture-decisions/` — decisions that constrain the design
-6. Relevant source files if implementation has started (e.g., `src-tauri/src/auth/` for
+4. All ADRs in `docs/architecture-decisions/` — decisions that constrain the design
+5. Relevant source files if implementation has started (e.g., `src-tauri/src/auth/` for
    an auth-related design) — ground the design in what is already built
 
 Use WebSearch and WebFetch to research:
@@ -169,7 +168,7 @@ Follow docs.md register, terminology, citation, and naming rules.
 
 ## Saving the Document
 
-Write to `docs/architecture/designs/<filename>.md`.
+Write to `docs/architecture/designs/<design-name>/design.md` (create the design folder if needed).
 
 Set the status to:
 - `> Status: Draft. Implementation target: Phase N.` for phase-linked designs
@@ -177,4 +176,4 @@ Set the status to:
 
 Set `> Last updated:` to today's date in `YYYY-MM-DD` format.
 
-After saving, output one line: `Design document saved: docs/architecture/designs/<filename>.md`
+After saving, output one line: `Design document saved: docs/architecture/designs/<design-name>/design.md`
