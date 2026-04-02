@@ -28,7 +28,7 @@ A privacy-conscious user wants multi-factor authentication for cloud storage but
 2. VoidGate prompts: "Insert USB drive for key file generation"
 3. User inserts blank or dedicated USB drive
 4. VoidGate generates 32 bytes of cryptographically random entropy
-5. VoidGate writes key file to USB drive: `voidgate.key`
+5. VoidGate writes 32-byte key file to USB drive (any filename; auto-detected via BLAKE3 fingerprint)
 6. VoidGate prompts: "Set vault password"
 7. User enters strong password (≥12 characters recommended)
 8. VoidGate derives master_key = Argon2id(password || key_file_bytes, salt)

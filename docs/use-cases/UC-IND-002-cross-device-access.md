@@ -38,7 +38,7 @@ An individual user wants to access their encrypted files from multiple devices (
 12. VoidGate downloads encrypted chunks from cloud (by UUID blob names)
 13. VoidGate verifies BLAKE3 checksums on encrypted chunks
 14. VoidGate decrypts chunks with file_key (unwrapped from manifest)
-15. VoidGate reassembles plaintext file in memory
+15. VoidGate reassembles plaintext file to user-specified destination (e.g., working directory or temp location)
 16. User opens/edits file locally
 17. User saves changes
 18. VoidGate re-encrypts modified file with new nonces
@@ -98,7 +98,7 @@ An individual user wants to access their encrypted files from multiple devices (
 - User can access vault from any device with password + USB key
 - Cloud manifest stays synchronized across devices
 - Conflicts are detected and user is prompted for resolution
-- No device stores plaintext files persistently (files decrypted in memory only)
+- No device stores plaintext files persistently unless explicitly downloaded by user (encrypted-at-rest in vault only)
 - USB key file is the authoritative hardware factor (portable, required on all devices)
 - Each device can independently pull latest vault state from cloud
 

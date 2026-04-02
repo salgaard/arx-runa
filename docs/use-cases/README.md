@@ -72,12 +72,14 @@ The skill parses the "Related Designs" section of each use case and reports:
 - ⚠️ Use cases with partial coverage (some designs missing)
 - ❌ Use cases with no design references (gaps requiring attention)
 
-**Latest Coverage Report** (as of documentation creation):
-- **11/11 use cases** have complete design coverage (100%)
-- **42 total design references**, all valid
-- Most referenced designs: `cryptographic-primitives` and `cloud-synchronisation` (used in all 11 use cases)
+**Example Coverage Report**:
+```
+✅ 11/11 use cases have complete design coverage (100%)
+📊 42 total design references, all valid
+🔗 Most referenced: cryptographic-primitives, cloud-synchronisation
+```
 
-Run the skill after any use case or design changes to validate traceability.
+Run `/use-case-coverage` after any use case or design changes to validate current traceability.
 
 ## How to Read Use Cases
 

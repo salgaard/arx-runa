@@ -2,7 +2,7 @@
 
 **Category**: [Individual Privacy / Business & Enterprise / Developer & Technical]
 
-**Status**: Draft | Active | Deprecated
+**Status**: [Draft]  <!-- Choose one: Draft | Active | Deprecated -->
 
 ---
 
