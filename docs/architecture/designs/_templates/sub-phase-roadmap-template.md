@@ -114,7 +114,7 @@ Each sub-phase includes its own test suite. Tests must pass before proceeding to
 After completing each sub-phase, run:
 ```bash
 cargo test           # All tests must pass
-cargo clippy --D warnings  # No new warnings
+cargo clippy -- -D warnings  # No new warnings
 ```
 
 This ensures new code doesn't break earlier sub-phases.

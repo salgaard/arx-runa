@@ -26,10 +26,13 @@
     }
 
     for (const lightTheme of lightThemes) {
-        document.getElementById(lightTheme).addEventListener('click', () => {
-            if (!lastThemeWasLight) {
-                window.location.reload();
-            }
-        });
+        const themeButton = document.getElementById(lightTheme);
+        if (themeButton) {
+            themeButton.addEventListener('click', () => {
+                if (!lastThemeWasLight) {
+                    window.location.reload();
+                }
+            });
+        }
     }
 })();

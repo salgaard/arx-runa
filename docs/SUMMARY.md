@@ -25,12 +25,14 @@
 - [Architecture Decisions](architecture-decisions/README.md)
   - [001: Code Structure and Patterns](architecture-decisions/001-code-structure-and-patterns.md)
   - [002: Frontend Stack Selection](architecture-decisions/002-frontend-stack-selection.md)
+  - [003: Sub-Phase Roadmap Workflow](architecture-decisions/003-sub-phase-roadmap-workflow.md)
 
 ---
 
 # Guides
 
 - [Development Setup](guides/development.md)
+- [Documentation SSOT](guides/documentation-ssot.md)
 
 ---
 

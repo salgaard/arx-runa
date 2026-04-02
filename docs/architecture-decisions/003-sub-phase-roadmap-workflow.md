@@ -180,7 +180,6 @@ The decision is validated when:
 - Template: `docs/architecture/designs/_templates/sub-phase-roadmap-template.md`
 - Usage guide: `docs/architecture/designs/README.md` (decomposition heuristics)
 - Development workflow: `docs/guides/development.md` § Working with Sub-Phase Roadmaps
-- Related commands: `.claude/commands/plan.md`, `.claude/commands/implement-plan.md`
 
 ---
 

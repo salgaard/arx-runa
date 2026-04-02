@@ -136,7 +136,7 @@ cargo test storage::cloud::rclone
 ## Documentation Impact
 
 **Files to create/update after sub-phase completion**:
-- Phase 4.1: Update `docs/architecture/diagrams/` with CloudTransport trait diagram
+- Phase 4.1: Update `docs/architecture/designs/cloud-synchronisation/diagrams/` with CloudTransport trait diagram
 - Phase 4.2: Create `docs/guides/cloud-setup.md` with setup wizard instructions
 - Phase 4.5: Update `docs/roadmap.md` Phase 4 to mark complete, add report-log entry for cloud sync milestone
 
