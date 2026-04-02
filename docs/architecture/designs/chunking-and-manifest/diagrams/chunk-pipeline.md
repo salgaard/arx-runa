@@ -78,6 +78,6 @@ A `file_key` is generated per file at creation. It is immediately wrapped with `
 
 ## Related
 
-- Design document: [../../architecture/designs/chunking-and-manifest.md](../../architecture/designs/chunking-and-manifest.md)
-- Crypto primitives: [../../architecture/designs/](../../architecture/designs/)
+- Design document: [../design.md](../design.md)
+- Crypto primitives: [../../cryptographic-primitives/design.md](../../cryptographic-primitives/design.md)
 - Source: `src-tauri/src/storage/`

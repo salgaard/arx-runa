@@ -78,6 +78,6 @@ provides file-granularity access control.
 
 ## Related
 
-- Report log: [2026-03-28-225617-problem-formulation.md](../../report-log/2026-03-28-225617-problem-formulation.md)
+- Report log: [../../../../report-log/2026-03-28-225617-problem-formulation.md](../../../../report-log/2026-03-28-225617-problem-formulation.md)
 - Source files: `src-tauri/src/auth/` (Argon2id + session keys), `src-tauri/src/crypto/` (HKDF derivation)
-- Design document: [../../architecture/designs/file-sharing.md](../../architecture/designs/file-sharing.md)
+- Design document: [../../file-sharing/design.md](../../file-sharing/design.md)

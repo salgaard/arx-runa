@@ -103,6 +103,6 @@ The cloud synchronisation flow covers three scenarios:
 
 ## Related
 
-- Design document: [../../architecture/designs/cloud-synchronisation.md](../../architecture/designs/cloud-synchronisation.md)
-- Authentication flow: [authentication-flow.md](authentication-flow.md)
-- Chunk pipeline: [chunk-pipeline.md](chunk-pipeline.md)
+- Design document: [../design.md](../design.md)
+- Authentication flow: [../../authentication-and-session-management/diagrams/authentication-flow.md](../../authentication-and-session-management/diagrams/authentication-flow.md)
+- Chunk pipeline: [../../chunking-and-manifest/diagrams/chunk-pipeline.md](../../chunking-and-manifest/diagrams/chunk-pipeline.md)

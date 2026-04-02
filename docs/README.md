@@ -18,7 +18,6 @@ filenames, folder structure, or metadata.
 ### Getting Started
 
 - [**Development Setup**](guides/development.md) — Set up your local development environment
-- [**GitHub Settings**](guides/github-settings.md) — Repository configuration guide
 
 ### Reference
 
