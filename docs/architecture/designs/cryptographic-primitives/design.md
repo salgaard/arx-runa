@@ -300,9 +300,6 @@ pub enum CryptoError {
     #[error("invalid blob format: expected at least {expected} bytes, got {actual}")]
     InvalidBlobFormat { expected: usize, actual: usize },
 
-    #[error("HKDF expansion failed")]
-    HkdfExpansionFailed,
-
     #[error("key unwrap failed")]
     KeyUnwrapFailed,
 }
@@ -471,7 +468,7 @@ None — all design decisions have been made.
 
 ## Related Documents
 
-- [Key Derivation Tree Diagram](../diagrams/key-derivation-tree.md)
-- [File Sharing Architecture](file-sharing.md) — per-file key rationale
-- [ADR 001 — Code Structure](../../architecture-decisions/001-code-structure-and-patterns.md)
+- [Key Derivation Tree Diagram](diagrams/key-derivation-tree.md)
+- [File Sharing Architecture](../file-sharing/design.md) — per-file key rationale
+- [ADR 001 — Code Structure](../../../architecture-decisions/001-code-structure-and-patterns.md)
 - Roadmap Phase 1 deliverables

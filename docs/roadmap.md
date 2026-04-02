@@ -56,7 +56,7 @@ When specifications in this roadmap conflict with design documents, **design doc
 **Deliverables**:
 1. **HKDF-SHA256 key derivation**: Derive vault-level keys (`key_encryption_key`, `sqlcipher_key`, `manifest_key`) from `master_key` with distinct `info` strings per design specification.
 2. **Per-file key management**: Random 256-bit `file_key` generation via CSPRNG; wrapping/unwrapping with `key_encryption_key` using XChaCha20-Poly1305.
-3. **Chunk encryption/decryption**: Implement `encrypt_chunk` and `decrypt_chunk` with wire format and AAD binding per design spec (see `cryptographic-primitives.md` for format, AAD construction, nonce generation).
+3. **Chunk encryption/decryption**: Implement `encrypt_chunk` and `decrypt_chunk` with wire format and AAD binding per design spec (see `docs/architecture/designs/cryptographic-primitives/design.md` for format, AAD construction, nonce generation).
 4. **BLAKE3 checksums**: Compute checksums over encrypted blobs.
 5. **Memory protection**: `ZeroizeOnDrop` and `Secret<T>` wrappers on all key types.
 6. **Adversarial test suite**: encrypt/decrypt round-trip, AAD mismatch, wrong key, corrupted ciphertext, tag tampering, nonce uniqueness, zeroize verification.
@@ -72,7 +72,7 @@ When specifications in this roadmap conflict with design documents, **design doc
 - ADR `002-cipher-selection.md` — XChaCha20-Poly1305 rationale and alternatives considered.
 - ADR `003-nonce-strategy.md` — random 192-bit nonce, birthday bound analysis, rejection of sequential nonces.
 - ADR `004-key-derivation-tree.md` — HKDF key separation rationale, per-file key model.
-- Update `docs/architecture/diagrams/key-derivation-tree.md` if implementation diverges from design.
+- Update `docs/architecture/designs/cryptographic-primitives/diagrams/key-derivation-tree.md` if implementation diverges from design.
 - Report-log entries: cipher trade-offs, nonce strategy, key separation design.
 - Report sections: Method (cryptographic foundations), Analysis (adversarial test results).
 

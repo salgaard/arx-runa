@@ -15,12 +15,12 @@ Each design folder contains:
 
 | Design | Status | Sub-Phases | Description |
 |--------|--------|------------|-------------|
-| [Authentication & Session](authentication-and-session-management/) | Draft | No | USB key file, Argon2id KDF, session lifecycle |
-| [Chunking & Manifest](chunking-and-manifest/) | Draft | No | Fixed-size chunks, SQLCipher manifest, integrity checks |
-| [Cloud Synchronisation](cloud-synchronisation/) | Draft | **Yes** (5 phases) | Rclone transport, conflict resolution, vault header |
-| [Cryptographic Primitives](cryptographic-primitives/) | Draft | No | XChaCha20-Poly1305, HKDF, key derivation tree |
-| [File Sharing](file-sharing/) | Draft | No | X25519 key exchange, share packages, revocation |
-| [Tauri IPC & Frontend](tauri-ipc-and-frontend/) | Draft | TBD | Error sanitisation, command surface, frontend UI |
+| [Authentication & Session](authentication-and-session-management/design.md) | Draft | No | USB key file, Argon2id KDF, session lifecycle |
+| [Chunking & Manifest](chunking-and-manifest/design.md) | Draft | No | Fixed-size chunks, SQLCipher manifest, integrity checks |
+| [Cloud Synchronisation](cloud-synchronisation/design.md) | Draft | **Yes** (5 phases) | Rclone transport, conflict resolution, vault header |
+| [Cryptographic Primitives](cryptographic-primitives/design.md) | Draft | No | XChaCha20-Poly1305, HKDF, key derivation tree |
+| [File Sharing](file-sharing/design.md) | Draft | No | X25519 key exchange, share packages, revocation |
+| [Tauri IPC & Frontend](tauri-ipc-and-frontend/design.md) | Draft | TBD | Error sanitisation, command surface, frontend UI |
 
 ## Creating New Designs
 

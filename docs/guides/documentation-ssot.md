@@ -7,7 +7,7 @@
 
 ---
 
-## 🚀 Quick Start for Contributors
+## Quick Start for Contributors
 
 **When you change a design document**:
 
@@ -59,9 +59,9 @@ That's it. No extraction, no generation, no pipeline.
 - Citations to standards (OWASP, NIST, RFCs)
 
 **Examples**:
-- `cryptographic-primitives.md` — XChaCha20-Poly1305, HKDF, wire format, AAD, nonces
-- `authentication-and-session-management.md` — Argon2id params, key derivation tree
-- `chunking-and-manifest.md` — 4 MiB chunk size, padding waste analysis
+- `docs/architecture/designs/cryptographic-primitives/design.md` — XChaCha20-Poly1305, HKDF, wire format, AAD, nonces
+- `docs/architecture/designs/authentication-and-session-management/design.md` — Argon2id params, key derivation tree
+- `docs/architecture/designs/chunking-and-manifest/design.md` — 4 MiB chunk size, padding waste analysis
 
 **When to edit**: When technical specifications change.
 

@@ -123,9 +123,6 @@ Total overhead: 40 bytes per chunk (0.001% of 4 MiB).
 
 ## Related
 
-- [Key Derivation Tree](key-derivation-tree.md) — HKDF expansion detail
-- [Chunk Pipeline](chunk-pipeline.md) — Storage layer detail
-- [Authentication Flow](authentication-flow.md) — Auth detail
-- Design: [cryptographic-primitives.md](../designs/cryptographic-primitives.md)
-- Design: [authentication-and-session-management.md](../designs/authentication-and-session-management.md)
-- Design: [chunking-and-manifest.md](../designs/chunking-and-manifest.md)
+- Design: [Cryptographic Primitives](../designs/cryptographic-primitives/design.md)
+- Design: [Authentication & Session Management](../designs/authentication-and-session-management/design.md)
+- Design: [Chunking & Manifest](../designs/chunking-and-manifest/design.md)

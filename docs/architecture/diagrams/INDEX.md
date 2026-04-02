@@ -25,11 +25,11 @@ Design-specific diagrams have been moved to their respective design folders:
 
 | Diagram | Location | Related Design |
 |---------|----------|----------------|
-| Authentication Flow | [`authentication-and-session-management/diagrams/`](../designs/authentication-and-session-management/diagrams/) | Authentication & Session Management |
-| Chunk Pipeline | [`chunking-and-manifest/diagrams/`](../designs/chunking-and-manifest/diagrams/) | Chunking & Manifest |
-| Cloud Sync Sequence | [`cloud-synchronisation/diagrams/`](../designs/cloud-synchronisation/diagrams/) | Cloud Synchronisation |
-| Key Derivation Tree | [`cryptographic-primitives/diagrams/`](../designs/cryptographic-primitives/diagrams/) | Cryptographic Primitives |
-| File Sharing Flow | [`file-sharing/diagrams/`](../designs/file-sharing/diagrams/) | File Sharing |
+| Authentication Flow | [`authentication-flow.md`](../designs/authentication-and-session-management/diagrams/authentication-flow.md) | Authentication & Session Management |
+| Chunk Pipeline | [`chunk-pipeline.md`](../designs/chunking-and-manifest/diagrams/chunk-pipeline.md) | Chunking & Manifest |
+| Cloud Sync Sequence | [`cloud-sync-sequence.md`](../designs/cloud-synchronisation/diagrams/cloud-sync-sequence.md) | Cloud Synchronisation |
+| Key Derivation Tree | [`key-derivation-tree.md`](../designs/cryptographic-primitives/diagrams/key-derivation-tree.md) | Cryptographic Primitives |
+| File Sharing Flow | [`file-sharing-flow.md`](../designs/file-sharing/diagrams/file-sharing-flow.md) | File Sharing |
 
 ---
 

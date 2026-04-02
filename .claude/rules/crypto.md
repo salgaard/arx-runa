@@ -25,7 +25,7 @@ paths:
 ## Key derivation
 - Never use `master_key` directly — derive via HKDF
 - Per-file: random `file_key` wrapped with `key_encryption_key`
-- See `authentication-and-session-management.md` for HKDF tree
+- See `docs/architecture/designs/authentication-and-session-management/design.md` for HKDF tree
 
 ## Memory
 - All keys: `ZeroizeOnDrop` + `Secret<T>`
@@ -33,4 +33,4 @@ paths:
 
 ## Argon2id minimums
 - m ≥ 19456, t ≥ 2, p = 1
-- See `authentication-and-session-management.md` for full parameters
+- See `docs/architecture/designs/authentication-and-session-management/design.md` for full parameters

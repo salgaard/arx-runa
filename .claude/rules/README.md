@@ -52,9 +52,9 @@ paths:
 
 | File | Scope | Design Reference |
 |------|-------|------------------|
-| `crypto.md` | `src-tauri/src/crypto/**` | cryptographic-primitives.md |
-| `auth.md` | `src-tauri/src/auth/**` | authentication-and-session-management.md |
-| `storage.md` | `src-tauri/src/storage/**` | chunking-and-manifest.md |
+| `crypto.md` | `src-tauri/src/crypto/**` | `docs/architecture/designs/cryptographic-primitives/design.md` |
+| `auth.md` | `src-tauri/src/auth/**` | `docs/architecture/designs/authentication-and-session-management/design.md` |
+| `storage.md` | `src-tauri/src/storage/**` | `docs/architecture/designs/chunking-and-manifest/design.md` |
 | `rust.md` | `src-tauri/**/*.rs` | General Rust patterns |
 | `tauri.md` | `src-tauri/src/ui/**`, tauri.conf.json | IPC and security |
 | `memory-protection.md` | `src-tauri/src/memory/**` | Memory safety |
