@@ -41,8 +41,8 @@ A user wants to store personal photos and videos in cloud storage without exposi
 11. User browses manifest for tagged photos
 12. User selects photo to view
 13. VoidGate downloads encrypted chunks from cloud
-14. VoidGate decrypts chunks in memory and displays photo
-15. User views photo without creating plaintext copy on disk
+14. VoidGate decrypts chunks and displays photo (in-app viewer) or exports to temp location (external viewer)
+15. User views photo
 16. User locks vault when done
 
 ## Alternate Flows
@@ -54,7 +54,7 @@ A user wants to store personal photos and videos in cloud storage without exposi
 **Steps**:
 1. User selects video file in manifest
 2. VoidGate downloads first few chunks
-3. VoidGate decrypts and streams to video player in memory
+3. VoidGate decrypts and streams to video player (in-app or via temp file for external player)
 4. VoidGate downloads subsequent chunks as needed (progressive streaming)
 5. User watches video with minimal latency
 6. Flow continues until video ends or user stops playback

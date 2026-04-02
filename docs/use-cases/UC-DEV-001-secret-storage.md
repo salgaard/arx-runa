@@ -42,7 +42,7 @@ A developer or DevOps engineer needs to store cryptographic secrets (API keys, p
 9. Developer unlocks vault on deployment machine
 10. Developer searches manifest for "AWS API Token"
 11. VoidGate downloads encrypted chunks from cloud
-12. VoidGate decrypts secret in memory (no plaintext written to disk)
+12. VoidGate decrypts secret (can export to clipboard, env var, or temp file per user choice)
 13. Developer copies secret to clipboard or exports to environment variable
 14. Developer uses secret for deployment (e.g., `export AWS_ACCESS_KEY_ID=...`)
 15. Developer completes deployment
@@ -103,7 +103,7 @@ A developer or DevOps engineer needs to store cryptographic secrets (API keys, p
 
 - Secrets are encrypted before upload (cloud never sees plaintext API keys, passwords)
 - Secrets cannot be accessed with password alone (USB key required)
-- Secrets are decrypted in memory only (no plaintext files on disk)
+- Secrets are decrypted on-demand and can be exported to clipboard/env vars (no persistent plaintext files unless explicitly saved)
 - Developer can rotate secrets and archive old versions
 - Developer can search secrets by tags or filenames (metadata in encrypted manifest)
 - Backup USB key enables disaster recovery

@@ -94,7 +94,7 @@ A privacy-conscious user wants multi-factor authentication for cloud storage but
 1. User unlocks vault with original USB key + password
 2. User inserts second USB drive
 3. User selects "Export Key File" in VoidGate
-4. VoidGate copies `voidgate.key` to second USB drive
+4. VoidGate copies 32-byte key file to second USB drive (auto-detectable via BLAKE3 fingerprint)
 5. User stores backup USB key in separate secure location
 6. Both USB keys are now valid for vault unlock (identical key_file_bytes)
 

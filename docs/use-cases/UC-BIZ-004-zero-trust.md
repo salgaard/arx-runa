@@ -43,7 +43,7 @@ An organization implementing Zero Trust architecture requires that no system —
 10. VoidGate verifies session continuously (timeout after inactivity)
 11. VoidGate downloads encrypted data from untrusted cloud
 12. VoidGate decrypts only within trusted workstation (after authentication)
-13. Employee accesses plaintext only in memory (no disk persistence)
+13. Employee accesses plaintext via download to controlled destination (ephemeral or persistent per policy)
 14. Session expires after timeout — employee must re-authenticate
 15. Security architect audits trust boundaries:
 16. Security architect verifies encryption at rest (cloud blobs are ciphertext)
@@ -124,7 +124,7 @@ An organization implementing Zero Trust architecture requires that no system —
 
 - **Implicit trust in cloud**: Zero Trust principle — cloud is explicitly untrusted
 - **Network eavesdropping**: Encrypted payload even if TLS is compromised
-- **Endpoint persistence**: No plaintext on disk (decryption in memory only)
+- **Endpoint persistence**: Plaintext written only to user-controlled destinations (no unmanaged persistence)
 - **Session hijacking**: Session timeout limits exposure window
 - **Provider-side attacks**: Cloud breach does not expose plaintext
 
