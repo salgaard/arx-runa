@@ -228,7 +228,67 @@ Each sub-phase is independently testable, with clear validation checkpoints befo
 
 ---
 
-## 10. Encryption stack (for context)
+## 10. AI Assistant Setup (Optional)
+
+VoidGate supports AI assistants via LSP and MCP integrations for enhanced code intelligence and tooling.
+
+### GitHub Copilot CLI
+
+LSP configuration is in `.github/lsp.json`:
+
+```json
+{
+  "lspServers": {
+    "rust": {
+      "command": "rust-analyzer",
+      "args": []
+    },
+    "typescript": {
+      "command": "typescript-language-server",
+      "args": ["--stdio"]
+    }
+  }
+}
+```
+
+**Prerequisites**:
+- `rust-analyzer`: `rustup component add rust-analyzer`
+- `typescript-language-server`: `npm install -g typescript-language-server typescript`
+
+### Claude CLI
+
+**LSP Plugins** (install once per user):
+```bash
+claude plugin install rust-analyzer-lsp
+claude plugin install typescript-lsp
+claude plugin install code-review
+claude plugin install security-guidance
+claude plugin install commit-commands
+```
+
+**MCP Servers** (project-scoped in `.mcp.json`):
+- `fetch` — Web content fetching
+- `github` — GitHub API integration (requires `GITHUB_TOKEN`)
+
+**Set GitHub Token** (Windows):
+```powershell
+[System.Environment]::SetEnvironmentVariable('GITHUB_TOKEN', 'ghp_YOUR_TOKEN_HERE', 'User')
+```
+
+Get a token at: https://github.com/settings/tokens (needs `repo` scope minimum)
+
+After setting, restart your terminal for the token to load.
+
+**Verify setup**:
+```bash
+claude mcp list
+```
+
+Both `fetch` and `github` should be listed (connection failures in health check are normal for stdio servers).
+
+---
+
+## 11. Encryption stack (for context)
 
 | Component | Technology |
 |---|---|
