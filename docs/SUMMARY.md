@@ -11,6 +11,7 @@
   - [UC-IND-002: Cross-Device Access](use-cases/UC-IND-002-cross-device-access.md)
   - [UC-IND-003: Privacy-Focused Photo Storage](use-cases/UC-IND-003-photo-storage.md)
   - [UC-IND-004: Hardware MFA Protection](use-cases/UC-IND-004-hardware-mfa-protection.md)
+  - [UC-IND-005: Key Loss and Data Recovery](use-cases/UC-IND-005-key-loss-and-data-recovery.md)
   - [UC-BIZ-001: Confidential BYOC Storage](use-cases/UC-BIZ-001-confidential-byoc.md)
   - [UC-BIZ-002: Secure File Sharing](use-cases/UC-BIZ-002-secure-sharing.md)
   - [UC-BIZ-003: Regulated Industry Storage](use-cases/UC-BIZ-003-regulated-storage.md)
@@ -61,6 +62,12 @@
 
 - [Development Setup](guides/development.md)
 - [Documentation SSOT](guides/documentation-ssot.md)
+
+---
+
+# Research
+
+- [Market & Future Directions](research/market-and-future-directions.md)
 
 ---
 

@@ -36,6 +36,7 @@ Use cases for individuals who don't trust cloud providers with their sensitive d
 | [UC-IND-002](UC-IND-002-cross-device-access.md) | Cross-Device Secure File Access | Multi-device sync, conflict detection, portable USB key |
 | [UC-IND-003](UC-IND-003-photo-storage.md) | Privacy-Focused Photo Storage | EXIF metadata protection, size padding, in-memory viewing |
 | [UC-IND-004](UC-IND-004-hardware-mfa-protection.md) | Hardware MFA for Personal Data Protection | USB key file, no password-only fallback, offline authentication |
+| [UC-IND-005](UC-IND-005-key-loss-and-data-recovery.md) | Key Loss and Irrecoverable Data Scenarios | No password reset, no recovery mechanism, backup strategies, cryptographic guarantee |
 
 ### Business & Enterprise (UC-BIZ)
 
