@@ -80,4 +80,4 @@ provides file-granularity access control.
 
 - Report log: [../../../../report-log/2026-03-28-225617-problem-formulation.md](../../../../report-log/2026-03-28-225617-problem-formulation.md)
 - Source files: `src-tauri/src/auth/` (Argon2id + session keys), `src-tauri/src/crypto/` (HKDF derivation)
-- Design document: [../../file-sharing/design.md](../../file-sharing/design.md)
+- Design document: [../design.md](../design.md)

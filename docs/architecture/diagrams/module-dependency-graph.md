@@ -32,7 +32,6 @@ flowchart TD
     CLOUD -->|"reads manifest\nfor sync state"| STORAGE
     SHARING -->|"per-file keys\nECIES encryption"| CRYPTO
     SHARING -->|"chunk metadata\nfor share packages"| STORAGE
-    SHARING -->|"uploads share blobs"| CLOUD
     UI -->|"invokes all\nbackend operations"| AUTH
     UI -->|"invokes all\nbackend operations"| STORAGE
     UI -->|"invokes all\nbackend operations"| CLOUD
@@ -65,7 +64,7 @@ Shows the dependency relationships between VoidGate's Rust modules, the Leptos f
 
 1. **Core** (red): `crypto/` and `auth/` — foundational cryptographic and authentication primitives. `auth` depends on `crypto` for key derivation.
 2. **Data** (blue): `storage/` and `storage/cloud/` — chunking, manifest management, and cloud synchronisation. Depends on both core modules.
-3. **Feature** (purple): `sharing/` — file sharing via ECIES. Depends on crypto, storage, and cloud.
+3. **Feature** (purple): `sharing/` — file sharing via ECIES. Depends on crypto and storage. Cloud access goes through storage abstraction.
 4. **Infrastructure** (grey): `memory/` — memory protection (`mlock`, `zeroize`). Used by core and data modules via dotted lines (cross-cutting concern).
 5. **Boundary** (amber): `ui/` and WASM frontend — Tauri IPC layer that sanitises errors and exposes backend operations to the frontend.
 6. **External** (green): Rclone sidecar, cloud provider, USB key file.

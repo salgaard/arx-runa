@@ -14,12 +14,12 @@ sequenceDiagram
 
     note over User,Cloud: Push Flow (upload local changes)
     User->>Sync: push()
-    Sync->>Meta: get_meta("snapshot_counter") → local_counter
+    Sync->>Meta: get_meta("snapshot_counter") -&gt; local_counter
     Sync->>RT: download_blob("manifest/manifest-backup.blob", temp)
     RT->>Cloud: rclone copyto manifest/manifest-backup.blob
     Cloud-->>RT: manifest-backup.blob
     RT-->>Sync: temp file
-    Sync->>Sync: decrypt manifest backup → cloud_counter
+    Sync->>Sync: decrypt manifest backup -&gt; cloud_counter
     alt cloud_counter > local_counter
         Sync-->>User: CONFLICT — pull first
     else cloud_counter == local_counter
@@ -32,7 +32,7 @@ sequenceDiagram
             RT-->>Sync: ok
             Sync->>Stage: delete staging/<uuid>.blob
         end
-        Sync->>Meta: increment_snapshot_counter() → new_counter
+        Sync->>Meta: increment_snapshot_counter() -&gt; new_counter
         Sync->>Meta: set_meta("last_synced_at", now)
         Sync->>Sync: VACUUM INTO temp; encrypt with manifest_key
         Sync->>RT: upload_blob(temp, manifest/manifest-backup.blob)
@@ -50,11 +50,11 @@ sequenceDiagram
     RT->>Cloud: rclone copyto vault-header.json
     Cloud-->>RT: vault-header.json
     RT-->>Sync: temp file
-    Sync->>Sync: parse VaultHeader → salt, params, key_file_blake3
+    Sync->>Sync: parse VaultHeader -&gt; salt, params, key_file_blake3
     Sync-->>User: prompt: password + USB key file
     User->>Sync: password + key_file_path
-    Sync->>Sync: Argon2id(password || key_file, salt) → master_key
-    Sync->>Sync: HKDF → key_encryption_key, sqlcipher_key, manifest_key
+    Sync->>Sync: Argon2id(password || key_file, salt) -&gt; master_key
+    Sync->>Sync: HKDF -&gt; key_encryption_key, sqlcipher_key, manifest_key
     Sync->>Sync: zeroize(master_key)
     Sync->>RT: download_blob("manifest/manifest-backup.blob", temp)
     RT->>Cloud: rclone copyto manifest/manifest-backup.blob
@@ -62,7 +62,7 @@ sequenceDiagram
     RT-->>Sync: temp file
     Sync->>Sync: decrypt manifest backup with manifest_key
     Sync->>Meta: import SQLCipher DB (keyed with sqlcipher_key)
-    Sync->>Meta: get all chunk rows → (blob_name, blake3_checksum)
+    Sync->>Meta: get all chunk rows -&gt; (blob_name, blake3_checksum)
     loop each missing blob (up to 4 concurrent via JoinSet)
         Sync->>RT: download_blob("vault/<uuid>.blob", staging/<uuid>.blob)
         RT->>Cloud: rclone copyto vault/<uuid>.blob
@@ -77,9 +77,9 @@ sequenceDiagram
     Sync-->>User: pull complete (any failures reported)
 
     note over User,Cloud: Conflict Detection Detail
-    Sync->>Meta: get_meta("snapshot_counter") → local=5
-    Sync->>Cloud: download manifest → decrypt → cloud_counter=7
-    note right of Sync: cloud > local → another device pushed
+    Sync->>Meta: get_meta("snapshot_counter") -&gt; local=5
+    Sync->>Cloud: download manifest -&gt; decrypt -&gt; cloud_counter=7
+    note right of Sync: cloud &gt; local -&gt; another device pushed
     Sync-->>User: CONFLICT: pull first (local=5, cloud=7)
 ```
 

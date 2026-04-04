@@ -26,7 +26,7 @@ sequenceDiagram
     Auth->>Auth: generate salt (32B CSPRNG), vault_id
     Auth->>KDF: Argon2id(password || key_file, salt)
     KDF-->>Auth: master_key
-    Auth->>KDF: HKDF(master_key) × 3
+    Auth->>KDF: HKDF(master_key) x 3
     KDF-->>Auth: key_encryption_key, sqlcipher_key, manifest_key
     Auth->>Auth: zeroize(master_key)
     Auth->>Mem: mlock(SessionKeys)
@@ -47,7 +47,7 @@ sequenceDiagram
     Auth->>Auth: read key_file bytes
     Auth->>KDF: Argon2id(password || key_file, salt from vault_header)
     KDF-->>Auth: master_key
-    Auth->>KDF: HKDF(master_key) × 3
+    Auth->>KDF: HKDF(master_key) x 3
     KDF-->>Auth: key_encryption_key, sqlcipher_key, manifest_key
     Auth->>Auth: zeroize(master_key)
     Auth->>Mem: mlock(SessionKeys)
@@ -59,7 +59,7 @@ sequenceDiagram
     Auth->>UI: warning — 60s before timeout
     Auth->>Mem: zeroize(SessionKeys), drop
     Auth->>DB: close SQLCipher connection
-    Auth-->>UI: session expired → show login screen
+    Auth-->>UI: session expired -&gt; show login screen
 
     note over User,DB: Password Change
     User->>UI: Change password
@@ -68,7 +68,7 @@ sequenceDiagram
     Auth->>Auth: generate new_salt (32B CSPRNG)
     Auth->>KDF: Argon2id(new_password || key_file, new_salt)
     KDF-->>Auth: new_master_key
-    Auth->>KDF: HKDF(new_master_key) × 3
+    Auth->>KDF: HKDF(new_master_key) x 3
     KDF-->>Auth: new_key_encryption_key, new_sqlcipher_key, new_manifest_key
     Auth->>Auth: zeroize(new_master_key)
     Auth->>DB: re-wrap all file_keys and X25519 private key

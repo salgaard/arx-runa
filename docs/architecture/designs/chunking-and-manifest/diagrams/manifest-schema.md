@@ -7,7 +7,7 @@
 erDiagram
     nodes {
         TEXT node_id PK "UUID v4"
-        TEXT parent_id FK "→ nodes.node_id (CASCADE)"
+        TEXT parent_id FK "-&gt; nodes.node_id (CASCADE)"
         TEXT node_type "file | directory"
         TEXT name "plaintext (SQLCipher encrypted)"
         INTEGER created_at "Unix timestamp"
@@ -18,7 +18,7 @@ erDiagram
 
     chunks {
         TEXT chunk_id PK "UUID v4"
-        TEXT node_id FK "→ nodes.node_id (CASCADE)"
+        TEXT node_id FK "-&gt; nodes.node_id (CASCADE)"
         INTEGER chunk_index "0-based"
         TEXT blob_name "UUID v4 (cloud identifier)"
         INTEGER size_padded "always 4 MiB"
@@ -40,8 +40,8 @@ erDiagram
 
     shares {
         TEXT share_id PK
-        TEXT file_id FK "→ nodes.node_id"
-        TEXT contact_id FK "→ contacts.contact_id"
+        TEXT file_id FK "-&gt; nodes.node_id"
+        TEXT contact_id FK "-&gt; contacts.contact_id"
         TEXT file_share_id
         TEXT cloud_path
         INTEGER created_at
@@ -51,7 +51,7 @@ erDiagram
 
     received_shares {
         TEXT share_id PK
-        TEXT sender_contact_id FK "→ contacts.contact_id"
+        TEXT sender_contact_id FK "-&gt; contacts.contact_id"
         TEXT file_name
         BLOB file_key_wrapped
         INTEGER chunk_count
@@ -62,8 +62,8 @@ erDiagram
     }
 
     nodes ||--o{ nodes : "parent_id (self-referencing tree)"
-    nodes ||--o{ chunks : "node_id → chunk_index (CASCADE)"
-    nodes ||--o{ shares : "node_id → file_id"
+    nodes ||--o{ chunks : "node_id -&gt; chunk_index (CASCADE)"
+    nodes ||--o{ shares : "node_id -&gt; file_id"
     contacts ||--o{ shares : "contact_id"
     contacts ||--o{ received_shares : "sender_contact_id"
 ```

@@ -8,9 +8,9 @@ flowchart TD
     subgraph ENCRYPT ["Encrypt Path"]
         E1["Source file\n(BufReader, streaming)"]:::io
         E2["Read chunk_size bytes\n(zero-pad if last chunk)"]:::proc
-        E3["encrypt_chunk\n(file_key, AAD = file_id ∥ chunk_index)"]:::crypto
+        E3["encrypt_chunk\n(file_key, AAD = file_id || chunk_index)"]:::crypto
         E4["[24B nonce | ciphertext | 16B tag]\nwire_blob"]:::data
-        E5["blake3::hash(wire_blob)\n→ blake3_checksum"]:::proc
+        E5["blake3::hash(wire_blob)\n-&gt; blake3_checksum"]:::proc
         E6["Write to\nstaging/<uuid>.blob"]:::io
         E7["ChunkRecord\n(chunk_index, blob_name,\nblake3_checksum)"]:::data
         E8["Insert node + chunks\n(SQLCipher transaction)"]:::db
@@ -20,7 +20,7 @@ flowchart TD
         D1["Read chunks from manifest\n(ordered by chunk_index)"]:::db
         D2["Read blob from\nstaging or cloud download"]:::io
         D3["Verify BLAKE3\n(fail fast if mismatch)"]:::proc
-        D4["decrypt_chunk\n(file_key, AAD = file_id ∥ chunk_index)"]:::crypto
+        D4["decrypt_chunk\n(file_key, AAD = file_id || chunk_index)"]:::crypto
         D5["padded_plaintext\n(chunk_size bytes)"]:::data
         D6["Write to destination\n(full chunk or truncate last)"]:::io
         D7["Reassembled file\n(size_bytes from manifest)"]:::io
@@ -28,9 +28,9 @@ flowchart TD
 
     subgraph KEYS ["Key Lifecycle"]
         K1["Generate file_key\n(32B CSPRNG)"]:::crypto
-        K2["Wrap: encrypt(file_key,\nkey_encryption_key)\n→ file_key_wrapped"]:::crypto
+        K2["Wrap: encrypt(file_key,\nkey_encryption_key)\n-&gt; file_key_wrapped"]:::crypto
         K3["Store file_key_wrapped\nin nodes table"]:::db
-        K4["Unwrap: decrypt(file_key_wrapped,\nkey_encryption_key)\n→ file_key"]:::crypto
+        K4["Unwrap: decrypt(file_key_wrapped,\nkey_encryption_key)\n-&gt; file_key"]:::crypto
         K5["Zeroize file_key\nafter use"]:::crypto
     end
 

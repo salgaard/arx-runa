@@ -134,7 +134,7 @@ An individual user wants to back up sensitive personal files (documents, photos,
 - Physical theft of device during an unlocked session
 - Malware capturing keys or screen during session
 - Cloud provider deleting or corrupting blobs
-- Quantum computing attacks (symmetric AES/ChaCha20 remains secure; see design doc)
+- Quantum computing attacks (symmetric XChaCha20-Poly1305 remains secure; see design doc)
 
 ## Notes
 
