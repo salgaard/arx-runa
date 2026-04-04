@@ -13,9 +13,8 @@ Use cases serve multiple functions:
 
 ## Structure
 
-Each use case follows a standardized format (see `_template.md`):
+Each use case follows a standardised format (see `_template.md`):
 
-- **UC-ID**: Unique identifier with category prefix
 - **Actors**: Who is involved (users, systems, external entities)
 - **Preconditions**: What must be true before the use case executes
 - **Main Flow**: Step-by-step primary success scenario
@@ -23,88 +22,55 @@ Each use case follows a standardized format (see `_template.md`):
 - **Success Criteria**: Measurable outcomes that define success
 - **Related Designs**: Links to design documents that address this use case
 - **Security Considerations**: Threats addressed, assumptions, and out-of-scope items
+- **Notes**: Brief context (≤3 sentences)
 
-## Categories
+## Progressive Security Model
+
+VoidGate supports two authentication tiers, selectable per folder:
+
+| Tier | Auth Factors | Use Case |
+|------|-------------|----------|
+| **Tier 1** | Password only | Default; accessible to any user |
+| **Tier 2** | Password + USB key file | High-value folders; hardware MFA required |
+
+All tiers are zero-knowledge — the cloud provider never holds keys or plaintext regardless of tier.
+
+## Use Cases
 
 ### Individual Privacy (UC-IND)
 
-Use cases for individuals who don't trust cloud providers with their sensitive data.
+Use cases for individuals protecting personal data from untrusted cloud providers.
 
-| ID | Title | Key Features |
-| ---- | ------- | -------------- |
-| [UC-IND-001](UC-IND-001-personal-file-backup.md) | Personal File Backup with Zero-Knowledge Encryption | XChaCha20-Poly1305 encryption, fixed-size chunks, hardware MFA |
-| [UC-IND-002](UC-IND-002-cross-device-access.md) | Cross-Device Secure File Access | Multi-device sync, conflict detection, portable USB key |
-| [UC-IND-003](UC-IND-003-photo-storage.md) | Privacy-Focused Photo Storage | EXIF metadata protection, size padding, in-memory viewing |
-| [UC-IND-004](UC-IND-004-hardware-mfa-protection.md) | Hardware MFA for Personal Data Protection | USB key file, no password-only fallback, offline authentication |
-| [UC-IND-005](UC-IND-005-key-loss-and-data-recovery.md) | Key Loss and Irrecoverable Data Scenarios | No password reset, no recovery mechanism, backup strategies, cryptographic guarantee |
+| ID | Title | Sub-question |
+|----|-------|-------------|
+| [UC-IND-001](UC-IND-001-personal-file-backup.md) | Zero-Knowledge Personal Backup | SQ1 (crypto), SQ3 (chunking), SQ4 (Zero-Trace) |
+| [UC-IND-002](UC-IND-002-cross-device-access.md) | Cross-Device Synchronisation | SQ3 (sync) |
+| [UC-IND-003](UC-IND-003-hardware-mfa-and-key-loss.md) | Hardware MFA and Key Loss | SQ2 (USB hardware factor) |
 
 ### Business & Enterprise (UC-BIZ)
 
-Use cases for organizations requiring compliance, multi-user access, or BYOC flexibility.
+Use cases for organisations requiring compliance, multi-user access, or BYOC flexibility.
 
-| ID | Title | Key Features |
-| ---- | ------- | -------------- |
-| [UC-BIZ-001](UC-BIZ-001-confidential-byoc.md) | Confidential Document Storage with BYOC | Bring Your Own Cloud, compliance-ready, cloud migration |
-| [UC-BIZ-002](UC-BIZ-002-secure-sharing.md) | Secure File Sharing Within Organization | Share key wrapping, revocation, expiration, audit trails |
-| [UC-BIZ-003](UC-BIZ-003-regulated-storage.md) | Regulated Industry Cloud Storage | HIPAA/GDPR/FINRA compliance, breach notification exemption |
-| [UC-BIZ-004](UC-BIZ-004-zero-trust.md) | Zero-Trust Architecture Compliance | Cryptographic trust boundaries, continuous verification |
+| ID | Title | Sub-question |
+|----|-------|-------------|
+| [UC-BIZ-001](UC-BIZ-001-confidential-byoc.md) | Organisational BYOC Storage | SQ1 (crypto), SQ3 (chunking) |
+| [UC-BIZ-002](UC-BIZ-002-secure-sharing.md) | Secure File Sharing | SQ5 (file sharing) |
 
-### Developer & Technical (UC-DEV)
+## Sub-Question Traceability
 
-Use cases for technical users who want full control over cryptographic implementation.
+Mapping to the five problem-formulation sub-questions:
 
-| ID | Title | Key Features |
-| ---- | ------- | -------------- |
-| [UC-DEV-001](UC-DEV-001-secret-storage.md) | Cryptographic Secret Storage | API keys/certificates backup, in-memory decryption, rotation |
-| [UC-DEV-002](UC-DEV-002-dev-backup.md) | Development Artifact Backup | Docker images, binaries, source archives, integrity checksums |
-| [UC-DEV-003](UC-DEV-003-custom-backend.md) | Custom Cloud Backend Integration | Rclone 70+ backends, self-hosted, decentralized, cost optimization |
+| Sub-question | Description | Use case coverage |
+|---|---|---|
+| SQ1 | Encryption standards and key management | UC-IND-001, UC-BIZ-001 |
+| SQ2 | USB hardware factor in authentication | UC-IND-003 |
+| SQ3 | Chunking and sync without metadata leakage | UC-IND-001, UC-IND-002, UC-BIZ-001 |
+| SQ4 | RAM-based UI / Zero-Trace | UC-IND-001 |
+| SQ5 | File sharing in a zero-trust system | UC-BIZ-002 |
 
-## Verification
+## Design Document Coverage
 
-Use cases are validated against design documents using the `use-case-coverage` skill:
-
-```bash
-# Check which use cases have design coverage
-/use-case-coverage
-```
-
-The skill parses the "Related Designs" section of each use case and reports:
-- ✅ Use cases with complete design coverage
-- ⚠️ Use cases with partial coverage (some designs missing)
-- ❌ Use cases with no design references (gaps requiring attention)
-
-**Example Coverage Report**:
-```
-✅ 11/11 use cases have complete design coverage (100%)
-📊 42 total design references, all valid
-🔗 Most referenced: cryptographic-primitives, cloud-synchronisation
-```
-
-Run `/use-case-coverage` after any use case or design changes to validate current traceability.
-
-## How to Read Use Cases
-
-1. **Start with the Overview**: Understand the problem being solved
-2. **Check Actors and Preconditions**: Identify who's involved and what's required
-3. **Follow the Main Flow**: Walk through the primary success scenario step-by-step
-4. **Review Alternate Flows**: Consider variations and edge cases
-5. **Verify Success Criteria**: Understand what defines a successful outcome
-6. **Trace to Designs**: Follow links to see how VoidGate's architecture addresses this use case
-7. **Assess Security**: Review threats addressed and security assumptions
-
-## Adding New Use Cases
-
-1. Copy `_template.md` to a new file: `UC-[CATEGORY]-NNN-kebab-case-title.md`
-2. Choose appropriate category prefix: `IND`, `BIZ`, or `DEV`
-3. Fill in all template sections with specific details
-4. Link to relevant design documents in "Related Designs"
-5. Add entry to the appropriate category list in this README
-6. Run `use-case-coverage` skill to verify design traceability
-7. Update `docs/SUMMARY.md` to include the new use case in the navigation
-
-## Design Document References
-
-Use cases reference the following design documents:
+All use cases reference at least one canonical design document:
 
 - [Authentication & Session Management](../architecture/designs/authentication-and-session-management/design.md)
 - [Cryptographic Primitives](../architecture/designs/cryptographic-primitives/design.md)
@@ -113,6 +79,13 @@ Use cases reference the following design documents:
 - [File Sharing](../architecture/designs/file-sharing/design.md)
 - [Tauri IPC & Frontend](../architecture/designs/tauri-ipc-and-frontend/design.md)
 
----
+Run `/use-case-coverage` after any use case or design changes to verify traceability.
 
-**Maintenance**: Review use cases when designs change significantly or when new features are added. The `use-case-coverage` skill should be run after any updates to ensure traceability remains intact.
+## Adding New Use Cases
+
+1. Copy `_template.md` to `UC-[CATEGORY]-NNN-kebab-case-title.md`
+2. Choose category prefix: `IND` or `BIZ`
+3. Fill in all sections; keep the main flow to ≤15 steps and alternate flows to ≤4
+4. Add entry to the appropriate table above
+5. Run `/use-case-coverage` to verify design references
+6. Update `docs/SUMMARY.md`
