@@ -39,10 +39,10 @@ All tiers are zero-knowledge — the cloud provider never holds keys or plaintex
 
 | ID | Title | Sub-question |
 |----|-------|-------------|
-| [UC-IND-001](UC-IND-001-personal-file-backup.md) | Zero-Knowledge Personal Backup | SQ1 (crypto), SQ3 (chunking), SQ4 (Zero-Trace) |
-| [UC-IND-002](UC-IND-002-cross-device-access.md) | Cross-Device Synchronisation | SQ3 (sync) |
-| [UC-IND-003](UC-IND-003-hardware-mfa-and-key-loss.md) | Hardware MFA and Key Loss | SQ2 (USB hardware factor) |
-| [UC-IND-004](UC-IND-004-personal-file-sharing.md) | Personal File Sharing | SQ5 (file sharing) |
+| [use-case-1](use-case-1-personal-file-backup.md) | Zero-Knowledge Personal Backup | SQ1 (crypto), SQ3 (chunking), SQ4 (Zero-Trace) |
+| [use-case-2](use-case-2-cross-device-access.md) | Cross-Device Synchronisation | SQ3 (sync) |
+| [use-case-3](use-case-3-hardware-mfa-and-key-loss.md) | Hardware MFA and Key Loss | SQ2 (USB hardware factor) |
+| [use-case-4](use-case-4-personal-file-sharing.md) | Personal File Sharing | SQ5 (file sharing) |
 
 ## Sub-Question Traceability
 

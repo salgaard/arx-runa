@@ -66,7 +66,7 @@ A user wants to share specific files from their vault with a friend or family me
 1. Sender unlocks vault and pulls latest manifest from cloud
 2. VoidGate reads the download receipt written by the recipient (file_id, timestamp)
 3. VoidGate displays: "Your shared file was downloaded by [recipient] on [date]"
-4. No server required — receipt is a small encrypted entry in the shared manifest area, picked up on next pull
+4. No server required — receipt is a small encrypted blob written under `shared/<file_share_id>/receipts/` in the cloud, picked up on next pull
 
 ### Recipient Does Not Have VoidGate
 

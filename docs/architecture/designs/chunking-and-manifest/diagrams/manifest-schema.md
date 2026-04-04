@@ -45,6 +45,7 @@ erDiagram
         TEXT file_share_id
         TEXT cloud_path
         INTEGER created_at
+        INTEGER expires_at "NULL if no expiration"
         INTEGER revoked_at "NULL if active"
     }
 
@@ -69,7 +70,7 @@ erDiagram
 
 ## Description
 
-Entity-relationship diagram for the SQLCipher manifest database. The entire database is encrypted with `sqlcipher_key` (derived via HKDF in Phase 1).
+Entity-relationship diagram for the SQLCipher manifest database. The entire database is encrypted with `sqlcipher_key` (derived from `master_key` via HKDF-SHA256 during authentication).
 
 ### Core tables (Phase 3)
 

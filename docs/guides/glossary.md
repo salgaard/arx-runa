@@ -29,9 +29,10 @@ The cloud provider sees blob count, uniform blob sizes, and access timing — ne
 A plaintext JSON file stored at the cloud root (`vault-header.json`). It contains only public parameters needed to bootstrap key derivation on a new device:
 
 - `vault_id` — UUID v4 identifying the vault
-- `salt` — 32-byte Argon2id salt (CSPRNG-generated at vault creation)
+- `tier` — authentication tier selected at vault creation: `1` (password only) or `2` (password + USB key file)
+- `argon2_salt` — 32-byte Argon2id salt (CSPRNG-generated at vault creation)
 - `argon2_params` — Argon2id cost parameters (memory, iterations, parallelism)
-- `key_file_blake3` — BLAKE3 fingerprint of the USB key file (Tier 2 only; preimage-resistant, does not reveal key material)
+- `key_file_blake3` — BLAKE3 fingerprint of the USB key file (Tier 2 only; `null` for Tier 1; preimage-resistant, does not reveal key material)
 
 The vault header is intentionally unencrypted: it must be downloadable before any keys exist, so a new device can derive the correct keys without prior authentication.
 
@@ -47,7 +48,7 @@ The manifest records, for each file:
 - Chunk map: ordered list of UUID blob names and their sizes
 - `snapshot_counter` for sync conflict detection
 
-The manifest is encrypted with `sqlcipher_key` (derived from `master_key` via HKDF). The cloud never sees manifest contents in plaintext.
+The local SQLCipher database is encrypted with `sqlcipher_key` (derived from `master_key` via HKDF). The cloud backup (`manifest-backup.blob`) is separately encrypted with `manifest_key` (also derived from `master_key` via HKDF). The cloud never sees manifest contents in plaintext.
 
 ---
 
@@ -78,7 +79,7 @@ The root key material for a vault session, derived by Argon2id from the user's p
 
 ## file_key
 
-A 32-byte random key generated per file at encryption time. Used as the actual XChaCha20-Poly1305 encryption key for that file's chunks. Stored encrypted inside the SQLCipher manifest (wrapped under `sqlcipher_key`).
+A 32-byte random key generated per file at encryption time. Used as the actual XChaCha20-Poly1305 encryption key for that file's chunks. Stored encrypted inside the SQLCipher manifest (wrapped under `key_encryption_key`, HKDF-derived from `master_key`) as `file_key_wrapped` in the `nodes` table.
 
 ---
 
@@ -143,6 +144,6 @@ The binding value included in every XChaCha20-Poly1305 encryption call: `file_id
 
 ---
 
-## Share Key (`share_key`)
+## File Sharing Key
 
-A per-file key used in the file-sharing feature (Phase 5). When a file is shared, a `share_key` is generated and wrapped with the recipient's public key so only they can unwrap it. Stored in the manifest alongside share metadata (recipient, expiration). See [UC-IND-004](../use-cases/UC-IND-004-personal-file-sharing.md).
+There is no separate `share_key` in VoidGate. When a file is shared, the existing `file_key` is re-encrypted inside an ECIES envelope (using an ECDH-derived symmetric key) addressed to the recipient's X25519 public key. The resulting `file_key_wrapped` is included in the share package. Share metadata is stored in the `shares` table (sender side) and `received_shares` table (recipient side) of the SQLCipher database. See [UC-IND-004](../use-cases/use-case-4-personal-file-sharing.md).
