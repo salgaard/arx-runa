@@ -26,35 +26,23 @@ Each use case follows a standardised format (see `_template.md`):
 
 ## Progressive Security Model
 
-VoidGate supports two authentication tiers, selectable per folder:
+VoidGate supports two authentication tiers, selectable per vault:
 
 | Tier | Auth Factors | Use Case |
 |------|-------------|----------|
-| **Tier 1** | Password only | Default; accessible to any user |
-| **Tier 2** | Password + USB key file | High-value folders; hardware MFA required |
+| **Tier 1** | Password only | Chosen at vault creation; accessible from any device with the password |
+| **Tier 2** | Password + USB key file | Chosen at vault creation; hardware factor required on every access |
 
-All tiers are zero-knowledge — the cloud provider never holds keys or plaintext regardless of tier.
+All tiers are zero-knowledge — the cloud provider never holds keys or plaintext regardless of tier. The tier applies to the entire vault and is chosen at creation time. Users who need different security levels create separate vaults.
 
 ## Use Cases
-
-### Individual Privacy (UC-IND)
-
-Use cases for individuals protecting personal data from untrusted cloud providers.
 
 | ID | Title | Sub-question |
 |----|-------|-------------|
 | [UC-IND-001](UC-IND-001-personal-file-backup.md) | Zero-Knowledge Personal Backup | SQ1 (crypto), SQ3 (chunking), SQ4 (Zero-Trace) |
 | [UC-IND-002](UC-IND-002-cross-device-access.md) | Cross-Device Synchronisation | SQ3 (sync) |
 | [UC-IND-003](UC-IND-003-hardware-mfa-and-key-loss.md) | Hardware MFA and Key Loss | SQ2 (USB hardware factor) |
-
-### Business & Enterprise (UC-BIZ)
-
-Use cases for organisations requiring compliance, multi-user access, or BYOC flexibility.
-
-| ID | Title | Sub-question |
-|----|-------|-------------|
-| [UC-BIZ-001](UC-BIZ-001-confidential-byoc.md) | Organisational BYOC Storage | SQ1 (crypto), SQ3 (chunking) |
-| [UC-BIZ-002](UC-BIZ-002-secure-sharing.md) | Secure File Sharing | SQ5 (file sharing) |
+| [UC-IND-004](UC-IND-004-personal-file-sharing.md) | Personal File Sharing | SQ5 (file sharing) |
 
 ## Sub-Question Traceability
 
@@ -62,11 +50,11 @@ Mapping to the five problem-formulation sub-questions:
 
 | Sub-question | Description | Use case coverage |
 |---|---|---|
-| SQ1 | Encryption standards and key management | UC-IND-001, UC-BIZ-001 |
+| SQ1 | Encryption standards and key management | UC-IND-001 |
 | SQ2 | USB hardware factor in authentication | UC-IND-003 |
-| SQ3 | Chunking and sync without metadata leakage | UC-IND-001, UC-IND-002, UC-BIZ-001 |
+| SQ3 | Chunking and sync without metadata leakage | UC-IND-001, UC-IND-002 |
 | SQ4 | RAM-based UI / Zero-Trace | UC-IND-001 |
-| SQ5 | File sharing in a zero-trust system | UC-BIZ-002 |
+| SQ5 | File sharing in a zero-trust system | UC-IND-004 |
 
 ## Design Document Coverage
 

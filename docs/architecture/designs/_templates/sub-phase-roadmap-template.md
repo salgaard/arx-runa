@@ -30,14 +30,11 @@
 ## Dependency Graph
 
 ```
-[X.1] → [X.2] → [X.3]
-         ↓
-        [X.4] → [X.5]
+[X.1] → [X.2] → [X.3] → [X.4] → [X.5]
 ```
 
 **Legend**:
 - `→` strict dependency (must complete predecessor before starting)
-- `↓` optional/flexible dependency (can start but may need predecessor output for full testing)
 
 ---
 

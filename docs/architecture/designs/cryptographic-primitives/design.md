@@ -48,6 +48,8 @@ RFC 5869 HKDF is used to derive three purpose-specific keys from `master_key`. E
 
 **Extensibility**: To add a new derived key, use the `derive-hkdf-key` skill. New keys are added by expanding with a distinct `info` string — the existing derived keys remain unchanged because HKDF produces independent outputs for different `info` values.
 
+> **Note**: The file-sharing design (Phase 5) uses a separate HKDF derivation with `info="voidgate-share"` for ECIES share packages. That derivation uses an ECDH shared secret as IKM, not `master_key`, and is documented in `docs/architecture/designs/file-sharing/design.md`. It is a distinct key derivation tree and does not affect the vault-key derivations above.
+
 ### Rust Signature
 
 ```rust
@@ -126,7 +128,7 @@ Total overhead: 40 bytes per chunk.
 
 ### AAD Construction
 
-Every AEAD operation MUST include Associated Authenticated Data (AAD) binding the ciphertext to its context:
+Every AEAD operation on chunk data MUST include Associated Authenticated Data (AAD) binding the ciphertext to its file and position context. Operations on singleton blobs that use a purpose-specific key (e.g., the manifest backup encrypted with `manifest_key`) may omit AAD when there is no multi-instance context to bind — see the cloud-sync design for the manifest backup rationale.
 
 ```
 AAD = file_id (16 bytes, UUID as raw bytes) || chunk_index (4 bytes, big-endian u32)
@@ -336,45 +338,8 @@ src-tauri/src/crypto/
 
 ## Data Flow Diagrams
 
-### Chunk Encryption Flow
-
-```mermaid
-sequenceDiagram
-    participant Caller
-    participant encrypt_chunk
-    participant CSPRNG
-    participant XChaCha20Poly1305
-
-    Caller->>encrypt_chunk: plaintext, file_key, file_id, chunk_index
-    encrypt_chunk->>CSPRNG: generate_nonce()
-    CSPRNG-->>encrypt_chunk: nonce (24 bytes)
-    encrypt_chunk->>encrypt_chunk: construct AAD = file_id || chunk_index
-    encrypt_chunk->>XChaCha20Poly1305: encrypt_in_place_detached(nonce, aad, plaintext)
-    XChaCha20Poly1305-->>encrypt_chunk: tag (16 bytes)
-    encrypt_chunk->>encrypt_chunk: assemble [nonce | ciphertext | tag]
-    encrypt_chunk-->>Caller: blob (Vec<u8>)
-```
-
-### Key Derivation Flow
-
-```mermaid
-flowchart LR
-    MK["master_key\n(from Argon2id)"]
-    
-    subgraph HKDF["HKDF-SHA256 Expansion"]
-        H1["expand(info: voidgate-key-encryption)"]
-        H2["expand(info: voidgate-sqlcipher)"]
-        H3["expand(info: voidgate-manifest-backup)"]
-    end
-    
-    KEK["key_encryption_key"]
-    SK["sqlcipher_key"]
-    MAK["manifest_key"]
-    
-    MK --> H1 --> KEK
-    MK --> H2 --> SK
-    MK --> H3 --> MAK
-```
+- [Chunk Encryption Flow](diagrams/chunk-encryption-flow.md) — internal flow of `encrypt_chunk`
+- [Key Derivation Flow](diagrams/key-derivation-flow.md) — HKDF-SHA256 expansion from `master_key` to vault keys
 
 ---
 
@@ -469,6 +434,8 @@ None — all design decisions have been made.
 ## Related Documents
 
 - [Key Derivation Tree Diagram](diagrams/key-derivation-tree.md)
+- [Chunk Encryption Flow](diagrams/chunk-encryption-flow.md)
+- [Key Derivation Flow](diagrams/key-derivation-flow.md)
 - [File Sharing Architecture](../file-sharing/design.md) — per-file key rationale
 - [ADR 001 — Code Structure](../../../architecture-decisions/001-code-structure-and-patterns.md)
 - Roadmap Phase 1 deliverables

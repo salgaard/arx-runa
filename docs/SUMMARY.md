@@ -62,6 +62,8 @@
 
 - [Development Setup](guides/development.md)
 - [Documentation SSOT](guides/documentation-ssot.md)
+- [Glossary](guides/glossary.md)
+- [Security Model](guides/security-model.md)
 
 ---
 

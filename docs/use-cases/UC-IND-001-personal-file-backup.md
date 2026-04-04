@@ -8,7 +8,7 @@
 
 ## Overview
 
-An individual user wants to back up sensitive personal files (documents, photos, videos) to cloud storage without exposing plaintext, filenames, or metadata to the cloud provider. VoidGate uses a drop zone as the primary interface and defaults to Tier 1 authentication (password-only); high-value folders can be upgraded to Tier 2 (password + USB key file).
+An individual user wants to back up sensitive personal files (documents, photos, videos) to cloud storage without exposing plaintext, filenames, or metadata to the cloud provider. VoidGate uses a drop zone as the primary interface. When creating a vault the user chooses an authentication tier: Tier 1 (password-only) or Tier 2 (password + USB key file). The tier applies to the entire vault — users who need different security levels create separate vaults.
 
 ## Actors
 
@@ -19,35 +19,24 @@ An individual user wants to back up sensitive personal files (documents, photos,
 
 - User has installed VoidGate on their local machine
 - User has configured an Rclone backend (e.g., Google Drive, Dropbox, S3)
-- User has set a vault password
 
 ## Main Flow
 
-1. User launches VoidGate and enters password (Tier 1)
-2. VoidGate derives master_key via Argon2id(password, salt)
-3. VoidGate unlocks vault and displays drop zone UI with vault file browser
-4. User drags files or folders onto the drop zone
-5. VoidGate reads each file into RAM, generates a random file_key per file
-6. VoidGate splits the file into 4 MiB fixed-size chunks, zero-padding the final chunk
-7. VoidGate encrypts each chunk with XChaCha20-Poly1305 (AAD: file_id || chunk_index)
-8. VoidGate uploads encrypted chunks to cloud with random UUID blob names
-9. VoidGate stores encrypted manifest (filenames, chunk map) in SQLCipher database
-10. Drop zone shows sync progress and confirms completion
-11. User browses vault and retrieves files via in-app viewer or file browser
-12. User locks vault
+1. User launches VoidGate and selects "Create Vault"
+2. VoidGate prompts: "Choose authentication tier — Tier 1 (password only) or Tier 2 (password + USB key)"
+3. User selects a tier and completes setup (password for Tier 1; password + USB key generation for Tier 2)
+4. VoidGate derives encryption keys from the provided credentials
+5. VoidGate unlocks vault and displays drop zone UI with vault file browser
+6. User drags files or folders onto the drop zone
+7. VoidGate generates a unique encryption key for each file
+8. VoidGate splits and encrypts the file into fixed-size chunks
+9. VoidGate records the file in the encrypted vault manifest
+10. VoidGate uploads encrypted chunks to cloud
+11. Drop zone shows sync progress and confirms completion
+12. User browses vault and views files in-app (Zero-Trace)
+13. User locks vault (and removes USB key if Tier 2)
 
 ## Alternate Flows
-
-### Upgrade Folder to Tier 2
-
-**Trigger**: User wants a folder to require USB key as a second factor
-
-**Steps**:
-1. User right-clicks folder in vault browser → "Require USB Key (Tier 2)"
-2. User inserts USB drive; VoidGate reads 32-byte key_file_bytes
-3. VoidGate re-derives folder keys combining password + key_file_bytes
-4. VoidGate re-wraps affected file_keys under the new key material
-5. Folder is now Tier 2 — future access requires both password and USB key
 
 ### Media Files (EXIF and In-Memory Viewing)
 
@@ -60,6 +49,18 @@ An individual user wants to back up sensitive personal files (documents, photos,
 4. When user opens a photo: VoidGate decrypts chunks into RAM and renders in-app (no temp file written to disk)
 5. For large videos: VoidGate decrypts and streams progressively from cloud chunks
 
+### Export Decrypted File to Disk
+
+**Trigger**: User wants to save a decrypted copy of a file outside VoidGate (e.g., to edit in an external application)
+
+**Steps**:
+1. User selects a file in the vault browser and chooses "Export"
+2. VoidGate downloads encrypted chunks and decrypts in RAM
+3. VoidGate prompts user to choose a save location
+4. VoidGate writes the plaintext file to the chosen location
+5. VoidGate warns: "Exported file is unencrypted and outside vault protection"
+6. User is responsible for the exported copy
+
 ### Cloud Provider Unavailable
 
 **Trigger**: Rclone backend is unreachable
@@ -67,7 +68,19 @@ An individual user wants to back up sensitive personal files (documents, photos,
 **Steps**:
 1. VoidGate completes local encryption and manifest update
 2. VoidGate queues upload for retry and displays "Sync pending"
-3. When connectivity restores, VoidGate automatically retries upload
+3. When connectivity restores, user triggers sync and VoidGate uploads pending chunks
+
+### Cloud Provider Migration
+
+**Trigger**: User wants to switch to a different cloud provider (e.g., from Google Drive to Backblaze B2)
+
+**Steps**:
+1. User configures a new Rclone backend in VoidGate settings
+2. User initiates "Migrate Vault" — VoidGate downloads all encrypted blobs from the old backend
+3. VoidGate re-uploads the same blobs to the new backend (UUID names and content unchanged)
+4. VoidGate pushes vault header and manifest backup to new backend
+5. User verifies migration and decommissions old backend
+6. No re-encryption required — data remains opaque to both providers
 
 ### File Already Exists
 
@@ -77,7 +90,7 @@ An individual user wants to back up sensitive personal files (documents, photos,
 1. VoidGate checks manifest for existing file by name
 2. VoidGate prompts: "File exists — overwrite or keep both?"
 3. On overwrite: old chunks are deleted, new chunks encrypted and uploaded
-4. On keep both: new version added with timestamp suffix in manifest
+4. On keep both: VoidGate saves the new file alongside the original with a disambiguated name
 
 ## Success Criteria
 
@@ -87,8 +100,9 @@ An individual user wants to back up sensitive personal files (documents, photos,
 - EXIF metadata is stripped or encrypted before upload (media files)
 - Decrypted content is displayed in-memory — no plaintext written to disk (Zero-Trace)
 - Drop zone is the primary upload interface; user never selects files through a system file picker by default
-- Tier 1 folders require password only; Tier 2 folders additionally require USB key file
-- Vault cannot be opened without the correct password
+- User selects authentication tier (Tier 1 or Tier 2) when creating the vault
+- Tier 1 vault requires password only; Tier 2 vault additionally requires USB key file
+- Vault cannot be opened without the correct authentication factors for the chosen tier
 
 ## Related Designs
 

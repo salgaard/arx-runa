@@ -15,12 +15,12 @@ Each design folder contains:
 
 | Design | Status | Sub-Phases | Description |
 |--------|--------|------------|-------------|
-| [Authentication & Session](authentication-and-session-management/design.md) | Design complete | No | USB key file, Argon2id KDF, session lifecycle |
-| [Chunking & Manifest](chunking-and-manifest/design.md) | Design complete | No | Fixed-size chunks, SQLCipher manifest, integrity checks |
+| [Authentication & Session](authentication-and-session-management/design.md) | Design complete | **Yes** (4 phases) | USB key file, Argon2id KDF, session lifecycle |
+| [Chunking & Manifest](chunking-and-manifest/design.md) | Design complete | **Yes** (3 phases) | Fixed-size chunks, SQLCipher manifest, integrity checks |
 | [Cloud Synchronisation](cloud-synchronisation/design.md) | Design complete | **Yes** (5 phases) | Rclone transport, conflict resolution, vault header |
-| [Cryptographic Primitives](cryptographic-primitives/design.md) | Design complete | No | XChaCha20-Poly1305, HKDF, key derivation tree |
-| [File Sharing](file-sharing/design.md) | Design complete | No | X25519 key exchange, share packages, revocation |
-| [Tauri IPC & Frontend](tauri-ipc-and-frontend/design.md) | Reviewed | TBD | Error sanitisation, command surface, frontend UI |
+| [Cryptographic Primitives](cryptographic-primitives/design.md) | Design complete | **Yes** (3 phases) | XChaCha20-Poly1305, HKDF, key derivation tree |
+| [File Sharing](file-sharing/design.md) | Design complete | **Yes** (3 phases) | X25519 key exchange, share packages, revocation |
+| [Tauri IPC & Frontend](tauri-ipc-and-frontend/design.md) | Reviewed | **Yes** (4 phases) | Error sanitisation, command surface, frontend UI |
 
 ## Creating New Designs
 

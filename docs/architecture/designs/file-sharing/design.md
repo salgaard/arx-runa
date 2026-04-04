@@ -176,6 +176,105 @@ If a file is shared with multiple recipients and the owner revokes access for on
 
 ---
 
+## Download Receipts
+
+### Purpose
+
+The owner of a shared file may want to know when a recipient has downloaded it. Download receipts provide a lightweight, cloud-mediated notification mechanism that does not require a central server.
+
+### Mechanism
+
+After a recipient successfully downloads and decrypts all chunks of a shared file, the recipient's VoidGate writes a receipt to the owner's shared folder in the cloud:
+
+```
+shared/<file_share_id>/receipts/<receipt_uuid>.blob
+```
+
+The receipt is encrypted with the owner's X25519 public key via ECIES (the same construction used for share packages). Only the owner can decrypt it.
+
+### Receipt format (plaintext inside ECIES envelope)
+
+```json
+{
+  "share_id": "<uuid-v4>",
+  "recipient_contact_id": "<uuid-v4>",
+  "downloaded_at": 1714000000
+}
+```
+
+### Owner reads receipts
+
+On the next manifest pull or sync operation, the owner's VoidGate:
+
+1. Lists blobs under `shared/<file_share_id>/receipts/`
+2. Downloads and decrypts each receipt using the owner's X25519 private key
+3. Displays a notification: "Your shared file was downloaded by [contact name] on [date]"
+4. Deletes the receipt blob from the cloud after reading (optional; keeps the shared folder tidy)
+
+### Security properties
+
+- Only the owner can read receipts (ECIES with owner's public key)
+- The cloud provider sees that a receipt blob was written but cannot read its content
+- A malicious recipient can choose not to write a receipt — receipts are cooperative, not enforceable
+- A malicious recipient can write a false receipt — the owner should treat receipts as informational, not authoritative
+
+### Scope
+
+Implementation target: Phase 5 (optional enhancement alongside core file sharing).
+
+---
+
+## Share Expiration
+
+### Purpose
+
+The owner may want a share to expire automatically after a specified period, without requiring manual revocation.
+
+### Share package field
+
+The share package JSON (inside the ECIES envelope) gains an optional `expires_at` field:
+
+```json
+{
+  "share_id": "<uuid-v4>",
+  "file_id": "<uuid-v4>",
+  "file_name": "report.pdf",
+  "expires_at": 1717200000,
+  ...
+}
+```
+
+If `expires_at` is `null` or absent, the share does not expire.
+
+### Database schema addition
+
+The `shares` table gains an `expires_at` column:
+
+```sql
+ALTER TABLE shares ADD COLUMN expires_at INTEGER;  -- Unix timestamp, NULL = no expiration
+```
+
+### Enforcement
+
+Expiration is enforced at two levels:
+
+1. **Cooperative (recipient-side)**: The recipient's VoidGate checks `expires_at` before decrypting. If the current time exceeds `expires_at`, VoidGate displays "Share expired — contact sender for renewed access" and refuses to decrypt. A malicious or modified recipient client can bypass this check.
+
+2. **Server-side (owner-side)**: On each push or sync operation, the owner's VoidGate checks all active shares for expired `expires_at` values. For each expired share:
+   - Delete the blobs under `shared/<file_share_id>/` from the cloud
+   - Set `shares.revoked_at` to the current timestamp
+   - This provides enforcement independent of the recipient's cooperation
+
+### UX
+
+When sharing a file, the sender can optionally configure an expiration period (e.g., "7 days", "30 days", "90 days", or "No expiration"). VoidGate computes `expires_at` as the current Unix timestamp plus the selected duration.
+
+### Scope
+
+Implementation target: Phase 5.
+
+---
+
 ## Database Schema
 
 ### Owner side

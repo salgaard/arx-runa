@@ -7,9 +7,11 @@
 
 ## Goals
 
-- Two-factor authentication: password + USB key file (physical hardware factor)
-- Password alone cannot compromise data — the key file is a mandatory cryptographic input
-- USB key file auto-detected when inserted — no manual file selection required after first setup
+- Two authentication tiers, selected per vault at creation time:
+  - **Tier 1** — password only: security depends on password entropy and Argon2id cost parameters
+  - **Tier 2** — password + USB key file: password alone cannot compromise data; the key file is a mandatory cryptographic input and a physical hardware factor
+- Both tiers are zero-knowledge: the cloud never holds keys, plaintext, or file names
+- USB key file auto-detected when inserted — no manual file selection required after first setup (Tier 2 only)
 - Session keys held in memory-locked RAM, zeroed on timeout
 - Vault creation generates all initial material: key file, salt, vault header, SQLCipher DB, X25519 identity keypair
 - Password and key file rotation supported without re-encrypting cloud blobs
@@ -17,6 +19,8 @@
 ---
 
 ## USB Key File
+
+The USB key file is the hardware second factor in Tier 2 authentication. Tier 1 vaults do not use a key file; all subsections below apply specifically to Tier 2.
 
 ### Format and generation
 
@@ -81,15 +85,16 @@ The vault header is stored in the cloud (plaintext JSON). An attacker who obtain
 
 ### Password and key file combination
 
-The Argon2id "password" input is constructed as:
+The Argon2id "password" input differs by tier:
 
 ```
-argon2_input = password_utf8_bytes || key_file_bytes
+Tier 1:  argon2_input = password_utf8_bytes
+Tier 2:  argon2_input = password_utf8_bytes || key_file_bytes
 ```
 
-where `password_utf8_bytes` is the password encoded as UTF-8, and `key_file_bytes` is the raw 32-byte key file content.
+In Tier 1, only the UTF-8-encoded password is passed to Argon2id. In Tier 2, the raw 32-byte key file content is appended to the password bytes before being passed to Argon2id.
 
-Simple concatenation is unambiguous because the key file is always exactly 32 bytes. Given the combined input and its total length, the split point is deterministic at `total_length - 32`. Length-prefixing adds complexity for a non-existent ambiguity. Hashing the password before Argon2id would destroy the benefit of Argon2id's memory-hard processing of the raw password.
+For Tier 2, simple concatenation is unambiguous because the key file is always exactly 32 bytes. Given the combined input and its total length, the split point is deterministic at `total_length - 32`. Length-prefixing adds complexity for a non-existent ambiguity. Hashing the password before Argon2id would destroy the benefit of Argon2id's memory-hard processing of the raw password.
 
 ### Salt
 
@@ -172,11 +177,11 @@ All key buffers are locked into physical RAM via `mlock` (Linux) / `VirtualLock`
 
 **State transitions:**
 
-1. **No session → Active**: user provides password, USB key file is detected (or selected manually). Argon2id + HKDF derive `SessionKeys`. Keys are mlocked. SQLCipher DB is opened with `sqlcipher_key`.
+1. **No session → Active**: user provides password; for Tier 2 vaults, the USB key file is also detected (or selected manually). Argon2id + HKDF derive `SessionKeys`. Keys are mlocked. SQLCipher DB is opened with `sqlcipher_key`.
 
 2. **Active → Expired**: activity-based timeout fires (default: 15 minutes of inactivity). All keys in `SessionKeys` are zeroed via `zeroize()`. SQLCipher connection is closed. The struct is dropped. File operations in progress must complete or be cancelled before zeroing.
 
-3. **Expired → Active**: user re-authenticates with password + USB key file. Full derivation runs again.
+3. **Expired → Active**: user re-authenticates. Full derivation runs again (password only for Tier 1; password + USB key file for Tier 2).
 
 ### Timeout mechanism
 
@@ -222,34 +227,48 @@ pub enum AuthenticationError {
 First-run sequence when the user creates a new vault:
 
 ```
-1.  User sets password
-2.  VoidGate prompts: "Insert a USB drive to store your key file"
-3.  DeviceMonitor detects USB insertion → mount_path
-4.  User confirms target drive (or picks a subdirectory)
-5.  VoidGate generates 32-byte key file via CSPRNG
-6.  Writes key file to chosen location on USB
-7.  Computes key_file_blake3 = blake3::hash(key_file)
-8.  Generates 32-byte salt via CSPRNG
-9.  Generates vault_id (UUID v4)
-10. Argon2id(password || key_file, salt, params) → master_key
-11. HKDF(master_key, "voidgate-key-encryption")  → key_encryption_key
-12. HKDF(master_key, "voidgate-sqlcipher")        → sqlcipher_key
-13. HKDF(master_key, "voidgate-manifest-backup")  → manifest_key
-14. zeroize(master_key)                            — master_key is gone
-15. Create SQLCipher DB keyed with sqlcipher_key
-16. Create schema: nodes, chunks, manifest_meta, contacts, shares, received_shares
-17. Generate X25519 identity keypair
-18. Wrap X25519 private key with key_encryption_key → store in SQLCipher
-19. Write vault header JSON to local staging:
-    {
-      "vault_id": "<uuid>",
-      "schema_version": 1,
-      "argon2_salt": "<base64>",
-      "argon2_params": { "m": 19456, "t": 2, "p": 1 },
-      "key_file_blake3": "<hex>"
-    }
-20. Upload vault header to cloud via CloudTransport
-21. Session begins: SessionKeys in mlocked memory
+1.   User sets password
+1b.  User selects authentication tier (Tier 1 or Tier 2)
+2.   [If Tier 2] VoidGate prompts: "Insert a USB drive to store your key file"
+3.   [If Tier 2] DeviceMonitor detects USB insertion → mount_path
+4.   [If Tier 2] User confirms target drive (or picks a subdirectory)
+5.   [If Tier 2] VoidGate generates 32-byte key file via CSPRNG
+6.   [If Tier 2] Writes key file to chosen location on USB
+7.   [If Tier 2] Computes key_file_blake3 = blake3::hash(key_file)
+8.   Generates 32-byte salt via CSPRNG
+9.   Generates vault_id (UUID v4)
+10.  Key derivation (tier-dependent):
+       Tier 1: Argon2id(password, salt, params)             → master_key
+       Tier 2: Argon2id(password || key_file, salt, params) → master_key
+11.  HKDF(master_key, "voidgate-key-encryption")  → key_encryption_key
+12.  HKDF(master_key, "voidgate-sqlcipher")        → sqlcipher_key
+13.  HKDF(master_key, "voidgate-manifest-backup")  → manifest_key
+14.  zeroize(master_key)                            — master_key is gone
+15.  Create SQLCipher DB keyed with sqlcipher_key
+16.  Create schema: nodes, chunks, manifest_meta, contacts, shares, received_shares
+17.  Generate X25519 identity keypair
+18.  Wrap X25519 private key with key_encryption_key → store in SQLCipher
+19.  Write vault header JSON to local staging:
+     Tier 1:
+     {
+       "vault_id": "<uuid>",
+       "schema_version": 1,
+       "tier": 1,
+       "argon2_salt": "<base64>",
+       "argon2_params": { "memory_cost": 19456, "time_cost": 2, "parallelism": 1 },
+       "key_file_blake3": null
+     }
+     Tier 2:
+     {
+       "vault_id": "<uuid>",
+       "schema_version": 1,
+       "tier": 2,
+       "argon2_salt": "<base64>",
+       "argon2_params": { "memory_cost": 19456, "time_cost": 2, "parallelism": 1 },
+       "key_file_blake3": "<hex>"
+     }
+20.  Upload vault header to cloud via CloudTransport
+21.  Session begins: SessionKeys in mlocked memory
 ```
 
 **Critical invariant**: `master_key` exists for exactly one scope — between step 10 and step 14. It must never be assigned to a field, returned, or passed to a function that might store it.
@@ -260,9 +279,11 @@ First-run sequence when the user creates a new vault:
 
 1. Authenticate with current credentials → current `SessionKeys`
 2. User enters new password
-3. Read key file from USB (must be present during password change)
+3. [If Tier 2] Read key file from USB (must be present during password change)
 4. Generate new 32-byte salt via CSPRNG (reusing salt with a different password is a vulnerability — same password-salt pair must never be reused)
-5. Argon2id(new_password || key_file, new_salt) → new_master_key
+5. Key derivation (tier-dependent):
+     Tier 1: Argon2id(new_password, new_salt)             → new_master_key
+     Tier 2: Argon2id(new_password || key_file, new_salt) → new_master_key
 6. HKDF → new key_encryption_key, new sqlcipher_key, new manifest_key
 7. zeroize(new_master_key)
 8. Re-wrap all `file_key` values: decrypt with old `key_encryption_key`, encrypt with new `key_encryption_key`
@@ -277,6 +298,8 @@ First-run sequence when the user creates a new vault:
 ---
 
 ## USB Key File Rotation
+
+Key file rotation applies only to Tier 2 vaults. Tier 1 vaults have no key file to rotate.
 
 The key file is a cryptographic input, not a lookup key. Changing it requires re-derivation:
 
@@ -304,15 +327,17 @@ The key file is a cryptographic input, not a lookup key. Changing it requires re
 When a user sets up VoidGate on a new machine:
 
 1. Configure Rclone remote (cloud backend connection)
-2. Fetch vault header from cloud → obtain salt, argon2_params, key_file_blake3
-3. Insert USB key file drive
-4. VoidGate scans for 32-byte files, matches against key_file_blake3
-5. User enters password
-6. Argon2id(password || key_file, salt) → master_key → HKDF → session keys
-7. Fetch encrypted manifest backup from cloud
-8. Decrypt manifest with manifest_key
-9. Import manifest into local SQLCipher (keyed with sqlcipher_key)
-10. Session begins — vault is operational on the new device
+2. Fetch vault header from cloud → obtain `tier`, `argon2_salt`, `argon2_params`, `key_file_blake3`
+3. [If `tier == 2`] Insert USB key file drive; VoidGate scans for 32-byte files and matches against `key_file_blake3`
+   [If `tier == 1`] Skip key file detection
+4. User enters password
+5. Key derivation (tier-dependent):
+     Tier 1: Argon2id(password, salt) → master_key → HKDF → session keys
+     Tier 2: Argon2id(password || key_file, salt) → master_key → HKDF → session keys
+6. Fetch encrypted manifest backup from cloud
+7. Decrypt manifest with manifest_key
+8. Import manifest into local SQLCipher (keyed with sqlcipher_key)
+9. Session begins — vault is operational on the new device
 
 ---
 
@@ -360,7 +385,7 @@ Implementations:
 
 | Decision | Options | Status |
 |----------|---------|--------|
-| Key file user-chosen filename during creation | Let user name the file vs. generate a random name | Minor UX decision, not blocking |
+| Key file user-chosen filename during creation (Tier 2 only) | Let user name the file vs. generate a random name | Minor UX decision, not blocking |
 | Argon2id parameter upgrade policy | Allow increasing params on existing vaults vs. fixed at creation | Deferred; current design stores params in vault header |
 | Session timeout during active upload | Wait for completion vs. cancel and clean up | Design says wait; needs verification during Phase 6 integration testing |
 
@@ -370,13 +395,14 @@ Implementations:
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
+| Authentication tiers | Tier 1 (password only) + Tier 2 (password + USB key file), selected per vault at creation | Accessibility for users who do not need hardware MFA; Tier 2 for maximum security where password alone cannot compromise data |
 | Key file format | 32 bytes CSPRNG, no structure | Maximum entropy, no filename leakage |
 | Key file identification | BLAKE3 hash in vault header | Preimage-resistant, enables auto-detection on new devices |
 | USB detection | OS-native device events (WMI/udev) | Responsive, professional UX |
 | Key file discovery | Scan 32-byte files, match BLAKE3 | No filename convention needed |
-| Argon2id input | `password_utf8 \|\| key_file_bytes` | Unambiguous (fixed 32-byte suffix), preserves Argon2id password processing |
+| Argon2id input | Tier 1: `password_utf8_bytes`; Tier 2: `password_utf8_bytes \|\| key_file_bytes` | Tier 2 concatenation is unambiguous (fixed 32-byte suffix); preserves Argon2id password processing in both tiers |
 | Salt size | 32 bytes | Exceeds OWASP minimum, consistent with 256-bit theme |
 | Session timeout | Activity-based, 15 min default, configurable | Balances security and usability |
 | mlock failure | Hard fail with clear error | Security product must not silently degrade |
 | Password change | Re-wrap keys, no chunk re-encryption | Per-file key model advantage |
-| Key file rotation | Re-wrap keys, identity keypair preserved | Sharing relationships survive rotation |
+| Key file rotation | Re-wrap keys, identity keypair preserved (Tier 2 only) | Sharing relationships survive rotation |

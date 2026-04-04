@@ -160,6 +160,56 @@ The root directory has `parent_id = NULL`. The tree is purely virtual — it exi
 
 ---
 
+## Pre-Encryption Processing: EXIF Stripping
+
+### Purpose
+
+Media files (JPEG, PNG, TIFF, video containers) may contain EXIF, XMP, or IPTC metadata that reveals sensitive information: GPS coordinates, camera model, timestamps, lens settings, and software versions. This metadata is encrypted along with the file content, but stripping it before encryption reduces the risk surface if a file is later exported or shared outside VoidGate.
+
+### Behaviour
+
+EXIF stripping is an optional pre-processing step that runs in RAM before the encrypt pipeline. It is enabled by default for media file types and can be disabled per vault in settings.
+
+**Supported file types** (detected by magic bytes, not file extension):
+
+| MIME type | Metadata formats stripped |
+|-----------|--------------------------|
+| `image/jpeg` | EXIF, XMP, IPTC |
+| `image/png` | eXIf chunk, XMP (tEXt/iTXt) |
+| `image/tiff` | EXIF, XMP, IPTC |
+| `video/mp4`, `video/quicktime` | GPS and location metadata in moov atom |
+
+**Unsupported types** pass through to the encrypt pipeline unmodified.
+
+### Flow
+
+```
+1. Read file into chunk-sized buffer (streaming, same as encrypt pipeline)
+2. If first buffer contains a recognised media magic byte sequence:
+   a. Parse metadata segments from the buffer
+   b. Remove EXIF, XMP, and IPTC segments
+   c. Rewrite the file header in-place in the buffer
+3. Pass the (possibly modified) buffer to the encrypt pipeline
+4. Original file on disk is never modified
+```
+
+### Implementation
+
+The `kamadak-exif` crate provides EXIF parsing. For rewriting JPEG files without EXIF segments, the `img-parts` crate can split a JPEG into segments and reassemble without the APP1 (EXIF) and APP13 (IPTC) segments.
+
+<!-- CITE: kamadak-exif crate — https://crates.io/crates/kamadak-exif -->
+<!-- CITE: img-parts crate — https://crates.io/crates/img-parts -->
+
+### Security property
+
+Stripping occurs in RAM. The original file on disk is never modified by VoidGate. The stripped content is what enters the encrypt pipeline and is stored in the cloud. If the user later exports the file from VoidGate, the exported copy will not contain EXIF metadata.
+
+### Scope
+
+Implementation target: Phase 3 (alongside the encrypt pipeline) or Phase 6 (as a UI toggle). Not blocking for the core encrypt/decrypt cycle.
+
+---
+
 ## Encrypt Pipeline
 
 ### Public API
@@ -376,3 +426,13 @@ Implementations:
 | 0-byte files | Node row with no chunks, `size_bytes = 0` | Clean edge case, file_key still generated for future updates |
 | Staging directory | App data subdirectory | Encrypted blobs safe on disk, cleaned up on startup |
 | Error recovery | SQLCipher transactions + orphan blob cleanup | No partial manifest state, no data loss |
+
+---
+
+## Related Documents
+
+- [Chunk Pipeline Diagram](diagrams/chunk-pipeline.md)
+- [Manifest Schema Diagram](diagrams/manifest-schema.md)
+- [Cryptographic Primitives](../cryptographic-primitives/design.md) — `encrypt_chunk`, `file_key`, BLAKE3
+- [Cloud Synchronisation](../cloud-synchronisation/design.md) — blob upload/download
+- Roadmap Phase 3 deliverables

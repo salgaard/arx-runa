@@ -13,26 +13,27 @@ An individual user wants to access and edit their encrypted files from multiple 
 ## Actors
 
 - **Primary Actor**: Individual user with multiple devices
-- **Secondary Actors**: Cloud storage provider (untrusted), VoidGate system, USB key file (Tier 2 folders only)
+- **Secondary Actors**: Cloud storage provider (untrusted), VoidGate system, USB key file (Tier 2 vaults only)
 
 ## Preconditions
 
 - User has VoidGate installed on multiple devices with the same Rclone backend configured
 - User has previously created a vault and pushed an encrypted manifest to cloud (see UC-IND-001)
-- For Tier 2 folders: same USB key file is available on the secondary device
+- For Tier 2 vaults: same USB key file is available on the secondary device
 
 ## Main Flow
 
 1. User launches VoidGate on secondary device and selects "Pull Vault from Cloud"
-2. User authenticates (password for Tier 1 folders; password + USB key for Tier 2 folders)
-3. VoidGate derives keys and downloads encrypted manifest from cloud (see UC-IND-001 for derivation detail)
+2. User authenticates (password for Tier 1 vaults; password + USB key for Tier 2 vaults)
+3. VoidGate derives encryption keys and downloads the vault manifest from cloud
 4. VoidGate decrypts manifest and displays file browser
 5. User selects a file to download
-6. VoidGate downloads encrypted chunks, verifies BLAKE3 checksums, decrypts with file_key
-7. User opens and edits file locally
-8. VoidGate re-encrypts modified file with new nonces and uploads new chunks
-9. VoidGate increments manifest snapshot_counter and pushes updated manifest to cloud
-10. User locks vault and removes USB key (if Tier 2)
+6. VoidGate downloads and decrypts the file, verifying integrity
+7. User views files in-app (Zero-Trace)
+8. To update a file, user uploads the modified version via the drop zone
+9. VoidGate encrypts and uploads the updated file, replacing the previous version
+10. VoidGate increments the manifest version and pushes the updated manifest to cloud
+11. User locks vault and removes USB key (if Tier 2)
 
 ## Alternate Flows
 
@@ -42,8 +43,8 @@ An individual user wants to access and edit their encrypted files from multiple 
 
 **Steps**:
 1. VoidGate detects local snapshot_counter < cloud snapshot_counter
-2. VoidGate prompts: "Cloud has newer version — pull and merge?"
-3. If accepted: VoidGate downloads latest manifest and merges changes
+2. VoidGate prompts: "Cloud has a newer version — pull latest?"
+3. If accepted: VoidGate downloads the latest manifest from cloud, replacing the local copy
 4. If declined: VoidGate warns "Working with stale manifest — conflicts possible"
 
 ### Concurrent Edit Conflict
@@ -54,17 +55,17 @@ An individual user wants to access and edit their encrypted files from multiple 
 1. User pushes from Device A (snapshot_counter increments)
 2. User attempts to push from Device B with stale manifest
 3. VoidGate detects conflict and prompts: "Keep local, keep cloud, or view both?"
-4. User selects resolution; VoidGate creates conflict copy with timestamp suffix if needed
+4. User selects resolution; VoidGate creates a conflict copy with a disambiguated name if needed
 
-### USB Key Not Available (Tier 2 Folder)
+### USB Key Not Available (Tier 2 Vault)
 
 **Trigger**: User at secondary device without their USB key
 
 **Steps**:
-1. User attempts to access a Tier 2 folder
+1. User attempts to access a Tier 2 vault
 2. VoidGate displays: "Key file not found — insert USB drive"
-3. User cannot access Tier 2 folder until USB key is available
-4. Tier 1 folders remain accessible with password only
+3. User cannot access Tier 2 vault until USB key is available
+4. Tier 1 vaults remain accessible with password only
 
 ### Download-Only Mode
 
@@ -75,13 +76,24 @@ An individual user wants to access and edit their encrypted files from multiple 
 2. User views files but does not edit
 3. User locks vault without pushing any changes
 
+### Edit File Externally
+
+**Trigger**: User wants to edit a file in an external application
+
+**Steps**:
+1. User exports a decrypted copy to disk (see UC-IND-001 Export alternate flow)
+2. User edits the file in an external application
+3. User uploads the modified file back via the drop zone
+4. VoidGate encrypts the updated file and replaces the previous version
+5. The exported copy remains on disk — the user is responsible for deleting it
+
 ## Success Criteria
 
 - User can access vault from any device with the correct authentication factors
 - Cloud manifest stays synchronised; snapshot_counter detects divergence
 - Conflicts are detected and user is prompted for resolution
-- Tier 1 folders are accessible with password only; Tier 2 folders require USB key on each device
-- No device stores plaintext persistently unless the user explicitly downloads a file
+- Tier 1 vaults are accessible with password only; Tier 2 vaults require USB key on each device
+- No device stores plaintext persistently unless the user explicitly exports a file
 
 ## Related Designs
 
@@ -112,4 +124,4 @@ An individual user wants to access and edit their encrypted files from multiple 
 
 ## Notes
 
-Cross-device sync requires explicit pull/push operations — VoidGate does not run a background sync daemon. For Tier 2 folders, carrying the USB key between devices is a deliberate security trade-off.
+Cross-device sync requires explicit pull/push operations — VoidGate does not run a background sync daemon. For Tier 2 vaults, carrying the USB key between devices is a deliberate security trade-off.

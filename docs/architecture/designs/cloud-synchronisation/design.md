@@ -382,6 +382,9 @@ pub struct VaultHeader {
     /// Schema version for forward compatibility.
     pub schema_version: u32,
 
+    /// Authentication tier: 1 (password only) or 2 (password + USB key file).
+    pub tier: u8,
+
     /// Argon2id salt, base64-encoded. 32 bytes (256 bits).
     /// Public parameter by design (NIST SP 800-132).
     pub argon2_salt: String,
@@ -390,8 +393,8 @@ pub struct VaultHeader {
     pub argon2_params: Argon2Params,
 
     /// BLAKE3 hash of the USB key file content, hex-encoded.
-    /// Enables auto-identification of the key file on USB insertion.
-    pub key_file_blake3: String,
+    /// Present only for Tier 2 vaults; `None` for Tier 1.
+    pub key_file_blake3: Option<String>,
 }
 
 /// Argon2id tuning parameters.
@@ -410,10 +413,26 @@ pub struct Argon2Params {
 
 Wire format (from Phase 2 auth design):
 
+**Tier 1 (password only):**
+
 ```json
 {
   "vault_id": "<uuid-v4>",
   "schema_version": 1,
+  "tier": 1,
+  "argon2_salt": "<base64-32-bytes>",
+  "argon2_params": { "memory_cost": 19456, "time_cost": 2, "parallelism": 1 },
+  "key_file_blake3": null
+}
+```
+
+**Tier 2 (password + USB key file):**
+
+```json
+{
+  "vault_id": "<uuid-v4>",
+  "schema_version": 1,
+  "tier": 2,
   "argon2_salt": "<base64-32-bytes>",
   "argon2_params": { "memory_cost": 19456, "time_cost": 2, "parallelism": 1 },
   "key_file_blake3": "<hex-32-bytes>"
@@ -436,10 +455,12 @@ Wire format (from Phase 2 auth design):
 2. Read temp file, deserialise JSON → VaultHeader
 3. Validate:
    a. schema_version is supported
-   b. argon2_salt decodes from base64 to exactly 32 bytes
-   c. argon2_params.memory_cost >= 19456
-   d. argon2_params.time_cost >= 2
-   e. key_file_blake3 decodes from hex to exactly 32 bytes
+   b. tier is 1 or 2
+   c. argon2_salt decodes from base64 to exactly 32 bytes
+   d. argon2_params.memory_cost >= 19456
+   e. argon2_params.time_cost >= 2
+   f. If tier == 2: key_file_blake3 decodes from hex to exactly 32 bytes
+   g. If tier == 1: key_file_blake3 is null
 4. Delete temp file
 5. Return VaultHeader
 ```
@@ -452,9 +473,10 @@ All vault header fields are intentionally public. Storing them in plaintext does
 |-------|--------------------------|
 | `vault_id` | Random UUID v4; reveals only that a vault exists |
 | `schema_version` | Integer; no sensitive information |
+| `tier` | Integer (1 or 2); reveals only whether hardware MFA is used — not key material |
 | `argon2_salt` | Public parameter by design — required before key derivation; NIST SP 800-132 designates salts as public <!-- CITE: NIST SP 800-132 §5.1 --> |
-| `argon2_params` | Public tuning parameters; an attacker who has the salt still needs the password and key file |
-| `key_file_blake3` | BLAKE3 is preimage-resistant; the hash cannot be reversed to recover the 32-byte key file. An attacker gains only the ability to verify a candidate file — equivalent to attempting authentication <!-- CITE: BLAKE3 specification — preimage resistance property --> |
+| `argon2_params` | Public tuning parameters; an attacker who has the salt still needs the password (and key file for Tier 2) |
+| `key_file_blake3` | Tier 2 only; `null` for Tier 1. BLAKE3 is preimage-resistant; the hash cannot be reversed to recover the 32-byte key file. An attacker gains only the ability to verify a candidate file — equivalent to attempting authentication <!-- CITE: BLAKE3 specification — preimage resistance property --> |
 
 ---
 
@@ -675,6 +697,58 @@ When the user permanently deletes a vault, all cloud data must be removed. This 
 **Confirmation UX (Phase 6)**: Vault deletion is irreversible. The UI must require explicit confirmation (e.g., type vault name to confirm). This is a Phase 6 concern.
 
 **Rclone remote cleanup**: The `rclone.conf` entry for this vault's remote is optionally deleted. If the user has other vaults on the same remote, the remote should be preserved. This requires tracking which vaults use which remotes.
+
+---
+
+## Vault Migration
+
+When a user wants to switch cloud providers (e.g., from Google Drive to Backblaze B2), VoidGate migrates all encrypted blobs without re-encryption. Blobs are opaque ciphertext — they are identical regardless of which provider stores them.
+
+### Migration flow
+
+```
+1.  User configures a new Rclone remote via the guided wizard (Section above)
+2.  VoidGate creates a new CloudEndpoint for the target remote
+3.  list_blobs("vault/") on the source remote → source_blobs
+4.  list_blobs("shared/") on the source remote → source_shared (if Phase 5 sharing is active)
+5.  For each blob in source_blobs:
+    a. download_blob(source, "vault/<blob_name>.blob", staging_dir/<blob_name>.blob)
+    b. upload_blob(staging_dir/<blob_name>.blob, target, "vault/<blob_name>.blob")
+    c. Delete staging copy
+    d. Report progress via MigrationProgress channel
+6.  Repeat step 5 for source_shared blobs (preserving the shared/<file_share_id>/ structure)
+7.  Download vault-header.json from source → upload to target
+8.  Download manifest/manifest-backup.blob from source → upload to target
+9.  Update local cloud-config.json to point to the target remote
+10. User verifies migration (browse vault, spot-check files)
+11. User optionally deletes blobs from the source remote
+```
+
+### Properties
+
+- **No re-encryption**: blobs are transferred as-is. UUID blob names and AEAD ciphertext are unchanged.
+- **No key material changes**: the vault header, manifest, and all file keys remain identical.
+- **Resumable**: if migration is interrupted, blobs already transferred to the target are valid. Retry re-downloads missing blobs (download/upload are idempotent).
+- **Non-destructive**: source blobs are not deleted automatically. The user explicitly decommissions the old remote after verification.
+
+### Concurrency
+
+Migration uses the same `tokio::JoinSet` concurrency model as push/pull, bounded by `SyncConfig.max_concurrent`. Each transfer is one download + one upload, serialised per blob.
+
+### Tauri command
+
+```rust
+#[tauri::command]
+async fn migrate_vault(
+    new_endpoint: CloudEndpointConfig,
+    progress: tauri::ipc::Channel<MigrationProgress>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
+```
+
+### Scope
+
+Implementation target: Phase 4 (optional enhancement). Not blocking for core push/pull operations.
 
 ---
 

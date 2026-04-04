@@ -7,13 +7,19 @@ paths:
 
 **Design specification**: `docs/architecture/designs/authentication-and-session-management/design.md`
 
-## USB key file
+## Authentication tiers
+- Tier 1: password only — `master_key = Argon2id(password, salt)`
+- Tier 2: password + USB key file — `master_key = Argon2id(password || key_file_bytes, salt)`
+- Tier selected per vault at creation; applies to entire vault
+
+## USB key file (Tier 2 only)
 - 32 bytes random entropy — not a device serial/ID
-- Mandatory factor: no password-only fallback
+- Tier 2 mandatory factor: no password-only fallback for Tier 2 vaults
 - No TOTP/authenticator apps — must be deterministic for KDF
 
 ## Key derivation
-- `master_key = Argon2id(password || key_file_bytes, salt)`
+- Tier 1: `master_key = Argon2id(password, salt)`
+- Tier 2: `master_key = Argon2id(password || key_file_bytes, salt)`
 - Salt in unencrypted vault header (cloud) — needed before derivation
 - Argon2id minimums: m ≥ 19456, t ≥ 2, p = 1
 - HKDF-SHA256 derives vault keys from `master_key`

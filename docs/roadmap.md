@@ -53,6 +53,8 @@ When specifications in this roadmap conflict with design documents, **design doc
 
 **Objective**: Implement the foundational cryptographic operations per [`docs/architecture/designs/cryptographic-primitives/design.md`](architecture/designs/cryptographic-primitives/design.md).
 
+**Sub-phase roadmap**: [`docs/architecture/designs/cryptographic-primitives/sub-phases/roadmap.md`](architecture/designs/cryptographic-primitives/sub-phases/roadmap.md) (recommended for incremental implementation)
+
 **Deliverables**:
 1. **HKDF-SHA256 key derivation**: Derive vault-level keys (`key_encryption_key`, `sqlcipher_key`, `manifest_key`) from `master_key` with distinct `info` strings per design specification.
 2. **Per-file key management**: Random 256-bit `file_key` generation via CSPRNG; wrapping/unwrapping with `key_encryption_key` using XChaCha20-Poly1305.
@@ -86,6 +88,8 @@ When specifications in this roadmap conflict with design documents, **design doc
 
 **Design document**: [`docs/architecture/designs/authentication-and-session-management/design.md`](architecture/designs/authentication-and-session-management/design.md)
 
+**Sub-phase roadmap**: [`docs/architecture/designs/authentication-and-session-management/sub-phases/roadmap.md`](architecture/designs/authentication-and-session-management/sub-phases/roadmap.md) (recommended for incremental implementation)
+
 **Deliverables**:
 1. `KeySource` trait and concrete USB key file reader (32-byte random entropy file, selected via file picker or auto-detected).
 2. `MockKeySource` implementation for deterministic testing without physical hardware.
@@ -114,6 +118,8 @@ When specifications in this roadmap conflict with design documents, **design doc
 **Objective**: implement the fixed-size chunking pipeline, the SQLCipher manifest database, and the local file-to-chunk-to-blob workflow (without cloud sync — that is Phase 4).
 
 **Design document**: [`docs/architecture/designs/chunking-and-manifest/design.md`](architecture/designs/chunking-and-manifest/design.md)
+
+**Sub-phase roadmap**: [`docs/architecture/designs/chunking-and-manifest/sub-phases/roadmap.md`](architecture/designs/chunking-and-manifest/sub-phases/roadmap.md) (recommended for incremental implementation)
 
 **Deliverables**:
 1. Fixed-size chunking at **4 MiB** with zero-pad to `chunk_size`, truncate on reassembly using `size_bytes` — streaming via `BufReader`/`BufWriter` and `tokio::io`, never loading entire files into memory.
@@ -171,6 +177,8 @@ When specifications in this roadmap conflict with design documents, **design doc
 
 **Objective**: implement the file sharing layer — X25519 local identity, contact management, ECIES share package creation and import, shared blob cloud layout, and revocation.
 
+**Sub-phase roadmap**: [`docs/architecture/designs/file-sharing/sub-phases/roadmap.md`](architecture/designs/file-sharing/sub-phases/roadmap.md) (recommended for incremental implementation)
+
 **Deliverables**:
 1. X25519 keypair generation on first run; store private key in SQLCipher wrapped with `key_encryption_key`.
 2. Contact management: import a contact's X25519 public key (from file or QR code), store in `contacts` table with display name and optional email label.
@@ -203,7 +211,7 @@ When specifications in this roadmap conflict with design documents, **design doc
 
 **Design document**: [`docs/architecture/designs/tauri-ipc-and-frontend/design.md`](architecture/designs/tauri-ipc-and-frontend/design.md)
 
-**Sub-phase roadmap**: Future — Phase 6 design (879 lines) may benefit from sub-phase decomposition when implementation begins
+**Sub-phase roadmap**: [`docs/architecture/designs/tauri-ipc-and-frontend/sub-phases/roadmap.md`](architecture/designs/tauri-ipc-and-frontend/sub-phases/roadmap.md) (recommended for incremental implementation)
 
 **Deliverables**:
 1. Tauri command definitions: `authenticate`, `lock_session`, `get_session_status`, `list_directory`, `upload_file`, `download_file`, `delete_file`, `sync_to_cloud`, `recover_from_cloud`, `get_sync_status`.

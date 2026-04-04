@@ -31,9 +31,10 @@ Commands are organised into domain-grouped submodules under `src-tauri/src/ui/`,
 src-tauri/src/ui/
 ├── mod.rs                 # Re-exports, invoke_handler registration
 ├── error.rs               # IpcError enum, From impls
-├── auth_commands.rs       # authenticate, lock_session, get_session_status
-├── file_commands.rs       # list_directory, upload_file, download_file, delete_file
-├── sync_commands.rs       # sync_to_cloud, recover_from_cloud, get_sync_status
+├── auth_commands.rs       # authenticate, create_vault, change_password, rotate_key_file, delete_vault, lock_session, get_session_status
+├── file_commands.rs       # list_directory, upload_file, download_file, delete_file, get_file_content
+├── sync_commands.rs       # sync_to_cloud, recover_from_cloud, get_sync_status, migrate_vault
+├── sharing_commands.rs    # export_public_key, add_contact, list_contacts, share_file, import_share, revoke_share, list_shares, list_received_shares
 └── types.rs               # IPC-specific types (responses, progress updates)
 ```
 
@@ -42,12 +43,12 @@ src-tauri/src/ui/
 ```rust
 // --- auth_commands.rs ---
 
-/// Authenticate with password and USB key file, derive session keys.
+/// Authenticate with password (Tier 1) or password + USB key file (Tier 2).
 /// Returns vault_id on success. Does NOT return any key material.
 #[tauri::command]
 async fn authenticate(
     password: String,
-    key_file_path: PathBuf,
+    key_file_path: Option<PathBuf>,  // None for Tier 1 vaults
     state: tauri::State<'_, AppState>,
 ) -> Result<AuthResponse, IpcError>;
 
@@ -62,6 +63,40 @@ async fn lock_session(
 async fn get_session_status(
     state: tauri::State<'_, AppState>,
 ) -> Result<SessionStatus, IpcError>;
+
+/// Create a new vault. For Tier 2, generates a key file at the destination path.
+#[tauri::command]
+async fn create_vault(
+    vault_name: String,
+    password: String,
+    tier: u8,
+    key_file_destination: Option<PathBuf>,  // Required for Tier 2
+    cloud_endpoint: CloudEndpointConfig,
+    state: tauri::State<'_, AppState>,
+) -> Result<AuthResponse, IpcError>;
+
+/// Change the vault password. Requires an active session.
+/// For Tier 2, the USB key file must be present.
+#[tauri::command]
+async fn change_password(
+    current_password: String,
+    new_password: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
+
+/// Rotate the USB key file. Tier 2 only. Generates a new key file.
+#[tauri::command]
+async fn rotate_key_file(
+    new_key_file_destination: PathBuf,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
+
+/// Delete the vault permanently. Requires typing the vault name as confirmation.
+#[tauri::command]
+async fn delete_vault(
+    confirmation: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
 
 // --- file_commands.rs ---
 
@@ -98,6 +133,15 @@ async fn delete_file(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), IpcError>;
 
+/// Decrypt and return file content for in-app viewing (Zero-Trace).
+/// Returns base64-encoded content for small files. For large files,
+/// streams chunks via the channel.
+#[tauri::command]
+async fn get_file_content(
+    file_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<FileContent, IpcError>;
+
 // --- sync_commands.rs ---
 
 /// Push local changes to cloud.
@@ -120,6 +164,74 @@ async fn recover_from_cloud(
 async fn get_sync_status(
     state: tauri::State<'_, AppState>,
 ) -> Result<SyncStatus, IpcError>;
+
+/// Migrate vault blobs from current cloud remote to a new one.
+/// No re-encryption required — blobs are opaque ciphertext.
+#[tauri::command]
+async fn migrate_vault(
+    new_endpoint: CloudEndpointConfig,
+    progress: tauri::ipc::Channel<MigrationProgress>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
+
+// --- sharing_commands.rs ---
+
+/// Export the user's X25519 public key to a file for out-of-band exchange.
+#[tauri::command]
+async fn export_public_key(
+    destination_path: PathBuf,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
+
+/// Import a contact's public key from a file.
+#[tauri::command]
+async fn add_contact(
+    display_name: String,
+    public_key_path: PathBuf,
+    email: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<ContactEntry, IpcError>;
+
+/// List all contacts.
+#[tauri::command]
+async fn list_contacts(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ContactEntry>, IpcError>;
+
+/// Share a file with a contact. Creates an ECIES share package.
+#[tauri::command]
+async fn share_file(
+    file_id: String,
+    contact_id: String,
+    expiration_days: Option<u32>,
+    state: tauri::State<'_, AppState>,
+) -> Result<ShareResponse, IpcError>;
+
+/// Import a received share package.
+#[tauri::command]
+async fn import_share(
+    share_package_path: PathBuf,
+    state: tauri::State<'_, AppState>,
+) -> Result<ImportShareResponse, IpcError>;
+
+/// Revoke a previously shared file.
+#[tauri::command]
+async fn revoke_share(
+    share_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
+
+/// List outgoing shares.
+#[tauri::command]
+async fn list_shares(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ShareEntry>, IpcError>;
+
+/// List received shares.
+#[tauri::command]
+async fn list_received_shares(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ReceivedShareEntry>, IpcError>;
 ```
 
 ### Command Registration
@@ -133,6 +245,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Auth
             ui::authenticate,
+            ui::create_vault,
+            ui::change_password,
+            ui::rotate_key_file,
+            ui::delete_vault,
             ui::lock_session,
             ui::get_session_status,
             // Files
@@ -140,10 +256,21 @@ pub fn run() {
             ui::upload_file,
             ui::download_file,
             ui::delete_file,
+            ui::get_file_content,
             // Sync
             ui::sync_to_cloud,
             ui::recover_from_cloud,
             ui::get_sync_status,
+            ui::migrate_vault,
+            // Sharing
+            ui::export_public_key,
+            ui::add_contact,
+            ui::list_contacts,
+            ui::share_file,
+            ui::import_share,
+            ui::revoke_share,
+            ui::list_shares,
+            ui::list_received_shares,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -159,14 +286,28 @@ fn main() {
             .app_manifest(
                 tauri_build::AppManifest::new()
                     .commands(&[
+                        "add_contact",
                         "authenticate",
+                        "change_password",
+                        "create_vault",
                         "delete_file",
+                        "delete_vault",
                         "download_file",
+                        "export_public_key",
+                        "get_file_content",
                         "get_session_status",
                         "get_sync_status",
+                        "import_share",
+                        "list_contacts",
                         "list_directory",
+                        "list_received_shares",
+                        "list_shares",
                         "lock_session",
+                        "migrate_vault",
                         "recover_from_cloud",
+                        "revoke_share",
+                        "rotate_key_file",
+                        "share_file",
                         "sync_to_cloud",
                         "upload_file",
                     ])
@@ -236,25 +377,25 @@ impl std::error::Error for IpcError {}
 ```rust
 // Explicit mappings from domain errors — never expose internals
 
-impl From<auth::AuthError> for IpcError {
-    fn from(err: auth::AuthError) -> Self {
+impl From<auth::AuthenticationError> for IpcError {
+    fn from(err: auth::AuthenticationError) -> Self {
         // Log full error for debugging
         tracing::error!("Auth error: {:?}", err);
         
         match err {
-            auth::AuthError::InvalidPassword => {
+            auth::AuthenticationError::InvalidCredentials => {
                 IpcError::AuthenticationFailed("Invalid credentials".into())
             }
-            auth::AuthError::KeyFileNotFound => {
+            auth::AuthenticationError::KeyFileNotFound => {
                 IpcError::AuthenticationFailed("Key file not found".into())
             }
-            auth::AuthError::KeyFileMismatch => {
-                IpcError::AuthenticationFailed("Invalid credentials".into())
+            auth::AuthenticationError::MemoryLockFailed(ref msg) => {
+                tracing::error!("Memory lock failure: {}", msg);
+                IpcError::InternalError("Cannot lock memory for session keys".into())
             }
-            auth::AuthError::SessionLocked => {
-                IpcError::VaultLocked("Please unlock your vault".into())
+            auth::AuthenticationError::VaultHeaderInvalid => {
+                IpcError::InternalError("Vault configuration error".into())
             }
-            _ => IpcError::InternalError("An error occurred".into()),
         }
     }
 }
@@ -413,6 +554,92 @@ pub struct SyncStatus {
     pub last_synced_at: Option<String>,
     /// Pending changes count.
     pub pending_changes: u32,
+}
+
+/// Content returned for in-app file viewing.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileContent {
+    /// MIME type (e.g., "image/jpeg", "text/plain").
+    pub mime_type: String,
+    /// Base64-encoded file content.
+    pub data_base64: String,
+    /// Original file size in bytes.
+    pub size_bytes: u64,
+}
+
+/// Response from sharing a file.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareResponse {
+    /// Unique share identifier.
+    pub share_id: String,
+    /// Path to the exported share package file.
+    pub package_path: String,
+}
+
+/// Response from importing a share.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportShareResponse {
+    /// Share identifier from the package.
+    pub share_id: String,
+    /// File name from the share.
+    pub file_name: String,
+    /// Sender's display name (if contact is known).
+    pub sender_name: Option<String>,
+}
+
+/// A contact entry.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactEntry {
+    pub contact_id: String,
+    pub display_name: String,
+    pub email: Option<String>,
+    pub created_at: String,
+}
+
+/// An outgoing share entry.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareEntry {
+    pub share_id: String,
+    pub file_name: String,
+    pub contact_name: String,
+    pub created_at: String,
+    pub revoked: bool,
+}
+
+/// A received share entry.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReceivedShareEntry {
+    pub share_id: String,
+    pub file_name: String,
+    pub sender_name: Option<String>,
+    pub imported_at: String,
+}
+
+/// Migration progress update.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationProgress {
+    pub percent: u8,
+    pub blobs_transferred: u32,
+    pub blobs_total: u32,
+    pub current_phase: String,
+}
+
+/// Cloud endpoint configuration for vault creation and migration.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudEndpointConfig {
+    pub provider: String,
+    pub bucket: String,
+    pub region: String,
+    pub endpoint: String,
+    pub path_prefix: String,
 }
 ```
 
@@ -702,37 +929,41 @@ use zeroize::Zeroize;
 use crate::components::{Button, Input};
 use crate::state::use_session_actions;
 
-/// Login page with password and USB key file inputs.
+/// Login page with password and optional USB key file inputs.
+/// Key file field is shown only for Tier 2 vaults.
 #[component]
 pub fn LoginPage() -> impl IntoView {
     let (password, set_password) = signal(String::new());
     let (key_file_path, set_key_file_path) = signal::<Option<String>>(None);
     let (error, set_error) = signal::<Option<String>>(None);
     let (loading, set_loading) = signal(false);
+    let (vault_tier, set_vault_tier) = signal::<u8>(2); // Read from vault header
     
     let session_actions = use_session_actions();
     
-    // Handle USB key file detection
+    // Handle USB key file detection (Tier 2 only)
     Effect::new(move |_| {
         spawn_local(async move {
-            // Listen for device events from backend
-            // Auto-populate key_file_path when detected
+            // Read vault header to determine tier
+            // If Tier 2: listen for device events, auto-populate key_file_path
         });
     });
     
     let on_submit = move |_| {
         let mut password_value = password.get();
         let key_file = key_file_path.get();
+        let tier = vault_tier.get();
         
         if password_value.is_empty() {
             set_error.set(Some("Password is required".into()));
             return;
         }
         
-        let Some(key_file) = key_file else {
+        // Key file required only for Tier 2 vaults
+        if tier == 2 && key_file.is_none() {
             set_error.set(Some("Please insert your USB key".into()));
             return;
-        };
+        }
         
         set_loading.set(true);
         set_error.set(None);
@@ -740,7 +971,7 @@ pub fn LoginPage() -> impl IntoView {
         spawn_local(async move {
             let result = invoke::<_, AuthResponse>("authenticate", &AuthRequest {
                 password: password_value.clone(),
-                key_file_path: key_file,
+                key_file_path: key_file, // None for Tier 1, Some(...) for Tier 2
             }).await;
             
             // CRITICAL: Zero password immediately after use (Zero-Trace compliance)
@@ -898,6 +1129,79 @@ impl IpcError {
 
 ---
 
+## Drop Zone Component
+
+The drop zone is the primary upload interface for VoidGate (UC-IND-001). Users drag files or folders onto the drop zone area rather than using a system file picker by default.
+
+### Implementation
+
+Tauri provides native drag-and-drop events via the WebView. When files are dropped onto the drop zone area:
+
+1. The WebView captures the `drop` event and extracts file paths from the `DataTransfer` object
+2. For each dropped path, the frontend invokes the `upload_file` command
+3. Folders are recursively traversed — each file within the folder is uploaded individually
+4. The transfer queue displays progress for all pending uploads
+
+### Component structure
+
+Add `drop_zone.rs` to the vault browser module:
+
+```
+src/vault/
+├── ...
+├── drop_zone.rs           # Drag-and-drop upload area
+└── upload_button.rs       # Fallback file picker button
+```
+
+### Visual feedback
+
+- **Idle**: Drop zone displays "Drag files here to upload" with a dashed border
+- **Dragover**: Border highlights, background tints to indicate a valid drop target
+- **Processing**: Drop zone shows the count of files queued and a spinner
+
+The upload button remains as a fallback for accessibility and for users who prefer a file picker dialog.
+
+### Scope
+
+Implementation target: Phase 6.
+
+---
+
+## In-App File Viewing (Zero-Trace)
+
+For supported file types, VoidGate decrypts file content into WASM memory and renders it in the WebView without writing a temporary file to disk. This preserves Zero-Trace compliance.
+
+### Supported types (MVP)
+
+| Type | Rendering approach |
+|------|-------------------|
+| Images (JPEG, PNG, GIF, WebP) | Decrypt → base64 → `blob:` URL in `<img>` tag |
+| Text (plain text, Markdown, JSON, CSV) | Decrypt → UTF-8 string → `<pre>` or rendered Markdown |
+| PDF | Deferred — requires embedded PDF viewer |
+| Video | Deferred — requires streaming decryption and progressive playback |
+
+### Flow
+
+1. User selects a file in the vault browser and chooses "View"
+2. Frontend invokes `get_file_content(file_id)`
+3. Backend decrypts all chunks into a RAM buffer, assembles the file, and returns it as base64 in a `FileContent` response
+4. Frontend creates a `blob:` URL from the decoded bytes and renders it in the appropriate viewer component
+5. On close or vault lock, the `blob:` URL is revoked and the buffer is released
+
+### Size limits
+
+For files exceeding 50 MiB, in-app viewing is not offered — the user must use `download_file` to export a decrypted copy. This limit prevents excessive WASM memory usage.
+
+### Security property
+
+No decrypted content touches the filesystem. The `blob:` URL exists only in WebView memory and is revoked when the viewer closes. The CSP prevents `blob:` URLs from being accessed by external scripts.
+
+### Scope
+
+Implementation target: Phase 6.
+
+---
+
 ## Zero-Trace Compliance
 
 ### Frontend Requirements
@@ -996,10 +1300,8 @@ The frontend runs in a WebView which is inherently less trusted than the Rust ba
 
 | Decision | Options | Recommendation | Status |
 |----------|---------|----------------|--------|
-| File preview in UI | Show preview for images/text vs. download-only | Download-only for MVP (security, scope) | Deferred |
 | Conflict resolution UI | Auto-resolve vs. manual merge | Last-write-wins with conflict notification | Deferred |
 | Keyboard shortcuts | Implement standard shortcuts (Ctrl+L lock, etc.) | Ctrl+L lock, Escape cancel only for MVP | Deferred |
-| Vault creation flow | Add create_vault command | Separate design task | Open |
 
 ---
 
@@ -1014,3 +1316,6 @@ The frontend runs in a WebView which is inherently less trusted than the Rust ba
 | Frontend state | Multiple focused contexts | Maps to security boundaries (session ≠ vault ≠ sync) |
 | Progress updates | Tauri IPC Channel | Real-time streaming, no polling overhead |
 | Session status | 5-second polling | Simple, low overhead, immediate UI update on lock |
+| Vault creation | `create_vault` command with tier selection | Completes the Phase 2 auth workflow |
+| File viewing | In-app for images/text, download-only for other types | Zero-Trace compliance; video deferred |
+| Sharing commands | Eight commands in `sharing_commands.rs` | Covers Phase 5 file sharing operations |

@@ -4,7 +4,7 @@ Zero-knowledge cloud storage. Data leaves encrypted, arrives as opaque blobs, re
 
 ## Core
 - XChaCha20-Poly1305 AEAD encryption
-- USB key file + password (hardware MFA) — password alone cannot compromise
+- Tier 1 (password) or Tier 2 (password + USB key file) — tier selected per vault at creation
 - Zero-Trace: RAM-based UI, no temp files
 - Fixed-size padded chunks — no file size inference
 - BYOC via Rclone
@@ -30,5 +30,5 @@ No abbreviations: `chunk_index` not `chunk_idx`, `encrypted_buffer` not `enc_buf
 - Never write unencrypted sensitive data to disk
 - Never commit secrets or key files
 - `unsafe` requires `// SAFETY:` comment
-- Every AEAD call MUST include AAD (file_id || chunk_index) — see crypto design for construction
+- Every chunk AEAD call MUST include AAD (file_id || chunk_index) — see crypto design for construction and exceptions
 - Nonces: random CSPRNG only — never sequential/derived
