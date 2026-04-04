@@ -63,7 +63,7 @@ Argon2id is the recommended algorithm for offline password hashing because its l
 At the VoidGate minimum parameters (`m=19456 KiB`, `t=2`), each derivation requires approximately 19 MiB of RAM. GPU cores have limited per-core memory bandwidth; the memory requirement prevents the massive parallelism that makes GPUs effective against algorithms such as PBKDF2 or bcrypt.
 <!-- CITE: Argon2 original paper — Biryukov, Dinu, Khovratovich 2016 — GPU memory-hardness analysis -->
 
-The practical result is roughly 1–10 derivation attempts per second per GPU, depending on hardware generation. The precise figure is hardware-dependent and evolves as GPU architectures change.
+The practical result is that GPU parallelism is severely limited compared to algorithms such as PBKDF2 or bcrypt, making offline brute force substantially harder for a given hardware budget.
 
 Tier 1 brute force resistance depends entirely on password quality. A password with insufficient entropy can be found within a practical time budget regardless of Argon2id cost. A minimum of 12 randomly chosen characters from a broad character set is recommended; passphrase-style passwords of equivalent or higher entropy are equally acceptable.
 

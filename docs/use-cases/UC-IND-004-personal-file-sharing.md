@@ -35,7 +35,7 @@ A user wants to share specific files from their vault with a friend or family me
 10. Recipient decrypts the file key using their private key
 11. Recipient downloads and decrypts the shared file
 12. Recipient views the file in-app or exports a decrypted copy to disk
-13. VoidGate writes a download receipt (file_id, timestamp) to the shared manifest area in cloud
+13. VoidGate writes a download receipt (file_id, timestamp) to the cloud under `shared/<file_share_id>/receipts/`
 
 ## Alternate Flows
 

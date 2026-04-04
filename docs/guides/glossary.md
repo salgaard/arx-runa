@@ -43,7 +43,7 @@ The encrypted index of all files in a vault. The manifest is stored in a **SQLCi
 
 The manifest records, for each file:
 - Filenames and directory structure
-- Per-file `file_key` (encrypted under `sqlcipher_key`)
+- Per-file `file_key_wrapped`: the file encryption key, wrapped with `key_encryption_key` (HKDF-derived from `master_key`); stored in the `nodes` table
 - Chunk map: ordered list of UUID blob names and their sizes
 - `snapshot_counter` for sync conflict detection
 

@@ -248,7 +248,7 @@ If `expires_at` is `null` or absent, the share does not expire.
 
 ### Database schema addition
 
-The `shares` table gains an `expires_at` column:
+The canonical `shares` table definition (see [Database Schema](#database-schema) below) includes `expires_at`. For existing databases, apply the following migration:
 
 ```sql
 ALTER TABLE shares ADD COLUMN expires_at INTEGER;  -- Unix timestamp, NULL = no expiration
@@ -297,7 +297,8 @@ CREATE TABLE shares (
     file_share_id   TEXT NOT NULL,      -- UUID v4, groups all recipients of the same file
     cloud_path      TEXT NOT NULL,      -- path to shared/<file_share_id>/ in cloud
     created_at      INTEGER NOT NULL,
-    revoked_at      INTEGER             -- NULL = active
+    revoked_at      INTEGER,            -- NULL = active
+    expires_at      INTEGER             -- NULL = no expiration (Unix timestamp)
 );
 ```
 

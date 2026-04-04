@@ -241,11 +241,10 @@ LSP configuration is in `.github/lsp.json`:
   "lspServers": {
     "rust": {
       "command": "rust-analyzer",
-      "args": []
-    },
-    "typescript": {
-      "command": "typescript-language-server",
-      "args": ["--stdio"]
+      "args": [],
+      "fileExtensions": {
+        ".rs": "rust"
+      }
     }
   }
 }
@@ -253,7 +252,6 @@ LSP configuration is in `.github/lsp.json`:
 
 **Prerequisites**:
 - `rust-analyzer`: `rustup component add rust-analyzer`
-- `typescript-language-server`: `npm install -g typescript-language-server typescript`
 
 ### Claude CLI
 
@@ -265,26 +263,6 @@ claude plugin install code-review
 claude plugin install security-guidance
 claude plugin install commit-commands
 ```
-
-**MCP Servers** (project-scoped in `.mcp.json`):
-- `fetch` — Web content fetching
-- `github` — GitHub API integration (requires `GITHUB_TOKEN`)
-
-**Set GitHub Token** (Windows):
-```powershell
-[System.Environment]::SetEnvironmentVariable('GITHUB_TOKEN', 'ghp_YOUR_TOKEN_HERE', 'User')
-```
-
-Get a token at: https://github.com/settings/tokens (needs `repo` scope minimum)
-
-After setting, restart your terminal for the token to load.
-
-**Verify setup**:
-```bash
-claude mcp list
-```
-
-Both `fetch` and `github` should be listed (connection failures in health check are normal for stdio servers).
 
 ---
 
