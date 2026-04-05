@@ -6,32 +6,32 @@
 ```mermaid
 flowchart TD
     subgraph ENCRYPT ["Encrypt Path"]
-        E1["Source file\n(BufReader, streaming)"]:::io
-        E2["Read chunk_size bytes\n(zero-pad if last chunk)"]:::proc
-        E3["encrypt_chunk\n(file_key, AAD = file_id || chunk_index)"]:::crypto
-        E4["[24B nonce | ciphertext | 16B tag]\nwire_blob"]:::data
-        E5["blake3::hash(wire_blob)\n-&gt; blake3_checksum"]:::proc
-        E6["Write to\nstaging/<uuid>.blob"]:::io
-        E7["ChunkRecord\n(chunk_index, blob_name,\nblake3_checksum)"]:::data
-        E8["Insert node + chunks\n(SQLCipher transaction)"]:::db
+        E1["Source file<br/>(BufReader, streaming)"]:::io
+        E2["Read chunk_size bytes<br/>(zero-pad if last chunk)"]:::proc
+        E3["encrypt_chunk<br/>(file_key, AAD = file_id || chunk_index)"]:::crypto
+        E4["[24B nonce | ciphertext | 16B tag]<br/>wire_blob"]:::data
+        E5["blake3::hash(wire_blob)<br/>-> blake3_checksum"]:::proc
+        E6["Write to<br/>staging/{uuid}.blob"]:::io
+        E7["ChunkRecord<br/>(chunk_index, blob_name,<br/>blake3_checksum)"]:::data
+        E8["Insert node + chunks<br/>(SQLCipher transaction)"]:::db
     end
 
     subgraph DECRYPT ["Decrypt Path"]
-        D1["Read chunks from manifest\n(ordered by chunk_index)"]:::db
-        D2["Read blob from\nstaging or cloud download"]:::io
-        D3["Verify BLAKE3\n(fail fast if mismatch)"]:::proc
-        D4["decrypt_chunk\n(file_key, AAD = file_id || chunk_index)"]:::crypto
-        D5["padded_plaintext\n(chunk_size bytes)"]:::data
-        D6["Write to destination\n(full chunk or truncate last)"]:::io
-        D7["Reassembled file\n(size_bytes from manifest)"]:::io
+        D1["Read chunks from manifest<br/>(ordered by chunk_index)"]:::db
+        D2["Read blob from<br/>staging or cloud download"]:::io
+        D3["Verify BLAKE3<br/>(fail fast if mismatch)"]:::proc
+        D4["decrypt_chunk<br/>(file_key, AAD = file_id || chunk_index)"]:::crypto
+        D5["padded_plaintext<br/>(chunk_size bytes)"]:::data
+        D6["Write to destination<br/>(full chunk or truncate last)"]:::io
+        D7["Reassembled file<br/>(size_bytes from manifest)"]:::io
     end
 
     subgraph KEYS ["Key Lifecycle"]
-        K1["Generate file_key\n(32B CSPRNG)"]:::crypto
-        K2["Wrap: encrypt(file_key,\nkey_encryption_key)\n-&gt; file_key_wrapped"]:::crypto
-        K3["Store file_key_wrapped\nin nodes table"]:::db
-        K4["Unwrap: decrypt(file_key_wrapped,\nkey_encryption_key)\n-&gt; file_key"]:::crypto
-        K5["Zeroize file_key\nafter use"]:::crypto
+        K1["Generate file_key<br/>(32B CSPRNG)"]:::crypto
+        K2["Wrap: encrypt(file_key,<br/>key_encryption_key)<br/>-> file_key_wrapped"]:::crypto
+        K3["Store file_key_wrapped<br/>in nodes table"]:::db
+        K4["Unwrap: decrypt(file_key_wrapped,<br/>key_encryption_key)<br/>-> file_key"]:::crypto
+        K5["Zeroize file_key<br/>after use"]:::crypto
     end
 
     K1 --> K2 --> K3

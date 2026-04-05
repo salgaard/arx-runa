@@ -1,55 +1,48 @@
 # Architecture Overview
 
-This section contains the technical architecture documentation for VoidGate.
+This section explains how VoidGate is structured internally — the components, data flows, and the reasoning behind key design choices.
 
 ## Sections
 
 ### [Design Documents](designs/README.md)
 
-Detailed technical designs for each subsystem, including:
-- Rust trait signatures
-- SQL DDL schemas
-- Wire formats
-- Security analysis
-- Implementation guidance
+Detailed specifications for each part of the system: authentication, encryption, file storage, cloud sync, and the user interface. Each design document explains the goals, the approach taken, and the security properties it must uphold.
 
 ### [Diagrams](diagrams/INDEX.md)
 
-Visual representations of:
-- Key derivation tree
-- Authentication flow
-- Chunk encryption pipeline
-- Cloud synchronisation sequence
-- File sharing protocol
+Visual diagrams showing:
+- How keys are derived from your password
+- How a file flows from your device to the cloud (and back)
+- How the chunk encryption pipeline works
+- How file sharing is handled securely
+- How the cloud sync sequence operates
 
 ## Key Concepts
 
 ### Trust Boundary
 
-The "gate" in VoidGate is the trust boundary. Everything outside the client
-(cloud storage, network, servers) is untrusted. Data crosses the gate only
-in encrypted form.
+The "gate" in VoidGate is the trust boundary — the line between what you control and what you do not. Your device is trusted; the cloud is not. VoidGate ensures that nothing crosses that boundary in an unencrypted form. Even if the cloud provider is breached, the attacker only finds scrambled data.
 
 ### Key Hierarchy
+
+Your password (and optionally a USB key file) is the single source of trust. From it, VoidGate derives all the cryptographic keys it needs, each with a separate purpose so a compromise of one does not affect the others.
 
 ```
 Password + USB Key File
         │
         ▼
-    Argon2id
+    Argon2id (slow key derivation — makes brute-force expensive)
         │
         ▼
-   master_key (mlocked)
+   master key (held in locked memory, never written to disk)
         │
-        ├─── HKDF ──► key_encryption_key (wraps file keys)
+        ├──► key encryption key  — protects the per-file encryption keys
         │
-        ├─── HKDF ──► sqlcipher_key (local database)
+        ├──► database key        — encrypts the local file index
         │
-        └─── HKDF ──► manifest_key (cloud backup)
+        └──► manifest key        — encrypts the cloud-side backup manifest
 ```
 
 ### Chunk Model
 
-Files are split into fixed-size chunks, each encrypted independently with
-a per-file key. Chunk boundaries are uniform (not content-defined) to prevent
-size-based inference attacks.
+Rather than uploading files as-is, VoidGate splits every file into equal-sized pieces (chunks), encrypts each piece independently, and uploads them separately. This prevents an observer from guessing a file's size or structure by looking at the sizes of what was uploaded.

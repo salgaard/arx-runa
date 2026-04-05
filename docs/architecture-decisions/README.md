@@ -1,37 +1,8 @@
 # Architecture Decision Records
 
-This directory contains Architecture Decision Records (ADRs) documenting
-significant design choices made during VoidGate development.
+When a significant design choice was made during VoidGate development, it was recorded here. These records explain not just *what* was decided, but *why* — including the alternatives that were considered and the trade-offs accepted.
 
-## What is an ADR?
-
-An ADR captures the context, decision, and consequences of an architectural
-choice. They serve as:
-
-- Historical record of why decisions were made
-- Onboarding documentation for new contributors
-- Reference for future decision-making
-
-## Format
-
-Each ADR follows this structure:
-
-```markdown
-## Decision-NNN: Title
-**Date / Status**
-
-### Context
-What problem are we solving? What constraints apply?
-
-### Decision
-What did we choose and why?
-
-### Consequences
-What trade-offs did we accept? What risks exist?
-
-### References
-- Relevant standards, RFCs, prior art
-```
+This is useful for anyone trying to understand the reasoning behind the current design, or for contributors evaluating whether a past decision still makes sense.
 
 ## Records
 
@@ -40,7 +11,4 @@ What trade-offs did we accept? What risks exist?
 | [001](001-code-structure-and-patterns.md) | Code Structure and Patterns | 2026-03-29 | Accepted |
 | [002](002-frontend-stack-selection.md) | Frontend Stack Selection | 2026-03-30 | Accepted |
 
-## Creating New ADRs
-
-Use the `/architecture-decision-record` skill to create new ADRs following
-the established format.
+Each record covers: the problem being solved, the decision made, the reasons behind it, and the trade-offs accepted.

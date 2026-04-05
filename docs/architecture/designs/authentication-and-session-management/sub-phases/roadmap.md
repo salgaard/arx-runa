@@ -14,12 +14,12 @@ This sub-phase roadmap decomposes the authentication and session management desi
 **Total sub-phases**: 4
 
 **Rationale for decomposition**:
-- ✅ **Size**: Exceeds ~100-150 lines (382 lines total)
-- ✅ **Trait boundaries**: `KeySource` and `DeviceMonitor` traits implementable independently of the KDF layer
-- ✅ **Platform splits**: OS-specific implementations for device monitoring (`WindowsDeviceMonitor` / `LinuxDeviceMonitor`)
-- ✅ **Integration breadth**: Touches auth module, crypto module (BLAKE3, Argon2id, HKDF), storage module (SQLCipher), cloud module (vault header upload)
-- ✅ **Error surface**: Defines `AuthenticationError` enum plus `KeySourceError` requiring separate test coverage
-- ✅ **Multi-step flows**: Vault creation (21 steps), password change, USB key file rotation, new-device recovery
+-  **Size**: Exceeds ~100-150 lines (382 lines total)
+-  **Trait boundaries**: `KeySource` and `DeviceMonitor` traits implementable independently of the KDF layer
+-  **Platform splits**: OS-specific implementations for device monitoring (`WindowsDeviceMonitor` / `LinuxDeviceMonitor`)
+-  **Integration breadth**: Touches auth module, crypto module (BLAKE3, Argon2id, HKDF), storage module (SQLCipher), cloud module (vault header upload)
+-  **Error surface**: Defines `AuthenticationError` enum plus `KeySourceError` requiring separate test coverage
+-  **Multi-step flows**: Vault creation (21 steps), password change, USB key file rotation, new-device recovery
 
 **Implementation strategy**: Build key file trait and device monitoring → add Argon2id KDF and memory-locked session keys → implement session lifecycle and timeout → implement vault ceremonies
 

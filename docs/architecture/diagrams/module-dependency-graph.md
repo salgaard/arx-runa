@@ -6,36 +6,36 @@
 ```mermaid
 flowchart TD
     subgraph BACKEND ["Rust Backend (src-tauri/src/)"]
-        CRYPTO["crypto/\nXChaCha20-Poly1305, HKDF,\nkey types, BLAKE3"]:::core
-        AUTH["auth/\nArgon2id, USB key file,\nsession lifecycle"]:::core
-        STORAGE["storage/\nchunking, manifest,\nMetadataStore"]:::data
-        CLOUD["storage/cloud/\nCloudTransport, Rclone,\nvault header"]:::data
-        SHARING["sharing/\nECIES, contacts,\nshare packages"]:::feature
-        MEMORY["memory/\nmlock/VirtualLock,\nzeroize guards"]:::infra
-        UI["ui/\nTauri IPC commands,\nerror sanitisation"]:::boundary
+        CRYPTO["crypto/<br/>XChaCha20-Poly1305, HKDF,<br/>key types, BLAKE3"]:::core
+        AUTH["auth/<br/>Argon2id, USB key file,<br/>session lifecycle"]:::core
+        STORAGE["storage/<br/>chunking, manifest,<br/>MetadataStore"]:::data
+        CLOUD["storage/cloud/<br/>CloudTransport, Rclone,<br/>vault header"]:::data
+        SHARING["sharing/<br/>ECIES, contacts,<br/>share packages"]:::feature
+        MEMORY["memory/<br/>mlock/VirtualLock,<br/>zeroize guards"]:::infra
+        UI["ui/<br/>Tauri IPC commands,<br/>error sanitisation"]:::boundary
     end
 
     subgraph FRONTEND ["Leptos Frontend (src/)"]
-        WASM["WASM app\nLeptos components,\ninvoke() wrapper"]:::boundary
+        WASM["WASM app<br/>Leptos components,<br/>invoke() wrapper"]:::boundary
     end
 
     subgraph EXTERNAL ["External"]
-        RCLONE["Rclone sidecar\n(subprocess)"]:::ext
-        CLOUD_PROVIDER["Cloud provider\n(S3, GCS, etc.)"]:::ext
-        USB["USB key file\n(hardware)"]:::ext
+        RCLONE["Rclone sidecar<br/>(subprocess)"]:::ext
+        CLOUD_PROVIDER["Cloud provider<br/>(S3, GCS, etc.)"]:::ext
+        USB["USB key file<br/>(hardware)"]:::ext
     end
 
     %% Internal dependencies
-    AUTH -->|"derives master_key\nvia Argon2id"| CRYPTO
-    STORAGE -->|"encrypt_chunk\nwrap/unwrap file_key"| CRYPTO
-    STORAGE -->|"session keys\n(KEK, sqlcipher_key)"| AUTH
-    CLOUD -->|"reads manifest\nfor sync state"| STORAGE
-    SHARING -->|"per-file keys\nECIES encryption"| CRYPTO
-    SHARING -->|"chunk metadata\nfor share packages"| STORAGE
-    UI -->|"invokes all\nbackend operations"| AUTH
-    UI -->|"invokes all\nbackend operations"| STORAGE
-    UI -->|"invokes all\nbackend operations"| CLOUD
-    UI -->|"invokes all\nbackend operations"| SHARING
+    AUTH -->|"derives master_key<br/>via Argon2id"| CRYPTO
+    STORAGE -->|"encrypt_chunk<br/>wrap/unwrap file_key"| CRYPTO
+    STORAGE -->|"session keys<br/>(KEK, sqlcipher_key)"| AUTH
+    CLOUD -->|"reads manifest<br/>for sync state"| STORAGE
+    SHARING -->|"per-file keys<br/>ECIES encryption"| CRYPTO
+    SHARING -->|"chunk metadata<br/>for share packages"| STORAGE
+    UI -->|"invokes all<br/>backend operations"| AUTH
+    UI -->|"invokes all<br/>backend operations"| STORAGE
+    UI -->|"invokes all<br/>backend operations"| CLOUD
+    UI -->|"invokes all<br/>backend operations"| SHARING
     WASM -->|"Tauri invoke()"| UI
 
     %% Infrastructure dependencies

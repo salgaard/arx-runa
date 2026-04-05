@@ -5,7 +5,7 @@
 
 ```mermaid
 flowchart LR
-    MK["master_key\n(from Argon2id)"]
+    MK["master_key<br/>(from Argon2id)"]
     
     subgraph HKDF["HKDF-SHA256 Expansion"]
         H1["expand(info: voidgate-key-encryption)"]

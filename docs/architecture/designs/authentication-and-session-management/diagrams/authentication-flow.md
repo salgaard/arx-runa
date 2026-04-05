@@ -59,7 +59,7 @@ sequenceDiagram
     Auth->>UI: warning — 60s before timeout
     Auth->>Mem: zeroize(SessionKeys), drop
     Auth->>DB: close SQLCipher connection
-    Auth-->>UI: session expired -&gt; show login screen
+    Auth-->>UI: session expired #45;#62; show login screen
 
     note over User,DB: Password Change
     User->>UI: Change password

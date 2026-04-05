@@ -1,18 +1,9 @@
 # Research
 
-This folder contains exploration documents, market research, and speculative ideas for VoidGate's future direction.
+Exploratory documents covering the market landscape, future directions, and ideas that may or may not make it into VoidGate.
+
+These are not specifications — they are living documents for brainstorming and strategic thinking.
 
 ## Documents
 
-- **[Market & Future Directions](market-and-future-directions.md)** — Market analysis, progressive security model, mainstream adoption strategies, and future trends.
-
-## Purpose
-
-Research documents are living documents for brainstorming and strategic planning. They are not specifications — ideas here may or may not be implemented.
-
-Key topics explored:
-- Competitor landscape (Cryptomator, Tresorit, Proton Drive)
-- Progressive security tiers (password → biometric → USB key)
-- Auto-sync UI design (drop zone)
-- Alternative auth factors (NFC, hardware wallets, biometrics)
-- Future market trends (AI privacy, post-quantum, personal AI agents)
+- **[Market & Future Directions](market-and-future-directions.md)** — How VoidGate compares to existing solutions (Cryptomator, Tresorit, Proton Drive), strategies for mainstream adoption, and longer-term ideas such as biometric authentication, NFC hardware keys, and post-quantum cryptography.

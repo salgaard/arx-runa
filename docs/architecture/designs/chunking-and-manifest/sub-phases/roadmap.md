@@ -14,11 +14,11 @@ This sub-phase roadmap decomposes the chunking and manifest design (378 lines) i
 **Total sub-phases**: 3
 
 **Rationale for decomposition**:
-- ✅ **Size**: Exceeds ~100-150 lines (378 lines total)
-- ✅ **Trait boundaries**: `MetadataStore` trait → `MockMetadataStore` → `SqlCipherMetadataStore` → encrypt/decrypt pipelines
-- ✅ **Integration breadth**: Touches crypto module (Phase 1), auth module (Phase 2), introduces SQLCipher, staging directory, and file I/O pipelines
-- ✅ **Error surface**: Defines multiple distinct `StorageError` variants requiring separate test coverage
-- ✅ **Multi-step flows**: Encrypt pipeline, decrypt pipeline, file key lifecycle, error recovery, orphan cleanup
+-  **Size**: Exceeds ~100-150 lines (378 lines total)
+-  **Trait boundaries**: `MetadataStore` trait → `MockMetadataStore` → `SqlCipherMetadataStore` → encrypt/decrypt pipelines
+-  **Integration breadth**: Touches crypto module (Phase 1), auth module (Phase 2), introduces SQLCipher, staging directory, and file I/O pipelines
+-  **Error surface**: Defines multiple distinct `StorageError` variants requiring separate test coverage
+-  **Multi-step flows**: Encrypt pipeline, decrypt pipeline, file key lifecycle, error recovery, orphan cleanup
 
 **Implementation strategy**: Build foundational schema and trait with mock → implement streaming encrypt/decrypt pipelines → add staging directory management and error recovery
 

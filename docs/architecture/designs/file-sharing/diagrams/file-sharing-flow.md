@@ -20,8 +20,8 @@ sequenceDiagram
     note over Owner,Cloud: Phase 1 — Share a File
     Owner->>Owner: Retrieve file_key from SQLCipher\n(unwrap with key_encryption_key)
     Owner->>Owner: Generate ephemeral X25519 keypair
-    Owner->>Owner: ECDH(ephemeral_private, recipient_public)\n-&gt; HKDF(info="voidgate-share") -&gt; symmetric_key
-    Owner->>Owner: Encrypt file_key with symmetric_key\n-&gt; file_key_wrapped
+    Owner->>Owner: ECDH(ephemeral_private, recipient_public)\n#45;#62; HKDF(info="voidgate-share") #45;#62; symmetric_key
+    Owner->>Owner: Encrypt file_key with symmetric_key\n#45;#62; file_key_wrapped
     Owner->>Owner: Assemble share package JSON\n(file_name, chunk_uuids, file_key_wrapped,\nephemeral_public_key, cloud_endpoint)
     Owner->>Owner: Encrypt package with XChaCha20-Poly1305\nusing symmetric_key
     Owner->>Cloud: Copy encrypted blobs to\nshared/<file_share_id>/ (public read)
@@ -32,8 +32,8 @@ sequenceDiagram
     Channel->>Recipient: Deliver share package
 
     note over Recipient,Cloud: Phase 3 — Recipient Imports and Fetches
-    Recipient->>Recipient: Decrypt ECIES envelope\nECDH(recipient_private, ephemeral_public)\n-&gt; HKDF(info="voidgate-share") -&gt; symmetric_key
-    Recipient->>Recipient: Decrypt file_key_wrapped\n-&gt; file_key
+    Recipient->>Recipient: Decrypt ECIES envelope\nECDH(recipient_private, ephemeral_public)\n#45;#62; HKDF(info="voidgate-share") #45;#62; symmetric_key
+    Recipient->>Recipient: Decrypt file_key_wrapped\n#45;#62; file_key
     Recipient->>Recipient: Store share in SQLCipher\n(received_shares table)
     Recipient->>Cloud: Fetch blobs via Rclone\n(from cloud_endpoint.share_path)
     Cloud->>Recipient: Return encrypted blobs

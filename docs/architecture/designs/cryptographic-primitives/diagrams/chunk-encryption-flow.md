@@ -17,7 +17,7 @@ sequenceDiagram
     encrypt_chunk->>XChaCha20Poly1305: encrypt_in_place_detached(nonce, aad, plaintext)
     XChaCha20Poly1305-->>encrypt_chunk: tag (16 bytes)
     encrypt_chunk->>encrypt_chunk: assemble [nonce | ciphertext | tag]
-    encrypt_chunk-->>Caller: blob (Vec<u8>)
+    encrypt_chunk-->>Caller: blob (Vec#60;u8#62;)
 ```
 
 ## Description

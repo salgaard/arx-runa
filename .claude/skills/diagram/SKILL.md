@@ -34,6 +34,7 @@ Select the Mermaid diagram type based on what is being visualised:
 ### Step 2 — Gather context
 
 Read the relevant sources before generating:
+- `.claude/reference/mermaid.md` — full Mermaid syntax reference (diagram types, node shapes, arrow syntax, VoidGate color palette, common fixes)
 - `CLAUDE.md` — architecture decisions, module layout, naming conventions
 - Design documents in `docs/architecture/designs/<design-name>/design.md` — canonical technical specifications
 - Source files if they exist (e.g. `src-tauri/src/crypto/`, `src-tauri/src/auth/`)
@@ -71,24 +72,7 @@ Read the relevant sources before generating:
 - Never split in the middle of a flow — each diagram must be self-contained
 - Create a parent "overview" diagram that references the child diagrams
 
-**Styling with `classDef` — use for visual clarity:**
-
-```mermaid
-classDef secret fill:#dc2626,stroke:#991b1b,color:#fff
-classDef crypto fill:#2563eb,stroke:#1e40af,color:#fff
-classDef storage fill:#16a34a,stroke:#166534,color:#fff
-classDef user fill:#9333ea,stroke:#6b21a8,color:#fff
-classDef boundary fill:#f59e0b,stroke:#d97706,color:#000
-```
-
-Apply styles to categorise nodes:
-- `secret` (red) — key material, passwords, plaintext data
-- `crypto` (blue) — encryption/decryption operations, KDF, HKDF
-- `storage` (green) — SQLCipher, blob storage, rclone
-- `user` (purple) — user-facing: UI, IPC commands, inputs
-- `boundary` (amber) — trust boundaries, security perimeters
-
-Apply with `:::secret` after a node definition, e.g. `MK["master_key"]:::secret`
+**Styling with `classDef`**: use the VoidGate color palette from `.claude/reference/mermaid.md` (already read in Step 2). Apply with `:::secret` after a node definition, e.g. `MK["master_key"]:::secret`.
 
 ### Step 4 — Determine diagram location
 

@@ -14,11 +14,11 @@ This sub-phase roadmap decomposes the cloud synchronisation design (722 lines) i
 **Total sub-phases**: 5
 
 **Rationale for decomposition**:
-- ✅ **Size**: Exceeds ~100-150 lines (722 lines total)
-- ✅ **Trait boundaries**: `CloudTransport` trait → `MockTransport` → `RcloneTransport` → vault header/manifest operations
-- ✅ **Integration breadth**: Touches storage module, introduces Rclone subprocess, cloud config management, conflict detection
-- ✅ **Error surface**: Defines 7 distinct `CloudTransportError` variants requiring separate test coverage
-- ✅ **Multi-step flows**: Upload/download flows, push/pull flows, conflict detection, garbage collection
+-  **Size**: Exceeds ~100-150 lines (722 lines total)
+-  **Trait boundaries**: `CloudTransport` trait → `MockTransport` → `RcloneTransport` → vault header/manifest operations
+-  **Integration breadth**: Touches storage module, introduces Rclone subprocess, cloud config management, conflict detection
+-  **Error surface**: Defines 7 distinct `CloudTransportError` variants requiring separate test coverage
+-  **Multi-step flows**: Upload/download flows, push/pull flows, conflict detection, garbage collection
 
 **Implementation strategy**: Build foundational trait with mock → integrate Rclone → implement bootstrap structures (vault header) → implement backup mechanisms (manifest) → add conflict detection and cloud flows
 

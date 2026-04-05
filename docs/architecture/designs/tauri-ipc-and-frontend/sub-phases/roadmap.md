@@ -14,11 +14,11 @@ This sub-phase roadmap decomposes the Tauri IPC and frontend design (1016 lines 
 **Total sub-phases**: 4 (Phases 6.1 through 6.4)
 
 **Rationale for decomposition**:
-- ✅ **Size**: Exceeds ~100-150 lines (1016 lines total)
-- ✅ **Trait boundaries**: IPC error/type definitions are independently implementable before frontend consumers exist
-- ✅ **Integration breadth**: Touches auth, storage, sync, and sharing modules on the backend; Leptos state contexts and page components on the frontend
-- ✅ **Error surface**: Defines 7 distinct `IpcError` variants plus `From` impls for 3 domain error types
-- ✅ **Multi-step flows**: Authentication flow, vault browse flow, file transfer with progress streaming, Zero-Trace state-clearing flow
+-  **Size**: Exceeds ~100-150 lines (1016 lines total)
+-  **Trait boundaries**: IPC error/type definitions are independently implementable before frontend consumers exist
+-  **Integration breadth**: Touches auth, storage, sync, and sharing modules on the backend; Leptos state contexts and page components on the frontend
+-  **Error surface**: Defines 7 distinct `IpcError` variants plus `From` impls for 3 domain error types
+-  **Multi-step flows**: Authentication flow, vault browse flow, file transfer with progress streaming, Zero-Trace state-clearing flow
 
 **Implementation strategy**: Define the IPC contract and error sanitisation boundary first → build frontend state contexts and type-safe invoke wrapper → build page components against the contexts → harden with Zero-Trace compliance and CSP
 

@@ -14,11 +14,11 @@ This sub-phase roadmap decomposes the file sharing design (282 lines) into 3 ind
 **Total sub-phases**: 3
 
 **Rationale for decomposition**:
-- ✅ **Size**: Exceeds ~100-150 lines (282 lines total)
-- ✅ **Trait boundaries**: Identity/contact management implementable independently of ECIES construction and cloud operations
-- ✅ **Integration breadth**: Touches crypto module (ECIES, HKDF), storage module (SQLCipher schema extension, CloudTransport), and auth module (key wrapping)
-- ✅ **Error surface**: Defines distinct error domains across identity, cryptographic, and cloud operations
-- ✅ **Multi-step flows**: Key exchange flow, share package creation flow, revocation flow
+-  **Size**: Exceeds ~100-150 lines (282 lines total)
+-  **Trait boundaries**: Identity/contact management implementable independently of ECIES construction and cloud operations
+-  **Integration breadth**: Touches crypto module (ECIES, HKDF), storage module (SQLCipher schema extension, CloudTransport), and auth module (key wrapping)
+-  **Error surface**: Defines distinct error domains across identity, cryptographic, and cloud operations
+-  **Multi-step flows**: Key exchange flow, share package creation flow, revocation flow
 
 **Implementation strategy**: Build identity layer with contact management → implement ECIES construction and share packages → add cloud layout and revocation operations
 

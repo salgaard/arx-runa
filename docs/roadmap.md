@@ -1,9 +1,25 @@
 # VoidGate Implementation Roadmap
 
-> Master plan for the VoidGate bachelor project. Each phase is designed as a
-> self-contained unit suitable for a single `/plan` + `/implement` session.
-> Documentation milestones are woven into implementation phases to ensure the
-> bachelor report is built incrementally alongside the codebase.
+VoidGate is built in ten sequential phases, each delivering a distinct, self-contained piece of the system. The phases are ordered by dependency: cryptographic foundations come first, then authentication, then storage, cloud sync, sharing, and finally the user interface and testing.
+
+| Phase | What gets built | Status |
+|-------|----------------|--------|
+| 0 — Scaffolding | Project structure, build pipeline, CI | Complete |
+| 1 — Cryptographic Primitives | Encryption, key derivation, chunk encryption/decryption | Complete |
+| 2 — Authentication & Session | Login flow, USB key file, session lifecycle and timeout | Complete |
+| 3 — Storage & Chunking | File splitting, local encrypted database, blob staging | In progress |
+| 4 — Cloud Synchronisation | Rclone integration, upload/download, new-device recovery | Planned |
+| 5 — File Sharing | Per-file sharing via encrypted share packages, revocation | Planned |
+| 6 — Tauri IPC & Frontend | User interface, backend commands, error handling | Planned |
+| 7 — Integration Testing | End-to-end tests covering all modules and adversarial scenarios | Planned |
+| 8 — Threat Model & Report | Formal threat model, architecture comparison, report consolidation | Planned |
+| 9 — Hardening & Submission | Security review, dependency audit, final polish | Planned |
+
+---
+
+The remainder of this page contains the detailed technical specification for each phase, including deliverables, test criteria, and documentation requirements.
+
+---
 
 ## Documentation References
 

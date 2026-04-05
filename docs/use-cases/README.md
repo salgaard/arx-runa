@@ -1,64 +1,51 @@
 # Use Cases
 
-This directory documents the real-world scenarios that VoidGate is designed to address. Use cases bridge the gap between user needs and technical implementation, providing requirements traceability from problem statements to design decisions.
+This section describes the real-world scenarios VoidGate is built to handle — what a user is trying to do, how VoidGate helps, and what security guarantees apply.
 
-## Purpose
+## Security Tiers
 
-Use cases serve multiple functions:
+VoidGate lets you choose how strongly each vault is protected when you create it:
 
-1. **Requirements Validation**: Ensure technical designs actually solve real-world problems
-2. **Design Traceability**: Link user needs to specific design documents and architectural decisions
-3. **Coverage Verification**: Identify gaps where use cases lack design support
-4. **Academic Documentation**: Demonstrate requirements engineering for the bachelor's project
+| Tier | What you need to unlock | Best for |
+|------|------------------------|----------|
+| **Tier 1** | Password only | Everyday use — accessible from any device |
+| **Tier 2** | Password + a specific USB file | High-value data — losing the USB means additional recovery steps |
 
-## Structure
-
-Each use case follows a standardised format (see `_template.md`):
-
-- **Actors**: Who is involved (users, systems, external entities)
-- **Preconditions**: What must be true before the use case executes
-- **Main Flow**: Step-by-step primary success scenario
-- **Alternate Flows**: Variations and exception paths
-- **Success Criteria**: Measurable outcomes that define success
-- **Related Designs**: Links to design documents that address this use case
-- **Security Considerations**: Threats addressed, assumptions, and out-of-scope items
-- **Notes**: Brief context (≤3 sentences)
-
-## Progressive Security Model
-
-VoidGate supports two authentication tiers, selectable per vault:
-
-| Tier | Auth Factors | Use Case |
-|------|-------------|----------|
-| **Tier 1** | Password only | Chosen at vault creation; accessible from any device with the password |
-| **Tier 2** | Password + USB key file | Chosen at vault creation; hardware factor required on every access |
-
-All tiers are zero-knowledge — the cloud provider never holds keys or plaintext regardless of tier. The tier applies to the entire vault and is chosen at creation time. Users who need different security levels create separate vaults.
+Regardless of tier, the cloud never holds your encryption keys or unencrypted files.
 
 ## Use Cases
 
-| ID | Title | Sub-question |
-|----|-------|-------------|
-| [use-case-1](use-case-1-personal-file-backup.md) | Zero-Knowledge Personal Backup | SQ1 (crypto), SQ3 (chunking), SQ4 (Zero-Trace) |
-| [use-case-2](use-case-2-cross-device-access.md) | Cross-Device Synchronisation | SQ3 (sync) |
-| [use-case-3](use-case-3-hardware-mfa-and-key-loss.md) | Hardware MFA and Key Loss | SQ2 (USB hardware factor) |
-| [use-case-4](use-case-4-personal-file-sharing.md) | Personal File Sharing | SQ5 (file sharing) |
+| | Scenario |
+|-|----------|
+| [Personal File Backup](use-case-1-personal-file-backup.md) | Back up sensitive files to any cloud provider. Only you can read them, even if the provider is breached. |
+| [Cross-Device Access](use-case-2-cross-device-access.md) | Access the same vault from multiple devices. Changes sync automatically without leaking filenames or structure. |
+| [Hardware Key & Recovery](use-case-3-hardware-mfa-and-key-loss.md) | Use a physical USB file as a second factor. Covers what happens if the USB is lost. |
+| [File Sharing](use-case-4-personal-file-sharing.md) | Share individual files with another person securely — without sharing your password or compromising the vault. |
 
-## Sub-Question Traceability
+## What Each Use Case Covers
 
-Mapping to the five problem-formulation sub-questions:
+Each use case document describes:
+- Who is involved and what they are trying to do
+- The step-by-step flow of a successful scenario
+- What can go wrong and how VoidGate handles it
+- The security properties that must hold throughout
 
-| Sub-question | Description | Use case coverage |
+---
+
+<details>
+<summary>Design traceability (for developers and reviewers)</summary>
+
+### Sub-Question Traceability
+
+| Sub-question | Description | Covered by |
 |---|---|---|
-| SQ1 | Encryption standards and key management | UC-IND-001 |
-| SQ2 | USB hardware factor in authentication | UC-IND-003 |
-| SQ3 | Chunking and sync without metadata leakage | UC-IND-001, UC-IND-002 |
-| SQ4 | RAM-based UI / Zero-Trace | UC-IND-001 |
-| SQ5 | File sharing in a zero-trust system | UC-IND-004 |
+| SQ1 | Encryption standards and key management | Use case 1 |
+| SQ2 | USB hardware factor in authentication | Use case 3 |
+| SQ3 | Chunking and sync without metadata leakage | Use cases 1, 2 |
+| SQ4 | RAM-based UI / Zero-Trace | Use case 1 |
+| SQ5 | File sharing in a zero-trust system | Use case 4 |
 
-## Design Document Coverage
-
-All use cases reference at least one canonical design document:
+### Design Document Coverage
 
 - [Authentication & Session Management](../architecture/designs/authentication-and-session-management/design.md)
 - [Cryptographic Primitives](../architecture/designs/cryptographic-primitives/design.md)
@@ -67,13 +54,5 @@ All use cases reference at least one canonical design document:
 - [File Sharing](../architecture/designs/file-sharing/design.md)
 - [Tauri IPC & Frontend](../architecture/designs/tauri-ipc-and-frontend/design.md)
 
-Run `/use-case-coverage` after any use case or design changes to verify traceability.
 
-## Adding New Use Cases
-
-1. Copy `_template.md` to `UC-[CATEGORY]-NNN-kebab-case-title.md`
-2. Choose category prefix: `IND` or `BIZ`
-3. Fill in all sections; keep the main flow to ≤15 steps and alternate flows to ≤4
-4. Add entry to the appropriate table above
-5. Run `/use-case-coverage` to verify design references
-6. Update `docs/SUMMARY.md`
+</details>
