@@ -20,52 +20,52 @@ sequenceDiagram
     Cloud-->>RT: manifest-backup.blob
     RT-->>Sync: temp file
     Sync->>Sync: decrypt manifest backup #45;#62; cloud_counter
-    alt cloud_counter > local_counter
+    break cloud_counter #62; local_counter
         Sync-->>User: CONFLICT — pull first
-    else cloud_counter == local_counter
-        Sync->>Meta: get all staged blob_names
-        Sync->>Sync: Fisher-Yates shuffle(blob_list)
-        
-        note over Sync,Cloud: Concurrent upload (4 Rclone processes via JoinSet)
-        
-        par Upload blob 1
-            Sync->>RT: upload_blob(staging/uuid1.blob)
-            RT->>Cloud: rclone copyto vault/uuid1.blob
-            Cloud-->>RT: ok
-            RT-->>Sync: ok
-            Sync->>Stage: delete staging/uuid1.blob
-        and Upload blob 2
-            Sync->>RT: upload_blob(staging/uuid2.blob)
-            RT->>Cloud: rclone copyto vault/uuid2.blob
-            Cloud-->>RT: ok
-            RT-->>Sync: ok
-            Sync->>Stage: delete staging/uuid2.blob
-        and Upload blob 3
-            Sync->>RT: upload_blob(staging/uuid3.blob)
-            RT->>Cloud: rclone copyto vault/uuid3.blob
-            Cloud-->>RT: ok
-            RT-->>Sync: ok
-            Sync->>Stage: delete staging/uuid3.blob
-        and Upload blob 4
-            Sync->>RT: upload_blob(staging/uuid4.blob)
-            RT->>Cloud: rclone copyto vault/uuid4.blob
-            Cloud-->>RT: ok
-            RT-->>Sync: ok
-            Sync->>Stage: delete staging/uuid4.blob
-        end
-        
-        note over Sync: Repeat for next batch until all blobs uploaded
-        Sync->>Meta: increment_snapshot_counter() #45;#62; new_counter
-        Sync->>Meta: set_meta("last_synced_at", now)
-        Sync->>Sync: VACUUM INTO temp; encrypt with manifest_key
-        Sync->>RT: upload_blob(temp, manifest/manifest-backup.blob)
-        RT->>Cloud: rclone copyto
-        Cloud-->>RT: ok
-        Sync->>RT: upload_blob(vault-header.json, vault-header.json)
-        RT->>Cloud: rclone copyto
-        Cloud-->>RT: ok
-        Sync-->>User: push complete (new_counter blobs synced)
     end
+
+    Sync->>Meta: get all staged blob_names
+    Sync->>Sync: Fisher-Yates shuffle(blob_list)
+    
+    note over Sync,Cloud: Concurrent upload (4 Rclone processes via JoinSet)
+    
+    par Upload blob 1
+        Sync->>RT: upload_blob(staging/uuid1.blob)
+        RT->>Cloud: rclone copyto vault/uuid1.blob
+        Cloud-->>RT: ok
+        RT-->>Sync: ok
+        Sync->>Stage: delete staging/uuid1.blob
+    and Upload blob 2
+        Sync->>RT: upload_blob(staging/uuid2.blob)
+        RT->>Cloud: rclone copyto vault/uuid2.blob
+        Cloud-->>RT: ok
+        RT-->>Sync: ok
+        Sync->>Stage: delete staging/uuid2.blob
+    and Upload blob 3
+        Sync->>RT: upload_blob(staging/uuid3.blob)
+        RT->>Cloud: rclone copyto vault/uuid3.blob
+        Cloud-->>RT: ok
+        RT-->>Sync: ok
+        Sync->>Stage: delete staging/uuid3.blob
+    and Upload blob 4
+        Sync->>RT: upload_blob(staging/uuid4.blob)
+        RT->>Cloud: rclone copyto vault/uuid4.blob
+        Cloud-->>RT: ok
+        RT-->>Sync: ok
+        Sync->>Stage: delete staging/uuid4.blob
+    end
+    
+    note over Sync: Repeat for next batch until all blobs uploaded
+    Sync->>Meta: increment_snapshot_counter() #45;#62; new_counter
+    Sync->>Meta: set_meta("last_synced_at", now)
+    Sync->>Sync: VACUUM INTO temp#59; encrypt with manifest_key
+    Sync->>RT: upload_blob(temp, manifest/manifest-backup.blob)
+    RT->>Cloud: rclone copyto
+    Cloud-->>RT: ok
+    Sync->>RT: upload_blob(vault-header.json, vault-header.json)
+    RT->>Cloud: rclone copyto
+    Cloud-->>RT: ok
+    Sync-->>User: push complete (new_counter blobs synced)
 
     note over User,Cloud: Pull Flow (new-device recovery)
     User->>Sync: pull()

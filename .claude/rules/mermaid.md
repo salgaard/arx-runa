@@ -42,7 +42,7 @@ Stick to these six stable types. Experimental types (`architecture-beta`, `C4`, 
 - Line breaks: `\n` — never `<br/>`
 - Arrows in text: `#45;#62;` — never `->` or `-&gt;`
 - Semicolons in text: `#59;` — never literal `;`
-- Never nest `alt`/`end` inside `par`/`and`/`end` — flatten or inline condition in message text
+- Never nest `par`/`end` inside `alt`/`else`/`end` — use `break`/`end` for early exits, then put `par` at the top level
 
 **ER diagram attributes**
 - FK arrows: `#45;#62;` — never `->` or `-&gt;`
