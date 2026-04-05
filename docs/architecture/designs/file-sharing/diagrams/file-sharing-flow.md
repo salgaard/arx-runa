@@ -18,33 +18,36 @@ sequenceDiagram
     note over Owner,Recipient: Optional: compare key fingerprints to verify (MITM mitigation)
 
     note over Owner,Cloud: Phase 1 — Share a File
-    Owner->>Owner: Retrieve file_key from SQLCipher\n(unwrap with key_encryption_key)
+    Owner->>Owner: SELECT file_key_wrapped from SQLCipher
+    Owner->>Owner: unwrap(file_key_wrapped, key_encryption_key) #45;#62; file_key
     Owner->>Owner: Generate ephemeral X25519 keypair
-    Owner->>Owner: ECDH(ephemeral_private, recipient_public)\n#45;#62; HKDF(info="voidgate-share") #45;#62; symmetric_key
-    Owner->>Owner: Encrypt file_key with symmetric_key\n#45;#62; file_key_wrapped
-    Owner->>Owner: Assemble share package JSON\n(file_name, chunk_uuids, file_key_wrapped,\nephemeral_public_key, cloud_endpoint)
-    Owner->>Owner: Encrypt package with XChaCha20-Poly1305\nusing symmetric_key
-    Owner->>Cloud: Copy encrypted blobs to\nshared/<file_share_id>/ (public read)
-    Owner->>Owner: Record share in SQLCipher\n(shares table: share_id, file_share_id, contact_id)
+    Owner->>Owner: ECDH(ephemeral_private, recipient_public) #45;#62; shared_secret
+    Owner->>Owner: HKDF(shared_secret, info=voidgate-share) #45;#62; symmetric_key
+    Owner->>Owner: Encrypt file_key with symmetric_key #45;#62; file_key_wrapped
+    Owner->>Owner: Assemble share package (file_name, chunk_uuids, file_key_wrapped, ephemeral_public_key)
+    Owner->>Owner: Encrypt package with XChaCha20-Poly1305 (symmetric_key)
+    Owner->>Cloud: Copy encrypted blobs to shared/[file_share_id]/ (public read)
+    Owner->>Owner: INSERT into shares (share_id, file_share_id, contact_id)
 
     note over Owner,Recipient: Phase 2 — Package Delivery (out-of-band)
     Owner->>Channel: Export share package file
     Channel->>Recipient: Deliver share package
 
     note over Recipient,Cloud: Phase 3 — Recipient Imports and Fetches
-    Recipient->>Recipient: Decrypt ECIES envelope\nECDH(recipient_private, ephemeral_public)\n#45;#62; HKDF(info="voidgate-share") #45;#62; symmetric_key
-    Recipient->>Recipient: Decrypt file_key_wrapped\n#45;#62; file_key
-    Recipient->>Recipient: Store share in SQLCipher\n(received_shares table)
-    Recipient->>Cloud: Fetch blobs via Rclone\n(from cloud_endpoint.share_path)
+    Recipient->>Recipient: ECDH(recipient_private, ephemeral_public) #45;#62; shared_secret
+    Recipient->>Recipient: HKDF(shared_secret, info=voidgate-share) #45;#62; symmetric_key
+    Recipient->>Recipient: Decrypt file_key_wrapped #45;#62; file_key
+    Recipient->>Recipient: INSERT into received_shares
+    Recipient->>Cloud: Fetch blobs via Rclone (cloud_endpoint.share_path)
     Cloud->>Recipient: Return encrypted blobs
     Recipient->>Recipient: Verify BLAKE3 per blob
-    Recipient->>Recipient: Decrypt chunks with file_key\n(XChaCha20-Poly1305 + AAD)
+    Recipient->>Recipient: Decrypt chunks with file_key (XChaCha20-Poly1305 + AAD)
     Recipient->>Recipient: Reassemble file
 
     note over Owner,Cloud: Phase 4 — Revocation (owner-initiated)
     Owner->>Cloud: Delete shared/<file_share_id>/
     Owner->>Owner: Set revoked_at in shares table
-    note over Owner: If recipient already fetched:\noptional re-encryption under new file_key
+    note over Owner: If recipient already fetched, optional re-encryption under new file_key
 ```
 
 ## Description

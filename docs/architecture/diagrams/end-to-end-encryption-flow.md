@@ -18,12 +18,12 @@ sequenceDiagram
     User->>UI: Enter password
     UI->>Auth: USB key file detected (BLAKE3 match)
     Auth->>Auth: Argon2id(password || key_file, salt)
-    note right of Auth: ⏱ ~2-3 seconds\n(m=19456 KiB, t=2, p=1)
+    note right of Auth: ~2-3 seconds (m=19456 KiB, t=2, p=1)
     
     alt Authentication Success
         Auth->>Crypto: master_key (32B, mlocked)
         Crypto->>Crypto: HKDF-SHA256 expand
-        Note right of Crypto: info: "voidgate-key-encryption"\ninfo: "voidgate-sqlcipher"\ninfo: "voidgate-manifest-backup"
+        note right of Crypto: info: voidgate-key-encryption, voidgate-sqlcipher, voidgate-manifest-backup
         Crypto-->>Auth: VaultKeys { key_encryption_key, sqlcipher_key, manifest_key }
         Auth->>Auth: zeroize(master_key)
         Auth->>Storage: Open SQLCipher(sqlcipher_key)
@@ -31,7 +31,7 @@ sequenceDiagram
     else Authentication Failed
         Auth->>Auth: zeroize intermediate state
         Auth-->>UI: Authentication failed (generic error)
-        note over Auth,UI: Never reveal which factor was wrong\n(password vs key file)
+        note over Auth,UI: Never reveal which factor was wrong (password vs key file)
     end
 
     Note over User,Cloud: === Upload File ===
@@ -51,10 +51,10 @@ sequenceDiagram
         Storage->>Storage: Read chunk via BufReader
         Storage->>Storage: Zero-pad if < chunk_size
         Storage->>Crypto: encrypt_chunk(chunk, file_key, file_id, chunk_index)
-        note right of Crypto: AAD = file_id (16B) || chunk_index (4B BE)\nNonce = 24B CSPRNG\n⏱ ~50-100ms per 4 MiB chunk
-        Crypto-->>Storage: wire_blob [nonce | ciphertext | tag]
+        note right of Crypto: AAD = file_id #124;#124; chunk_index, nonce = 24B CSPRNG
+        Crypto-->>Storage: wire_blob [nonce #124; ciphertext #124; tag]
         Storage->>Storage: blake3::hash(wire_blob)
-        Storage->>Storage: Write blob to staging/<uuid>.blob
+        Storage->>Storage: Write blob to staging/[uuid].blob
         Storage->>Storage: zeroize(plaintext_chunk)
     end
     
@@ -89,7 +89,7 @@ sequenceDiagram
             Storage->>Storage: zeroize(padded_plaintext)
         else BLAKE3 Mismatch
             Storage->>Storage: Abort download, report corruption
-            note over Storage: Fail fast — never attempt decrypt\nwith tampered/corrupted blob
+            note over Storage: Fail fast — never decrypt a tampered blob
         end
     end
     

@@ -38,10 +38,12 @@ Stick to these six stable types. Experimental types (`architecture-beta`, `C4`, 
 **Flowchart edge labels**
 - `-->|text|` only — never `-->|"quoted text"|` (quotes inside pipes confuse the lexer)
 
-**Sequence diagram messages**
-- Line breaks: `\n` — never `<br/>`
+**Sequence diagram messages and notes**
+- Line breaks: never use `\n` — split into separate arrows instead; shorten notes to a single line
 - Arrows in text: `#45;#62;` — never `->` or `-&gt;`
 - Semicolons in text: `#59;` — never literal `;`
+- Pipe char in notes: `#124;` — never literal `|` or `||`
+- No emoji in notes or messages
 - Never nest `par`/`end` inside `alt`/`else`/`end` — use `break`/`end` for early exits, then put `par` at the top level
 
 **ER diagram attributes**
