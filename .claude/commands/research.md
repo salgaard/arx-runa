@@ -7,7 +7,7 @@ Collaborative research session for: $ARGUMENTS
 ---
 
 ## Flow
- 
+  
 ### 1. Orient
 
 1. Read relevant existing docs (`CLAUDE.md`, related files in `docs/`)
