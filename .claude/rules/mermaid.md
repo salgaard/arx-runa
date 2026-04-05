@@ -29,14 +29,20 @@ Stick to these six stable types. Experimental types (`architecture-beta`, `C4`, 
 
 **Flowchart node labels**
 - Line breaks: `<br/>` — never `\n`
-- Arrows: plain `->` — never `-&gt;`
+- Arrows: `#45;#62;` — never plain `->` or `-&gt;` (both cause empty squares in v11)
+- Pipe char: `#124;` for `|`, `#124;#124;` for `||` — never literal (parsed as edge-label delimiter)
+- Unicode / emoji: ASCII equivalents only — `>=` not `≥`, no emoji in labels
 - Reserved word: never use `end` as a node ID; use `END` or `["end"]`
 - Node IDs: never start with `o-` or `x-` (creates special edges)
+
+**Flowchart edge labels**
+- `-->|text|` only — never `-->|"quoted text"|` (quotes inside pipes confuse the lexer)
 
 **Sequence diagram messages**
 - Line breaks: `\n` — never `<br/>`
 - Arrows in text: `#45;#62;` — never `->` or `-&gt;`
 - Semicolons in text: `#59;` — never literal `;`
+- Never nest `alt`/`end` inside `par`/`and`/`end` — flatten or inline condition in message text
 
 **ER diagram attributes**
 - FK arrows: `#45;#62;` — never `->` or `-&gt;`

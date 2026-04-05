@@ -313,9 +313,13 @@ Available themes: `default`, `dark`, `neutral`, `forest`, `base`
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Empty squares / missing text | `-&gt;` in flowchart node label | Use plain `->` in flowcharts |
+| Empty squares / missing text | `\|` or `\|\|` in flowchart node label | Use `#124;` (pipe entity) in node text |
+| Empty squares / missing text | `->` in flowchart node label | Use `#45;#62;` (not plain `->`) |
 | Empty squares / missing text | `\n` in flowchart node label | Use `<br/>` in flowcharts |
+| Empty squares / missing text | Unicode chars (e.g. `≥`, `🔥`) in flowchart label | Use ASCII equivalents (`>=`) or plain text |
 | Syntax error on build | `end` used as node ID | Use `END` or `["end"]` |
+| Syntax error on build | Nested `alt`/`end` inside `par`/`and`/`end` block | Flatten structure; inline the condition in the message text |
+| Edge labels rendered with literal quotes | Quoted text inside pipes: `\|"text"\|` | Remove inner quotes: `\|text\|` |
 | Special edge rendered unexpectedly | Node ID starts with `o-` or `x-` | Add space or capitalize |
 | Arrows not rendering in sequence | Named HTML entity like `-&gt;` | Use `#45;#62;` |
 | Sequence diagram breaks at semicolon | `;` in message text | Use `#59;` |

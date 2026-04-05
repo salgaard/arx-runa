@@ -10,7 +10,7 @@ flowchart TD
     SALT["Argon2 Salt<br/>(from vault header)"]:::storage
 
     subgraph KDF ["Key Derivation — Argon2id"]
-        ARGON["Argon2id<br/>m≥19456, t≥2, p=1"]:::crypto
+        ARGON["Argon2id<br/>m>=19456, t>=2, p=1"]:::crypto
     end
 
     MK_NODE(["master_key<br/>(mlocked memory)"]):::secret
@@ -32,27 +32,27 @@ flowchart TD
         FKW["file_key_wrapped<br/>(file_key encrypted with key_encryption_key)<br/>stored in SQLCipher nodes table"]:::storage
     end
 
-    PW -->|"combined input"| ARGON
-    KF -->|"combined input"| ARGON
-    SALT -->|"salt"| ARGON
+    PW -->|combined input| ARGON
+    KF -->|combined input| ARGON
+    SALT -->|salt| ARGON
 
-    ARGON -->|"outputs"| MK_NODE
+    ARGON -->|outputs| MK_NODE
 
-    MK_NODE -->|"input"| HKDF1
-    MK_NODE -->|"input"| HKDF2
-    MK_NODE -->|"input"| HKDF3
+    MK_NODE -->|input| HKDF1
+    MK_NODE -->|input| HKDF2
+    MK_NODE -->|input| HKDF3
 
-    HKDF1 -->|"derives"| KEK
-    HKDF2 -->|"derives"| SK
-    HKDF3 -->|"derives"| MK
+    HKDF1 -->|derives| KEK
+    HKDF2 -->|derives| SK
+    HKDF3 -->|derives| MK
 
-    HKDF3 --> ZEROIZE_MK["🔥 zeroize(master_key)<br/>Immediately after HKDF"]:::zeroize
+    HKDF3 --> ZEROIZE_MK["zeroize(master_key)<br/>Immediately after HKDF"]:::zeroize
 
-    KEK -->|"wraps/unwraps"| FK
-    FK -->|"encrypted with key_encryption_key"| FKW
+    KEK -->|wraps/unwraps| FK
+    FK -->|encrypted with KEK| FKW
 
     FK --> USE_FK["Use for<br/>chunk encrypt/decrypt"]:::proc
-    USE_FK --> ZEROIZE_FK["🔥 zeroize(file_key)<br/>After each operation"]:::zeroize
+    USE_FK --> ZEROIZE_FK["zeroize(file_key)<br/>After each operation"]:::zeroize
 
     classDef secret fill:#dc2626,stroke:#991b1b,color:#fff
     classDef crypto fill:#2563eb,stroke:#1e40af,color:#fff

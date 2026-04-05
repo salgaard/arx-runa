@@ -94,13 +94,7 @@ sequenceDiagram
         RT->>Cloud: rclone copyto vault/uuid1.blob
         Cloud-->>RT: uuid1.blob
         RT-->>Sync: staging/uuid1.blob
-        Sync->>Sync: Verify BLAKE3
-        alt checksum match
-            Sync->>Sync: Accept blob
-        else checksum mismatch
-            Sync->>Stage: delete staging/uuid1.blob
-            Sync->>Sync: record verification failure
-        end
+        Sync->>Sync: Verify BLAKE3 (delete + record failure on mismatch)
     and Download blob 2
         Sync->>RT: download_blob(vault/uuid2.blob)
         RT->>Cloud: rclone copyto vault/uuid2.blob
