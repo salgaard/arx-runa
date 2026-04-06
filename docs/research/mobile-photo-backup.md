@@ -4,7 +4,7 @@
 > **Status**: Living document
 > **Last updated**: April 2026
 
-This document evaluates the feasibility of a Arx Runa mobile application for iOS and Android that automatically encrypts photos from the device camera roll and uploads them to a user-configured Rclone cloud backend.
+This document evaluates the feasibility of an Arx Runa mobile application for iOS and Android that automatically encrypts photos from the device camera roll and uploads them to a user-configured Rclone cloud backend.
 
 ---
 
@@ -120,7 +120,7 @@ iCloud Drive does **not** expose a public API. Apple does not provide:
 
 Apple's iCloud protocols are proprietary and undocumented. The `icloud-drive-docker` open-source project reverse-engineered partial access, but this is unsupported, fragile, and violates Apple's Terms of Service.
 
-**Verdict**: iCloud cannot be a Arx Runa backend via Rclone or any other reliable method. This is a fundamental Apple platform restriction, not a Arx Runa limitation.
+**Verdict**: iCloud cannot be an Arx Runa backend via Rclone or any other reliable method. This is a fundamental Apple platform restriction, not an Arx Runa limitation.
 
 Users on Apple devices who want photo backup should configure one of: S3-compatible storage, Google Drive, OneDrive, WebDAV, or SFTP.
 

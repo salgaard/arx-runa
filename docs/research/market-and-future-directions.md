@@ -641,7 +641,7 @@ Arx Runa could become the **private memory layer** for local AI:
 **Problem**: Developers store secrets in plaintext .env files.
 
 **Solution**:
-- `voidgate secrets set API_KEY=xxx`
+- `arx-runa secrets set API_KEY=xxx`
 - Encrypted storage, decrypted only in memory at runtime
 - Git-safe (commit encrypted blob, not plaintext)
 - Integration with CI/CD

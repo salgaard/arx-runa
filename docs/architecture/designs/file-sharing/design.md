@@ -51,10 +51,10 @@ The base Arx Runa design uses a vault-wide `key_encryption_key` (HKDF-derived fr
 ```
 master_key  (Argon2id output, mlocked memory, never stored)
     │
-    ├─ key_encryption_key  (HKDF-SHA256, info: "voidgate-key-encryption")
+    ├─ key_encryption_key  (HKDF-SHA256, info: "arx-runa-key-encryption")
     │       └─ wraps/unwraps per-file file_keys stored in SQLCipher
-    ├─ sqlcipher_key       (HKDF-SHA256, info: "voidgate-sqlcipher")
-    └─ manifest_key        (HKDF-SHA256, info: "voidgate-manifest-backup")
+    ├─ sqlcipher_key       (HKDF-SHA256, info: "arx-runa-sqlcipher")
+    └─ manifest_key        (HKDF-SHA256, info: "arx-runa-manifest-backup")
 
 Per file (generated at file creation):
     file_key  (random 256-bit via CSPRNG)
@@ -75,7 +75,7 @@ Share packages are encrypted using the recipient's X25519 public key via ECIES (
 
 1. Generate an ephemeral X25519 keypair (ephemeral private key is discarded after use)
 2. Perform ECDH between the ephemeral private key and the recipient's long-term public key → shared secret
-3. Derive a symmetric key: `HKDF-SHA256(shared_secret, salt=ephemeral_public_key, info="voidgate-share")`
+3. Derive a symmetric key: `HKDF-SHA256(shared_secret, salt=ephemeral_public_key, info="arx-runa-share")`
 4. Encrypt the share package content with that symmetric key using XChaCha20-Poly1305
 5. Transmit: `[ephemeral_public_key | nonce | ciphertext | Poly1305 tag]`
 
@@ -123,7 +123,7 @@ The `file_key_wrapped` field is the `file_key` encrypted with the ECDH-derived s
 
 ### Delivery
 
-The owner exports the share package as a file and delivers it via their own channel (email, messaging app, USB). The recipient imports it into Arx Runa via file picker or a `voidgate://share-import?...` deep link (Tauri custom URI scheme).
+The owner exports the share package as a file and delivers it via their own channel (email, messaging app, USB). The recipient imports it into Arx Runa via file picker or a `arx-runa://share-import?...` deep link (Tauri custom URI scheme).
 
 ---
 

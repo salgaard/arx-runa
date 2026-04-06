@@ -21,7 +21,7 @@ This document researches whether adding data compression to Arx Runa's encrypt-a
 9. [Bin-Packing: Storing Multiple Files Per Chunk](#bin-packing-storing-multiple-files-per-chunk)
 10. [Decision: Position 1 — No Compression](#decision-position-1--no-compression)
 11. [Cloud Storage Cost Analysis](#cloud-storage-cost-analysis)
-12. [Real Cost Drivers in Arx Runa](#real-cost-drivers-in-voidgate)
+12. [Real Cost Drivers in Arx Runa](#real-cost-drivers-in-arx-runa)
 13. [Padding Overhead: Real Numbers](#padding-overhead-real-numbers)
 14. [Cloud Provider Comparison](#cloud-provider-comparison)
 15. [Open Questions](#open-questions)

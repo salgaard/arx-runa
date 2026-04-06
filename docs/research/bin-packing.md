@@ -12,7 +12,7 @@ This document researches whether Arx Runa should support packing multiple small 
 
 1. [The Problem](#the-problem)
 2. [Prior Art](#prior-art)
-3. [How Bin-Packing Would Work in Arx Runa](#how-bin-packing-would-work-in-voidgate)
+3. [How Bin-Packing Would Work in Arx Runa](#how-bin-packing-would-work-in-arx-runa)
 4. [Privacy Analysis](#privacy-analysis)
 5. [Write Amplification: The Core Trade-off](#write-amplification-the-core-trade-off)
 6. [The RWS Trilemma](#the-rws-trilemma)

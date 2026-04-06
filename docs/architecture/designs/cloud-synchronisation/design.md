@@ -170,13 +170,13 @@ pub struct CloudEndpoint {
     pub endpoint: String,
 
     /// Path prefix within the bucket that acts as the cloud root for all
-    /// `CloudTransport` operations (e.g., `"voidgate/"` or
+    /// `CloudTransport` operations (e.g., `"arx-runa/"` or
     /// `"shared/<file_share_id>/"`).
     pub path_prefix: String,
 }
 ```
 
-**Where the owner's config is stored.** `%APPDATA%/voidgate/cloud-config.json` (Windows) or `~/.local/share/voidgate/cloud-config.json` (Linux). This file contains no secrets — Rclone credentials live in Rclone's own `rclone.conf`. The cloud config must be readable before authentication (required at step 1 of new-device recovery).
+**Where the owner's config is stored.** `%APPDATA%/arx-runa/cloud-config.json` (Windows) or `~/.local/share/arx-runa/cloud-config.json` (Linux). This file contains no secrets — Rclone credentials live in Rclone's own `rclone.conf`. The cloud config must be readable before authentication (required at step 1 of new-device recovery).
 
 ---
 
@@ -256,10 +256,10 @@ Rclone is invoked with `--retries 3` (the default). Arx Runa does not add a sepa
 
 Arx Runa uses an **isolated `rclone.conf`** in the Arx Runa application data directory, not the system default:
 
-- **Windows**: `%APPDATA%/voidgate/rclone.conf`
-- **Linux**: `~/.local/share/voidgate/rclone.conf`
+- **Windows**: `%APPDATA%/arx-runa/rclone.conf`
+- **Linux**: `~/.local/share/arx-runa/rclone.conf`
 
-Every Rclone invocation includes `--config <voidgate_rclone_conf_path>`.
+Every Rclone invocation includes `--config <arx_runa_rclone_conf_path>`.
 
 **Rationale**:
 - Prevents interference with user's existing Rclone remotes
@@ -307,7 +307,7 @@ impl Default for SyncConfig {
 }
 ```
 
-`SyncConfig` is stored in `%APPDATA%/voidgate/sync-config.json` (or Linux equivalent). It is user-editable but not exposed in the initial UI — advanced users can modify it directly.
+`SyncConfig` is stored in `%APPDATA%/arx-runa/sync-config.json` (or Linux equivalent). It is user-editable but not exposed in the initial UI — advanced users can modify it directly.
 
 **Why separate from `CloudEndpoint`**: `CloudEndpoint` describes *where* to sync (provider, bucket, credentials). `SyncConfig` describes *how* to sync (concurrency, timeouts). Keeping them separate allows:
 - Same sync behaviour across multiple vaults
@@ -330,10 +330,10 @@ Arx Runa provides a provider selection UI rather than requiring the user to run 
 ### S3-compatible flow
 
 1. User selects provider and enters: access key ID, secret access key, bucket name, region, endpoint URL (optional; empty for AWS)
-2. Arx Runa generates a remote name: `voidgate-<uuid>`
+2. Arx Runa generates a remote name: `arx-runa-<uuid>`
 3. Calls via sidecar:
    ```
-   rclone config create voidgate-<uuid> s3
+   rclone config create arx-runa-<uuid> s3
      provider=Other
      access_key_id=<id>
      secret_access_key=<secret>
@@ -350,7 +350,7 @@ Arx Runa passes credentials as arguments to `rclone config create`, not as envir
 1. User selects Google Drive
 2. Arx Runa calls:
    ```
-   rclone config create voidgate-<uuid> drive scope=drive --non-interactive
+   rclone config create arx-runa-<uuid> drive scope=drive --non-interactive
    ```
 3. Rclone prints an OAuth URL; Arx Runa opens it in the default browser via `tauri::api::shell::open`
 4. User authorises in browser; Rclone captures the token
@@ -496,7 +496,7 @@ Wire format:
 [24-byte nonce | ciphertext | 16-byte Poly1305 tag]
 ```
 
-No AAD is used. The manifest backup is a singleton — there is no `file_id` or `chunk_index` context to bind. The `manifest_key` derived from `master_key` via `hkdf(master, info=b"voidgate-manifest-backup")` is purpose-specific and not used for any other operation.
+No AAD is used. The manifest backup is a singleton — there is no `file_id` or `chunk_index` context to bind. The `manifest_key` derived from `master_key` via `hkdf(master, info=b"arx-runa-manifest-backup")` is purpose-specific and not used for any other operation.
 
 ### Upload flow
 
@@ -999,7 +999,7 @@ Cleanup:
 |----------|--------|-----------|
 | Rclone distribution | Tauri sidecar (bundled binary) | No user installation step; Tauri handles platform detection and path resolution; MIT license permits bundling |
 | Rclone invocation | `tokio::process::Command`, no shell | Prevents shell injection; arguments are separate OS strings |
-| Rclone config location | Arx Runa-specific `%APPDATA%/voidgate/rclone.conf` | Isolated from system Rclone; prevents credential conflicts; self-contained uninstall |
+| Rclone config location | Arx Runa-specific `%APPDATA%/arx-runa/rclone.conf` | Isolated from system Rclone; prevents credential conflicts; self-contained uninstall |
 | Remote path validation | Regex allowlist `^[a-zA-Z0-9._/-]+$`, reject `..` | Prevents path traversal from crafted manifest data |
 | Cloud storage layout | `vault-header.json` at root, `vault/` for blobs, `manifest/` for backup | Vault header accessible before auth; clean separation of concerns |
 | Upload order | Randomised (Fisher-Yates shuffle) | Breaks temporal correlation that could link blobs to files |

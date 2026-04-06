@@ -36,9 +36,9 @@ After Argon2id produces `master_key`, HKDF-SHA256 expands it into three vault-le
 
 | Derived Key | HKDF `info` string | Purpose |
 |---|---|---|
-| `key_encryption_key` | `voidgate-key-encryption` | Wraps and unwraps per-file `file_key` values |
-| `sqlcipher_key` | `voidgate-sqlcipher` | Keys the local SQLCipher database |
-| `manifest_key` | `voidgate-manifest-backup` | Encrypts the cloud manifest backup |
+| `key_encryption_key` | `arx-runa-key-encryption` | Wraps and unwraps per-file `file_key` values |
+| `sqlcipher_key` | `arx-runa-sqlcipher` | Keys the local SQLCipher database |
+| `manifest_key` | `arx-runa-manifest-backup` | Encrypts the cloud manifest backup |
 
 `master_key` is zeroed immediately after all three derivations complete. It is never assigned to a struct field, returned from a function, or written to any storage.
 

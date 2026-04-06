@@ -22,7 +22,7 @@ sequenceDiagram
     Owner->>Owner: unwrap(file_key_wrapped, key_encryption_key) #45;#62; file_key
     Owner->>Owner: Generate ephemeral X25519 keypair
     Owner->>Owner: ECDH(ephemeral_private, recipient_public) #45;#62; shared_secret
-    Owner->>Owner: HKDF(shared_secret, info=voidgate-share) #45;#62; symmetric_key
+    Owner->>Owner: HKDF(shared_secret, info=arx-runa-share) #45;#62; symmetric_key
     Owner->>Owner: Encrypt file_key with symmetric_key #45;#62; file_key_wrapped
     Owner->>Owner: Assemble share package (file_name, chunk_uuids, file_key_wrapped, ephemeral_public_key)
     Owner->>Owner: Encrypt package with XChaCha20-Poly1305 (symmetric_key)
@@ -35,7 +35,7 @@ sequenceDiagram
 
     note over Recipient,Cloud: Phase 3 — Recipient Imports and Fetches
     Recipient->>Recipient: ECDH(recipient_private, ephemeral_public) #45;#62; shared_secret
-    Recipient->>Recipient: HKDF(shared_secret, info=voidgate-share) #45;#62; symmetric_key
+    Recipient->>Recipient: HKDF(shared_secret, info=arx-runa-share) #45;#62; symmetric_key
     Recipient->>Recipient: Decrypt file_key_wrapped #45;#62; file_key
     Recipient->>Recipient: INSERT into received_shares
     Recipient->>Cloud: Fetch blobs via Rclone (cloud_endpoint.share_path)

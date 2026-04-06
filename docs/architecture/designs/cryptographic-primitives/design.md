@@ -38,9 +38,9 @@ RFC 5869 HKDF is used to derive three purpose-specific keys from `master_key`. E
 
 | Key | Info String | Purpose |
 |-----|-------------|---------|
-| `key_encryption_key` | `b"voidgate-key-encryption"` | Wraps/unwraps per-file `file_key` values |
-| `sqlcipher_key` | `b"voidgate-sqlcipher"` | SQLCipher database encryption |
-| `manifest_key` | `b"voidgate-manifest-backup"` | Encrypts manifest cloud backup |
+| `key_encryption_key` | `b"arx-runa-key-encryption"` | Wraps/unwraps per-file `file_key` values |
+| `sqlcipher_key` | `b"arx-runa-sqlcipher"` | SQLCipher database encryption |
+| `manifest_key` | `b"arx-runa-manifest-backup"` | Encrypts manifest cloud backup |
 
 **Critical**: `master_key` is zeroed immediately after derivation. Never stored, never logged.
 
@@ -48,7 +48,7 @@ RFC 5869 HKDF is used to derive three purpose-specific keys from `master_key`. E
 
 **Extensibility**: To add a new derived key, use the `derive-hkdf-key` skill. New keys are added by expanding with a distinct `info` string — the existing derived keys remain unchanged because HKDF produces independent outputs for different `info` values.
 
-> **Note**: The file-sharing design (Phase 5) uses a separate HKDF derivation with `info="voidgate-share"` for ECIES share packages. That derivation uses an ECDH shared secret as IKM, not `master_key`, and is documented in `docs/architecture/designs/file-sharing/design.md`. It is a distinct key derivation tree and does not affect the vault-key derivations above.
+> **Note**: The file-sharing design (Phase 5) uses a separate HKDF derivation with `info="arx-runa-share"` for ECIES share packages. That derivation uses an ECDH shared secret as IKM, not `master_key`, and is documented in `docs/architecture/designs/file-sharing/design.md`. It is a distinct key derivation tree and does not affect the vault-key derivations above.
 
 ### Rust Signature
 

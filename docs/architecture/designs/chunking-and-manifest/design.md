@@ -325,8 +325,8 @@ If the transaction fails (crash, I/O error), no manifest state exists for the pa
 ### Location
 
 A subdirectory of the Arx Runa application data directory:
-- Windows: `%APPDATA%/voidgate/staging/`
-- Linux: `~/.local/share/voidgate/staging/`
+- Windows: `%APPDATA%/arx-runa/staging/`
+- Linux: `~/.local/share/arx-runa/staging/`
 
 ### Lifecycle
 

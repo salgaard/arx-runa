@@ -16,9 +16,9 @@ flowchart TD
     MK_NODE(["master_key<br/>(mlocked memory)"]):::secret
 
     subgraph HKDF_LAYER ["Key Expansion — HKDF-SHA256 (RFC 5869)"]
-        HKDF1["HKDF<br/>info: voidgate-key-encryption"]:::crypto
-        HKDF2["HKDF<br/>info: voidgate-sqlcipher"]:::crypto
-        HKDF3["HKDF<br/>info: voidgate-manifest-backup"]:::crypto
+        HKDF1["HKDF<br/>info: arx-runa-key-encryption"]:::crypto
+        HKDF2["HKDF<br/>info: arx-runa-sqlcipher"]:::crypto
+        HKDF3["HKDF<br/>info: arx-runa-manifest-backup"]:::crypto
     end
 
     subgraph VAULT_KEYS ["Vault-Level Keys"]

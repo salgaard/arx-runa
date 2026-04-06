@@ -121,9 +121,9 @@ After Argon2id produces `master_key`, HKDF-SHA256 derives three vault-level keys
 
 ```
 master_key (32 bytes, Argon2id output, held in mlocked memory)
-    ├─ HKDF(info: "voidgate-key-encryption")  → key_encryption_key
-    ├─ HKDF(info: "voidgate-sqlcipher")        → sqlcipher_key
-    └─ HKDF(info: "voidgate-manifest-backup")  → manifest_key
+    ├─ HKDF(info: "arx-runa-key-encryption")  → key_encryption_key
+    ├─ HKDF(info: "arx-runa-sqlcipher")        → sqlcipher_key
+    └─ HKDF(info: "arx-runa-manifest-backup")  → manifest_key
 ```
 
 `master_key` is zeroed immediately after all three HKDF derivations complete. It is never stored, never logged, and never leaves the derivation function's scope.
@@ -240,9 +240,9 @@ First-run sequence when the user creates a new vault:
 10.  Key derivation (tier-dependent):
        Tier 1: Argon2id(password, salt, params)             → master_key
        Tier 2: Argon2id(password || key_file, salt, params) → master_key
-11.  HKDF(master_key, "voidgate-key-encryption")  → key_encryption_key
-12.  HKDF(master_key, "voidgate-sqlcipher")        → sqlcipher_key
-13.  HKDF(master_key, "voidgate-manifest-backup")  → manifest_key
+11.  HKDF(master_key, "arx-runa-key-encryption")  → key_encryption_key
+12.  HKDF(master_key, "arx-runa-sqlcipher")        → sqlcipher_key
+13.  HKDF(master_key, "arx-runa-manifest-backup")  → manifest_key
 14.  zeroize(master_key)                            — master_key is gone
 15.  Create SQLCipher DB keyed with sqlcipher_key
 16.  Create schema: nodes, chunks, manifest_meta, contacts, shares, received_shares

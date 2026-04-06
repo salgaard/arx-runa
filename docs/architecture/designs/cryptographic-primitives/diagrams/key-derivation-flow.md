@@ -8,9 +8,9 @@ flowchart LR
     MK["master_key<br/>(from Argon2id)"]
     
     subgraph HKDF["HKDF-SHA256 Expansion"]
-        H1["expand(info: voidgate-key-encryption)"]
-        H2["expand(info: voidgate-sqlcipher)"]
-        H3["expand(info: voidgate-manifest-backup)"]
+        H1["expand(info: arx-runa-key-encryption)"]
+        H2["expand(info: arx-runa-sqlcipher)"]
+        H3["expand(info: arx-runa-manifest-backup)"]
     end
     
     KEK["key_encryption_key"]

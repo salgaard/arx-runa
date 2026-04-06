@@ -651,7 +651,7 @@ fn LoginForm() -> impl IntoView {
                             <input
                                 type="text"
                                 class="input font-mono"
-                                placeholder="/media/usb/voidgate.key"
+                                placeholder="/media/usb/arx-runa.key"
                                 prop:value=key_path
                                 on:input:target=move |ev| set_key_path.set(ev.target().value())
                             />

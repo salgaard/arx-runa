@@ -23,7 +23,7 @@ sequenceDiagram
     alt Authentication Success
         Auth->>Crypto: master_key (32B, mlocked)
         Crypto->>Crypto: HKDF-SHA256 expand
-        note right of Crypto: info: voidgate-key-encryption, voidgate-sqlcipher, voidgate-manifest-backup
+        note right of Crypto: info: arx-runa-key-encryption, arx-runa-sqlcipher, arx-runa-manifest-backup
         Crypto-->>Auth: VaultKeys { key_encryption_key, sqlcipher_key, manifest_key }
         Auth->>Auth: zeroize(master_key)
         Auth->>Storage: Open SQLCipher(sqlcipher_key)

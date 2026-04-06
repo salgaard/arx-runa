@@ -10,13 +10,13 @@ Follow every step in order. Do not skip the documentation updates — stale key 
 See `docs/architecture/designs/authentication-and-session-management/design.md` for the current canonical key derivation tree.
 
 As of the last update, these info strings are allocated:
-- `b"voidgate-key-encryption"` → key_encryption_key (wraps per-file file_keys at rest)
-- `b"voidgate-sqlcipher"` → sqlcipher_key
-- `b"voidgate-manifest-backup"` → manifest_key
+- `b"arx-runa-key-encryption"` → key_encryption_key (wraps per-file file_keys at rest)
+- `b"arx-runa-sqlcipher"` → sqlcipher_key
+- `b"arx-runa-manifest-backup"` → manifest_key
 
 **Before proceeding, verify the current tree in the canonical source to avoid collisions.**
 
-**Step 1: Choose an info string.** Format: `b"voidgate-<purpose>"`. It must be unique, descriptive, and not a variation of an existing one.
+**Step 1: Choose an info string.** Format: `b"arx-runa-<purpose>"`. It must be unique, descriptive, and not a variation of an existing one.
 
 **Step 2: Define the key type as a named newtype with `ZeroizeOnDrop`:**
 ```rust
@@ -33,7 +33,7 @@ impl NewPurposeKey {
 fn derive_new_purpose_key(master_key: &Secret<[u8; 32]>) -> Result<NewPurposeKey, KeyDerivationError> {
     let hkdf = Hkdf::<Sha256>::new(None, master_key.expose_secret());
     let mut key_bytes = Zeroizing::new([0u8; 32]);
-    hkdf.expand(b"voidgate-<purpose>", key_bytes.as_mut())
+    hkdf.expand(b"arx-runa-<purpose>", key_bytes.as_mut())
         .map_err(|_| KeyDerivationError::HkdfExpand)?;
     Ok(NewPurposeKey(Secret::new(*key_bytes)))
     // Zeroizing zeroes the stack buffer here on drop.
