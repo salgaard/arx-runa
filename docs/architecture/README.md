@@ -21,7 +21,7 @@ Visual diagrams showing:
 
 ### Trust Boundary
 
-The "gate" in Arx Runa is the trust boundary — the line between what you control and what you do not. Your device is trusted; the cloud is not. Arx Runa ensures that nothing crosses that boundary in an unencrypted form. Even if the cloud provider is breached, the attacker only finds scrambled data.
+Arx Runa treats the client device as trusted and all cloud infrastructure as untrusted. The trust boundary is the point at which data leaves the user's machine. All encryption happens client-side; the cloud receives only ciphertext, never plaintext or encryption keys. Even if the cloud provider is compromised or legally compelled to hand over data, an attacker without the master key cannot decrypt anything.
 
 ### Key Hierarchy
 
