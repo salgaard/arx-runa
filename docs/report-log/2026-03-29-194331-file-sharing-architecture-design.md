@@ -21,7 +21,7 @@ Arx Runa requires a file sharing mechanism that preserves the zero-trust model: 
 
 The single vault-wide `chunk_key` was replaced with a two-level key structure:
 
-1. `key_encryption_key` — HKDF-SHA256 derived from `master_key` (info: `"voidgate-key-encryption"`); replaces the `chunk_key` HKDF branch
+1. `key_encryption_key` — HKDF-SHA256 derived from `master_key` (info: `"arx-runa-key-encryption"`); replaces the `chunk_key` HKDF branch
 2. `file_key` — random 256-bit key generated per file via CSPRNG; stored wrapped (encrypted) with `key_encryption_key` in the SQLCipher `nodes` table (per file, not per chunk — see [chunking design report](2026-03-29-211003-chunking-manifest-design.md) for schema evolution)
 
 All chunk encryption uses `file_key`. The `key_encryption_key` is never used directly for chunk encryption — it only wraps and unwraps `file_key` values. This is the standard key-wrapping pattern used by LUKS key slots and age.
@@ -37,7 +37,7 @@ Share packages are encrypted using the recipient's X25519 public key via ECIES:
 
 1. Owner generates an ephemeral X25519 keypair
 2. ECDH between ephemeral private key and recipient's long-term public key → shared secret
-3. `HKDF-SHA256(shared_secret, salt=ephemeral_public_key, info="voidgate-share")` → symmetric key
+3. `HKDF-SHA256(shared_secret, salt=ephemeral_public_key, info="arx-runa-share")` → symmetric key
 4. XChaCha20-Poly1305 encrypts the share package content
 5. Wire format: `[32B ephemeral_public_key | 24B nonce | ciphertext | 16B Poly1305 tag]`
 

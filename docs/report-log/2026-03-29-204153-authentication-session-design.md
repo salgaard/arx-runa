@@ -64,7 +64,7 @@ Both flows re-derive session keys with the new credentials, re-wrap all `file_ke
 
 ### Fixed key file filename
 
-Scan removable drives for a file named `voidgate.key`. Rejected: the filename reveals Arx Runa usage (anti-plausible deniability) and constrains the user's file placement options.
+Scan removable drives for a file named `arx-runa.key`. Rejected: the filename reveals Arx Runa usage (anti-plausible deniability) and constrains the user's file placement options.
 
 ### Arbitrary file as key material (hash user-chosen file)
 

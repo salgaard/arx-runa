@@ -105,7 +105,7 @@ When the owner shares a file, Arx Runa produces a share package — a small file
   "file_key_wrapped": "<file_key encrypted with ECDH-derived symmetric key, base64>",
   "cloud_endpoint": {
     "provider": "s3",
-    "bucket": "alice-voidgate",
+    "bucket": "alice-arx-runa",
     "region": "eu-west-1",
     "endpoint": "https://s3.eu-west-1.amazonaws.com",
     "share_path": "shared/<file_share_id>/"

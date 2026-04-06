@@ -130,7 +130,7 @@ popular."
 
 ### Project setup
 ```bash
-cargo create-tauri-app voidgate --template leptos
+cargo create-tauri-app arx-runa --template leptos
 ```
 
 ### Tailwind integration
