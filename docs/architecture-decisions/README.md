@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-When a significant design choice was made during VoidGate development, it was recorded here. These records explain not just *what* was decided, but *why* — including the alternatives that were considered and the trade-offs accepted.
+When a significant design choice was made during Arx Runa development, it was recorded here. These records explain not just *what* was decided, but *why* — including the alternatives that were considered and the trade-offs accepted.
 
 This is useful for anyone trying to understand the reasoning behind the current design, or for contributors evaluating whether a past decision still makes sense.
 

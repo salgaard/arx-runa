@@ -1,6 +1,6 @@
 ---
 name: derive-hkdf-key
-description: Safely add a new purpose-specific HKDF key to the VoidGate key derivation tree. Use when a new cryptographic key with a distinct purpose is needed.
+description: Safely add a new purpose-specific HKDF key to the Arx Runa key derivation tree. Use when a new cryptographic key with a distinct purpose is needed.
 ---
 
 Follow every step in order. Do not skip the documentation updates — stale key derivation trees cause security review failures.

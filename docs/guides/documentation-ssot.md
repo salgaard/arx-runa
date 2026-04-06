@@ -1,4 +1,4 @@
-# VoidGate Documentation SSOT Architecture
+# Arx Runa Documentation SSOT Architecture
 
 > **Single Source of Truth (SSOT)** for technical specifications ensures that every data element is authored in exactly one place, eliminating synchronization errors and maintenance burden.
 

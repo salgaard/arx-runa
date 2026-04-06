@@ -107,7 +107,7 @@ sequenceDiagram
 
 ## Description
 
-This diagram shows the complete encryption data flow across VoidGate's modules, from user authentication through file upload/download to vault locking.
+This diagram shows the complete encryption data flow across Arx Runa's modules, from user authentication through file upload/download to vault locking.
 
 ### Key security invariants illustrated
 

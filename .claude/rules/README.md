@@ -1,10 +1,10 @@
-# AI Rules — VoidGate
+# AI Rules — Arx Runa
 
 This directory contains AI agent rules that enforce constraints during code generation and review.
 
 ## Architecture: Reference-Based SSOT
 
-VoidGate uses a **Single Source of Truth (SSOT)** architecture where:
+Arx Runa uses a **Single Source of Truth (SSOT)** architecture where:
 
 1. **Design documents** (`docs/architecture/designs/<design-name>/design.md`) are the canonical source
 2. **Rule files** (this directory) reference design docs and state key constraints

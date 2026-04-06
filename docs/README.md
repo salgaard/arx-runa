@@ -1,12 +1,42 @@
-# VoidGate
+# Arx Runa
 
-**VoidGate** is a personal cloud storage application built around one principle: your files should be unreadable to anyone but you — including the cloud service storing them.
+<div class="arx-sheet">
+  <svg viewBox="0 0 200 236" width="118" height="140" xmlns="http://www.w3.org/2000/svg">
+    <path d="M 20 0 L 180 0 L 200 20 L 200 152 L 100 232 L 0 152 L 0 20 Z" fill="#0C0E14" stroke="#222736" stroke-width="1"/>
+    <path d="M 30 9 L 170 9 L 188 27 L 188 148 L 100 220 L 12 148 L 12 27 Z" fill="none" stroke="#181D28" stroke-width="0.6"/>
+    <line x1="100" y1="30" x2="100" y2="188" stroke="#5C7090" stroke-width="2.2" stroke-linecap="square"/>
+    <line x1="100" y1="103" x2="59" y2="148" stroke="#5C7090" stroke-width="2.2" stroke-linecap="square"/>
+    <line x1="100" y1="103" x2="141" y2="148" stroke="#5C7090" stroke-width="2.2" stroke-linecap="square"/>
+    <line x1="0" y1="20" x2="14" y2="20" stroke="#1C2130" stroke-width="0.5"/>
+    <line x1="186" y1="20" x2="200" y2="20" stroke="#1C2130" stroke-width="0.5"/>
+  </svg>
+  <div class="arx-wordmark">ARX RUNA</div>
+  <div class="arx-tagline">Encrypted here &nbsp;·&nbsp; Stored anywhere</div>
+  <div class="arx-divider"></div>
+  <p class="arx-desc">
+    Arx Runa seals your files in <em>unbreakable runes</em> before they ever leave your machine. Encrypted shards are dispatched to any cloud you choose — but the keys never travel with them. <em>No server holds your secrets. No cloud holds your keys.</em> The fortress stays with you.
+  </p>
+  <div class="arx-rule-row">
+    <div class="arx-rule"><em>Local-first.</em> Encryption happens entirely on your machine. The cloud never sees plaintext.</div>
+    <div class="arx-rule"><em>Cloud-agnostic.</em> Rclone syncs sealed shards to any provider you choose — S3, Backblaze, Dropbox, your own server.</div>
+    <div class="arx-rule"><em>Zero trust.</em> No accounts, no servers, no third-party key management. Your keys live with you.</div>
+  </div>
+  <div class="arx-swatches">
+    <div class="arx-sw"><div class="arx-sw-block" style="background:#09090B;border:0.5px solid #1E2130;"></div><div class="arx-sw-name">Iron</div></div>
+    <div class="arx-sw"><div class="arx-sw-block" style="background:#0C0E14;"></div><div class="arx-sw-name">Stone</div></div>
+    <div class="arx-sw"><div class="arx-sw-block" style="background:#222736;"></div><div class="arx-sw-name">Steel</div></div>
+    <div class="arx-sw"><div class="arx-sw-block" style="background:#5C7090;"></div><div class="arx-sw-name">Rune</div></div>
+    <div class="arx-sw"><div class="arx-sw-block" style="background:#DBD7CD;"></div><div class="arx-sw-name">Bone</div></div>
+  </div>
+</div>
 
-When you upload a file, VoidGate encrypts it on your device before it ever leaves. The cloud receives meaningless scrambled data. When you download, VoidGate decrypts it locally. At no point does the cloud hold your encryption keys, your filenames, your folder structure, or any other metadata. This is called *zero-knowledge* storage.
+**Arx Runa** is a personal cloud storage application built around one principle: your files should be unreadable to anyone but you — including the cloud service storing them.
+
+When you upload a file, Arx Runa encrypts it on your device before it ever leaves. The cloud receives meaningless scrambled data. When you download, Arx Runa decrypts it locally. At no point does the cloud hold your encryption keys, your filenames, your folder structure, or any other metadata. This is called *zero-knowledge* storage.
 
 ## Research Problem
 
-Mainstream cloud storage services (OneDrive, Google Drive, Dropbox) require users to trust the provider with their plaintext files, filenames, and metadata. A compromised or legally compelled provider can expose everything. VoidGate explores whether it is possible to build a practical alternative where the provider is structurally incapable of reading your data.
+Mainstream cloud storage services (OneDrive, Google Drive, Dropbox) require users to trust the provider with their plaintext files, filenames, and metadata. A compromised or legally compelled provider can expose everything. Arx Runa explores whether it is possible to build a practical alternative where the provider is structurally incapable of reading your data.
 
 **Main question:** How can a software solution for secure cloud storage be designed and implemented such that client-side encryption eliminates the need for trust in third-party providers, and how can the use of physical hardware factors (MFA) and Zero-Trace principles minimise the local attack surface on the user's machine?
 
@@ -24,9 +54,9 @@ This breaks down into five sub-questions:
 
 ## Explore the Documentation
 
-### What VoidGate Does
+### What Arx Runa Does
 
-- [**Use Cases**](use-cases/README.md) — Real-world scenarios VoidGate is designed for
+- [**Use Cases**](use-cases/README.md) — Real-world scenarios Arx Runa is designed for
 - [**Project Roadmap**](roadmap.md) — Development phases and what is planned
 
 ### How It Works
@@ -57,4 +87,4 @@ This breaks down into five sub-questions:
 
 ## Source Code
 
-- [GitHub Repository(private at the moment)](https://github.com/Chorizzio/void-gate)
+- [GitHub Repository(private at the moment)](https://github.com/Chorizzio/arx-runa)

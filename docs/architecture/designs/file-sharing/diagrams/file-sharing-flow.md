@@ -5,10 +5,10 @@
 
 ```mermaid
 sequenceDiagram
-    participant Owner as Owner (VoidGate)
+    participant Owner as Owner (Arx Runa)
     participant Cloud as Cloud Storage
     participant Channel as Out-of-Band Channel
-    participant Recipient as Recipient (VoidGate)
+    participant Recipient as Recipient (Arx Runa)
 
     note over Owner,Recipient: Phase 0 — Key Exchange (one-time setup)
     Owner->>Channel: Export X25519 public key (file or QR code)
@@ -54,7 +54,7 @@ sequenceDiagram
 
 The file sharing flow has four phases:
 
-1. **Key exchange** (one-time): both parties export their X25519 public keys via any out-of-band channel (email, messaging app, USB). No VoidGate server involvement. Optional fingerprint verification mitigates MITM attacks on the key exchange channel.
+1. **Key exchange** (one-time): both parties export their X25519 public keys via any out-of-band channel (email, messaging app, USB). No Arx Runa server involvement. Optional fingerprint verification mitigates MITM attacks on the key exchange channel.
 
 2. **Share creation**: the owner retrieves the `file_key` for the target file, constructs an ECIES-encrypted share package containing the `file_key` and blob location, copies blobs to a public-read shared folder, and records the share in SQLCipher.
 

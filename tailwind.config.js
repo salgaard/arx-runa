@@ -7,7 +7,7 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        // VoidGate primary palette - dark blue-gray
+        // Arx Runa primary palette - dark blue-gray
         'void': {
           50: '#f0f4f8',
           100: '#d9e2ec',

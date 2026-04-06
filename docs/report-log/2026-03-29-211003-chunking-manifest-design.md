@@ -13,7 +13,7 @@ commit: "5d71df7"
 
 ## Context
 
-Phase 3 of VoidGate implements the storage layer: fixed-size chunking, uniform padding, per-file key lifecycle, SQLCipher manifest database, and the encrypt/decrypt pipelines. Two significant design questions were resolved: the chunk size (a pending decision since the roadmap was written) and the correct location for `file_key_wrapped` in the schema.
+Phase 3 of Arx Runa implements the storage layer: fixed-size chunking, uniform padding, per-file key lifecycle, SQLCipher manifest database, and the encrypt/decrypt pipelines. Two significant design questions were resolved: the chunk size (a pending decision since the roadmap was written) and the correct location for `file_key_wrapped` in the schema.
 
 ## Substance
 
@@ -66,7 +66,7 @@ Variable-size chunks based on file content (e.g., Rabin fingerprinting). Rejecte
 
 ### 8 MiB chunk size
 
-Double the padding waste (average ~4 MiB per file vs ~2 MiB), higher per-chunk memory, coarser resume granularity. No compensating benefit for VoidGate's workload profile.
+Double the padding waste (average ~4 MiB per file vs ~2 MiB), higher per-chunk memory, coarser resume granularity. No compensating benefit for Arx Runa's workload profile.
 
 ### PKCS7-style padding
 

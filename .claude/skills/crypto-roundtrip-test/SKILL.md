@@ -1,6 +1,6 @@
 ---
 name: crypto-roundtrip-test
-description: Write the canonical VoidGate crypto adversarial test suite. Use when adding tests to any module in src-tauri/src/crypto/.
+description: Write the canonical Arx Runa crypto adversarial test suite. Use when adding tests to any module in src-tauri/src/crypto/.
 ---
 
 Write all of the following test cases for the crypto function under test. Do not skip cases — every thiserror variant must have at least one test that triggers it.

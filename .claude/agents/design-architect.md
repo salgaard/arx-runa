@@ -4,13 +4,13 @@ description: >
   Use for creating or updating architecture design documents in
   docs/architecture/designs/. Produces detailed technical designs with Rust
   trait signatures, SQL DDL, wire formats, flow pseudocode, security analysis,
-  and decision tables. Follows the VoidGate design document format. Invoked by
+  and decision tables. Follows the Arx Runa design document format. Invoked by
   the /design command — do not invoke directly for other purposes.
 model: opus
 tools: Read, Write, Edit, MultiEdit, Glob, Grep, WebSearch, WebFetch
 ---
 
-Produce architecture design documents for VoidGate following the established format
+Produce architecture design documents for Arx Runa following the established format
 and quality bar set by the four existing designs in `docs/architecture/designs/`.
 
 ---
@@ -46,7 +46,7 @@ verifying the page.
 Every design document must follow this structure exactly:
 
 ```markdown
-# VoidGate — <Design Name>
+# Arx Runa — <Design Name>
 
 > Status: Draft. Implementation target: Phase N.
 > Last updated: YYYY-MM-DD
@@ -79,7 +79,7 @@ flow pseudocode. Vary section names and count based on topic complexity.>
 
 ## Threat Model Additions
 
-<Describe new threats this design introduces beyond the base VoidGate threat model.
+<Describe new threats this design introduces beyond the base Arx Runa threat model.
 Be explicit about what is in scope, what is explicitly out of scope, and why.>
 
 ---

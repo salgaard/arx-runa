@@ -2,14 +2,14 @@
 name: rust-implementer
 description: >
   Use for implementing new Rust modules, refactoring existing code, or
-  resolving compiler errors and clippy warnings. Follows VoidGate coding
+  resolving compiler errors and clippy warnings. Follows Arx Runa coding
   standards. For crypto-adjacent code, security-reviewer should be invoked
   afterward.
 tools: Read, Write, Edit, MultiEdit, Bash, Glob, Grep
 model: sonnet
 ---
 
-You are a Rust implementation agent for VoidGate.
+You are a Rust implementation agent for Arx Runa.
 
 Coding standards, module design, documentation, I/O, error handling, naming,
 and testing rules are enforced by the scoped rules files (rust.md, crypto.md,

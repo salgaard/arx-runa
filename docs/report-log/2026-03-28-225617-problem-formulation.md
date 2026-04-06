@@ -8,7 +8,7 @@ source: manual
 commit: "703df41"
 ---
 
-## Problem Formulation — VoidGate
+## Problem Formulation — Arx Runa
 
 ## Context
 
@@ -49,13 +49,13 @@ The approved problem formulation (Danish original, advisor-approved):
 5. **File sharing in a zero-trust system:** What cryptographic and protocol-level challenges arise when enabling file-granularity sharing between independent users in a zero-trust client-side encrypted system, and how does the proposed sharing architecture compare to existing approaches such as OneDrive sharing links and Cryptomator shared vaults?
    <!-- SOURCE: Cryptomator Security Architecture — https://docs.cryptomator.org/security/architecture — documents client-side AES-256 encryption with a virtual filesystem layer; primary architectural comparison target for sharing model -->
    <!-- SOURCE: Protect your OneDrive files in Personal Vault — https://support.microsoft.com/en-us/office/protect-your-onedrive-files-in-personal-vault-6540ef37-e9bf-4121-a773-56f98dce78c4 — "Personal Vault is a protected area in OneDrive where you can store your most important or sensitive files" — provider-trust model sharing links, not zero-knowledge sharing -->
-   <!-- SOURCE: age encryption tool — https://github.com/FiloSottile/age — reference implementation of X25519-based ECIES used by VoidGate sharing layer for share package encryption -->
+   <!-- SOURCE: age encryption tool — https://github.com/FiloSottile/age — reference implementation of X25519-based ECIES used by Arx Runa sharing layer for share package encryption -->
 
 ## Implications
 
-Each sub-question maps to a distinct module in the VoidGate architecture:
+Each sub-question maps to a distinct module in the Arx Runa architecture:
 
-| Sub-question | VoidGate module | Report section |
+| Sub-question | Arx Runa module | Report section |
 |---|---|---|
 | 1 — Encryption & key management | `src-tauri/src/crypto/` | Method, Analysis |
 | 2 — USB hardware factor | `src-tauri/src/auth/` | Method, Analysis |

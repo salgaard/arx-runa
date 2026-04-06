@@ -13,7 +13,7 @@ commit: "5d71df7"
 
 ## Context
 
-VoidGate requires a file sharing mechanism that preserves the zero-trust model: the cloud provider must never hold key material, sharing must not require a central authority, and access control must operate at file granularity. The base architecture used a single vault-wide `chunk_key` derived from `master_key` via HKDF, which is incompatible with per-file access delegation. Sub-question 5 of the problem formulation was revised to make file sharing the primary implementation target rather than a speculative extensibility discussion.
+Arx Runa requires a file sharing mechanism that preserves the zero-trust model: the cloud provider must never hold key material, sharing must not require a central authority, and access control must operate at file granularity. The base architecture used a single vault-wide `chunk_key` derived from `master_key` via HKDF, which is incompatible with per-file access delegation. Sub-question 5 of the problem formulation was revised to make file sharing the primary implementation target rather than a speculative extensibility discussion.
 
 ## Substance
 
@@ -71,7 +71,7 @@ Blobs in `shared/<file_share_id>/` are publicly readable. The share package cont
 
 ### Identity model
 
-VoidGate generates an X25519 keypair on first run. Public keys are exchanged out-of-band (file export, QR code). No email infrastructure, no central directory, no sign-up. The trust assumption is explicit: security of key exchange is as strong as the out-of-band channel. MITM is mitigated by optional fingerprint verification (short hash of public key compared over a separate channel).
+Arx Runa generates an X25519 keypair on first run. Public keys are exchanged out-of-band (file export, QR code). No email infrastructure, no central directory, no sign-up. The trust assumption is explicit: security of key exchange is as strong as the out-of-band channel. MITM is mitigated by optional fingerprint verification (short hash of public key compared over a separate channel).
 
 This is the same trust model as WireGuard, age, and PGP.
 <!-- CITE: WireGuard whitepaper — key exchange model and out-of-band trust assumption -->
@@ -105,7 +105,7 @@ A relay or directory server for key exchange and blob mediation. Rejected: viola
 
 ## References
 
-<!-- SOURCE: age encryption format — https://github.com/FiloSottile/age — X25519 recipient type: ephemeral keypair + ECDH + HKDF + ChaCha20-Poly1305; reference implementation of the ECIES construction used by VoidGate sharing -->
+<!-- SOURCE: age encryption format — https://github.com/FiloSottile/age — X25519 recipient type: ephemeral keypair + ECDH + HKDF + ChaCha20-Poly1305; reference implementation of the ECIES construction used by Arx Runa sharing -->
 <!-- CITE: RFC 7748 — Elliptic Curves for Security — defines X25519 Diffie-Hellman function -->
 <!-- CITE: HMAC-based Extract-and-Expand Key Derivation Function (HKDF) — RFC 5869 — used in ECIES key derivation step -->
 <!-- CITE: LUKS (Linux Unified Key Setup) key slot design — LUKS1 specification or cryptsetup documentation — reference for key-wrapping pattern -->

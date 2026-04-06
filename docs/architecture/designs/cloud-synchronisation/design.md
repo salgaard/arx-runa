@@ -1,4 +1,4 @@
-# VoidGate — Cloud Synchronisation Design
+# Arx Runa — Cloud Synchronisation Design
 
 > Status: Design complete. Implementation target: Phase 4.
 > Last updated: 2026-03-30
@@ -36,9 +36,9 @@
 
 **`vault/` is flat.** Blob names are UUID v4. Collision probability at 2³² blobs is below 2⁻⁶¹, negligible in practice. A flat layout avoids any structural metadata that could reveal file organisation to the cloud provider.
 
-**`manifest/manifest-backup.blob` is a single file** overwritten on each push. The `snapshot_counter` inside the encrypted manifest is the logical version. Cloud-provider object versioning (S3 object versioning, etc.) can retain history if the user enables it — VoidGate does not manage that.
+**`manifest/manifest-backup.blob` is a single file** overwritten on each push. The `snapshot_counter` inside the encrypted manifest is the logical version. Cloud-provider object versioning (S3 object versioning, etc.) can retain history if the user enables it — Arx Runa does not manage that.
 
-**`shared/` is reserved for Phase 5.** The layout is defined here to establish the full directory contract. VoidGate does not create `shared/` until the first file share.
+**`shared/` is reserved for Phase 5.** The layout is defined here to establish the full directory contract. Arx Runa does not create `shared/` until the first file share.
 
 ---
 
@@ -149,7 +149,7 @@ pub enum CloudTransportError {
 /// Describes a cloud storage endpoint for Rclone.
 ///
 /// For owner operations, this is loaded from `cloud-config.json` in the
-/// VoidGate application data directory.
+/// Arx Runa application data directory.
 ///
 /// For received file shares (Phase 5), this is deserialized from the
 /// `cloud_endpoint` field in the share package — the formats are identical.
@@ -187,7 +187,7 @@ pub struct CloudEndpoint {
 Rclone is bundled as a Tauri external binary (sidecar). The `tauri.conf.json` `externalBin` field lists the platform-specific Rclone binaries. Tauri resolves the binary path at runtime via `app.shell().sidecar("rclone")`.
 
 The sidecar approach:
-- Ships Rclone with VoidGate — no user installation step
+- Ships Rclone with Arx Runa — no user installation step
 - Tauri handles extraction, platform detection, and path resolution
 - Rclone is MIT-licensed; bundling is permitted without restriction
 
@@ -250,11 +250,11 @@ Rclone stderr is captured. Before including it in `CloudTransportError::RclonePr
 
 ### Rclone retry
 
-Rclone is invoked with `--retries 3` (the default). VoidGate does not add a separate retry layer on top of individual blob operations; retry at the push/pull flow level is left to the user.
+Rclone is invoked with `--retries 3` (the default). Arx Runa does not add a separate retry layer on top of individual blob operations; retry at the push/pull flow level is left to the user.
 
 ### Rclone configuration file location
 
-VoidGate uses an **isolated `rclone.conf`** in the VoidGate application data directory, not the system default:
+Arx Runa uses an **isolated `rclone.conf`** in the Arx Runa application data directory, not the system default:
 
 - **Windows**: `%APPDATA%/voidgate/rclone.conf`
 - **Linux**: `~/.local/share/voidgate/rclone.conf`
@@ -264,10 +264,10 @@ Every Rclone invocation includes `--config <voidgate_rclone_conf_path>`.
 **Rationale**:
 - Prevents interference with user's existing Rclone remotes
 - Avoids credential conflicts if user has a personal Rclone setup
-- Makes VoidGate self-contained — uninstall removes all config
-- User cannot accidentally expose VoidGate remotes to other Rclone tools
+- Makes Arx Runa self-contained — uninstall removes all config
+- User cannot accidentally expose Arx Runa remotes to other Rclone tools
 
-**Trade-off**: Users cannot reuse existing Rclone remotes. This is acceptable — the guided wizard handles initial setup, and VoidGate remotes have security requirements (no caching, specific flags) that ad-hoc remotes may not meet.
+**Trade-off**: Users cannot reuse existing Rclone remotes. This is acceptable — the guided wizard handles initial setup, and Arx Runa remotes have security requirements (no caching, specific flags) that ad-hoc remotes may not meet.
 
 ### Operation timeouts
 
@@ -280,7 +280,7 @@ Every Rclone invocation includes `--config <voidgate_rclone_conf_path>`.
 
 Timeouts are passed to `tokio::time::timeout` wrapping the Rclone subprocess. If the timeout expires, the Rclone process is killed (`kill` on Unix, `TerminateProcess` on Windows) and `CloudTransportError::Timeout` is returned.
 
-Rclone's internal `--timeout` flag is **not used** — VoidGate manages timeouts externally for consistent behaviour across all operations.
+Rclone's internal `--timeout` flag is **not used** — Arx Runa manages timeouts externally for consistent behaviour across all operations.
 
 ### Concurrency configuration
 
@@ -318,7 +318,7 @@ impl Default for SyncConfig {
 
 ## Guided Setup Wizard
 
-VoidGate provides a provider selection UI rather than requiring the user to run `rclone config` directly. The wizard covers the two supported providers.
+Arx Runa provides a provider selection UI rather than requiring the user to run `rclone config` directly. The wizard covers the two supported providers.
 
 ### Supported providers
 
@@ -330,7 +330,7 @@ VoidGate provides a provider selection UI rather than requiring the user to run 
 ### S3-compatible flow
 
 1. User selects provider and enters: access key ID, secret access key, bucket name, region, endpoint URL (optional; empty for AWS)
-2. VoidGate generates a remote name: `voidgate-<uuid>`
+2. Arx Runa generates a remote name: `voidgate-<uuid>`
 3. Calls via sidecar:
    ```
    rclone config create voidgate-<uuid> s3
@@ -343,23 +343,23 @@ VoidGate provides a provider selection UI rather than requiring the user to run 
    ```
 4. Stores `CloudEndpoint` in `cloud-config.json`
 
-VoidGate passes credentials as arguments to `rclone config create`, not as environment variables or config file snippets. Rclone then stores them in its own `rclone.conf`. After the wizard, VoidGate no longer holds the credentials.
+Arx Runa passes credentials as arguments to `rclone config create`, not as environment variables or config file snippets. Rclone then stores them in its own `rclone.conf`. After the wizard, Arx Runa no longer holds the credentials.
 
 ### Google Drive flow
 
 1. User selects Google Drive
-2. VoidGate calls:
+2. Arx Runa calls:
    ```
    rclone config create voidgate-<uuid> drive scope=drive --non-interactive
    ```
-3. Rclone prints an OAuth URL; VoidGate opens it in the default browser via `tauri::api::shell::open`
+3. Rclone prints an OAuth URL; Arx Runa opens it in the default browser via `tauri::api::shell::open`
 4. User authorises in browser; Rclone captures the token
-5. VoidGate stores the resulting `CloudEndpoint`
+5. Arx Runa stores the resulting `CloudEndpoint`
 
 ### Wizard security properties
 
 - Credentials are passed as arguments to `rclone config create`, validated against the remote path sanitisation rules
-- Credentials are not written to any VoidGate file, not logged, and not held in memory after the wizard completes
+- Credentials are not written to any Arx Runa file, not logged, and not held in memory after the wizard completes
 - Rclone's `rclone.conf` is the authoritative credential store
 
 ---
@@ -406,7 +406,7 @@ pub struct Argon2Params {
     /// Time cost (iterations). Minimum 2 (OWASP).
     pub time_cost: u32,
 
-    /// Parallelism. Always 1 in VoidGate.
+    /// Parallelism. Always 1 in Arx Runa.
     pub parallelism: u32,
 }
 ```
@@ -443,7 +443,7 @@ Wire format (from Phase 2 auth design):
 
 ```
 1. Serialise VaultHeader to JSON bytes
-2. Write to temp file in the VoidGate staging directory
+2. Write to temp file in the Arx Runa staging directory
 3. upload_blob(temp_path, "vault-header.json")
 4. Delete temp file
 ```
@@ -520,7 +520,7 @@ No AAD is used. The manifest backup is a singleton — there is no `file_id` or 
 3. Extract 24-byte nonce from prefix
 4. Decrypt: XChaCha20-Poly1305(manifest_key, nonce, ciphertext, aad=None)
    → manifest_buffer
-5. Write manifest_buffer to the VoidGate data directory as the local SQLCipher DB
+5. Write manifest_buffer to the Arx Runa data directory as the local SQLCipher DB
 6. Zeroize manifest_buffer
 7. Open SQLCipher DB with sqlcipher_key to verify integrity
 8. Delete temp file
@@ -646,7 +646,7 @@ BLAKE3 verification is mandatory before any blob is passed to `decrypt_chunk`. A
 
 ### Resolution
 
-VoidGate does not attempt automatic merge. When a conflict is detected:
+Arx Runa does not attempt automatic merge. When a conflict is detected:
 
 1. Push is aborted with a user-facing message: "Another device has synced changes since your last sync. Pull first, then push again."
 2. The user runs a pull to update the local manifest and `snapshot_counter`
@@ -692,7 +692,7 @@ When the user permanently deletes a vault, all cloud data must be removed. This 
 10. Zero and drop session keys
 ```
 
-**Failure handling**: If any cloud deletion fails, VoidGate reports partial deletion status. The user can retry or manually clean via Rclone. A partially deleted vault cannot be recovered — the manifest backup and vault header are deleted early in the flow, so even if some blobs remain, they are orphaned ciphertext.
+**Failure handling**: If any cloud deletion fails, Arx Runa reports partial deletion status. The user can retry or manually clean via Rclone. A partially deleted vault cannot be recovered — the manifest backup and vault header are deleted early in the flow, so even if some blobs remain, they are orphaned ciphertext.
 
 **Confirmation UX (Phase 6)**: Vault deletion is irreversible. The UI must require explicit confirmation (e.g., type vault name to confirm). This is a Phase 6 concern.
 
@@ -702,13 +702,13 @@ When the user permanently deletes a vault, all cloud data must be removed. This 
 
 ## Vault Migration
 
-When a user wants to switch cloud providers (e.g., from Google Drive to Backblaze B2), VoidGate migrates all encrypted blobs without re-encryption. Blobs are opaque ciphertext — they are identical regardless of which provider stores them.
+When a user wants to switch cloud providers (e.g., from Google Drive to Backblaze B2), Arx Runa migrates all encrypted blobs without re-encryption. Blobs are opaque ciphertext — they are identical regardless of which provider stores them.
 
 ### Migration flow
 
 ```
 1.  User configures a new Rclone remote via the guided wizard (Section above)
-2.  VoidGate creates a new CloudEndpoint for the target remote
+2.  Arx Runa creates a new CloudEndpoint for the target remote
 3.  list_blobs("vault/") on the source remote → source_blobs
 4.  list_blobs("shared/") on the source remote → source_shared (if Phase 5 sharing is active)
 5.  For each blob in source_blobs:
@@ -800,17 +800,17 @@ Implementation target: Phase 4 (optional enhancement). Not blocking for core pus
 
 ### Rclone as a trusted component
 
-Rclone runs as a subprocess with the same OS permissions as VoidGate. It has access to:
+Rclone runs as a subprocess with the same OS permissions as Arx Runa. It has access to:
 - Blob files passed as file path arguments (AEAD ciphertext only — never plaintext)
 - The vault header file (plaintext JSON with public parameters only)
 - Rclone's `rclone.conf` (cloud credentials)
 
 Rclone does **not** have access to:
-- VoidGate's session keys (in mlocked memory, never passed to a subprocess)
+- Arx Runa's session keys (in mlocked memory, never passed to a subprocess)
 - The SQLCipher database key
 - Plaintext file content at any stage
 
-**Threat: malicious Rclone binary.** If an attacker replaces the sidecar binary, they could exfiltrate blob files or modify them in transit. This is equivalent to a compromised OS, which is explicitly out of scope in VoidGate's threat model. The sidecar binary should be verified against the official Rclone release checksums as part of the VoidGate release build process.
+**Threat: malicious Rclone binary.** If an attacker replaces the sidecar binary, they could exfiltrate blob files or modify them in transit. This is equivalent to a compromised OS, which is explicitly out of scope in Arx Runa's threat model. The sidecar binary should be verified against the official Rclone release checksums as part of the Arx Runa release build process.
 
 ### Path traversal via crafted manifest
 
@@ -820,7 +820,7 @@ A compromised manifest could contain `blob_name` values such as `../../etc/passw
 
 An attacker who controls the cloud storage could replace `manifest/manifest-backup.blob` with an older version. On recovery, the user would see a stale vault state. The `snapshot_counter` inside the encrypted manifest is monotonic — a push following recovery would detect a divergence if new blobs had been added since the stale snapshot. However, if the attacker also withholds newer blobs, the replay could be internally consistent.
 
-This is an inherent limitation of the "bring your own cloud" model: the cloud provider is trusted for availability but not integrity. VoidGate declares this out of scope in the threat model, consistent with Tahoe-LAFS's server threat model.
+This is an inherent limitation of the "bring your own cloud" model: the cloud provider is trusted for availability but not integrity. Arx Runa declares this out of scope in the threat model, consistent with Tahoe-LAFS's server threat model.
 <!-- SOURCE: Tahoe – The Least-Authority Filesystem — Wilcox-O'Hearn & Warner, StorageSS '08 — https://eprint.iacr.org/2012/524 — "The only thing you ask of the servers is that they can (usually) provide the shares when you ask for them: you aren't relying upon them for confidentiality, integrity, or absolute availability." -->
 
 ---
@@ -904,7 +904,7 @@ pub struct SyncConflict {
 1. Push returns `Err(SyncError::Conflict(SyncConflict { ... }))`
 2. Frontend displays: "Another device synced changes. Your local changes: X files. Pull to see remote changes, then push again."
 3. User clicks "Pull" — manifest is updated, `snapshot_counter` synced
-4. If file-level conflicts exist (same `node_id` modified in both), VoidGate lists them:
+4. If file-level conflicts exist (same `node_id` modified in both), Arx Runa lists them:
    - "File `documents/report.pdf` was modified on both devices"
    - Options: "Keep Local", "Keep Remote", "Keep Both (rename local)"
 5. User resolves each conflict
@@ -999,7 +999,7 @@ Cleanup:
 |----------|--------|-----------|
 | Rclone distribution | Tauri sidecar (bundled binary) | No user installation step; Tauri handles platform detection and path resolution; MIT license permits bundling |
 | Rclone invocation | `tokio::process::Command`, no shell | Prevents shell injection; arguments are separate OS strings |
-| Rclone config location | VoidGate-specific `%APPDATA%/voidgate/rclone.conf` | Isolated from system Rclone; prevents credential conflicts; self-contained uninstall |
+| Rclone config location | Arx Runa-specific `%APPDATA%/voidgate/rclone.conf` | Isolated from system Rclone; prevents credential conflicts; self-contained uninstall |
 | Remote path validation | Regex allowlist `^[a-zA-Z0-9._/-]+$`, reject `..` | Prevents path traversal from crafted manifest data |
 | Cloud storage layout | `vault-header.json` at root, `vault/` for blobs, `manifest/` for backup | Vault header accessible before auth; clean separation of concerns |
 | Upload order | Randomised (Fisher-Yates shuffle) | Breaks temporal correlation that could link blobs to files |
@@ -1011,7 +1011,7 @@ Cleanup:
 | Manifest I/O | Full buffer (explicit streaming exception) | Manifests are small (< 10 MiB); single AEAD operation is simpler and correct |
 | Conflict detection | `snapshot_counter` comparison, detect-and-block | Correct; auto-merge is out of scope for this project |
 | Conflict resolution | Manual — user pulls, resolves, then pushes | Avoids silent data loss; honest scope declaration |
-| Remote configuration | Guided wizard calls `rclone config create` | Better UX than raw `rclone config`; VoidGate never holds credentials |
+| Remote configuration | Guided wizard calls `rclone config create` | Better UX than raw `rclone config`; Arx Runa never holds credentials |
 | Initial provider support | S3-compatible + Google Drive | Covers the most common use cases (privacy-focused and consumer) |
 | Stderr sanitisation | Strip lines containing credential keywords | Prevents `rclone.conf` leakage through error messages surfaced to frontend |
 | Cloud blob deletion | Best-effort; failures logged, not blocking | Orphaned ciphertext is harmless; availability is more important than strict cleanup |

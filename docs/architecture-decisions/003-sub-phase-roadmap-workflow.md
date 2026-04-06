@@ -8,7 +8,7 @@
 
 ## Context
 
-The VoidGate project uses a three-command workflow for converting architectural vision into working code:
+The Arx Runa project uses a three-command workflow for converting architectural vision into working code:
 1. `/design <topic>` → creates detailed technical designs in `docs/architecture/designs/`
 2. `/plan <topic>` → generates implementation plans in `.claude/plans/`
 3. `/implement-plan <file>` → executes via the `rust-implementer` agent
@@ -130,7 +130,7 @@ Continue feeding full designs to `/implement-plan`, regardless of size.
 4. **Natural checkpoints**: Manual testing after each sub-phase catches integration issues early
 5. **Thesis documentation**: Each checkpoint produces a test log entry for the bachelor report
 6. **Flexibility**: If a sub-phase implementation strategy proves flawed, pivot without throwing away earlier sub-phases
-7. **Alignment with existing structure**: VoidGate already uses phase-based roadmap structure (`docs/roadmap.md`); sub-phase roadmaps extend this naturally
+7. **Alignment with existing structure**: Arx Runa already uses phase-based roadmap structure (`docs/roadmap.md`); sub-phase roadmaps extend this naturally
 
 ### Negative
 

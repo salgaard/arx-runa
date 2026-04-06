@@ -5,7 +5,7 @@
 
 ## Context
 
-VoidGate requires a frontend for Phase 6 (Tauri IPC + Frontend). The UI needs
+Arx Runa requires a frontend for Phase 6 (Tauri IPC + Frontend). The UI needs
 are modest: login screen, vault browser, upload/download controls, and session
 status indicator.
 
@@ -39,7 +39,7 @@ Tauri:        Official leptos template
 
 ### Single-language architecture
 
-The entire VoidGate codebase — crypto, auth, storage, and UI — uses Rust.
+The entire Arx Runa codebase — crypto, auth, storage, and UI — uses Rust.
 This provides:
 
 - **No context-switching**: One language, one mental model, one toolchain
@@ -85,7 +85,7 @@ Leptos uses SolidJS-inspired signals, not a virtual DOM:
 
 Choosing Leptos supports a coherent thesis:
 
-> "VoidGate demonstrates that a security-critical application can be built
+> "Arx Runa demonstrates that a security-critical application can be built
 > entirely in Rust, from cryptographic primitives to user interface, achieving
 > type safety and memory control throughout the stack."
 
@@ -99,7 +99,7 @@ popular."
 1. **Larger bundle size**: ~200-250KB WASM overhead vs ~50KB for Svelte.
    Acceptable for a desktop app where startup time is less critical than web.
 
-2. **Smaller ecosystem**: Thaw UI (574 ★) vs DaisyUI (32K ★). VoidGate's UI
+2. **Smaller ecosystem**: Thaw UI (574 ★) vs DaisyUI (32K ★). Arx Runa's UI
    is simple enough that hand-rolling components is feasible.
 
 3. **Harder debugging**: WASM stack traces are less readable than JS. Mitigated
@@ -210,7 +210,7 @@ Tailwind CSS with a custom dark theme designed for privacy/security context.
 
 ### Theme Design
 
-The VoidGate theme emphasises:
+The Arx Runa theme emphasises:
 - **Dark backgrounds**: Professional, privacy-focused aesthetic
 - **Muted palette**: No bright/playful colors — calm, trustworthy
 - **Clear security states**: Locked (gray), unlocked (green), warning (amber)

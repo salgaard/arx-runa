@@ -3,7 +3,7 @@ Recommended model: `/model sonnet`
 Implement the following: $ARGUMENTS
 
 Steps:
-1. Use the `rust-implementer` agent to implement following VoidGate coding
+1. Use the `rust-implementer` agent to implement following Arx Runa coding
    standards.
 2. If any modified files are in src-tauri/src/crypto/, src-tauri/src/auth/,
    or src-tauri/src/storage/,

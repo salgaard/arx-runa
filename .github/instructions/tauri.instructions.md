@@ -19,7 +19,7 @@ applyTo: "src-tauri/src/ui/**,src-tauri/tauri.conf.json,src-tauri/capabilities/*
 ## Capabilities (`capabilities/`)
 - Deny-by-default — add only what's strictly needed
 - Never `"windows": ["*"]` with sensitive permissions
-- No remote URLs — VoidGate is local-only
+- No remote URLs — Arx Runa is local-only
 - Scope: `$APPDATA`, `$DOCUMENT` — never absolute paths
 
 ## Build (`build.rs`)

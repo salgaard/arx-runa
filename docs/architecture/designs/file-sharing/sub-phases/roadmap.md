@@ -89,7 +89,7 @@ This ensures new code does not break earlier sub-phases.
 
 ### Manual Testing Checklist
 
-- Phase 5.1: Export public key file and verify it imports cleanly on a second VoidGate instance
+- Phase 5.1: Export public key file and verify it imports cleanly on a second Arx Runa instance
 - Phase 5.2: Create a share package, inspect the wire format bytes (first 32B is ephemeral key, next 24B is nonce)
 - Phase 5.3: Share a file, verify blobs appear under `shared/<file_share_id>/`; revoke and verify blobs are deleted
 

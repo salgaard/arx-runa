@@ -5,25 +5,25 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug executable 'void-gate'",
+            "name": "Debug executable 'arx-runa'",
             "type": "lldb",
             "request": "launch",
             "cargo": {
                 "args": [
                     "run",
-                    "--bin=void-gate"
+                    "--bin=arx-runa"
                 ]
             },
             "args": []
         },
         {
-            "name": "Debug unit tests in executable 'void-gate'",
+            "name": "Debug unit tests in executable 'arx-runa'",
             "type": "lldb",
             "request": "launch",
             "cargo": {
                 "args": [
                     "test",
-                    "--bin=void-gate"
+                    "--bin=arx-runa"
                 ]
             }
         }

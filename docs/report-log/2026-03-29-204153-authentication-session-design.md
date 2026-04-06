@@ -13,17 +13,17 @@ commit: "5d71df7"
 
 ## Context
 
-Phase 2 of VoidGate requires a full authentication system: USB key file as a mandatory cryptographic factor, Argon2id key derivation, session lifecycle with memory-locked keys, and session timeout. Several design questions were open at the start of this phase, the most significant being how USB key file identification and auto-detection should work without requiring a fixed filename convention.
+Phase 2 of Arx Runa requires a full authentication system: USB key file as a mandatory cryptographic factor, Argon2id key derivation, session lifecycle with memory-locked keys, and session timeout. Several design questions were open at the start of this phase, the most significant being how USB key file identification and auto-detection should work without requiring a fixed filename convention.
 
 ## Substance
 
 ### USB key file: auto-detection via BLAKE3 fingerprint
 
-The USB key file is 32 bytes of CSPRNG-generated random data. It has no internal structure and no mandated filename. VoidGate generates the file during vault creation and writes it to a user-chosen location on a removable drive.
+The USB key file is 32 bytes of CSPRNG-generated random data. It has no internal structure and no mandated filename. Arx Runa generates the file during vault creation and writes it to a user-chosen location on a removable drive.
 
 To enable auto-detection without a fixed filename, `blake3(key_file_content)` is stored in the vault header alongside the Argon2id salt. The vault header is public by design (plaintext JSON). BLAKE3 is preimage-resistant — the hash cannot be reversed to obtain the 32-byte key file, and does not provide an attacker any advantage beyond being able to verify a candidate file.
 
-**Auto-detection flow**: when the OS reports a removable drive mount event, VoidGate scans the drive for files that are exactly 32 bytes (near-instant filter), computes BLAKE3 for each, and matches against the vault header. If a match is found, the key file path is auto-populated in the login UI. The user still enters the password and explicitly confirms — the USB event fills one field, not the entire authentication.
+**Auto-detection flow**: when the OS reports a removable drive mount event, Arx Runa scans the drive for files that are exactly 32 bytes (near-instant filter), computes BLAKE3 for each, and matches against the vault header. If a match is found, the key file path is auto-populated in the login UI. The user still enters the password and explicitly confirms — the USB event fills one field, not the entire authentication.
 
 The vault header field list is updated to: `vault_id, schema_version, argon2_salt, argon2_params, key_file_blake3`.
 <!-- CITE: BLAKE3 specification — preimage resistance and collision resistance properties -->
@@ -42,7 +42,7 @@ Salt size: 32 bytes (CSPRNG), stored in vault header. Exceeds NIST minimum of 16
 
 ### mlock failure: hard fail
 
-If `mlock` (Linux) or `VirtualLock` (Windows) fails, VoidGate refuses to create the session and returns a clear error message explaining the cause and the fix. A security product that silently degrades memory protection is not trustworthy. The required memory is under 1 KiB (three 32-byte session keys), well within default system limits.
+If `mlock` (Linux) or `VirtualLock` (Windows) fails, Arx Runa refuses to create the session and returns a clear error message explaining the cause and the fix. A security product that silently degrades memory protection is not trustworthy. The required memory is under 1 KiB (three 32-byte session keys), well within default system limits.
 
 ### Session timeout: activity-based, 15 minutes, configurable
 
@@ -64,7 +64,7 @@ Both flows re-derive session keys with the new credentials, re-wrap all `file_ke
 
 ### Fixed key file filename
 
-Scan removable drives for a file named `voidgate.key`. Rejected: the filename reveals VoidGate usage (anti-plausible deniability) and constrains the user's file placement options.
+Scan removable drives for a file named `voidgate.key`. Rejected: the filename reveals Arx Runa usage (anti-plausible deniability) and constrains the user's file placement options.
 
 ### Arbitrary file as key material (hash user-chosen file)
 

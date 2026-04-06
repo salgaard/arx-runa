@@ -7,10 +7,10 @@
 # Use Cases
 
 - [Overview](use-cases/README.md)
-  - [UC-IND-001: Zero-Knowledge Personal Backup](use-cases/use-case-1-personal-file-backup.md)
-  - [UC-IND-002: Cross-Device Synchronisation](use-cases/use-case-2-cross-device-access.md)
-  - [UC-IND-003: Hardware MFA and Key Loss](use-cases/use-case-3-hardware-mfa-and-key-loss.md)
-  - [UC-IND-004: Personal File Sharing](use-cases/use-case-4-personal-file-sharing.md)
+  - [use-case-1: Zero-Knowledge Personal Backup](use-cases/use-case-1-personal-file-backup.md)
+  - [use-case-2: Cross-Device Synchronisation](use-cases/use-case-2-cross-device-access.md)
+  - [use-case-3: Hardware MFA and Key Loss](use-cases/use-case-3-hardware-mfa-and-key-loss.md)
+  - [use-case-4: Personal File Sharing](use-cases/use-case-4-personal-file-sharing.md)
 
 ---
 
@@ -77,3 +77,14 @@
 # Reference
 
 - [Project Roadmap](roadmap.md)
+
+---
+
+# Research
+
+- [Overview](research/README.md)
+  - [Market & Future Directions](research/market-and-future-directions.md)
+  - [Mobile: Encrypted Photo Backup](research/mobile-photo-backup.md)
+  - [Compression and Cloud Storage Cost](research/compression-and-cloud-cost.md)
+  - [Bin-Packing Small Files into Chunks](research/bin-packing.md)
+  - [Reducing Padding Overhead](research/padding-overhead-reduction.md)

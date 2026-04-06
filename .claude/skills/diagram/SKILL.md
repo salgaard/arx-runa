@@ -1,7 +1,7 @@
 ---
 name: diagram
 description: >
-  Generate or update a Mermaid diagram for VoidGate architecture, flows, or
+  Generate or update a Mermaid diagram for Arx Runa architecture, flows, or
   data models. Invoke proactively when implementing a module, logging a
   decision, or when a flow would benefit from visual documentation.
 ---
@@ -34,7 +34,7 @@ Select the Mermaid diagram type based on what is being visualised:
 ### Step 2 — Gather context
 
 Read the relevant sources before generating:
-- `.claude/reference/mermaid.md` — full Mermaid syntax reference (diagram types, node shapes, arrow syntax, VoidGate color palette, common fixes)
+- `.claude/reference/mermaid.md` — full Mermaid syntax reference (diagram types, node shapes, arrow syntax, Arx Runa color palette, common fixes)
 - `CLAUDE.md` — architecture decisions, module layout, naming conventions
 - Design documents in `docs/architecture/designs/<design-name>/design.md` — canonical technical specifications
 - Source files if they exist (e.g. `src-tauri/src/crypto/`, `src-tauri/src/auth/`)
@@ -72,7 +72,7 @@ Read the relevant sources before generating:
 - Never split in the middle of a flow — each diagram must be self-contained
 - Create a parent "overview" diagram that references the child diagrams
 
-**Styling with `classDef`**: use the VoidGate color palette from `.claude/reference/mermaid.md` (already read in Step 2). Apply with `:::secret` after a node definition, e.g. `MK["master_key"]:::secret`.
+**Styling with `classDef`**: use the Arx Runa color palette from `.claude/reference/mermaid.md` (already read in Step 2). Apply with `:::secret` after a node definition, e.g. `MK["master_key"]:::secret`.
 
 ### Step 4 — Determine diagram location
 

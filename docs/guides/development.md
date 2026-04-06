@@ -80,7 +80,7 @@ cargo install cargo-audit
 
 1. Set a breakpoint in your code (e.g., `src-tauri/src/main.rs`).
 2. Press `F5` or open **Run and Debug** in the VS Code sidebar.
-3. Select the **"VoidGate: Debug"** profile.
+3. Select the **"Arx Runa: Debug"** profile.
 
 ---
 
@@ -119,7 +119,7 @@ scoop install jq
 
 ## 8. Documentation SSOT Architecture
 
-VoidGate uses a **Single Source of Truth (SSOT)** documentation architecture. Technical specifications appear once in canonical design documents and are referenced elsewhere.
+Arx Runa uses a **Single Source of Truth (SSOT)** documentation architecture. Technical specifications appear once in canonical design documents and are referenced elsewhere.
 
 ### When changing technical constraints:
 
@@ -141,7 +141,7 @@ VoidGate uses a **Single Source of Truth (SSOT)** documentation architecture. Te
 
 ## 9. Working with Sub-Phase Roadmaps
 
-For large design documents (>100 lines or logically separable), VoidGate uses **sub-phase roadmaps** to decompose implementation into independently testable units with manual validation checkpoints.
+For large design documents (>100 lines or logically separable), Arx Runa uses **sub-phase roadmaps** to decompose implementation into independently testable units with manual validation checkpoints.
 
 ### When to Use Sub-Phase Roadmaps
 
@@ -230,7 +230,7 @@ Each sub-phase is independently testable, with clear validation checkpoints befo
 
 ## 10. AI Assistant Setup (Optional)
 
-VoidGate supports AI assistants via LSP and MCP integrations for enhanced code intelligence and tooling.
+Arx Runa supports AI assistants via LSP and MCP integrations for enhanced code intelligence and tooling.
 
 ### GitHub Copilot CLI
 

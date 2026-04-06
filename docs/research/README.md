@@ -1,9 +1,13 @@
 # Research
 
-Exploratory documents covering the market landscape, future directions, and ideas that may or may not make it into VoidGate.
+Exploratory documents covering the market landscape, future directions, and ideas that may or may not make it into Arx Runa.
 
 These are not specifications — they are living documents for brainstorming and strategic thinking.
 
 ## Documents
 
-- **[Market & Future Directions](market-and-future-directions.md)** — How VoidGate compares to existing solutions (Cryptomator, Tresorit, Proton Drive), strategies for mainstream adoption, and longer-term ideas such as biometric authentication, NFC hardware keys, and post-quantum cryptography.
+- **[Market & Future Directions](market-and-future-directions.md)** — How Arx Runa compares to existing solutions (Cryptomator, Tresorit, Proton Drive), strategies for mainstream adoption, and longer-term ideas such as biometric authentication, NFC hardware keys, and post-quantum cryptography.
+- **[Mobile: Encrypted Photo Backup](mobile-photo-backup.md)** — Feasibility research for an iOS and Android app that automatically encrypts camera roll photos and uploads them to a user-configured Rclone cloud backend. Covers Tauri 2.0 mobile support, rclone portability, iCloud limitations, background upload constraints, and recommended architecture per platform.
+- **[Compression and Cloud Storage Cost](compression-and-cloud-cost.md)** — Research into whether adding compression to the encrypt-and-upload pipeline makes sense. Covers the compression/encryption ordering rule, why encryption does not compress data, why CRIME/BREACH attacks do not apply, the fixed-size padding problem, the blob-count privacy leak, a decision to not add compression (Position 1), and a full cloud storage cost analysis across Backblaze B2, Cloudflare R2, AWS S3, Google Drive, and OneDrive.
+- **[Bin-Packing Small Files into Chunks](bin-packing.md)** — Research into packing multiple small files into a single 4 MiB chunk to reduce padding waste. Covers the small-file overhead problem, prior art (Facebook Haystack, HDFS HAR, IEEE encrypted KV store research), privacy analysis, write amplification, the RWS trilemma, manifest schema changes required, and a recommendation for an opt-in archival vault mode modelled on Haystack.
+- **[Reducing Padding Overhead](padding-overhead-reduction.md)** — Survey of all known techniques for reducing per-file padding waste beyond bin-packing: Padmé padding (max 12% overhead, O(log log M) leakage, Rust crate available), tiered chunk sizes, smaller uniform chunk size, content-defined chunking (CDC, rejected — fingerprinting attacks), and epoch-based deferred batching. Includes a comparative summary and recommendation.

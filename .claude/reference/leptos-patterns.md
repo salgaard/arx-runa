@@ -1,6 +1,6 @@
 # Leptos Patterns Reference
 
-This document provides extended code examples for Leptos patterns in VoidGate.
+This document provides extended code examples for Leptos patterns in Arx Runa.
 For rules and requirements, see `.github/instructions/leptos.instructions.md`.
 
 ## Table of Contents
@@ -169,7 +169,7 @@ struct Todo {
 
 let (todos, set_todos) = signal(vec![
     Todo { id: 1, text: "Learn Leptos".into(), done: false },
-    Todo { id: 2, text: "Build VoidGate".into(), done: false },
+    Todo { id: 2, text: "Build Arx Runa".into(), done: false },
 ]);
 
 view! {
@@ -577,7 +577,7 @@ on_cleanup(move || {
 
 ## Styling with Tailwind
 
-VoidGate uses Tailwind CSS with a custom dark theme. Full design system is in
+Arx Runa uses Tailwind CSS with a custom dark theme. Full design system is in
 `docs/architecture/design-system.md`.
 
 ### Using CSS component classes

@@ -7,7 +7,7 @@
 
 ## Context
 
-VoidGate is a security-critical application where readability, maintainability,
+Arx Runa is a security-critical application where readability, maintainability,
 and correctness are paramount. As the codebase grows through the roadmap phases,
 we need consistent conventions for:
 

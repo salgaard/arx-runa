@@ -13,12 +13,12 @@ Brief 1-2 sentence description of what this use case addresses.
 ## Actors
 
 - **Primary Actor**: [e.g., Individual user, System administrator, Developer]
-- **Secondary Actors**: [e.g., Cloud provider, VoidGate system, etc.]
+- **Secondary Actors**: [e.g., Cloud provider, Arx Runa system, etc.]
 
 ## Preconditions
 
 - List prerequisites that must be true before this use case can execute
-- e.g., User has VoidGate installed
+- e.g., User has Arx Runa installed
 - e.g., User has created a USB key file
 - e.g., User has configured cloud backend via Rclone
 

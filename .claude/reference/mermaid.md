@@ -1,12 +1,12 @@
-# Mermaid Syntax Reference — VoidGate
+# Mermaid Syntax Reference — Arx Runa
 
-Full syntax guide for Mermaid diagrams used in VoidGate documentation.
+Full syntax guide for Mermaid diagrams used in Arx Runa documentation.
 
 ---
 
 ## Diagram Type Selection
 
-| Diagram Type | Best For | VoidGate Examples | Status |
+| Diagram Type | Best For | Arx Runa Examples | Status |
 |-------------|----------|-------------------|--------|
 | **Flowchart** | Process flows, algorithms | Chunk pipeline, key derivation | Stable |
 | **Sequence** | Temporal interactions | Auth flow, sync sequence, IPC | Stable |
@@ -58,7 +58,7 @@ Extended shapes (v11.3.0+):
 - `<-->` — Bidirectional arrow
 - `~~~` — Invisible link (positioning only)
 
-### VoidGate Node Conventions
+### Arx Runa Node Conventions
 
 - **Module nodes**: `MODULE["module/<br/>Brief description<br/>Key components"]:::style`
 - **Process nodes**: `E1["Step description<br/>(context or details)"]:::proc`
@@ -119,7 +119,7 @@ flowchart TD
 - `par [action 1]` ... `and [action 2]` ... `end`
 - `break [condition]` ... `end`
 
-### VoidGate Conventions
+### Arx Runa Conventions
 
 - **Participant names**: Short, capitalized (`User`, `Auth`, `Sync`, `Meta`)
 - **Full names**: `Meta as MetadataStore (SQLCipher)`
@@ -158,7 +158,7 @@ sequenceDiagram
 4. **Cardinality**: `||` (exactly one), `|o` (zero or one), `|{` (one or more), `o{` (zero or more)
 5. **Relationship line**: `--` (identifying/solid), `..` (non-identifying/dashed)
 
-### VoidGate Conventions
+### Arx Runa Conventions
 
 - **Table names**: lowercase (matching SQLite convention)
 - **Column types**: TEXT, INTEGER, BLOB (SQLite types)
@@ -276,7 +276,7 @@ Nearly identical to `flowchart TD` but more permissive with special characters a
 
 ## Styling
 
-### VoidGate Color Palette
+### Arx Runa Color Palette
 
 ```mermaid
 classDef secret   fill:#dc2626,stroke:#991b1b,color:#fff
@@ -381,7 +381,7 @@ Use `neutral` theme for print. Export SVG when possible — scales without pixel
 
 ```mermaid
 architecture-beta
-    group client(disk)[VoidGate Client]
+    group client(disk)[Arx Runa Client]
     service app(server)[Tauri App] in client
     service rclone(server)[Rclone] in client
 
@@ -396,10 +396,10 @@ architecture-beta
 
 ```mermaid
 C4Context
-    title System Context for VoidGate
+    title System Context for Arx Runa
 
     Person(user, "User", "Individual with sensitive files")
-    System(voidgate, "VoidGate", "Zero-knowledge cloud backup")
+    System(voidgate, "Arx Runa", "Zero-knowledge cloud backup")
     System_Ext(cloud, "Cloud Provider", "S3/GCS/Azure")
 
     Rel(user, voidgate, "Backs up files")

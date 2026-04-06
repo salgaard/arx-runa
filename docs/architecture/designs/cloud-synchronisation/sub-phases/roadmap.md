@@ -145,5 +145,5 @@ cargo test storage::cloud::rclone
 ## Notes
 
 - **Manifest size exception**: Manifest backup loads entire DB into memory (exception to streaming rule). Typical size <10 MiB, acceptable for in-memory encryption.
-- **No auto-merge**: Conflict resolution is manual. VoidGate detects conflicts but does not attempt automatic merge.
+- **No auto-merge**: Conflict resolution is manual. Arx Runa detects conflicts but does not attempt automatic merge.
 - **Future work (Phase 5)**: `shared/` directory structure is defined but not implemented until Phase 5 (file sharing)

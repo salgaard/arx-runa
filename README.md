@@ -1,8 +1,8 @@
-# VoidGate
+# Arx Runa
 
-[![CI](https://github.com/Chorizzio/void-gate/actions/workflows/continuous-integration.yml/badge.svg)](https://github.com/Chorizzio/void-gate/actions/workflows/continuous-integration.yml)
-[![Security Audit](https://github.com/Chorizzio/void-gate/actions/workflows/security-audit.yml/badge.svg)](https://github.com/Chorizzio/void-gate/actions/workflows/security-audit.yml)
-[![Docs](https://github.com/Chorizzio/void-gate/actions/workflows/documentation-check.yml/badge.svg)](https://github.com/Chorizzio/void-gate/actions/workflows/documentation-check.yml)
+[![CI](https://github.com/Chorizzio/arx-runa/actions/workflows/continuous-integration.yml/badge.svg)](https://github.com/Chorizzio/arx-runa/actions/workflows/continuous-integration.yml)
+[![Security Audit](https://github.com/Chorizzio/arx-runa/actions/workflows/security-audit.yml/badge.svg)](https://github.com/Chorizzio/arx-runa/actions/workflows/security-audit.yml)
+[![Docs](https://github.com/Chorizzio/arx-runa/actions/workflows/documentation-check.yml/badge.svg)](https://github.com/Chorizzio/arx-runa/actions/workflows/documentation-check.yml)
 ![Rust](https://img.shields.io/badge/rust-2024-orange?logo=rust)
 
 **Zero-knowledge cloud storage** — data leaves encrypted, arrives as opaque

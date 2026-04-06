@@ -1,5 +1,5 @@
 [book]
-title = "VoidGate Documentation"
+title = "Arx Runa Documentation"
 authors = ["Chorizzio"]
 description = "Zero-knowledge cloud storage — technical documentation"
 src = "."
@@ -12,11 +12,13 @@ create-missing = false
 [output.html]
 default-theme = "navy"
 preferred-dark-theme = "navy"
-git-repository-url = "https://github.com/Chorizzio/void-gate"
+git-repository-url = "https://github.com/Chorizzio/arx-runa"
 git-repository-icon = "fa-github"
-edit-url-template = "https://github.com/Chorizzio/void-gate/edit/master/docs/{path}"
-site-url = "/void-gate/"
+edit-url-template = "https://github.com/Chorizzio/arx-runa/edit/master/docs/{path}"
+site-url = "/arx-runa/"
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-css = ["arx-runa-brand.css"]
+favicon-svg = "arx-runa-logo.svg"
 
 [output.html.fold]
 enable = true

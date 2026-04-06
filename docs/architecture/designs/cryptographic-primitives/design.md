@@ -1,4 +1,4 @@
-# VoidGate — Cryptographic Primitives Design
+# Arx Runa — Cryptographic Primitives Design
 
 > Status: Design complete. Implementation target: Phase 1.
 > Last updated: 2026-04-01 (reviewed)
@@ -7,7 +7,7 @@
 
 ## Goals
 
-- Provide foundational cryptographic operations for all other VoidGate modules
+- Provide foundational cryptographic operations for all other Arx Runa modules
 - HKDF-SHA256 key derivation producing vault-level keys from `master_key`
 - XChaCha20-Poly1305 AEAD encryption with mandatory AAD binding
 - Per-file random key generation, wrapping, and unwrapping
@@ -20,7 +20,7 @@
 
 - ✅ Use: `XChaCha20Poly1305` with 192-bit (24-byte) nonces
 - ❌ Reject: `ChaCha20Poly1305` (96-bit nonces insufficient for random generation)
-- ❌ Reject: AES-GCM (not used in VoidGate)
+- ❌ Reject: AES-GCM (not used in Arx Runa)
 
 **Rationale**: XChaCha20 extended nonce space (192-bit vs 96-bit) enables safe random nonce generation without collision concerns. With 96-bit nonces, the birthday bound becomes concerning after ~2^32 encryptions; with 192-bit, it's negligible even at 2^64 encryptions.
 
@@ -206,7 +206,7 @@ pub fn generate_nonce() -> [u8; 24];
 ### Security Properties
 
 - **No sequential nonces**: Sequential or counter-based nonces are rejected. They create catastrophic failure modes if the counter is ever reset or reused.
-- **Birthday bound**: With 192-bit nonces, the collision probability after 2^64 encryptions is ~2^-64. VoidGate's use case (personal file storage) will never approach this limit.
+- **Birthday bound**: With 192-bit nonces, the collision probability after 2^64 encryptions is ~2^-64. Arx Runa's use case (personal file storage) will never approach this limit.
 - **Per-file key isolation**: Even if a nonce collision occurred, the per-file key model limits the impact to a single file.
 
 ---

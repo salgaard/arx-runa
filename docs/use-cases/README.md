@@ -1,10 +1,10 @@
 # Use Cases
 
-This section describes the real-world scenarios VoidGate is built to handle — what a user is trying to do, how VoidGate helps, and what security guarantees apply.
+This section describes the real-world scenarios Arx Runa is built to handle — what a user is trying to do, how Arx Runa helps, and what security guarantees apply.
 
 ## Security Tiers
 
-VoidGate lets you choose how strongly each vault is protected when you create it:
+Arx Runa lets you choose how strongly each vault is protected when you create it:
 
 | Tier | What you need to unlock | Best for |
 |------|------------------------|----------|
@@ -27,7 +27,7 @@ Regardless of tier, the cloud never holds your encryption keys or unencrypted fi
 Each use case document describes:
 - Who is involved and what they are trying to do
 - The step-by-step flow of a successful scenario
-- What can go wrong and how VoidGate handles it
+- What can go wrong and how Arx Runa handles it
 - The security properties that must hold throughout
 
 ---

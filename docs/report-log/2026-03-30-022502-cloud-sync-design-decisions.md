@@ -17,13 +17,13 @@ commit: "5d71df7"
 
 ## Context
 
-The Phase 4 cloud synchronisation design document was written to define how VoidGate moves encrypted blobs between local staging and a remote cloud backend. The design covers five interconnected choices: how Rclone is distributed to end users, how the cloud remote is configured, how upload order affects metadata privacy, how concurrent device usage is handled, and how the manifest backup is encrypted. Each decision has security and usability implications relevant to the zero-knowledge guarantee.
+The Phase 4 cloud synchronisation design document was written to define how Arx Runa moves encrypted blobs between local staging and a remote cloud backend. The design covers five interconnected choices: how Rclone is distributed to end users, how the cloud remote is configured, how upload order affects metadata privacy, how concurrent device usage is handled, and how the manifest backup is encrypted. Each decision has security and usability implications relevant to the zero-knowledge guarantee.
 
 ## Substance
 
 ### Rclone distributed as a Tauri sidecar
 
-Rclone is bundled with VoidGate as a Tauri external binary (sidecar), rather than requiring users to install it separately. Tauri's sidecar mechanism handles platform detection, binary extraction, and path resolution at runtime. Rclone is MIT-licensed, which permits bundling without restriction.
+Rclone is bundled with Arx Runa as a Tauri external binary (sidecar), rather than requiring users to install it separately. Tauri's sidecar mechanism handles platform detection, binary extraction, and path resolution at runtime. Rclone is MIT-licensed, which permits bundling without restriction.
 
 The subprocess invocation uses `tokio::process::Command` with arguments passed as a `Vec<OsString>`. No shell interpolation occurs at any stage. Remote paths are validated against a strict allowlist (`^[a-zA-Z0-9._/-]+$`) before being passed to Rclone, preventing path traversal from crafted manifest data.
 <!-- SOURCE: Path Traversal | OWASP Foundation — https://owasp.org/www-community/attacks/Path_Traversal — "Validate the user's input by only accepting known good – do not sanitize the data" -->
@@ -32,9 +32,9 @@ Rclone's stderr is sanitised before inclusion in error messages: lines containin
 
 ### Guided setup wizard (S3-compatible and Google Drive)
 
-Rather than requiring users to run `rclone config` manually, VoidGate provides a provider selection wizard that calls `rclone config create` via the sidecar. Initial provider support covers S3-compatible services (AWS S3, MinIO, Backblaze B2, Wasabi) and Google Drive (OAuth 2.0 browser flow).
+Rather than requiring users to run `rclone config` manually, Arx Runa provides a provider selection wizard that calls `rclone config create` via the sidecar. Initial provider support covers S3-compatible services (AWS S3, MinIO, Backblaze B2, Wasabi) and Google Drive (OAuth 2.0 browser flow).
 
-Credentials are passed as arguments to `rclone config create` and not retained by VoidGate after the wizard completes. Rclone's `rclone.conf` is the authoritative credential store. The `CloudEndpoint` struct stored in `cloud-config.json` contains only the remote name, bucket, region, endpoint URL, and path prefix — no secrets.
+Credentials are passed as arguments to `rclone config create` and not retained by Arx Runa after the wizard completes. Rclone's `rclone.conf` is the authoritative credential store. The `CloudEndpoint` struct stored in `cloud-config.json` contains only the remote name, bucket, region, endpoint URL, and path prefix — no secrets.
 
 ### Upload order randomisation
 
@@ -52,7 +52,7 @@ Automatic manifest merge would require decrypting two SQLCipher databases, perfo
 
 ### Manifest backup: full-buffer encryption
 
-The SQLCipher export is loaded into a single buffer before encryption with `manifest_key` (XChaCha20-Poly1305, random nonce, no AAD). This is a deliberate exception to VoidGate's streaming rule. The manifest is expected to remain below 10 MiB throughout the project scope, making a single AEAD operation simpler and correct. No AAD is applied: the manifest backup is a singleton — there is no `file_id` or `chunk_index` context to bind.
+The SQLCipher export is loaded into a single buffer before encryption with `manifest_key` (XChaCha20-Poly1305, random nonce, no AAD). This is a deliberate exception to Arx Runa's streaming rule. The manifest is expected to remain below 10 MiB throughout the project scope, making a single AEAD operation simpler and correct. No AAD is applied: the manifest backup is a singleton — there is no `file_id` or `chunk_index` context to bind.
 
 ## Alternatives considered
 
@@ -62,11 +62,11 @@ The SQLCipher export is loaded into a single buffer before encryption with `mani
 
 **Automatic conflict resolution (last-writer-wins)**: would eliminate the manual pull step but risks silent data loss when two devices modify the same file concurrently. Detect-and-block is the correct baseline; merge logic is a future extension.
 
-**Streaming manifest encryption**: applying the chunk pipeline to the manifest backup would be consistent with the rest of VoidGate's I/O model but adds unnecessary complexity for a file that remains small throughout this project's scope.
+**Streaming manifest encryption**: applying the chunk pipeline to the manifest backup would be consistent with the rest of Arx Runa's I/O model but adds unnecessary complexity for a file that remains small throughout this project's scope.
 
 ## Implications
 
-The sidecar model couples VoidGate's release pipeline to Rclone releases: VoidGate must be rebuilt when a new Rclone version is required. The wizard's provider list is finite; adding new providers requires code changes (though the `CloudEndpoint` descriptor format is extensible).
+The sidecar model couples Arx Runa's release pipeline to Rclone releases: Arx Runa must be rebuilt when a new Rclone version is required. The wizard's provider list is finite; adding new providers requires code changes (though the `CloudEndpoint` descriptor format is extensible).
 
 Upload order randomisation partially mitigates temporal correlation but does not eliminate all access-pattern leakage. Blob count, upload timing windows, and vault header presence remain observable by the cloud provider. These are documented limitations in the threat model.
 

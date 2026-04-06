@@ -1,4 +1,4 @@
-# VoidGate — Tauri IPC Layer and Frontend Design
+# Arx Runa — Tauri IPC Layer and Frontend Design
 
 > Status: Reviewed. Implementation target: Phase 6.
 > Last updated: 2026-03-31
@@ -1131,7 +1131,7 @@ impl IpcError {
 
 ## Drop Zone Component
 
-The drop zone is the primary upload interface for VoidGate (UC-IND-001). Users drag files or folders onto the drop zone area rather than using a system file picker by default.
+The drop zone is the primary upload interface for Arx Runa (UC-IND-001). Users drag files or folders onto the drop zone area rather than using a system file picker by default.
 
 ### Implementation
 
@@ -1169,7 +1169,7 @@ Implementation target: Phase 6.
 
 ## In-App File Viewing (Zero-Trace)
 
-For supported file types, VoidGate decrypts file content into WASM memory and renders it in the WebView without writing a temporary file to disk. This preserves Zero-Trace compliance.
+For supported file types, Arx Runa decrypts file content into WASM memory and renders it in the WebView without writing a temporary file to disk. This preserves Zero-Trace compliance.
 
 ### Supported types (MVP)
 
@@ -1292,7 +1292,7 @@ The frontend runs in a WebView which is inherently less trusted than the Rust ba
 ### Out of scope
 
 - **Memory scraping in WebView**: WASM memory could theoretically be dumped. This is equivalent to the cold-boot threat already documented in the threat model.
-- **Malicious Tauri plugins**: VoidGate uses no third-party Tauri plugins.
+- **Malicious Tauri plugins**: Arx Runa uses no third-party Tauri plugins.
 
 ---
 

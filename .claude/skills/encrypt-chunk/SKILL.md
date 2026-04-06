@@ -1,6 +1,6 @@
 ---
 name: encrypt-chunk
-description: Implement XChaCha20-Poly1305 chunk encryption for VoidGate. Use when writing or modifying encrypt_chunk or decrypt_chunk in src-tauri/src/crypto/.
+description: Implement XChaCha20-Poly1305 chunk encryption for Arx Runa. Use when writing or modifying encrypt_chunk or decrypt_chunk in src-tauri/src/crypto/.
 ---
 
 Implement chunk encryption following the canonical specifications in `docs/architecture/designs/cryptographic-primitives/design.md`. Do not deviate from the wire format or AAD construction — both sides of the encrypt/decrypt pair must match identically.

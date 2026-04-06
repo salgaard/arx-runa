@@ -1,7 +1,7 @@
 ---
 name: architecture-decision-record
 description: >
-  Create an Architecture Decision Record (ADR) for VoidGate. Invoke proactively
+  Create an Architecture Decision Record (ADR) for Arx Runa. Invoke proactively
   when an architectural decision is made — selecting a technology, choosing
   between design alternatives, defining a security boundary, or establishing a
   convention that constrains future work. Also invokable manually via

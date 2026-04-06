@@ -1,10 +1,10 @@
-# VoidGate: Market Opportunities & Future Directions
+# Arx Runa: Market Opportunities & Future Directions
 
 > **Document type**: Exploration / brainstorming  
 > **Status**: Living document  
 > **Last updated**: April 2026
 
-This document explores market positioning, mainstream adoption strategies, and future opportunities for VoidGate. It includes speculative ideas and preliminary implementation notes.
+This document explores market positioning, mainstream adoption strategies, and future opportunities for Arx Runa. It includes speculative ideas and preliminary implementation notes.
 
 ---
 
@@ -47,7 +47,7 @@ From [Tresorit Security Page](https://tresorit.com/security):
 - **Swiss privacy laws**: Stronger than US/EU
 - **Compliance**: ISO 27001:2022, GDPR, HIPAA BAA, CCPA
 
-**VoidGate advantage**: Tresorit is SaaS-locked. VoidGate's BYOC model means you own your cloud backend.
+**Arx Runa advantage**: Tresorit is SaaS-locked. Arx Runa's BYOC model means you own your cloud backend.
 
 ### Competitor Deep Dive: Internxt
 
@@ -56,11 +56,11 @@ From [Internxt Privacy Page](https://internxt.com/privacy):
 - Open-source approach
 - Consumer-focused messaging
 
-**VoidGate advantage**: Hardware MFA, zero-trace architecture, more paranoid threat model.
+**Arx Runa advantage**: Hardware MFA, zero-trace architecture, more paranoid threat model.
 
-### VoidGate's Unique Position
+### Arx Runa's Unique Position
 
-VoidGate differentiates on:
+Arx Runa differentiates on:
 - **Hardware MFA as cryptographic requirement** — not just convenience 2FA
 - **BYOC (Bring Your Own Cloud)** via Rclone — true vendor independence
 - **Zero-Trace UI** — RAM-only, no temp files, paranoid by design
@@ -98,7 +98,7 @@ Source: [How Americans View Data Privacy](https://www.pewresearch.org/internet/2
 - 85% say parents have responsibility to protect kids' online privacy
 - 59% say tech companies have responsibility
 
-**Actionable insight for VoidGate**: 
+**Actionable insight for Arx Runa**: 
 - Privacy concern is widespread and growing
 - Trust in tech companies is low
 - There's appetite for tools that give users control
@@ -224,7 +224,7 @@ Current encrypted storage tools require manual encrypt/decrypt workflows. Users 
 
 ### The Vision
 
-A drag-and-drop zone in the VoidGate UI that:
+A drag-and-drop zone in the Arx Runa UI that:
 1. Accepts files/folders dropped onto it
 2. Encrypts immediately (client-side)
 3. Uploads encrypted chunks to configured cloud
@@ -239,8 +239,8 @@ A drag-and-drop zone in the VoidGate UI that:
 - **Problem**: OS may create temp files, thumbnails, search indexes → breaks zero-trace
 
 **UI-based approach**:
-- User explicitly drops files into VoidGate window
-- VoidGate reads directly from source, encrypts in RAM, uploads
+- User explicitly drops files into Arx Runa window
+- Arx Runa reads directly from source, encrypts in RAM, uploads
 - Source file remains unchanged (or optionally deleted)
 - **Advantage**: Full control over data flow, true zero-trace
 
@@ -248,7 +248,7 @@ A drag-and-drop zone in the VoidGate UI that:
 
 ```
 ┌─────────────────────────────────────────┐
-│  VoidGate                    [—][□][×]  │
+│  Arx Runa                    [—][□][×]  │
 ├─────────────────────────────────────────┤
 │                                         │
 │   ┌─────────────────────────────────┐   │
@@ -270,9 +270,9 @@ A drag-and-drop zone in the VoidGate UI that:
 
 For power users who want auto-sync:
 - User designates a "hot folder" on disk
-- VoidGate watches it (via file system events)
+- Arx Runa watches it (via file system events)
 - New files → encrypt → upload → optionally delete source
-- **Trade-off**: Source folder has plaintext briefly, but VoidGate never writes unencrypted
+- **Trade-off**: Source folder has plaintext briefly, but Arx Runa never writes unencrypted
 
 ### Implementation Notes (Tauri)
 
@@ -328,8 +328,8 @@ async fn handle_drop(paths: Vec<PathBuf>, state: State<VaultState>) -> Result<()
 
 **How it works**:
 1. User purchases blank NFC tag (NTAG215, ~$2)
-2. VoidGate writes 32 bytes of random entropy to tag (write-protected after)
-3. On unlock: user taps tag, VoidGate reads entropy, combines with password
+2. Arx Runa writes 32 bytes of random entropy to tag (write-protected after)
+3. On unlock: user taps tag, Arx Runa reads entropy, combines with password
 
 **Advantages**:
 - Cheap and replaceable
@@ -368,7 +368,7 @@ async fn handle_drop(paths: Vec<PathBuf>, state: State<VaultState>) -> Result<()
 - Existing ecosystem (8.9k stars on Hanko, 1.1k on Frame)
 
 **How it could work**:
-1. VoidGate generates 32-byte challenge
+1. Arx Runa generates 32-byte challenge
 2. Hardware wallet signs challenge with device-specific key
 3. Signature (deterministic) used as key material for Argon2
 4. Same challenge + same device = same signature = same derived key
@@ -423,7 +423,7 @@ Source: [FIDO Alliance Passkeys](https://fidoalliance.org/passkeys/)
 - Reduced need for password resets
 - Decreased customer support needs
 
-**VoidGate implications**:
+**Arx Runa implications**:
 - Users are becoming familiar with biometric + device auth patterns
 - Passkey UX patterns can inform Tier 2 biometric flow
 - Watch WebAuthn PRF extension for direct key derivation capability
@@ -483,22 +483,22 @@ Source: [CISA Quantum](https://www.cisa.gov/quantum)
 6. Alert IT departments and vendors
 7. Educate workforce
 
-### VoidGate PQC Strategy
+### Arx Runa PQC Strategy
 
 **Current state**:
-- VoidGate uses XChaCha20-Poly1305 (symmetric) — NOT vulnerable to quantum attacks
+- Arx Runa uses XChaCha20-Poly1305 (symmetric) — NOT vulnerable to quantum attacks
 - HKDF-SHA256 for key derivation — NOT vulnerable
 - Argon2id for password hashing — NOT vulnerable
 - **No RSA/ECC in current design** — minimal quantum exposure
 
-**Why VoidGate is well-positioned**:
+**Why Arx Runa is well-positioned**:
 - Symmetric cryptography (ChaCha20) is quantum-resistant (Grover's algorithm only halves effective key length)
 - 256-bit keys remain secure even against quantum computers
 - No key exchange with remote servers (client-side only)
 - HKDF allows easy algorithm substitution
 
 **Future considerations**:
-- If VoidGate adds key sharing features, use ML-KEM (FIPS 203)
+- If Arx Runa adds key sharing features, use ML-KEM (FIPS 203)
 - If digital signatures needed, use ML-DSA (FIPS 204)
 - Monitor Rust ecosystem: `pqcrypto` crate, RustCrypto implementations
 - **Marketing opportunity**: Position as "quantum-ready" even though current design is already resistant
@@ -533,7 +533,7 @@ From Pew Research (2023):
 - 81% expect AI will lead to data being used in uncomfortable ways
 - 80% expect AI will lead to unintended data uses
 
-**The opportunity**: Users want AI capabilities but don't trust companies. VoidGate could be the **private storage layer** for:
+**The opportunity**: Users want AI capabilities but don't trust companies. Arx Runa could be the **private storage layer** for:
 - Local AI conversation history
 - AI-processed documents (summaries, analysis)
 - Personal context/preferences for AI assistants
@@ -559,7 +559,7 @@ From Pew Research (2023):
 
 ### Near-Term (2026-2028)
 
-| Trend | Impact on VoidGate | Action |
+| Trend | Impact on Arx Runa | Action |
 |-------|-------------------|--------|
 | **AI training on user data** | Major privacy backlash, users seeking "AI-proof" storage | Marketing opportunity: "Your data stays yours" |
 | **Passkey adoption** | Users comfortable with biometric + device auth | Prepare Tier 2 biometric UX |
@@ -568,21 +568,21 @@ From Pew Research (2023):
 
 ### Mid-Term (2028-2032)
 
-| Trend | Impact on VoidGate | Action |
+| Trend | Impact on Arx Runa | Action |
 |-------|-------------------|--------|
-| **Post-quantum migration** | NIST PQC standards finalized, early adopters migrating | Architect for algorithm agility (VoidGate already uses HKDF — swap primitives) |
+| **Post-quantum migration** | NIST PQC standards finalized, early adopters migrating | Architect for algorithm agility (Arx Runa already uses HKDF — swap primitives) |
 | **Decentralized storage maturity** | IPFS/Filecoin/Arweave become practical | BYOC via Rclone positions well — add backends |
 | **Health data ownership** | Wearables generate sensitive biometric streams | "Health vault" feature — encrypted health data aggregation |
 | **Hardware wallet ubiquity** | More users own secure hardware | Prioritize Ledger/Trezor integration |
 
 ### Long-Term (2032+)
 
-| Trend | Impact on VoidGate | Action |
+| Trend | Impact on Arx Runa | Action |
 |-------|-------------------|--------|
 | **Personal AI agents** | Users need private storage for AI context, memories, conversations | "AI memory vault" — huge use case |
-| **Digital identity wallets** | EU eIDAS 2.0, government-issued digital ID | Integration point — store credentials in VoidGate |
+| **Digital identity wallets** | EU eIDAS 2.0, government-issued digital ID | Integration point — store credentials in Arx Runa |
 | **Biometric normalization** | Face/fingerprint everywhere | Tier 2 becomes default expectation |
-| **Zero-knowledge as table stakes** | What's "paranoid" today becomes standard | VoidGate's architecture becomes mainstream requirement |
+| **Zero-knowledge as table stakes** | What's "paranoid" today becomes standard | Arx Runa's architecture becomes mainstream requirement |
 
 ### The "AI Memory Vault" Opportunity
 
@@ -593,10 +593,10 @@ As personal AI assistants become prevalent, users will want:
 - Encrypted context that AI can access but cloud can't
 - "My AI knows me, but Big Tech doesn't"
 
-VoidGate could become the **private memory layer** for local AI:
+Arx Runa could become the **private memory layer** for local AI:
 - Store conversation logs, preferences, learned context
 - AI runs locally (see: Oxide-Lab, 104 stars — Rust+Tauri local AI)
-- VoidGate provides encrypted persistence
+- Arx Runa provides encrypted persistence
 
 ---
 
@@ -684,7 +684,7 @@ VoidGate could become the **private memory layer** for local AI:
 
 ## Summary
 
-VoidGate has a defensible niche today (hardware-bound zero-knowledge + BYOC) and strong positioning for future trends (AI privacy backlash, post-quantum, personal AI agents).
+Arx Runa has a defensible niche today (hardware-bound zero-knowledge + BYOC) and strong positioning for future trends (AI privacy backlash, post-quantum, personal AI agents).
 
 **Key strategic moves**:
 1. **Progressive security model** — lower entry barrier while keeping paranoid tier

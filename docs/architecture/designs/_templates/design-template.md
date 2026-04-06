@@ -1,4 +1,4 @@
-# VoidGate — [Design Title]
+# Arx Runa — [Design Title]
 
 > Status: Draft. Implementation target: Phase [N].  
 > Last updated: [YYYY-MM-DD]

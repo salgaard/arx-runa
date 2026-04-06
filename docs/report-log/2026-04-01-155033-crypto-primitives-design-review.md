@@ -17,7 +17,7 @@ commit: "28bd43c"
 
 ## Context
 
-The VoidGate cryptographic primitives design document underwent a structured review to verify its alignment with related design documents (authentication, chunking, cloud sync) and adherence to project security invariants defined in CLAUDE.md. The review was conducted interactively, section by section, following the `/interactive-design review` workflow.
+The Arx Runa cryptographic primitives design document underwent a structured review to verify its alignment with related design documents (authentication, chunking, cloud sync) and adherence to project security invariants defined in CLAUDE.md. The review was conducted interactively, section by section, following the `/interactive-design review` workflow.
 
 ## Substance
 

@@ -60,7 +60,7 @@ Stick to these six stable types. Experimental types (`architecture-beta`, `C4`, 
 
 ---
 
-## VoidGate Color Palette
+## Arx Runa Color Palette
 
 ```
 classDef secret   fill:#dc2626,stroke:#991b1b,color:#fff  %% key material, plaintext

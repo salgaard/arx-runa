@@ -21,7 +21,7 @@ For patterns and examples, see `.claude/reference/leptos-patterns.md`.
 - `LocalResource` for fetching, `Action` for mutations
 - Wrap fallible async in `ErrorBoundary`
 
-## VoidGate constraints
+## Arx Runa constraints
 - **Zero-Trace**: No localStorage/sessionStorage for sensitive data
 - **Zero-Trace**: Never log keys, passwords, decrypted content
 - **Zero-Trace**: Clear UI state when vault locks

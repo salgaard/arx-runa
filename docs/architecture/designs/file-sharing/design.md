@@ -1,4 +1,4 @@
-# VoidGate — File Sharing Architecture Design
+# Arx Runa — File Sharing Architecture Design
 
 > Status: Design complete. Implementation target: Phase 5.
 > Last updated: 2026-03-29
@@ -10,9 +10,9 @@
 - Users can share individual files with specific contacts
 - Both personal use (family, friends) and team use must be supportable with the same architecture
 - Revocation prevents future access; honest about the limits of cryptographic revocation
-- No central sign-up required — VoidGate generates a local X25519 identity on first run
+- No central sign-up required — Arx Runa generates a local X25519 identity on first run
 - Folder sharing is a future extension of the same mechanism (multiple files in one share package)
-- Recipients must run VoidGate — there is no browser-based or app-less recipient flow
+- Recipients must run Arx Runa — there is no browser-based or app-less recipient flow
 - Shares are snapshots: the share captures the file at the time of sharing; updates to the original file do not propagate automatically
 
 ---
@@ -21,32 +21,32 @@
 
 ### No central server for identity
 
-VoidGate generates an X25519 keypair on first run. This keypair is the user's identity. The private key is stored in the local SQLCipher vault, wrapped with `key_encryption_key` and protected by the same auth flow (USB key file + password → Argon2id → `master_key` → `key_encryption_key`).
+Arx Runa generates an X25519 keypair on first run. This keypair is the user's identity. The private key is stored in the local SQLCipher vault, wrapped with `key_encryption_key` and protected by the same auth flow (USB key file + password → Argon2id → `master_key` → `key_encryption_key`).
 
-Email addresses are used as human-readable labels for contacts only. VoidGate does not send email itself and does not require email credentials. The email address is a display name, not a delivery mechanism.
+Email addresses are used as human-readable labels for contacts only. Arx Runa does not send email itself and does not require email credentials. The email address is a display name, not a delivery mechanism.
 
 ### Key exchange
 
 Public keys are exchanged out-of-band:
 
-1. Alice opens VoidGate and exports her X25519 public key as a small file or QR code
+1. Alice opens Arx Runa and exports her X25519 public key as a small file or QR code
 2. Alice sends this to Bob via her own email client, a messaging app, a USB stick, or any other channel
-3. Bob imports Alice's public key into VoidGate — it is stored as a contact with Alice's display name and optional email label
+3. Bob imports Alice's public key into Arx Runa — it is stored as a contact with Alice's display name and optional email label
 4. The reverse happens so both sides can share with each other
 
-VoidGate never touches email infrastructure. Delegating delivery to the user's existing trusted channel avoids SMTP credential exposure and is the same model used by WireGuard, age, and PGP.
+Arx Runa never touches email infrastructure. Delegating delivery to the user's existing trusted channel avoids SMTP credential exposure and is the same model used by WireGuard, age, and PGP.
 
 ### Trust assumption
 
 The security of key exchange depends on the out-of-band channel. This is an explicit design assumption stated in the threat model. If an attacker controls the channel (MITM), they can substitute their own public key and receive the share package instead of the intended recipient.
 
-Mitigation: fingerprint verification. VoidGate displays a short hash (first 16 hex characters of SHA-256 of the public key). The owner and contact can compare fingerprints out-of-band (phone call, in person). This is opt-in UX, not a system requirement.
+Mitigation: fingerprint verification. Arx Runa displays a short hash (first 16 hex characters of SHA-256 of the public key). The owner and contact can compare fingerprints out-of-band (phone call, in person). This is opt-in UX, not a system requirement.
 
 ---
 
 ## Key Architecture: Per-File Keys
 
-The base VoidGate design uses a vault-wide `key_encryption_key` (HKDF-derived from `master_key`) that wraps per-file random keys. Each file has its own `file_key` — a random 256-bit value generated at file creation time via CSPRNG.
+The base Arx Runa design uses a vault-wide `key_encryption_key` (HKDF-derived from `master_key`) that wraps per-file random keys. Each file has its own `file_key` — a random 256-bit value generated at file creation time via CSPRNG.
 
 ```
 master_key  (Argon2id output, mlocked memory, never stored)
@@ -90,7 +90,7 @@ Reference implementation: the `age` encryption tool uses the same construction a
 
 ## Share Package Format
 
-When the owner shares a file, VoidGate produces a share package — a small file containing everything the recipient needs to fetch and decrypt the shared file.
+When the owner shares a file, Arx Runa produces a share package — a small file containing everything the recipient needs to fetch and decrypt the shared file.
 
 ### Plaintext fields (inside the ECIES envelope)
 
@@ -123,7 +123,7 @@ The `file_key_wrapped` field is the `file_key` encrypted with the ECDH-derived s
 
 ### Delivery
 
-The owner exports the share package as a file and delivers it via their own channel (email, messaging app, USB). The recipient imports it into VoidGate via file picker or a `voidgate://share-import?...` deep link (Tauri custom URI scheme).
+The owner exports the share package as a file and delivers it via their own channel (email, messaging app, USB). The recipient imports it into Arx Runa via file picker or a `voidgate://share-import?...` deep link (Tauri custom URI scheme).
 
 ---
 
@@ -142,7 +142,7 @@ The owner exports the share package as a file and delivers it via their own chan
 `file_share_id` is a UUID v4 that identifies a shared copy of a file. All recipients of the same file share the same set of blobs. This is distinct from `share_id` (per recipient–file pair).
 
 When the owner shares a file:
-1. VoidGate copies the relevant encrypted blobs from `vault/` into `shared/<file_share_id>/`
+1. Arx Runa copies the relevant encrypted blobs from `vault/` into `shared/<file_share_id>/`
 2. No re-encryption is required — blobs are already encrypted with `file_key`, which travels in the share package
 3. The share package's `chunk_uuids` list points to blobs in `shared/<file_share_id>/`
 
@@ -184,7 +184,7 @@ The owner of a shared file may want to know when a recipient has downloaded it. 
 
 ### Mechanism
 
-After a recipient successfully downloads and decrypts all chunks of a shared file, the recipient's VoidGate writes a receipt to the owner's shared folder in the cloud:
+After a recipient successfully downloads and decrypts all chunks of a shared file, the recipient's Arx Runa writes a receipt to the owner's shared folder in the cloud:
 
 ```
 shared/<file_share_id>/receipts/<receipt_uuid>.blob
@@ -204,7 +204,7 @@ The receipt is encrypted with the owner's X25519 public key via ECIES (the same 
 
 ### Owner reads receipts
 
-On the next manifest pull or sync operation, the owner's VoidGate:
+On the next manifest pull or sync operation, the owner's Arx Runa:
 
 1. Lists blobs under `shared/<file_share_id>/receipts/`
 2. Downloads and decrypts each receipt using the owner's X25519 private key
@@ -258,16 +258,16 @@ ALTER TABLE shares ADD COLUMN expires_at INTEGER;  -- Unix timestamp, NULL = no 
 
 Expiration is enforced at two levels:
 
-1. **Cooperative (recipient-side)**: The recipient's VoidGate checks `expires_at` before decrypting. If the current time exceeds `expires_at`, VoidGate displays "Share expired — contact sender for renewed access" and refuses to decrypt. A malicious or modified recipient client can bypass this check.
+1. **Cooperative (recipient-side)**: The recipient's Arx Runa checks `expires_at` before decrypting. If the current time exceeds `expires_at`, Arx Runa displays "Share expired — contact sender for renewed access" and refuses to decrypt. A malicious or modified recipient client can bypass this check.
 
-2. **Server-side (owner-side)**: On each push or sync operation, the owner's VoidGate checks all active shares for expired `expires_at` values. For each expired share:
+2. **Server-side (owner-side)**: On each push or sync operation, the owner's Arx Runa checks all active shares for expired `expires_at` values. For each expired share:
    - Delete the blobs under `shared/<file_share_id>/` from the cloud
    - Set `shares.revoked_at` to the current timestamp
    - This provides enforcement independent of the recipient's cooperation
 
 ### UX
 
-When sharing a file, the sender can optionally configure an expiration period (e.g., "7 days", "30 days", "90 days", or "No expiration"). VoidGate computes `expires_at` as the current Unix timestamp plus the selected duration.
+When sharing a file, the sender can optionally configure an expiration period (e.g., "7 days", "30 days", "90 days", or "No expiration"). Arx Runa computes `expires_at` as the current Unix timestamp plus the selected duration.
 
 ### Scope
 
@@ -341,7 +341,7 @@ This is a deliberate design decision. Live sharing (recipient always sees the la
 
 If Alice and Bob exchange public keys over an untrusted channel (plain email without S/MIME or PGP), an attacker who controls the channel can substitute their own public key. The owner would encrypt the share package for the attacker, not the intended recipient.
 
-**Mitigation**: fingerprint verification. VoidGate displays a short fingerprint (first 16 hex characters of SHA-256 of the X25519 public key) alongside each contact. Alice and Bob compare fingerprints over a separate channel (phone call, in person). This is opt-in UX; the system does not enforce it.
+**Mitigation**: fingerprint verification. Arx Runa displays a short fingerprint (first 16 hex characters of SHA-256 of the X25519 public key) alongside each contact. Alice and Bob compare fingerprints over a separate channel (phone call, in person). This is opt-in UX; the system does not enforce it.
 
 **Threat model statement**: the security of the key exchange is as strong as the out-of-band delivery channel. This is the same trust assumption made by WireGuard, age, and PGP.
 

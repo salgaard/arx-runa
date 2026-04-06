@@ -1,6 +1,6 @@
-# VoidGate Implementation Roadmap
+# Arx Runa Implementation Roadmap
 
-VoidGate is built in ten sequential phases, each delivering a distinct, self-contained piece of the system. The phases are ordered by dependency: cryptographic foundations come first, then authentication, then storage, cloud sync, sharing, and finally the user interface and testing.
+Arx Runa is built in ten sequential phases, each delivering a distinct, self-contained piece of the system. The phases are ordered by dependency: cryptographic foundations come first, then authentication, then storage, cloud sync, sharing, and finally the user interface and testing.
 
 | Phase | What gets built | Status |
 |-------|----------------|--------|
@@ -275,7 +275,7 @@ When specifications in this roadmap conflict with design documents, **design doc
 **Deliverables**:
 1. `docs/threat-model/threat-model.md` — trust boundaries, threat actors, attack vectors, mitigations, and explicit out-of-scope declarations (cold boot, compromised OS kernel, multi-device conflict resolution, MITM on key exchange without fingerprint verification).
 2. `docs/architecture/system-overview.md` — consolidated architecture document with all diagrams, module descriptions, and data flows.
-3. Sharing architecture comparison: VoidGate sharing (ECIES, per-file keys, shared blob storage) vs. OneDrive sharing links (server-side ACL, provider holds keys) vs. Cryptomator shared vaults (vault-level sharing, not file-granularity) — addressing sub-question 5.
+3. Sharing architecture comparison: Arx Runa sharing (ECIES, per-file keys, shared blob storage) vs. OneDrive sharing links (server-side ACL, provider holds keys) vs. Cryptomator shared vaults (vault-level sharing, not file-granularity) — addressing sub-question 5.
 4. Run `/report-note compile` to aggregate all report-log entries into a structured report outline.
 5. Verify all ADRs are complete and cross-referenced.
 

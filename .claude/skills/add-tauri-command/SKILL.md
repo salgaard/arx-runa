@@ -1,6 +1,6 @@
 ---
 name: add-tauri-command
-description: Add a new Tauri IPC command to VoidGate. Use when exposing new backend functionality to the frontend via invoke().
+description: Add a new Tauri IPC command to Arx Runa. Use when exposing new backend functionality to the frontend via invoke().
 ---
 
 Follow this procedure for every new Tauri command. The IPC boundary is a security boundary — treat all frontend inputs as untrusted and all errors as potentially leaky.

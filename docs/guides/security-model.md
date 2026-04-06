@@ -1,12 +1,12 @@
-# VoidGate Security Model
+# Arx Runa Security Model
 
-This document describes the security model of VoidGate for a technically literate audience. It covers authentication tiers, brute force resistance, attack chains, endpoint threats, the cloud access model, and the identity system used for file sharing.
+This document describes the security model of Arx Runa for a technically literate audience. It covers authentication tiers, brute force resistance, attack chains, endpoint threats, the cloud access model, and the identity system used for file sharing.
 
 ---
 
 ## Authentication Tiers
 
-VoidGate supports two authentication tiers. Both use Argon2id as the password-based key derivation function (KDF), but they differ in what material is fed into it.
+Arx Runa supports two authentication tiers. Both use Argon2id as the password-based key derivation function (KDF), but they differ in what material is fed into it.
 
 **Tier 1 — password only**
 
@@ -60,7 +60,7 @@ Argon2id is the recommended algorithm for offline password hashing because its l
 <!-- CITE: OWASP Password Storage Cheat Sheet — Argon2id as preferred algorithm -->
 <!-- CITE: RFC 9106 — Argon2 Memory-Hard Function for Password Hashing and Proof-of-Work Applications -->
 
-At the VoidGate minimum parameters (`m=19456 KiB`, `t=2`), each derivation requires approximately 19 MiB of RAM. GPU cores have limited per-core memory bandwidth; the memory requirement prevents the massive parallelism that makes GPUs effective against algorithms such as PBKDF2 or bcrypt.
+At the Arx Runa minimum parameters (`m=19456 KiB`, `t=2`), each derivation requires approximately 19 MiB of RAM. GPU cores have limited per-core memory bandwidth; the memory requirement prevents the massive parallelism that makes GPUs effective against algorithms such as PBKDF2 or bcrypt.
 <!-- CITE: Argon2 original paper — Biryukov, Dinu, Khovratovich 2016 — GPU memory-hardness analysis -->
 
 The practical result is that GPU parallelism is severely limited compared to algorithms such as PBKDF2 or bcrypt, making offline brute force substantially harder for a given hardware budget.
@@ -108,7 +108,7 @@ These are not cryptographic weaknesses. They are endpoint security concerns outs
 
 **Tier 2 materially reduces the impact of endpoint threats.** A stolen password is useless without the physical USB drive; a stolen USB drive is useless without the password. An attacker must simultaneously compromise both factors. This does not prevent all endpoint threats — malware with full runtime access to the process at authentication time could capture both factors simultaneously — but it eliminates the large class of attacks that obtain only one factor (phishing, credential database leaks, single-keylogger sessions before the USB drive is inserted).
 
-VoidGate mitigates memory scraping with `mlock`/`VirtualLock` on all session key buffers and `ZeroizeOnDrop` on all key types, which overwrites key material before memory is released to the allocator.
+Arx Runa mitigates memory scraping with `mlock`/`VirtualLock` on all session key buffers and `ZeroizeOnDrop` on all key types, which overwrites key material before memory is released to the allocator.
 
 ---
 
@@ -136,13 +136,13 @@ See the full specification: [`../architecture/designs/file-sharing/design.md`](.
 
 ## X25519 Identity and Key Exchange
 
-VoidGate generates a local X25519 keypair at vault creation. This keypair is the user's cryptographic identity for file sharing. There is no central key server or registration requirement.
+Arx Runa generates a local X25519 keypair at vault creation. This keypair is the user's cryptographic identity for file sharing. There is no central key server or registration requirement.
 
 The X25519 private key is stored in SQLCipher, wrapped with `key_encryption_key`. It is protected by the same authentication flow as all other vault content. If the vault password and key file are rotated, the private key is re-wrapped under the new `key_encryption_key`; the keypair itself does not change, and existing sharing relationships are preserved.
 
-The X25519 public key is shared out-of-band — exported as a file or QR code and delivered via the user's own channel (email, messaging application, physical media). VoidGate does not publish public keys to any directory and does not require an email address or any network-accessible identity.
+The X25519 public key is shared out-of-band — exported as a file or QR code and delivered via the user's own channel (email, messaging application, physical media). Arx Runa does not publish public keys to any directory and does not require an email address or any network-accessible identity.
 
-Only parties to whom the user has explicitly delivered their public key can construct share packages addressed to that user. The security of key exchange is as strong as the out-of-band delivery channel. VoidGate displays a short fingerprint (first 16 hex characters of the SHA-256 hash of the public key) to allow out-of-band verification; this verification is opt-in.
+Only parties to whom the user has explicitly delivered their public key can construct share packages addressed to that user. The security of key exchange is as strong as the out-of-band delivery channel. Arx Runa displays a short fingerprint (first 16 hex characters of the SHA-256 hash of the public key) to allow out-of-band verification; this verification is opt-in.
 <!-- CITE: age encryption tool (filippo.io/age) — same out-of-band key exchange model and ECIES construction -->
 
 Share packages are encrypted using ECIES: an ephemeral X25519 keypair is generated, ECDH is performed against the recipient's long-term public key, a symmetric key is derived via HKDF-SHA256, and the package content (including the per-file `file_key`) is encrypted with XChaCha20-Poly1305. The ephemeral private key is discarded after use; forward secrecy for the share package itself is provided at the per-share level.

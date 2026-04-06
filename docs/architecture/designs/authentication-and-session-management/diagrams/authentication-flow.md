@@ -35,7 +35,7 @@ sequenceDiagram
     Auth->>Auth: write vault_header.json (salt, params, key_file_blake3)
 
     note over User,DB: Login (subsequent runs)
-    User->>UI: Open VoidGate
+    User->>UI: Open Arx Runa
     UI->>Auth: begin_login()
     Auth->>DM: watch() — await USB mount event
     DM-->>Auth: DeviceEvent::Mounted { mount_path }

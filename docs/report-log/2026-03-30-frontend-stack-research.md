@@ -1,11 +1,11 @@
-# Frontend Stack Research for VoidGate
+# Frontend Stack Research for Arx Runa
 
 > Research conducted: March 2026  
 > Purpose: Evaluate frontend options for Phase 6 (Tauri IPC + Frontend)
 
 ## Context
 
-VoidGate requires a frontend that:
+Arx Runa requires a frontend that:
 - Integrates with Tauri's webview
 - Supports the **Zero-Trace** pillar (RAM-based UI, no disk writes)
 - Is learnable by someone with Blazor/C# background (new to JS frameworks)
@@ -257,7 +257,7 @@ Build:       dotnet CLI
 - Component libraries like MudBlazor are mature
 - Official Tauri template exists
 
-### Why NOT Blazor for VoidGate
+### Why NOT Blazor for Arx Runa
 
 - ❌ **Large bundle size** — ~500KB+ for Blazor WASM runtime
 - ❌ **GC unpredictability** — .NET GC may retain plaintext in heap
@@ -267,7 +267,7 @@ Build:       dotnet CLI
 
 ### Verdict
 
-Not recommended for VoidGate due to Zero-Trace requirements. Blazor's
+Not recommended for Arx Runa due to Zero-Trace requirements. Blazor's
 garbage collector makes it difficult to guarantee sensitive data is zeroed
 from memory.
 
@@ -275,7 +275,7 @@ from memory.
 
 ## Zero-Trace Requirements (All Options)
 
-Regardless of framework choice, VoidGate's frontend must:
+Regardless of framework choice, Arx Runa's frontend must:
 
 ### Must Do
 - [ ] Disable localStorage for sensitive data
@@ -326,7 +326,7 @@ function lockVault() {
 
 ## Recommendation
 
-### For VoidGate Specifically
+### For Arx Runa Specifically
 
 **Primary Recommendation: Svelte + Tailwind + DaisyUI**
 
@@ -347,7 +347,7 @@ Reasons:
 
 ### Not Recommended
 - **Blazor** — GC makes Zero-Trace difficult
-- **React** — steeper learning curve, overkill for VoidGate's UI needs
+- **React** — steeper learning curve, overkill for Arx Runa's UI needs
 
 ---
 

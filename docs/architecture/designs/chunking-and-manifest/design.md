@@ -1,4 +1,4 @@
-# VoidGate — Chunking and Manifest Design
+# Arx Runa — Chunking and Manifest Design
 
 > Status: Design complete. Implementation target: Phase 3.
 > Last updated: 2026-03-29
@@ -164,7 +164,7 @@ The root directory has `parent_id = NULL`. The tree is purely virtual — it exi
 
 ### Purpose
 
-Media files (JPEG, PNG, TIFF, video containers) may contain EXIF, XMP, or IPTC metadata that reveals sensitive information: GPS coordinates, camera model, timestamps, lens settings, and software versions. This metadata is encrypted along with the file content, but stripping it before encryption reduces the risk surface if a file is later exported or shared outside VoidGate.
+Media files (JPEG, PNG, TIFF, video containers) may contain EXIF, XMP, or IPTC metadata that reveals sensitive information: GPS coordinates, camera model, timestamps, lens settings, and software versions. This metadata is encrypted along with the file content, but stripping it before encryption reduces the risk surface if a file is later exported or shared outside Arx Runa.
 
 ### Behaviour
 
@@ -202,7 +202,7 @@ The `kamadak-exif` crate provides EXIF parsing. For rewriting JPEG files without
 
 ### Security property
 
-Stripping occurs in RAM. The original file on disk is never modified by VoidGate. The stripped content is what enters the encrypt pipeline and is stored in the cloud. If the user later exports the file from VoidGate, the exported copy will not contain EXIF metadata.
+Stripping occurs in RAM. The original file on disk is never modified by Arx Runa. The stripped content is what enters the encrypt pipeline and is stored in the cloud. If the user later exports the file from Arx Runa, the exported copy will not contain EXIF metadata.
 
 ### Scope
 
@@ -324,7 +324,7 @@ If the transaction fails (crash, I/O error), no manifest state exists for the pa
 
 ### Location
 
-A subdirectory of the VoidGate application data directory:
+A subdirectory of the Arx Runa application data directory:
 - Windows: `%APPDATA%/voidgate/staging/`
 - Linux: `~/.local/share/voidgate/staging/`
 
@@ -333,7 +333,7 @@ A subdirectory of the VoidGate application data directory:
 1. **Write**: blobs are created during `encrypt_file`, named `<uuid>.blob`
 2. **Upload**: Phase 4 (cloud sync) reads from staging and uploads via Rclone
 3. **Delete**: after confirmed upload, the staging copy is deleted
-4. **Cleanup**: on startup, VoidGate scans the staging directory for blobs not referenced by any `chunks.blob_name` in the manifest → delete them (orphans from interrupted operations)
+4. **Cleanup**: on startup, Arx Runa scans the staging directory for blobs not referenced by any `chunks.blob_name` in the manifest → delete them (orphans from interrupted operations)
 
 ### Security
 

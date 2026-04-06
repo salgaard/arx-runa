@@ -1,4 +1,4 @@
-# VoidGate — Copilot CLI
+# Arx Runa — Copilot CLI
 
 See `CLAUDE.md` for all coding standards.
 

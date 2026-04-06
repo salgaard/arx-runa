@@ -1,6 +1,6 @@
 # Glossary
 
-Terms used consistently across VoidGate documentation, use cases, and source code.
+Terms used consistently across Arx Runa documentation, use cases, and source code.
 
 ---
 
@@ -112,15 +112,15 @@ Both tiers are zero-knowledge — the cloud provider never holds key material. T
 
 ## BYOC (Bring Your Own Cloud)
 
-VoidGate's cloud-agnostic storage model. Users configure any Rclone-supported backend (Google Drive, Backblaze B2, Amazon S3, Azure Blob, self-hosted MinIO, etc.) as their vault's cloud storage. VoidGate does not operate its own storage infrastructure.
+Arx Runa's cloud-agnostic storage model. Users configure any Rclone-supported backend (Google Drive, Backblaze B2, Amazon S3, Azure Blob, self-hosted MinIO, etc.) as their vault's cloud storage. Arx Runa does not operate its own storage infrastructure.
 
 ---
 
 ## Rclone
 
-An open-source command-line tool that manages file synchronization and transfer to cloud storage backends. VoidGate uses Rclone as its cloud transport layer to achieve Bring Your Own Cloud (BYOC) compatibility. Rclone supports 70+ storage providers including Google Drive, S3, Backblaze B2, Dropbox, Azure Blob, and self-hosted solutions like MinIO.
+An open-source command-line tool that manages file synchronization and transfer to cloud storage backends. Arx Runa uses Rclone as its cloud transport layer to achieve Bring Your Own Cloud (BYOC) compatibility. Rclone supports 70+ storage providers including Google Drive, S3, Backblaze B2, Dropbox, Azure Blob, and self-hosted solutions like MinIO.
 
-VoidGate invokes Rclone programmatically to upload and download encrypted blobs, treating it as a storage-agnostic abstraction. Users configure their chosen backend via Rclone's standard configuration file (`rclone.conf`), and VoidGate never handles cloud provider credentials directly.
+Arx Runa invokes Rclone programmatically to upload and download encrypted blobs, treating it as a storage-agnostic abstraction. Users configure their chosen backend via Rclone's standard configuration file (`rclone.conf`), and Arx Runa never handles cloud provider credentials directly.
 
 See [Rclone official documentation](https://rclone.org) for configuration guides and supported backends.
 
@@ -128,7 +128,7 @@ See [Rclone official documentation](https://rclone.org) for configuration guides
 
 ## Zero-Trace
 
-The principle that VoidGate leaves no plaintext artifacts on the host machine during a session. Decrypted file content is held in RAM only, never written to disk as temp files, thumbnails, or OS caches. When the vault is locked, no recoverable plaintext remains on the device.
+The principle that Arx Runa leaves no plaintext artifacts on the host machine during a session. Decrypted file content is held in RAM only, never written to disk as temp files, thumbnails, or OS caches. When the vault is locked, no recoverable plaintext remains on the device.
 
 ---
 
@@ -146,4 +146,4 @@ The binding value included in every XChaCha20-Poly1305 encryption call: `file_id
 
 ## File Sharing Key
 
-There is no separate `share_key` in VoidGate. When a file is shared, the existing `file_key` is re-encrypted inside an ECIES envelope (using an ECDH-derived symmetric key) addressed to the recipient's X25519 public key. The resulting `file_key_wrapped` is included in the share package. Share metadata is stored in the `shares` table (sender side) and `received_shares` table (recipient side) of the SQLCipher database. See [UC-IND-004](../use-cases/use-case-4-personal-file-sharing.md).
+There is no separate `share_key` in Arx Runa. When a file is shared, the existing `file_key` is re-encrypted inside an ECIES envelope (using an ECDH-derived symmetric key) addressed to the recipient's X25519 public key. The resulting `file_key_wrapped` is included in the share package. Share metadata is stored in the `shares` table (sender side) and `received_shares` table (recipient side) of the SQLCipher database. See [UC-IND-004](../use-cases/use-case-4-personal-file-sharing.md).

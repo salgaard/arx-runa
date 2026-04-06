@@ -1,6 +1,6 @@
 # Architecture Overview
 
-This section explains how VoidGate is structured internally — the components, data flows, and the reasoning behind key design choices.
+This section explains how Arx Runa is structured internally — the components, data flows, and the reasoning behind key design choices.
 
 ## Sections
 
@@ -21,11 +21,11 @@ Visual diagrams showing:
 
 ### Trust Boundary
 
-The "gate" in VoidGate is the trust boundary — the line between what you control and what you do not. Your device is trusted; the cloud is not. VoidGate ensures that nothing crosses that boundary in an unencrypted form. Even if the cloud provider is breached, the attacker only finds scrambled data.
+The "gate" in Arx Runa is the trust boundary — the line between what you control and what you do not. Your device is trusted; the cloud is not. Arx Runa ensures that nothing crosses that boundary in an unencrypted form. Even if the cloud provider is breached, the attacker only finds scrambled data.
 
 ### Key Hierarchy
 
-Your password (and optionally a USB key file) is the single source of trust. From it, VoidGate derives all the cryptographic keys it needs, each with a separate purpose so a compromise of one does not affect the others.
+Your password (and optionally a USB key file) is the single source of trust. From it, Arx Runa derives all the cryptographic keys it needs, each with a separate purpose so a compromise of one does not affect the others.
 
 ```
 Password + USB Key File
@@ -45,4 +45,4 @@ Password + USB Key File
 
 ### Chunk Model
 
-Rather than uploading files as-is, VoidGate splits every file into equal-sized pieces (chunks), encrypts each piece independently, and uploads them separately. This prevents an observer from guessing a file's size or structure by looking at the sizes of what was uploaded.
+Rather than uploading files as-is, Arx Runa splits every file into equal-sized pieces (chunks), encrypts each piece independently, and uploads them separately. This prevents an observer from guessing a file's size or structure by looking at the sizes of what was uploaded.

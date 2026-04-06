@@ -1,4 +1,4 @@
-# VoidGate
+# Arx Runa
 
 Zero-knowledge cloud storage. Data leaves encrypted, arrives as opaque blobs, returns readable only on client. Cloud never holds keys, names, or metadata.
 

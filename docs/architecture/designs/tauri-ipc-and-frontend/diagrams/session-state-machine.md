@@ -72,7 +72,7 @@ stateDiagram-v2
 
 ## Description
 
-State machine for VoidGate session lifecycle. States represent the authentication and activity status of the vault session. All session keys are held in mlocked memory during Unlocked/Active/Idle/TimingOut states and immediately zeroized on transition to Locked.
+State machine for Arx Runa session lifecycle. States represent the authentication and activity status of the vault session. All session keys are held in mlocked memory during Unlocked/Active/Idle/TimingOut states and immediately zeroized on transition to Locked.
 
 ### States
 

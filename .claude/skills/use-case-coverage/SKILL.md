@@ -1,7 +1,7 @@
 ---
 name: use-case-coverage
 description: >
-  Verify that VoidGate use cases have adequate design document coverage.
+  Verify that Arx Runa use cases have adequate design document coverage.
   Reports coverage gaps and validates design traceability.
 ---
 

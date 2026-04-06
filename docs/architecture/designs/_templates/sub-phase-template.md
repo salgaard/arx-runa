@@ -42,7 +42,7 @@ cargo test [specific test path or pattern]
 ## Implementation Notes
 
 - [Note 1, e.g., "Use `#[async_trait]` for the trait"]
-- [Note 2, e.g., "Temp files in VoidGate staging directory, not system temp"]
+- [Note 2, e.g., "Temp files in Arx Runa staging directory, not system temp"]
 - [Gotcha or design clarification]
 
 ---

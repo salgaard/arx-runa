@@ -58,7 +58,7 @@ flowchart TD
 
 ## Description
 
-Shows the dependency relationships between VoidGate's Rust modules, the Leptos frontend, and external systems.
+Shows the dependency relationships between Arx Runa's Rust modules, the Leptos frontend, and external systems.
 
 ### Dependency layers
 
