@@ -1,3 +1,70 @@
+/* ============================================================
+   ARX RUNA — Brand Design Tokens
+   Encrypted here · Stored anywhere
+   ============================================================ */
+
+:root {
+
+  /* --- Color Palette --- */
+  --color-iron: #09090B;
+  /* Darkest. Outer backgrounds, page fill. */
+  --color-stone: #0C0E14;
+  /* Card/surface backgrounds. */
+  --color-steel: #222736;
+  /* Borders, dividers, subtle UI lines. */
+  --color-rune: #5C7090;
+  /* Primary accent. Logomark, highlights. */
+  --color-bone: #DBD7CD;
+  /* Primary text on dark backgrounds. */
+
+  /* --- Extended Text Scale --- */
+  --color-text-primary: #DBD7CD;
+  /* bone — headings, labels */
+  --color-text-secondary: #9AA3B0;
+  /* mid — body text */
+  --color-text-muted: #636D7E;
+  /* dim — descriptions, subtitles */
+  --color-text-ghost: #3E4A5E;
+  /* faintest — taglines, metadata */
+
+  /* --- Surface Scale --- */
+  --color-surface-base: #09090B;
+  /* iron */
+  --color-surface-raised: #0C0E14;
+  /* stone */
+  --color-surface-overlay: #111420;
+  /* between stone and steel */
+
+  /* --- Border Scale --- */
+  --color-border-subtle: #181C26;
+  --color-border-default: #1C2030;
+  --color-border-strong: #222736;
+  /* steel */
+
+  /* --- Typography --- */
+  --font-display: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-body: Georgia, 'Times New Roman', serif;
+  --font-mono: 'Courier New', Courier, monospace;
+
+  /* --- Letter Spacing --- */
+  --tracking-wordmark: 0.5em;
+  --tracking-tagline: 0.28em;
+  --tracking-label: 0.12em;
+
+  /* --- Border Radius --- */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* --- Spacing --- */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 48px;
+
+}
+
 .arx-sheet {
   background: #09090B;
   border-radius: 12px;
@@ -99,4 +166,35 @@
 .arx-rule em {
   font-style: normal;
   color: #6B7E9A;
+}
+
+.coal, :root {
+  --bg:                        #09090B;
+  --fg:                        #DBD7CD;
+  --sidebar-bg:                #0C0E14;
+  --sidebar-fg:                #9AA3B0;
+  --sidebar-active:            #DBD7CD;
+  --sidebar-spacer:            #1C2030;
+  --scrollbar:                 #222736;
+  --icons:                     #5C7090;
+  --icons-hover:               #9AA3B0;
+  --links:                     #5C7090;
+  --inline-code-color:         #9AA3B0;
+  --theme-popup-bg:            #0C0E14;
+  --theme-popup-border:        #222736;
+  --theme-hover:               #111420;
+  --quote-bg:                  #0C0E14;
+  --quote-border:              #222736;
+  --table-border-color:        #222736;
+  --table-header-bg:           #111420;
+  --table-alternate-bg:        #0C0E14;
+  --searchbar-border-color:    #222736;
+  --searchbar-bg:              #0C0E14;
+  --searchbar-fg:              #DBD7CD;
+  --searchbar-shadow-color:    #09090B;
+  --searchresults-header-fg:   #9AA3B0;
+  --searchresults-border-color:#222736;
+  --searchresults-li-bg:       #0C0E14;
+  --search-mark-bg:            #5C7090;
+  --color-scheme: dark;
 }

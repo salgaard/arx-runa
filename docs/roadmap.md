@@ -4,10 +4,10 @@ Arx Runa is built in ten sequential phases, each delivering a distinct, self-con
 
 | Phase | What gets built | Status |
 |-------|----------------|--------|
-| 0 — Scaffolding | Project structure, build pipeline, CI | Complete |
-| 1 — Cryptographic Primitives | Encryption, key derivation, chunk encryption/decryption | Complete |
-| 2 — Authentication & Session | Login flow, USB key file, session lifecycle and timeout | Complete |
-| 3 — Storage & Chunking | File splitting, local encrypted database, blob staging | In progress |
+| 0 — Scaffolding | Project structure, build pipeline, CI | Planned |
+| 1 — Cryptographic Primitives | Encryption, key derivation, chunk encryption/decryption | Planned |
+| 2 — Authentication & Session | Login flow, USB key file, session lifecycle and timeout | Planned |
+| 3 — Storage & Chunking | File splitting, local encrypted database, blob staging | Planned |
 | 4 — Cloud Synchronisation | Rclone integration, upload/download, new-device recovery | Planned |
 | 5 — File Sharing | Per-file sharing via encrypted share packages, revocation | Planned |
 | 6 — Tauri IPC & Frontend | User interface, backend commands, error handling | Planned |
@@ -342,26 +342,3 @@ Phase 8  (threat model + report consolidation)
 Phase 9  (hardening + submission)
 ```
 
----
-
-## Pending Architectural Decisions
-
-The following decisions remain open and must be resolved during the indicated phases:
-
-| Decision | Resolution phase | Impact |
-|----------|-----------------|--------|
-| *(no pending decisions)* | — | All Phase 0–3 architectural decisions resolved |
-
----
-
-## Report Section Mapping
-
-Each phase contributes to specific sections of the bachelor report, ensuring the report is constructed incrementally rather than written under time pressure at the end:
-
-| Report section | Contributing phases |
-|---------------|-------------------|
-| Problem formulation | Phase 0 (existing), refined in Phase 8 |
-| Method and scientific foundation | Phases 1, 2, 3, 4, 5 |
-| Analysis and application | Phases 1, 2, 3, 4, 5, 6, 7 |
-| Discussion and recommendations | Phases 5, 6, 7, 8 |
-| Conclusion | Phase 8 |

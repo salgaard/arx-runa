@@ -4,7 +4,7 @@
 
 <img src="docs/arx-runa-logo.svg" width="118" height="140" alt="Arx Runa Logo">
 
-### Encrypted here · Stored anywhere
+<h3>Encrypted here · Stored anywhere</h3>
 
 </div>
 
@@ -49,17 +49,8 @@
 **📖 [Full Documentation on GitHub Pages](https://chorizzio.github.io/arx-runa/)**
 
 Quick links:
-- [Development Setup](https://chorizzio.github.io/arx-runa/guides/development.html) — toolchain, IDE, debugging
-- [Architecture Decisions](https://chorizzio.github.io/arx-runa/architecture-decisions/) — all major design choices with rationale
-- [System Architecture](https://chorizzio.github.io/arx-runa/architecture/) — key derivation, data flow, chunking
-- [Threat Model](https://chorizzio.github.io/arx-runa/threat-model/) — security boundaries, assumptions, scope
-
-## Academic Context
-
-This is a bachelor's project in software development. All design decisions are
-documented with rationale, trade-offs, and references to established standards
-(NIST, OWASP, RFCs).
-
-## License
-
-TBD
+- [Use Cases](https://chorizzio.github.io/arx-runa/use-cases/index.html) — Real-world scenarios Arx Runa is designed for
+- [Roadmap](https://chorizzio.github.io/arx-runa/roadmap.html) — Implementation roadmap
+- [Architecture](https://chorizzio.github.io/arx-runa/architecture/index.html) — Detailed technical designs for each part of the system
+- [Glossary](https://chorizzio.github.io/arx-runa/guides/glossary.html) — Terms used consistently across Arx Runa
+- [Research](https://chorizzio.github.io/arx-runa/research/index.html) — Research to critique and explore ideas and options

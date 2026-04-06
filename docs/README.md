@@ -21,13 +21,6 @@
     <div class="arx-rule"><em>Cloud-agnostic.</em> Rclone syncs sealed shards to any provider you choose — S3, Backblaze, Dropbox, your own server.</div>
     <div class="arx-rule"><em>Zero trust.</em> No accounts, no servers, no third-party key management. Your keys live with you.</div>
   </div>
-  <div class="arx-swatches">
-    <div class="arx-sw"><div class="arx-sw-block" style="background:#09090B;border:0.5px solid #1E2130;"></div><div class="arx-sw-name">Iron</div></div>
-    <div class="arx-sw"><div class="arx-sw-block" style="background:#0C0E14;"></div><div class="arx-sw-name">Stone</div></div>
-    <div class="arx-sw"><div class="arx-sw-block" style="background:#222736;"></div><div class="arx-sw-name">Steel</div></div>
-    <div class="arx-sw"><div class="arx-sw-block" style="background:#5C7090;"></div><div class="arx-sw-name">Rune</div></div>
-    <div class="arx-sw"><div class="arx-sw-block" style="background:#DBD7CD;"></div><div class="arx-sw-name">Bone</div></div>
-  </div>
 </div>
 
 **Arx Runa** is a personal cloud storage application built around one principle: your files should be unreadable to anyone but you — including the cloud service storing them.
