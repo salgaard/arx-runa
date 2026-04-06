@@ -55,7 +55,7 @@ XChaCha20-Poly1305, as used in Arx Runa, adds a fixed overhead of **40 bytes per
 
 For a 4 MiB chunk, this represents 0.001% overhead — completely negligible for cost purposes. The ciphertext is not smaller than the plaintext; it is the same size plus 40 bytes, and it is incompressible.
 
-**Corollary**: files stored in a Arx Runa vault cannot be further compressed by the cloud provider or any downstream system. The cloud stores exactly what Arx Runa uploads.
+**Corollary**: files stored in an Arx Runa vault cannot be further compressed by the cloud provider or any downstream system. The cloud stores exactly what Arx Runa uploads.
 
 ---
 

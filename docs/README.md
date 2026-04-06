@@ -14,7 +14,7 @@
   <div class="arx-tagline">Encrypted here &nbsp;·&nbsp; Stored anywhere</div>
   <div class="arx-divider"></div>
   <p class="arx-desc">
-    Arx Runa seals your files in <em>unbreakable runes</em> before they ever leave your machine. Encrypted shards are dispatched to any cloud you choose — but the keys never travel with them. <em>No server holds your secrets. No cloud holds your keys.</em> The fortress stays with you.
+    Arx Runa encrypts files locally before cloud storage. Data is chunked and encrypted client-side using XChaCha20-Poly1305 AEAD; keys remain on the user's device and never leave the local system. Cloud providers receive only opaque ciphertext.
   </p>
   <div class="arx-rule-row">
     <div class="arx-rule"><em>Local-first.</em> Encryption happens entirely on your machine. The cloud never sees plaintext.</div>
