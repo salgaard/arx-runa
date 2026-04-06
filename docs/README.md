@@ -1,5 +1,3 @@
-# Arx Runa
-
 <div class="arx-sheet">
   <svg viewBox="0 0 200 236" width="118" height="140" xmlns="http://www.w3.org/2000/svg">
     <path d="M 20 0 L 180 0 L 200 20 L 200 152 L 100 232 L 0 152 L 0 20 Z" fill="#0C0E14" stroke="#222736" stroke-width="1"/>
