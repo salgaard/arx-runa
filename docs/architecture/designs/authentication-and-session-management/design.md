@@ -153,6 +153,20 @@ struct SessionKeys {
 
 `SessionKeys` is the single owner of all sensitive key material during a session. It is allocated in mlocked memory and implements `ZeroizeOnDrop`.
 
+### Session ownership and sharing
+
+`SessionKeys` is held behind a shared, async-safe read-write lock:
+
+```rust
+type SharedSession = Arc<RwLock<Option<SessionKeys>>>;
+```
+
+- **File operations** acquire a read lock, borrow the keys for the duration of the key lookup only (not for the entire I/O), then release the lock. Concurrent reads are allowed.
+- **Timeout task / manual lock** acquires a write lock and sets the `Option` to `None`. Dropping the `Option` triggers `ZeroizeOnDrop` on `SessionKeys`. The write lock blocks until all active read guards are released — this is the "wait for in-progress operations" guarantee.
+- **Authentication** acquires a write lock and replaces `None` with `Some(SessionKeys { … })`.
+
+This model ensures keys are never copied out of the lock guard, concurrent file operations proceed without contention, and the zeroing on timeout is both guaranteed (by `ZeroizeOnDrop`) and sequenced correctly (the write lock cannot be acquired while any reader holds a guard).
+
 ### Memory locking
 
 All key buffers are locked into physical RAM via `mlock` (Linux) / `VirtualLock` (Windows) to prevent the OS from swapping them to disk.
@@ -195,8 +209,8 @@ All key buffers are locked into physical RAM via `mlock` (Linux) / `VirtualLock`
 
 - Default: 15 minutes of inactivity
 - A timer resets on every Tauri IPC command invocation (file upload, download, browse, etc.)
-- The timer runs as a `tokio` task. When it fires, it sends a signal to the session manager to zero keys
-- If an operation is in progress when the timeout fires, the session manager waits for the current operation to complete, then zeroes keys. Operations are not aborted mid-stream to avoid partial writes.
+- The timer runs as a `tokio` task. When it fires, it acquires a write lock on `SharedSession` and sets the `Option` to `None`, triggering `ZeroizeOnDrop`
+- If an operation is in progress when the timeout fires, the write lock blocks until all active read guards are released — operations complete naturally before zeroing. Operations are not aborted mid-stream to avoid partial writes.
 - The timeout duration is stored in local config (not SQLCipher — must be readable before authentication)
 
 **Timeout UX:**
