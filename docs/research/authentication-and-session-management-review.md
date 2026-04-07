@@ -157,6 +157,40 @@ The key insight is that `PRAGMA rekey` changes which key opens the database, whi
 
 ---
 
+## Session Concurrency Model
+
+### What the design chose (original)
+
+The design described the timeout mechanism as: "The timer runs as a `tokio` task. When it fires, it sends a signal to the session manager to zero keys." No ownership type, locking primitive, or sharing model was specified.
+
+### The gap
+
+`SessionKeys` must be accessible to:
+1. Tauri command handlers (concurrent — multiple IPC calls can be in flight)
+2. The background timeout `tokio` task
+3. Manual lock commands
+
+Without a specified model, an implementer must guess how `SessionKeys` is shared and how "wait for in-progress operations" is mechanically enforced. Common wrong choices include:
+
+- `Arc<Mutex<SessionKeys>>` without an `Option` — zeroing would require a custom `locked` flag, and `ZeroizeOnDrop` can't be relied on while the `Arc` has live clones
+- Channels for zeroing signals — the timeout task sends a message, the receiver zeroes keys, but in-flight command handlers may still hold borrowed keys after the message is processed
+
+### The fix: `Arc<RwLock<Option<SessionKeys>>>`
+
+The correct model combines three properties:
+
+| Property | Mechanism |
+|----------|-----------|
+| Concurrent reads | `RwLock` read guards — multiple command handlers can hold keys simultaneously |
+| Serialised write (zero/authenticate) | `RwLock` write guard — exclusive, blocks until all readers release |
+| Automatic zeroization on drop | `Option` set to `None` — dropping `SessionKeys` triggers `ZeroizeOnDrop` |
+
+The "wait for in-progress operations" guarantee is not a separate mechanism — it falls out naturally from the write lock. When the timeout task acquires the write lock, it blocks until every active read guard is dropped. Read guards are held only for the duration of key access (not the entire file I/O), so the wait is brief.
+
+**Status: Fixed. `SharedSession` type alias and usage pattern added to Session Management section of the design.**
+
+---
+
 <!-- Sections written during the session below -->
 
 ---
@@ -177,6 +211,7 @@ _Written at close-out._
 | `DeviceMonitor::watch` returns `Pin<Box<dyn Stream<Item = DeviceEvent> + Send>>` | RPITIT (`impl Stream`) — not dyn-safe; associated type — more verbose; generics — propagates up the stack | Boxed return keeps the trait dyn-safe for OS-specific runtime dispatch; allocation cost is negligible (called once at session start) |
 | HKDF salt `b"arx-runa-v1"` added to auth design diagrams and vault creation flow | Cross-reference only (note pointing to crypto design) | Auth design is the first place an implementer encounters the HKDF call; inconsistency with the crypto design would produce different key material depending on which doc was read |
 | Password change: re-wrap all file_keys in a SQLCipher transaction; call `PRAGMA rekey` only after commit | Document as known limitation; staged backup approach | Transaction + staged rekey is the only approach that leaves the vault recoverable on any failure mode; SQLCipher WAL makes this reliable with no extra complexity |
+| Session shared as `Arc<RwLock<Option<SessionKeys>>>` | `Arc<Mutex<…>>` (serialises reads unnecessarily) | `RwLock` allows concurrent command handler reads; write lock for timeout/auth enforces "wait for operations" without a separate signal mechanism; `Option` drop triggers `ZeroizeOnDrop` |
 
 ---
 
