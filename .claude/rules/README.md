@@ -59,7 +59,7 @@ paths:
 | `tauri.md` | `src-tauri/src/ui/**`, tauri.conf.json | IPC and security |
 | `memory-protection.md` | `src-tauri/src/memory/**` | Memory safety |
 | `leptos.md` | `src/**/*.rs` (frontend) | Leptos patterns |
-| `docs.md` | `docs/**` | Documentation standards |
+| `research.md` | `docs/research/**` | Research document standards |
 
 ## Workflow
 

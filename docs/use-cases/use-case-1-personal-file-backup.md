@@ -1,4 +1,4 @@
-# UC-IND-001: Zero-Knowledge Personal Backup
+# use-case-1: Zero-Knowledge Personal Backup
 
 **Category**: Individual Privacy
 
@@ -138,4 +138,4 @@ An individual user wants to back up sensitive personal files (documents, photos,
 
 ## Notes
 
-This is the canonical use case for Arx Runa. Tier 1 is the default for accessibility — see UC-IND-003 for the full Tier 2 (USB key) setup and key-loss scenarios.
+This is the canonical use case for Arx Runa. Tier 1 is the default for accessibility — see [use-case-3](use-case-3-hardware-mfa-and-key-loss.md) for the full Tier 2 (USB key) setup and key-loss scenarios.

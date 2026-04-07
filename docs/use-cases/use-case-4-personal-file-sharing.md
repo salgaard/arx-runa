@@ -1,4 +1,4 @@
-# UC-IND-004: Personal File Sharing
+# use-case-4: Personal File Sharing
 
 **Category**: Individual Privacy
 
@@ -116,4 +116,4 @@ A user wants to share specific files from their vault with a friend or family me
 
 ## Notes
 
-File sharing is specified in the design document but not yet implemented. This use case describes intended behaviour. See [UC-IND-003](UC-IND-003-hardware-mfa-and-key-loss.md) for authentication factor considerations when the sender uses a Tier 2 vault.
+File sharing is specified in the design document but not yet implemented. This use case describes intended behaviour. See [use-case-3](use-case-3-hardware-mfa-and-key-loss.md) for authentication factor considerations when the sender uses a Tier 2 vault.

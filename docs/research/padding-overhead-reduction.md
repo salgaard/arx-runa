@@ -2,7 +2,7 @@
 
 > **Document type**: Exploration / feasibility research
 > **Status**: Living document
-> **Last updated**: April 2026
+> **Last updated**: 2026-04-06
 
 This document surveys all known techniques for reducing the per-file padding overhead caused by Arx Runa's fixed-size 4 MiB chunk design, and evaluates each against Arx Runa's privacy model and implementation constraints.
 
@@ -28,8 +28,9 @@ For background on the overhead problem itself, see `compression-and-cloud-cost.m
 14. [Vault-Specific Chunk Size](#vault-specific-chunk-size)
 15. [Comparative Summary](#comparative-summary)
 16. [Recommendation](#recommendation)
-17. [Open Questions](#open-questions)
-18. [Sources](#sources)
+17. [Decisions](#decisions)
+18. [Open Questions](#open-questions)
+19. [Sources](#sources)
 
 ---
 
@@ -801,11 +802,26 @@ Bin-packing (Approach 1) can be retrofitted to match by adopting soft-delete and
 
 This addresses the most common high-overhead scenario (photo library import) without touching the general-purpose vault pipeline.
 
+**Path C is the chosen implementation approach.** Paths A and B remain available as incremental steps or opt-in settings, but the target architecture is hybrid auto-routing.
+
 ### What to avoid
 
 **CDC** is incompatible with Arx Runa's threat model and should not be adopted regardless of the storage benefits. The fingerprinting attacks are concrete and published.
 
 **Full bin-packing on mutable vaults** introduces write amplification that is disproportionate to the storage benefit for general-purpose use. Restrict it to explicit archival vault mode if implemented at all.
+
+---
+
+## Decisions
+
+> Choices made during this research session. Updated as the session progresses.
+
+| Decision | Alternatives considered | Rationale |
+|---|---|---|
+| **CDC (content-defined chunking) rejected** | FastCDC, Rabin fingerprinting, Gear hashing | Published fingerprinting attacks (Truong 2025) enable file membership inference from encrypted chunk sizes; incompatible with Arx Runa's adversarial cloud threat model |
+| **Upload jitter rejected as a timing defence** | Random delays between uploads, constant-rate dummy traffic | Cloud provider records server-side timestamps the client cannot influence; jitter does not remove these; epoch batching is the correct approach |
+| **Chunk size treated as an immutable vault property set at creation** | Per-file chunk size, globally mutable setting | Changing chunk size requires re-encrypting every blob; mixed blob sizes within one vault break the anonymity set |
+| **Hybrid auto-routing (Approach 7) chosen as the implementation approach** | Standard bin-packing, pure epoch batching, Padmé-only, smaller chunk size only | Eliminates write amplification from the start; matches bin-packing on storage efficiency; eliminates timing correlation for small files; no privacy trade-off required |
 
 ---
 

@@ -2,7 +2,7 @@
 
 > **Document type**: Exploration / brainstorming  
 > **Status**: Living document  
-> **Last updated**: April 2026
+> **Last updated**: 2026-04-06
 
 This document explores market positioning, mainstream adoption strategies, and future opportunities for Arx Runa. It includes speculative ideas and preliminary implementation notes.
 
@@ -20,7 +20,10 @@ This document explores market positioning, mainstream adoption strategies, and f
 8. [AI Privacy & Private Cloud Compute](#ai-privacy--private-cloud-compute)
 9. [Future Trends & Timing](#future-trends--timing)
 10. [Feature Ideas for Mainstream Appeal](#feature-ideas-for-mainstream-appeal)
-11. [Open Questions](#open-questions)
+11. [Recommendation](#recommendation)
+12. [Decisions](#decisions)
+13. [Open Questions](#open-questions)
+14. [Sources](#sources)
 
 ---
 
@@ -662,6 +665,30 @@ Arx Runa could become the **private memory layer** for local AI:
 
 ---
 
+## Recommendation
+
+Arx Runa has a defensible niche today (hardware-bound zero-knowledge + BYOC) and strong positioning for future trends (AI privacy backlash, post-quantum, personal AI agents).
+
+**Key strategic moves**:
+1. **Progressive security model** — lower entry barrier while keeping paranoid tier
+2. **Auto-sync drop zone UI** — "Dropbox but private" experience
+3. **Alternative auth factors** — biometric and NFC for mainstream, hardware wallet for crypto users
+4. **Developer tools** — encrypted secrets management for word-of-mouth
+5. **Mobile monetization** — Cryptomator-proven revenue model
+
+The architecture being built today is ahead of the curve. What's "paranoid" in 2026 becomes "standard practice" by 2030.
+
+---
+
+## Decisions
+
+> Choices made during this research session. Updated as the session progresses.
+
+| Decision | Alternatives considered | Rationale |
+|---|---|---|
+
+---
+
 ## Open Questions
 
 1. **Mobile priority**: Build mobile app (revenue) or focus on desktop excellence first?
@@ -682,22 +709,7 @@ Arx Runa could become the **private memory layer** for local AI:
 
 ---
 
-## Summary
-
-Arx Runa has a defensible niche today (hardware-bound zero-knowledge + BYOC) and strong positioning for future trends (AI privacy backlash, post-quantum, personal AI agents).
-
-**Key strategic moves**:
-1. **Progressive security model** — lower entry barrier while keeping paranoid tier
-2. **Auto-sync drop zone UI** — "Dropbox but private" experience
-3. **Alternative auth factors** — biometric and NFC for mainstream, hardware wallet for crypto users
-4. **Developer tools** — encrypted secrets management for word-of-mouth
-5. **Mobile monetization** — Cryptomator-proven revenue model
-
-The architecture being built today is ahead of the curve. What's "paranoid" in 2026 becomes "standard practice" by 2030.
-
----
-
-## Research Sources
+## Sources
 
 ### Primary Sources (Web Research)
 
@@ -739,6 +751,3 @@ The architecture being built today is ahead of the curve. What's "paranoid" in 2
 | Passkey sign-in success improvement over passwords | 20% | FIDO Alliance |
 | Cryptomator GitHub stars | 14.8k | GitHub |
 
----
-
-*This is a living document. Add ideas, research, and findings as they emerge.*

@@ -25,6 +25,7 @@ The remainder of this page contains the detailed technical specification for eac
 
 **Important**: This roadmap contains implementation logistics, dependencies, and test criteria. **Technical specifications** (algorithms, parameters, schemas) are in the canonical design documents:
 
+- **Project scaffolding**: [`docs/architecture/designs/project-scaffolding/design.md`](architecture/designs/project-scaffolding/design.md)
 - **Cryptographic primitives**: [`docs/architecture/designs/cryptographic-primitives/design.md`](architecture/designs/cryptographic-primitives/design.md)
 - **Authentication & session**: [`docs/architecture/designs/authentication-and-session-management/design.md`](architecture/designs/authentication-and-session-management/design.md)
 - **Chunking & manifest**: [`docs/architecture/designs/chunking-and-manifest/design.md`](architecture/designs/chunking-and-manifest/design.md)
@@ -47,6 +48,10 @@ When specifications in this roadmap conflict with design documents, **design doc
 
 **Depends on**: nothing
 
+**Design document**: [`docs/architecture/designs/project-scaffolding/design.md`](architecture/designs/project-scaffolding/design.md)
+
+**Sub-phase roadmap**: [`docs/architecture/designs/project-scaffolding/sub-phases/roadmap.md`](architecture/designs/project-scaffolding/sub-phases/roadmap.md) (recommended for incremental implementation)
+
 **Objective**: establish the compilable project skeleton — correct directory structure, dependency declarations, and CI pipeline — so all subsequent phases have a stable foundation.
 
 **Deliverables**:
@@ -58,7 +63,8 @@ When specifications in this roadmap conflict with design documents, **design doc
 6. Update `docs/guides/development.md` with Tauri-specific build and run instructions.
 
 **Documentation**:
-- ADR `001-project-structure.md` — workspace layout, rationale for Tauri, edition 2024.
+- ADR `001-code-structure-and-patterns.md` — module layout, newtype conventions.
+- ADR `004-project-scaffolding.md` — workspace layout, Tauri v2, Leptos 0.8, SQLCipher bundling, and edition 2024 decisions.
 - Report-log entry: scaffolding decisions and any edition 2024 surprises.
 
 ---

@@ -44,7 +44,7 @@ RFC 5869 HKDF is used to derive three purpose-specific keys from `master_key`. E
 
 **Critical**: `master_key` is zeroed immediately after derivation. Never stored, never logged.
 
-**Salt**: Empty (no salt). Argon2id output has sufficient entropy; a salt provides no additional security benefit here. HKDF internally uses a zero-filled salt of hash length when none is provided.
+**Salt**: Fixed domain separator `b"arx-runa-v1"`. Argon2id output has sufficient entropy, so the salt provides no additional entropy mixing — but RFC 5869 recommends a fixed salt even with high-entropy IKM to act as a domain separator, preventing cross-application key confusion if the same `master_key` were ever fed into a different HKDF context. The value encodes application identity and key hierarchy version.
 
 **Extensibility**: To add a new derived key, use the `derive-hkdf-key` skill. New keys are added by expanding with a distinct `info` string — the existing derived keys remain unchanged because HKDF produces independent outputs for different `info` values.
 
@@ -228,8 +228,39 @@ pub struct Blake3Hash([u8; 32]);
 
 1. After encryption: `checksum = compute_checksum(blob)`
 2. Store checksum in manifest alongside chunk metadata
-3. Before decryption: verify `compute_checksum(downloaded_blob) == stored_checksum`
-4. If mismatch: abort without attempting decryption
+3. Before decryption: call `verify_checksum(blob, expected)` → returns `VerifiedBlob` or `ChecksumMismatch` error
+4. Pass `VerifiedBlob` to `decrypt_chunk` — the type system enforces the check-before-decrypt order
+
+### VerifiedBlob Newtype
+
+To structurally prevent calling `decrypt_chunk` on an unverified blob, `verify_checksum` returns an opaque `VerifiedBlob` wrapper. `decrypt_chunk` accepts only `VerifiedBlob`, making it a compile error to skip the checksum check.
+
+```rust
+/// Opaque wrapper — only constructible by verify_checksum.
+pub struct VerifiedBlob(Vec<u8>);
+
+/// Verifies the BLAKE3 checksum of an encrypted blob.
+///
+/// # Errors
+/// Returns `CryptoError::ChecksumMismatch` if the checksum does not match.
+pub fn verify_checksum(
+    blob: Vec<u8>,
+    expected: &Blake3Hash,
+) -> Result<VerifiedBlob, CryptoError>;
+```
+
+`decrypt_chunk` signature updated to accept `VerifiedBlob`:
+
+```rust
+pub fn decrypt_chunk(
+    blob: VerifiedBlob,
+    file_key: &FileKey,
+    file_id: &FileId,
+    chunk_index: ChunkIndex,
+) -> Result<Vec<u8>, CryptoError>;
+```
+
+**Rationale**: The BLAKE3 checksum is unkeyed — it provides fast detection of hardware/network corruption before the more expensive AEAD decryption. The manifest (SQLCipher) protects the stored hashes, so unkeyed is operationally sufficient. The `VerifiedBlob` newtype is a zero-cost mechanism that enforces the correct call order at compile time.
 
 ---
 
@@ -393,6 +424,14 @@ Both attacks are prevented by mandatory AAD.
 
 All key types implement `ZeroizeOnDrop` to ensure sensitive key material is overwritten before memory is released. Tests verify this behavior using unsafe pointer inspection.
 
+### Key Non-Commitment
+
+XChaCha20-Poly1305 is not a *committing* AEAD — it does not provide binding security, meaning it is theoretically possible to find two different keys that both authenticate the same ciphertext. For symmetric file encryption this is not a practical concern: there is no protocol interaction where an attacker can present a ciphertext and ask the vault to try multiple keys. This limitation is relevant to the Phase 5 file-sharing layer (ECIES share package import), where it should be revisited.
+
+### Cipher Upgrade Path
+
+AEGIS-256 (IETF CFRG draft-irtf-cfrg-aegis-aead) offers ~2× higher throughput on hardware with AES-NI instructions (~0.7 cpb vs ~1.5 cpb), a 256-bit nonce safe for random generation, and ephemeral key erasure before data processing. Once AEGIS-256 reaches RFC status and a Rust audit is available, it is a strong upgrade candidate for XChaCha20-Poly1305 — the wire format and API surface would remain identical.
+
 ---
 
 ## Dependencies
@@ -402,13 +441,15 @@ All key types implement `ZeroizeOnDrop` to ensure sensitive key material is over
 chacha20poly1305 = "0.10"  # XChaCha20-Poly1305 AEAD
 hkdf = "0.12"              # HKDF-SHA256
 sha2 = "0.10"              # SHA-256 for HKDF
-blake3 = "1.5"             # BLAKE3 checksum
-rand = "0.8"               # CSPRNG
-uuid = { version = "1.0", features = ["v4"] }
-zeroize = { version = "1.7", features = ["derive"] }
-secrecy = "0.8"            # Secret<T> wrapper
-thiserror = "1.0"          # Error handling
+blake3 = "1"               # BLAKE3 checksum
+rand = "0.9"               # CSPRNG — must be >= 0.9 for Rust edition 2024 (`gen` keyword reserved)
+uuid = { version = "1", features = ["v4"] }
+zeroize = { version = "1", features = ["derive"] }
+secrecy = "0.10"           # Secret<T> wrapper
+thiserror = "2"            # Error handling
 ```
+
+> **Note on `rand` 0.9 API change**: The `.gen()` method is removed in edition 2024 (reserved keyword). Use `rand::rng().random::<[u8; 32]>()` instead of `rand::thread_rng().gen::<[u8; 32]>()`.
 
 ---
 
@@ -422,12 +463,13 @@ None — all design decisions have been made.
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| HKDF salt | Empty | Argon2id output has sufficient entropy |
+| HKDF salt | `b"arx-runa-v1"` (domain separator) | RFC 5869 recommends a fixed salt for domain separation even with high-entropy IKM |
 | File ID representation | `FileId` newtype wrapping `[u8; 16]` | Type safety + compact AAD |
 | Encryption API | `encrypt_in_place_detached()` | Explicit control over wire format |
 | Zeroize verification | Unsafe pointer inspection in tests | Rigorous verification of memory clearing |
 | Nonce strategy | Random 192-bit via CSPRNG | Avoids counter persistence issues |
 | AAD format | `file_id \|\| chunk_index` (big-endian) | Binds ciphertext to context |
+| BLAKE3 mode | Unkeyed; `VerifiedBlob` newtype enforces check-before-decrypt | Manifest is SQLCipher-encrypted so unkeyed is operationally sufficient; newtype makes skipping the check a compile error |
 
 ---
 

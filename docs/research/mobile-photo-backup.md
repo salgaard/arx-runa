@@ -2,7 +2,7 @@
 
 > **Document type**: Exploration / feasibility research
 > **Status**: Living document
-> **Last updated**: April 2026
+> **Last updated**: 2026-04-06
 
 This document evaluates the feasibility of an Arx Runa mobile application for iOS and Android that automatically encrypts photos from the device camera roll and uploads them to a user-configured Rclone cloud backend.
 
@@ -20,7 +20,10 @@ This document evaluates the feasibility of an Arx Runa mobile application for iO
 8. [Key Management on Mobile](#key-management-on-mobile)
 9. [Encryption Core Portability](#encryption-core-portability)
 10. [Recommended Architecture Per Platform](#recommended-architecture-per-platform)
-11. [Open Questions](#open-questions)
+11. [Recommendation](#recommendation)
+12. [Decisions](#decisions)
+13. [Open Questions](#open-questions)
+14. [Sources](#sources)
 
 ---
 
@@ -268,25 +271,7 @@ Arx Runa iOS (Tauri 2.0)
 
 ---
 
-## Open Questions
-
-1. **Rclone App Store approval**: Has any iOS app successfully shipped with an embedded rclone/gomobile binary? If not, the native client approach is the safer path.
-
-2. **Argon2id parameters on mobile**: What `m_cost`/`t_cost` gives acceptable unlock time (<2s) on a budget Android device (e.g., Snapdragon 4xx)?
-
-3. **Temporary encrypted chunk storage on iOS**: How large can the app container grow before iOS evicts it? Needs a maximum queue depth and retry strategy.
-
-4. **Photo deduplication**: If the user backs up to the same cloud vault from both desktop and mobile, how does the manifest handle duplicate file_ids?
-
-5. **Offline queue**: Should the app queue encrypted chunks locally and upload when connectivity is restored, or re-encrypt on upload? Local queue is faster; re-encrypt avoids persistent encrypted local copies.
-
-6. **Android vs iOS priority**: Android has fewer technical constraints and a larger addressable market for privacy-focused users (especially non-Apple ecosystem). Android may be the right first target.
-
-7. **Monetization**: Following the Cryptomator model (desktop free, mobile paid), what is the right price point for the mobile app? App Store average for privacy tools is $3–10 one-time or $1–3/month.
-
----
-
-## Summary
+## Recommendation
 
 | Dimension | Android | iOS |
 |---|---|---|
@@ -304,7 +289,34 @@ iOS is viable but requires a divergent upload strategy (URLSession background tr
 
 ---
 
-*This is a living document. Add findings, prototype results, and platform-specific discoveries as they emerge.*
+## Decisions
+
+> Choices made during this research session. Updated as the session progresses.
+
+| Decision | Alternatives considered | Rationale |
+|---|---|---|
+| **Android as recommended first target** | iOS first, simultaneous Android and iOS | Fewer technical constraints; WorkManager provides reliable background upload; rclone integration via gomobile is straightforward and has real-world precedent (Round-Sync) |
+| **Rclone embedded as Go library (gomobile bind) for Android** | Subprocess sidecar, native cloud APIs per-provider | Runs in-process; avoids subprocess spawning; adds ~30–50 MB to APK but provides 70+ backends immediately |
+| **Native cloud clients (S3, WebDAV, Google Drive) for iOS instead of rclone** | rclone via gomobile bind | URLSession background transfers require direct HTTP calls — rclone cannot manage transfers when app is suspended; App Store restrictions on dynamic execution increase review risk |
+| **Biometric (Secure Enclave / Android Keystore device_key) as Tier 2 replacement on mobile** | USB key file, NFC tag, password-only | USB key impractical on iOS; biometric unlock is native UX on both platforms and device-binds the second factor to the hardware |
+
+---
+
+## Open Questions
+
+1. **Rclone App Store approval**: Has any iOS app successfully shipped with an embedded rclone/gomobile binary? If not, the native client approach is the safer path.
+
+2. **Argon2id parameters on mobile**: What `m_cost`/`t_cost` gives acceptable unlock time (<2s) on a budget Android device (e.g., Snapdragon 4xx)?
+
+3. **Temporary encrypted chunk storage on iOS**: How large can the app container grow before iOS evicts it? Needs a maximum queue depth and retry strategy.
+
+4. **Photo deduplication**: If the user backs up to the same cloud vault from both desktop and mobile, how does the manifest handle duplicate file_ids?
+
+5. **Offline queue**: Should the app queue encrypted chunks locally and upload when connectivity is restored, or re-encrypt on upload? Local queue is faster; re-encrypt avoids persistent encrypted local copies.
+
+~~6. **Android vs iOS priority**~~ — Resolved: Android is the recommended first target. See Decisions.
+
+7. **Monetization**: Following the Cryptomator model (desktop free, mobile paid), what is the right price point for the mobile app? App Store average for privacy tools is $3–10 one-time or $1–3/month.
 
 ---
 

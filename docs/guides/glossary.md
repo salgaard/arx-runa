@@ -93,7 +93,7 @@ A vault-level key derived from `master_key` via HKDF, used to encrypt the local 
 
 A 32-byte file of cryptographically random entropy stored on a physical USB drive. Used as the hardware second factor in Tier 2 authentication. The key file is identified by its BLAKE3 fingerprint stored in the vault header — the filename is irrelevant.
 
-Losing the USB key file without a backup means permanent loss of access to Tier 2 vaults. See [UC-IND-003](../use-cases/UC-IND-003-hardware-mfa-and-key-loss.md).
+Losing the USB key file without a backup means permanent loss of access to Tier 2 vaults. See [Use Case 3](../use-cases/use-case-3-hardware-mfa-and-key-loss.md).
 
 ---
 
@@ -146,4 +146,4 @@ The binding value included in every XChaCha20-Poly1305 encryption call: `file_id
 
 ## File Sharing Key
 
-There is no separate `share_key` in Arx Runa. When a file is shared, the existing `file_key` is re-encrypted inside an ECIES envelope (using an ECDH-derived symmetric key) addressed to the recipient's X25519 public key. The resulting `file_key_wrapped` is included in the share package. Share metadata is stored in the `shares` table (sender side) and `received_shares` table (recipient side) of the SQLCipher database. See [UC-IND-004](../use-cases/use-case-4-personal-file-sharing.md).
+There is no separate `share_key` in Arx Runa. When a file is shared, the existing `file_key` is re-encrypted inside an ECIES envelope (using an ECDH-derived symmetric key) addressed to the recipient's X25519 public key. The resulting `file_key_wrapped` is included in the share package. Share metadata is stored in the `shares` table (sender side) and `received_shares` table (recipient side) of the SQLCipher database. See [Use Case 4](../use-cases/use-case-4-personal-file-sharing.md).

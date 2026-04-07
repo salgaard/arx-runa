@@ -2,7 +2,7 @@
 
 > **Document type**: Exploration / feasibility research
 > **Status**: Living document
-> **Last updated**: April 2026
+> **Last updated**: 2026-04-06
 
 This document researches whether adding data compression to Arx Runa's encrypt-and-upload pipeline would be beneficial, and analyses the cloud storage cost implications of Arx Runa's current fixed-size chunking and zero-padding design.
 
@@ -24,8 +24,10 @@ This document researches whether adding data compression to Arx Runa's encrypt-a
 12. [Real Cost Drivers in Arx Runa](#real-cost-drivers-in-arx-runa)
 13. [Padding Overhead: Real Numbers](#padding-overhead-real-numbers)
 14. [Cloud Provider Comparison](#cloud-provider-comparison)
-15. [Open Questions](#open-questions)
-16. [Sources](#sources)
+15. [Recommendation](#recommendation)
+16. [Decisions](#decisions)
+17. [Open Questions](#open-questions)
+18. [Sources](#sources)
 
 ---
 
@@ -391,6 +393,26 @@ Arx Runa's BYOC model via Rclone supports all major cloud backends. Cost varies 
 
 ---
 
+## Recommendation
+
+Arx Runa will not add compression to the file encryption pipeline. The dominant file types stored in personal vaults (photos, video) are already entropy-coded at the format level — compression before chunking yields zero savings while leaking content-type metadata to the cloud via blob count. The fixed-size blob guarantee must be preserved. See [Decision: Position 1 — No Compression](#decision-position-1--no-compression) for the full rationale.
+
+For text-heavy developer vaults, an **opt-in vault-level compression flag** is a viable future release feature, clearly documented as trading metadata privacy for storage savings. It must not be the default.
+
+---
+
+## Decisions
+
+> Choices made during this research session. Updated as the session progresses.
+
+| Decision | Alternatives considered | Rationale |
+|---|---|---|
+| **No compression in the file encryption pipeline** | Compress per-chunk + re-pad to fixed size (Option A), compress whole file before chunking (Option B), variable-size blobs (Option C) | Dominant file types are at their entropy limit; Option B leaks content-type via blob count; Option C breaks the fixed-size blob guarantee entirely |
+| **Variable-size blobs (Option C) rejected outright** | Option A, Option B, no compression | Directly exposes compression ratios as blob sizes — the worst possible privacy regression |
+| **Opt-in compression flag deferred to a future release, not default** | Always-on compression, never allow it | Users with text-heavy vaults should be able to accept the documented metadata privacy trade-off; must not affect media vaults |
+
+---
+
 ## Open Questions
 
 1. **Small file warning**: should Arx Runa display an estimated cloud storage size (including padding overhead) before upload, so users with many small files can decide to archive them first?
@@ -429,6 +451,4 @@ Arx Runa's BYOC model via Rclone supports all major cloud backends. Cost varies 
 | **NaviShark** | Google Drive pricing 2025 — plans and costs | [navishark.com/en/blog/google-drive-pricing-2025-plans-costs](https://www.navishark.com/en/blog/google-drive-pricing-2025-plans-costs) |
 | **Rotational Labs** | Compression vs cryptography — what comes first? | [rotational.io/blog/compression-vs-cryptography](https://rotational.io/blog/compression-vs-cryptography/) |
 
----
 
-*This is a living document. Add findings, prototype results, and cost updates as cloud pricing changes.*

@@ -1,4 +1,4 @@
-# UC-XXX: [Use Case Title]
+# use-case-x: [Use Case Title]
 
 **Category**: [Individual Privacy / Business & Enterprise / Developer & Technical]
 

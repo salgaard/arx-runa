@@ -1,4 +1,4 @@
-# UC-IND-003: Hardware MFA and Key Loss
+# use-case-3: Hardware MFA and Key Loss
 
 **Category**: Individual Privacy
 

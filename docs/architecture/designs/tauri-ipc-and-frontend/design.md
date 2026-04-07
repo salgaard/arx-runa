@@ -1131,7 +1131,7 @@ impl IpcError {
 
 ## Drop Zone Component
 
-The drop zone is the primary upload interface for Arx Runa (UC-IND-001). Users drag files or folders onto the drop zone area rather than using a system file picker by default.
+The drop zone is the primary upload interface for Arx Runa (Use Case 1). Users drag files or folders onto the drop zone area rather than using a system file picker by default.
 
 ### Implementation
 

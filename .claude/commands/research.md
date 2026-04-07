@@ -2,54 +2,120 @@
 
 Collaborative research session for: $ARGUMENTS
 
-**Conversation, not automation.** Present findings, ask questions, stop and wait. Never auto-advance.
+**Conversation, not automation.** Present findings, ask questions, present options, present recommendations — find optimal solutions together.
 
 ---
 
 ## Flow
-  
-### 1. Orient
 
-1. Read relevant existing docs (`CLAUDE.md`, related files in `docs/`)
-2. Present: "Here's what I found. What are we trying to figure out?"
-3. **Stop and wait.**
+### 0. Set Up the Research File
 
-### 2. Research
+1. Derive a kebab-case filename from the topic: `docs/research/<topic-name>.md`
+2. Check `docs/research/` for related existing research documents — link them in the new doc
+3. Create the file with this exact header and scaffold:
 
-1. Search: web, codebase, standards (RFCs, NIST, OWASP), prior art
-2. Present findings with links
-3. Ask: "What should we dig into next?" or "Ready to discuss?"
-4. **Stop and wait.**
-5. Repeat as needed.
+```markdown
+# Arx Runa: <Title>
 
-### 3. Discuss
+> **Document type**: Exploration / feasibility research
+> **Status**: Draft
+> **Last updated**: <YYYY-MM DD>
+
+<One-sentence description of what this document investigates.>
+
+For background on <related topic>, see `<related-doc>.md`.
+
+---
+
+## Table of Contents
+
+1. [The Problem](#the-problem)
+2. [Prior Art](#prior-art)
+...
+N. [Recommendation](#recommendation)
+N+1. [Decisions](#decisions)
+N+2. [Open Questions](#open-questions)
+N+3. [Sources](#sources)
+
+---
+
+## The Problem
+
+...
+
+---
+
+## Recommendation
+
+...
+
+---
+
+## Decisions
+
+> Choices made during this research session. Updated as the session progresses.
+
+| Decision | Alternatives considered | Rationale |
+|---|---|---|
+
+---
+
+## Open Questions
+
+...
+
+---
+
+## Sources
+
+| Source | Topic | URL |
+|---|---|---|
+```
+
+4. Add an entry to `docs/research/README.md` before the session ends
+
+### 1. Research
+
+1. **Deep search**: web, codebase, standards (RFCs, NIST, FIPS, OWASP), academic papers (IACR ePrint, USENIX Security, IEEE, ACM CCS), prior art in production systems
+2. **Privacy model lens**: evaluate every finding against Arx Runa's zero-knowledge threat model — does it preserve fixed-size blobs, protect metadata, avoid side channels?
+3. Present findings with sources (author, venue/publisher, year, URL)
+4. Ask: "What should we dig into next?" or "Ready to discuss?"
+5. Update the research document continuously — do not batch all writes to the end
+6. Repeat as needed
+
+### 2. Discuss
 
 1. Present one topic, decision, or finding at a time
-2. If options exist, show them with trade-offs
+2. If options exist, show them with trade-offs (a comparison table is preferred)
 3. Ask for input
-4. **Stop and wait.**
-5. Repeat until done.
+4. Repeat until done
 
-### 4. Document (optional)
+### 3. Close Out
 
-When research leads to something worth capturing, suggest appropriate output:
-
-| Research about... | Suggest |
-|-------------------|---------|
-| Architecture, design choices | `docs/architecture/designs/<design-name>/design.md` |
-| Threats, attacks, mitigations | `docs/threat-model/<topic>.md` |
-| A significant decision | ADR in `docs/architecture-decisions/` |
-| Process, how-to | `docs/guides/<topic>.md` |
-| Implementation approach | `/plan` for todos |
-
-Ask before creating anything. User drives what gets documented.
+1. Write the `Recommendation` section — a clear position with rationale
+2. Confirm the `Decisions` table is complete — every choice made during the session must have a row
+3. Capture unresolved questions in `Open Questions`
+4. Populate the `Sources` table with every reference used
+5. Set `Status` to `Living document` (if further investigation expected) or `Concluded` (if a decision was reached)
+6. Confirm `docs/research/README.md` has been updated
 
 ---
 
 ## Rules
 
-1. **Stop after each step** — never auto-continue
-2. **One thing at a time** — don't overwhelm
-3. **Suggest, don't assume** — user decides what to document
-4. **Cite sources** — include links
-5. **Use `ask_user`** — with choices when options are clear
+1. **One thing at a time** — don't overwhelm
+2. **Suggest, don't assume** — user decides which direction to take
+3. **Cite everything** — every claim that isn't common knowledge needs a source entry
+4. **Security claims require standards** — NIST, RFC, IACR, peer-reviewed paper
+5. **Flag speculation** — mark unverified claims with `<!-- TODO: verify -->`
+6. **Cross-reference** — link related research docs and design docs rather than duplicating content
+
+---
+
+## Status Values
+
+| Status | Meaning |
+|---|---|
+| `Draft` | Active session, document incomplete |
+| `Living document` | Session concluded, further investigation expected |
+| `Concluded` | Decision reached, document is final |

@@ -2,7 +2,7 @@
 
 > **Document type**: Exploration / feasibility research
 > **Status**: Living document
-> **Last updated**: April 2026
+> **Last updated**: 2026-04-06
 
 This document researches whether Arx Runa should support packing multiple small files into a single 4 MiB chunk to reduce the padding overhead identified in `compression-and-cloud-cost.md`.
 
@@ -21,8 +21,9 @@ This document researches whether Arx Runa should support packing multiple small 
 9. [Implementation Sketch](#implementation-sketch)
 10. [Comparison with Existing Solutions](#comparison-with-existing-solutions)
 11. [Recommendation](#recommendation)
-12. [Open Questions](#open-questions)
-13. [Sources](#sources)
+12. [Decisions](#decisions)
+13. [Open Questions](#open-questions)
+14. [Sources](#sources)
 
 ---
 
@@ -374,6 +375,17 @@ The padding overhead for small files is real but affordable in absolute terms (<
 
 ---
 
+## Decisions
+
+> Choices made during this research session. Updated as the session progresses.
+
+| Decision | Alternatives considered | Rationale |
+|---|---|---|
+| **Bin-packing not added to the general-purpose vault pipeline** | Transparent bin-packing for all files, opt-in per-vault | Write amplification (N× re-encrypt and re-upload per mutation) makes it unsuitable for mutable content |
+| **Two practical paths: user-level archiving (available today) and opt-in archival vault mode (future)** | No action, transparent bin-packing for all vaults | Archiving before storage is available today at zero implementation cost; archival vault mode modelled on Haystack is appropriate for write-once workloads only |
+
+---
+
 ## Open Questions
 
 1. **Compaction trigger**: in an archival vault mode, when should compaction run? On demand only, or automatically when deleted bytes exceed a threshold (e.g., > 20% of a chunk)?
@@ -403,6 +415,4 @@ The padding overhead for small files is real but affordable in absolute terms (<
 | **Small Datum blog** | Read, write, and space amplification — pick 2 (RWS trilemma) | [smalldatum.blogspot.com/2015/11/read-write-space-amplification-pick-2](http://smalldatum.blogspot.com/2015/11/read-write-space-amplification-pick-2_23.html) |
 | **Cloudera** | Small Files, Big Foils — HDFS small file problem and solutions | [cloudera.com/blog/technical/small-files-big-foils](https://www.cloudera.com/blog/technical/small-files-big-foils-addressing-the-associated-metadata-and-application-challenges.html) |
 
----
 
-*This is a living document. Add implementation findings and design decisions as they emerge.*

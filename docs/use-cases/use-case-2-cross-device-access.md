@@ -1,4 +1,4 @@
-# UC-IND-002: Cross-Device Synchronisation
+# use-case-2: Cross-Device Synchronisation
 
 **Category**: Individual Privacy
 
@@ -18,7 +18,7 @@ An individual user wants to access and edit their encrypted files from multiple 
 ## Preconditions
 
 - User has Arx Runa installed on multiple devices with the same Rclone backend configured
-- User has previously created a vault and pushed an encrypted manifest to cloud (see UC-IND-001)
+- User has previously created a vault and pushed an encrypted manifest to cloud (see [use-case-1](use-case-1-personal-file-backup.md))
 - For Tier 2 vaults: same USB key file is available on the secondary device
 
 ## Main Flow
@@ -81,7 +81,7 @@ An individual user wants to access and edit their encrypted files from multiple 
 **Trigger**: User wants to edit a file in an external application
 
 **Steps**:
-1. User exports a decrypted copy to disk (see UC-IND-001 Export alternate flow)
+1. User exports a decrypted copy to disk (see [use-case-1](use-case-1-personal-file-backup.md) Export alternate flow)
 2. User edits the file in an external application
 3. User uploads the modified file back via the drop zone
 4. Arx Runa encrypts the updated file and replaces the previous version
