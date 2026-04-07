@@ -1,7 +1,7 @@
 # Arx Runa: Authentication and Session Management — Critical Review
 
 > **Document type**: Exploration / feasibility research
-> **Status**: Draft
+> **Status**: Concluded
 > **Last updated**: 2026-04-07
 
 Critical review of `docs/architecture/designs/authentication-and-session-management/design.md` against
@@ -191,13 +191,116 @@ The "wait for in-progress operations" guarantee is not a separate mechanism — 
 
 ---
 
+## X25519 Private Key Wrapping
+
+### What the design chose (original)
+
+Step 18 of the vault creation flow stated "Wrap X25519 private key with `key_encryption_key` → store in SQLCipher" with no wire format, cipher, or AAD specification.
+
+### The gap
+
+The X25519 private key is a 32-byte secret stored in SQLCipher, wrapped under `key_encryption_key` — structurally identical to a `file_key_wrapped` record. The crypto design fully specifies the `wrap_file_key` format: XChaCha20-Poly1305, empty AAD, producing a 72-byte blob (24-byte nonce | 32-byte ciphertext | 16-byte tag). Without an explicit reference, an implementer reading only the auth design has no specification for the wire format. The empty AAD is acceptable here for the same reason as `file_key_wrapped`: the wrapped key is self-contained and stored in SQLCipher, so substitution requires first breaking the database encryption.
+
+### Fix
+
+A parenthetical note was added to step 18 directing the implementer to the `wrap_file_key` format in the crypto design. No separate format is defined — reusing the existing wrapping primitive keeps the implementation consistent and avoids proliferating wire formats.
+
+**Status: Fixed. Step 18 now references the crypto design's `wrap_file_key` wire format.**
+
+---
+
+## master_key Type-Level Zeroization
+
+### What the design chose (original)
+
+The design described `master_key` informally as "32 bytes, Argon2id output, held in mlocked memory" and specified that it is zeroed with `zeroize(master_key)` immediately after HKDF expansion.
+
+### The gap
+
+A manual `zeroize()` call only runs if that specific line of code is reached. If the HKDF expansion returns an error between deriving the first key and the last — or if an early `?` operator propagates before the manual call — `master_key` remains in memory until the stack frame is cleaned up by the allocator (with no guarantee of zeroing). This is not a theoretical concern: the `hkdf` crate can return an error if the output length exceeds the HKDF maximum.
+
+The crypto design already uses `Zeroizing<[u8; 32]>` for all sensitive key buffers. Typing `master_key` as `Zeroizing<[u8; 32]>` closes this gap at the language level — the `ZeroizeOnDrop` impl runs unconditionally when the variable goes out of scope, including all error paths.
+
+### Why Zeroizing<T> is the right choice
+
+`Zeroizing<T>` from the `zeroize` crate wraps any type implementing `Zeroize` and adds `Drop` that calls `zeroize()`. For `[u8; 32]`, this overwrites the buffer with zeros before the memory is reclaimed. The wrapper has no runtime overhead beyond the zeroing itself and does not prevent the value from being used normally.
+
+The alternative — a custom `MasterKey` newtype with `ZeroizeOnDrop` — would also work but is more boilerplate for a value that lives in exactly one scope and is never passed across a function boundary.
+
+**Status: Fixed. `master_key` typed as `Zeroizing<[u8; 32]>` in the HKDF diagram and explanatory note added.**
+
+---
+
+## Memory Protection: mlock vs memfd_secret
+
+### What the design chose
+
+`mlock` on Linux, `VirtualLock` on Windows. Both prevent the OS from swapping session key pages to disk.
+
+### memfd_secret — stronger Linux alternative
+
+Linux 5.14 (August 2021) introduced the `memfd_secret()` syscall, which creates a "secretmem" region with a stronger protection property: the pages are removed from the kernel's direct-map page tables. This means even a compromised kernel module or `ptrace`-capable process cannot read the memory by walking the direct map. `mlock` only prevents eviction — the pages remain kernel-readable.
+
+The `secure-types` crate on crates.io abstracts over both: it allocates with `memfd_secret` when the kernel supports it (Linux 5.14+) and falls back to `mlock` on older kernels or other platforms. This would provide a transparent upgrade for Linux users without any API changes to Arx Runa.
+
+### Why no change is needed now
+
+`mlock`/`VirtualLock` is the correct choice for the current design:
+- Cross-platform (Windows and Linux covered by the existing model)
+- Well-understood semantics with an established Rust ecosystem (`secrecy` crate)
+- `memfd_secret` is Linux-only and requires kernel 5.14+; most current desktop Linux distributions qualify, but it adds a platform-specific code path
+
+`memfd_secret` is worth revisiting as an opt-in hardening measure for the Linux path in Phase 9 (hardening). The upgrade would be a crate change with no design impact.
+
+**Verdict: mlock is correct for the current design. memfd_secret noted as a Phase 9 hardening candidate.**
+
+---
+
+## Argon2id Parameters
+
+### What the design chose
+
+m=19456 KiB (19 MiB), t=2, p=1. The design states these are OWASP minimums.
+
+### Verification against current standards
+
+| Parameter set | Source | m | t | p |
+|---------------|--------|---|---|---|
+| Design (minimum) | Arx Runa auth design | 19456 KiB | 2 | 1 |
+| OWASP minimum (2024-2025) | Password Storage Cheat Sheet | 19456 KiB | 2 | 1 |
+| OWASP alternative | Password Storage Cheat Sheet | 46592 KiB | 1 | 1 |
+
+The design's parameters exactly match the current OWASP minimum. The cheat sheet has not changed these values since 2022. The alternative configuration (46 MiB, 1 iteration) trades memory for iterations at equivalent security level.
+
+**NIST note**: NIST SP 800-63B expresses a preference for BALLOON (which uses NIST-approved hash primitives) over Argon2id for strict federal compliance contexts. This is not relevant to Arx Runa, which targets personal cloud storage, not federal certification.
+
+**Verdict: Argon2id parameters are correct and current. No change.**
+
+---
+
 <!-- Sections written during the session below -->
 
 ---
 
 ## Recommendation
 
-_Written at close-out._
+The authentication and session management design is **well-structured and security-conscious** in its fundamentals: two-tier authentication, Argon2id with correct parameters, HKDF-SHA256 key separation, mlocked session keys, hard failure on mlock unavailability, and a clean separation between credential change and blob re-encryption. No conceptual rethinking is required.
+
+Seven actionable findings were identified and resolved:
+
+| # | Finding | Severity | Resolution |
+|---|---------|----------|------------|
+| 1 | `rand::thread_rng().fill_bytes` — stale rand 0.8 API | Bug | Updated to `rand::rng().fill` |
+| 2 | `DeviceMonitor::watch` returning `impl Stream` — not dyn-safe | Bug | Updated to `Pin<Box<dyn Stream<…> + Send>>` |
+| 3 | HKDF diagram missing `b"arx-runa-v1"` salt | Gap | Salt added to diagram and vault creation flow |
+| 4 | Password change re-wrap not transactional | Gap | Transaction + staged rekey pattern specified |
+| 5 | Session concurrency model unspecified | Gap | `Arc<RwLock<Option<SessionKeys>>>` added to design |
+| 6 | X25519 private key wrapping format unspecified | Improvement | Cross-reference to `wrap_file_key` wire format added |
+| 7 | `master_key` relies on manual zeroize — misses error paths | Improvement | Typed as `Zeroizing<[u8; 32]>` |
+| 8 | memfd_secret stronger than mlock on Linux 5.14+ | Note | Documented as Phase 9 hardening candidate |
+| 9 | Argon2id parameters confirmed against OWASP 2024-2025 | Note | No change — parameters are current |
+
+The design is ready for Phase 2 implementation.
 
 ---
 
@@ -212,6 +315,8 @@ _Written at close-out._
 | HKDF salt `b"arx-runa-v1"` added to auth design diagrams and vault creation flow | Cross-reference only (note pointing to crypto design) | Auth design is the first place an implementer encounters the HKDF call; inconsistency with the crypto design would produce different key material depending on which doc was read |
 | Password change: re-wrap all file_keys in a SQLCipher transaction; call `PRAGMA rekey` only after commit | Document as known limitation; staged backup approach | Transaction + staged rekey is the only approach that leaves the vault recoverable on any failure mode; SQLCipher WAL makes this reliable with no extra complexity |
 | Session shared as `Arc<RwLock<Option<SessionKeys>>>` | `Arc<Mutex<…>>` (serialises reads unnecessarily) | `RwLock` allows concurrent command handler reads; write lock for timeout/auth enforces "wait for operations" without a separate signal mechanism; `Option` drop triggers `ZeroizeOnDrop` |
+| X25519 private key wrapping references `wrap_file_key` wire format (XChaCha20-Poly1305, empty AAD, 72 bytes) | Separate format with AAD binding to vault_id; leave unspecified | Same structure as `file_key_wrapped`; reusing the existing primitive avoids proliferating formats; empty AAD acceptable because the wrapped key is inside SQLCipher |
+| `master_key` typed as `Zeroizing<[u8; 32]>` | Manual `zeroize()` call; custom newtype with `ZeroizeOnDrop` | `Zeroizing` wrapper guarantees zeroing on all drop paths including early returns on HKDF error; no boilerplate; consistent with `zeroize` usage in the crypto design |
 
 ---
 
@@ -223,3 +328,13 @@ _Written at close-out._
 
 | Source | Topic | URL |
 |---|---|---|
+| OWASP Password Storage Cheat Sheet (2024-2025) | Argon2id minimum parameters: m=19456, t=2, p=1 | https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html |
+| NIST SP 800-63B, §5.1.1.2 | Memory-hard KDF SHOULD requirement; BALLOON preference for federal compliance | https://pages.nist.gov/800-63-3/sp800-63b.html |
+| RFC 5869, "HMAC-based Extract-and-Expand Key Derivation Function (HKDF)" | Fixed salt recommendation for high-entropy IKM; domain separator rationale | https://datatracker.ietf.org/doc/html/rfc5869 |
+| argon2 crate v0.5.3 (RustCrypto) | `hash_password_into` API for raw-bytes output | https://docs.rs/argon2/latest |
+| rand crate v0.9 (RustCrypto) | `rng().fill()` replaces `thread_rng().fill_bytes()`; edition 2024 compatibility | https://docs.rs/rand/0.9 |
+| Rust Blog: "async fn and return-position impl Trait in traits" (Dec 2023) | RPITIT stabilised in Rust 1.75; dyn-safety limitation | https://blog.rust-lang.org/2023/12/21/async-fn-rpit-in-traits/ |
+| Linux man page: memfd_secret(2) | secretmem design; removal from kernel direct-map | https://man7.org/linux/man-pages/man2/memfd_secret.2.html |
+| LWN.net: "Secret memory for userspace" (2021) | memfd_secret motivation and kernel implementation | https://lwn.net/Articles/865256/ |
+| secure-types crate | `memfd_secret` + `mlock` abstraction with automatic fallback | https://crates.io/crates/secure-types |
+| zeroize crate (RustCrypto) | `Zeroizing<T>` wrapper; `ZeroizeOnDrop` semantics | https://docs.rs/zeroize/latest |

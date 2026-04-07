@@ -1,7 +1,7 @@
 # Arx Runa — Authentication and Session Management Design
 
 > Status: Design complete. Implementation target: Phase 2.
-> Last updated: 2026-03-29
+> Last updated: 2026-04-07 (reviewed)
 
 ---
 
@@ -122,7 +122,7 @@ These are **minimums**. Actual parameters stored in vault header allow future in
 After Argon2id produces `master_key`, HKDF-SHA256 derives three vault-level keys:
 
 ```
-master_key (32 bytes, Argon2id output, held in mlocked memory)
+master_key: Zeroizing<[u8; 32]>  (Argon2id output, held in mlocked memory)
     │
     HKDF-SHA256 (salt: b"arx-runa-v1")
     ├─ info: "arx-runa-key-encryption"  → key_encryption_key
@@ -130,9 +130,11 @@ master_key (32 bytes, Argon2id output, held in mlocked memory)
     └─ info: "arx-runa-manifest-backup"  → manifest_key
 ```
 
-The fixed salt `b"arx-runa-v1"` acts as a domain separator per RFC 5869 §3.1, preventing cross-application key confusion and encoding a version point for future key-hierarchy changes. Full rationale in `docs/architecture/designs/cryptographic-primitives/design.md`.
+`master_key` is typed as `Zeroizing<[u8; 32]>`. The `Zeroizing` wrapper from the `zeroize` crate guarantees that the buffer is overwritten with zeros on drop — automatically, even if the HKDF expansion returns an error early. This is stricter than a manual `zeroize()` call, which can be missed on error paths.
 
-`master_key` is zeroed immediately after all three HKDF derivations complete. It is never stored, never logged, and never leaves the derivation function's scope.
+`master_key` is never stored, never logged, and never leaves the derivation function's scope. It is zeroed at the end of that scope by the `Zeroizing` drop impl.
+
+The fixed salt `b"arx-runa-v1"` acts as a domain separator per RFC 5869 §3.1, preventing cross-application key confusion and encoding a version point for future key-hierarchy changes. Full rationale in `docs/architecture/designs/cryptographic-primitives/design.md`.
 
 ---
 
@@ -268,6 +270,8 @@ First-run sequence when the user creates a new vault:
 16.  Create schema: nodes, chunks, manifest_meta, contacts, shares, received_shares
 17.  Generate X25519 identity keypair
 18.  Wrap X25519 private key with key_encryption_key → store in SQLCipher
+     (uses the same `wrap_file_key` wire format: XChaCha20-Poly1305, empty AAD, 72-byte output —
+     see `docs/architecture/designs/cryptographic-primitives/design.md`)
 19.  Write vault header JSON to local staging:
      Tier 1:
      {
