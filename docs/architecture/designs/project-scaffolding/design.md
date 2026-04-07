@@ -20,11 +20,11 @@
 
 ### Workspace Layout
 
-The project uses a Cargo workspace with `src-tauri/` as the sole workspace member. The Leptos frontend in `src/` compiles to WASM via Trunk and is not a Cargo workspace member.
+The project uses a Cargo workspace where the root `Cargo.toml` is a **package+workspace manifest** — it defines both the frontend crate (compiled by Trunk to WASM) and declares `src-tauri/` as a named workspace member. A pure virtual workspace manifest cannot be targeted by Trunk, so the root must include a `[package]` section.
 
 ```
 arx-runa/
-├── Cargo.toml                  # [workspace] with members = ["src-tauri"]
+├── Cargo.toml                  # [package] (frontend) + [workspace] with members = ["src-tauri"]
 ├── Cargo.lock
 ├── Trunk.toml                  # Trunk build config for Leptos frontend
 ├── index.html                  # Trunk entry point
@@ -147,7 +147,7 @@ The frontend Leptos code requires its own `Cargo.toml` at the project root (or T
 | `leptos` | `"0.8"` | `csr` | Leptos framework (client-side rendering) |
 | `console_error_panic_hook` | `"0.1"` | — | WASM panic messages in browser console |
 
-**Note**: The root `Cargo.toml` serves dual duty — it defines the workspace and is the frontend crate compiled by Trunk. Trunk reads the `[[bin]]` or `[lib]` target and compiles it to WASM.
+**Note**: The root `Cargo.toml` is a **package+workspace manifest** — it contains both `[package]` (the frontend crate, compiled by Trunk to WASM) and `[workspace]` (declaring `src-tauri` as a member). A pure virtual workspace manifest (containing only `[workspace]`) cannot be used as a Trunk build target; Trunk requires a `[package]` section to identify the crate to compile.
 
 ---
 

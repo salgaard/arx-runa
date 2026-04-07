@@ -23,7 +23,7 @@ This ADR records the scaffolding-level decisions. Code-level patterns (newtypes,
 **Alternatives considered**:
 - *Standalone `src-tauri/`* — remove top-level Cargo.toml entirely. Simpler but prevents future workspace members (e.g., shared types crate).
 
-**Rationale**: Standard Tauri v2 pattern. Workspace provides flexibility at no cost — `Cargo.lock` is shared, and the top-level `Cargo.toml` also serves as the Trunk build target for the Leptos frontend.
+**Rationale**: Standard Tauri v2 pattern. The root `Cargo.toml` is a **package+workspace manifest**: it contains both `[package]` (the frontend crate, Trunk's build target) and `[workspace]` (declaring `src-tauri` as a member). A pure virtual workspace cannot be compiled by Trunk. This layout shares `Cargo.lock` across the workspace and leaves room for future members (e.g., a shared types crate).
 
 ### 2. Tauri v2
 

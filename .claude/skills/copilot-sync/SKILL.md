@@ -35,20 +35,24 @@ be kept in sync with `.claude/rules/`:
 
 ## Transformation rule
 
-This is a **direct transformation**. The Claude rule content is copied verbatim,
-with only the frontmatter key changed:
+The Claude rule content is copied verbatim, with the frontmatter key changed from `paths:` to `applyTo:`.
 
-| Claude Code | Copilot Instructions |
-|-------------|---------------------|
-| `paths:\n  - "<glob>"` | `applyTo: "<glob>"` |
-| `paths:\n  - "<glob1>"\n  - "<glob2>"` | `applyTo:\n  - "<glob1>"\n  - "<glob2>"` |
+**`applyTo` is always a single quoted string** — comma-separated for multiple globs. Never a YAML list.
+
+| Claude Code `paths:` | Copilot `applyTo:` |
+|----------------------|-------------------|
+| Single path: `paths:\n  - "src/**"` | `applyTo: "src/**"` |
+| Multi-path list: `paths:\n  - "a/**"\n  - "b/**"` | `applyTo: "a/**,b/**"` |
 
 **Sync procedure:**
 1. Read `.claude/rules/<name>.md`
-2. Replace `paths:` key with `applyTo:` key (preserve YAML list structure)
-3. Write to `.github/instructions/<name>.instructions.md`
+2. Extract all glob values from the `paths:` list
+3. Join them with `,` (no spaces) into a single quoted string
+4. Write `applyTo: "<glob1>,<glob2>"` as the frontmatter
+5. Copy all content below the frontmatter verbatim
+6. Write to `.github/instructions/<name>.instructions.md`
 
-After transformation, files should be byte-identical except for the frontmatter key name.
+After transformation, content below the frontmatter is byte-identical; only the frontmatter key and format differ.
 
 ---
 

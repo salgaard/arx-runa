@@ -268,8 +268,8 @@ Sync behaviour:
 ## Open Questions
 
 - ~~Should a vault backup archive include the SQLCipher database?~~ — Resolved: the manifest is already uploaded as `manifest/manifest-backup.blob` on the primary remote (see `docs/architecture/designs/cloud-synchronisation/design.md`). `rclone sync` picks it up automatically; no special handling needed.
-- Should destination sessions be vault-scoped (per vault) or global (shared across vaults for the same user)?
-- Can Rclone be embedded as a library or must it be a sidecar binary? (The existing BYOC approach uses a sidecar — does that scale to a rich cloud browser UI?)
+- ~~Should destination sessions be vault-scoped (per vault) or global (shared across vaults for the same user)?~~ — Resolved: sessions are vault-scoped to preserve least privilege and reduce cross-vault credential exposure (see Decisions table).
+- ~~Can Rclone be embedded as a library or must it be a sidecar binary?~~ — Resolved: Rclone remains a sidecar binary, consistent with the existing BYOC approach (see Decisions table).
 - What is the UX for selecting which destinations a vault syncs to — primary only, primary + backup, all?
 - Should the blob browser support filtering/searching by real filename (requires unlocked vault) vs. UUID only?
 - For archive backups: should the archive be encrypted at the archive level (second layer of encryption) or rely solely on the per-blob AEAD encryption already present?

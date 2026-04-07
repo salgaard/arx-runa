@@ -449,7 +449,7 @@ secrecy = "0.10"           # Secret<T> wrapper
 thiserror = "2"            # Error handling
 ```
 
-> **Note on `rand` 0.9 API change**: The `.gen()` method is removed in edition 2024 (reserved keyword). Use `rand::rng().random::<[u8; 32]>()` instead of `rand::thread_rng().gen::<[u8; 32]>()`.
+> **Note on `rand` 0.9 API change**: In Rust 2024, `gen` is a reserved keyword, so method calls written as `.gen()` require escaping as `.r#gen()`. Prefer `rand::rng().random::<[u8; 32]>()` over `rand::thread_rng().r#gen::<[u8; 32]>()` for clarity and alignment with the `rand` 0.9 API.
 
 ---
 
