@@ -168,7 +168,11 @@
   color: #6B7E9A;
 }
 
-.coal, :root {
+/* ============================================================
+   ARX RUNA — Custom Theme Variables
+   ============================================================ */
+
+.arx-runa {
   --bg:                        #09090B;
   --fg:                        #DBD7CD;
   --sidebar-bg:                #0C0E14;
@@ -197,9 +201,4 @@
   --searchresults-li-bg:       #0C0E14;
   --search-mark-bg:            #5C7090;
   --color-scheme: dark;
-}
-
-/* Hide theme selector - coal only */
-#theme-toggle, .theme-popup {
-  display: none !important;
 }

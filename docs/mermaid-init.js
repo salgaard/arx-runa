@@ -1,6 +1,20 @@
 (() => {
-    // Initialize Mermaid with dark theme (coal theme is locked)
-    mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+    // Theme detection for Mermaid
+    const darkThemes = ['ayu', 'navy', 'coal', 'arx-runa'];
+    const lightThemes = ['light', 'rust'];
+
+    const classList = document.getElementsByTagName('html')[0].classList;
+
+    let lastThemeWasLight = true;
+    for (const cssClass of classList) {
+        if (darkThemes.includes(cssClass)) {
+            lastThemeWasLight = false;
+            break;
+        }
+    }
+
+    const theme = lastThemeWasLight ? 'default' : 'dark';
+    mermaid.initialize({ startOnLoad: true, theme });
 
     // Add zoom/pan functionality to all Mermaid diagrams
     function addZoomToDiagrams() {
@@ -180,4 +194,27 @@
         addZoomToDiagrams();
         observer.observe(document.body, { childList: true, subtree: true });
     });
+
+    // Reload page when switching between light and dark themes for mermaid re-render
+    for (const darkTheme of darkThemes) {
+        const themeButton = document.getElementById(darkTheme);
+        if (themeButton) {
+            themeButton.addEventListener('click', () => {
+                if (lastThemeWasLight) {
+                    window.location.reload();
+                }
+            });
+        }
+    }
+
+    for (const lightTheme of lightThemes) {
+        const themeButton = document.getElementById(lightTheme);
+        if (themeButton) {
+            themeButton.addEventListener('click', () => {
+                if (!lastThemeWasLight) {
+                    window.location.reload();
+                }
+            });
+        }
+    }
 })();

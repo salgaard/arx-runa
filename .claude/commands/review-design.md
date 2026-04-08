@@ -109,6 +109,10 @@ N+3. [Sources](#sources)
 
 Search for critique across these lenses. Run web searches in parallel where possible.
 
+**Alternative lens** — is there a better approach?
+- For each key design decision: what are the alternatives? Is the design's choice still the best one?
+- Note newer standards or algorithms that post-date the design
+
 **Correctness lens** — will the implementation actually work?
 - API version mismatches, renamed functions, deprecated methods
 - Edition/compiler compatibility issues
@@ -125,10 +129,6 @@ Search for critique across these lenses. Run web searches in parallel where poss
 - Are there cases the design doesn't handle?
 - Are there enforcement mechanisms missing (type-level, runtime)?
 - Are there cross-module interactions not accounted for?
-
-**Alternative lens** — is there a better approach?
-- For each key design decision: what are the alternatives? Is the design's choice still the best one?
-- Note newer standards or algorithms that post-date the design
 
 As research findings are discovered, **write them into the research document immediately** — draft the relevant topic section, even if incomplete. Do not hold all writing until the end.
 
