@@ -167,38 +167,3 @@
   font-style: normal;
   color: #6B7E9A;
 }
-
-/* ============================================================
-   ARX RUNA — Custom Theme Variables
-   ============================================================ */
-
-.arx-runa {
-  --bg:                        #09090B;
-  --fg:                        #DBD7CD;
-  --sidebar-bg:                #0C0E14;
-  --sidebar-fg:                #9AA3B0;
-  --sidebar-active:            #DBD7CD;
-  --sidebar-spacer:            #1C2030;
-  --scrollbar:                 #222736;
-  --icons:                     #5C7090;
-  --icons-hover:               #9AA3B0;
-  --links:                     #5C7090;
-  --inline-code-color:         #9AA3B0;
-  --theme-popup-bg:            #0C0E14;
-  --theme-popup-border:        #222736;
-  --theme-hover:               #111420;
-  --quote-bg:                  #0C0E14;
-  --quote-border:              #222736;
-  --table-border-color:        #222736;
-  --table-header-bg:           #111420;
-  --table-alternate-bg:        #0C0E14;
-  --searchbar-border-color:    #222736;
-  --searchbar-bg:              #0C0E14;
-  --searchbar-fg:              #DBD7CD;
-  --searchbar-shadow-color:    #09090B;
-  --searchresults-header-fg:   #9AA3B0;
-  --searchresults-border-color:#222736;
-  --searchresults-li-bg:       #0C0E14;
-  --search-mark-bg:            #5C7090;
-  --color-scheme: dark;
-}
