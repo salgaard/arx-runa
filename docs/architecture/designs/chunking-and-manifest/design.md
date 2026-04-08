@@ -1,7 +1,7 @@
 # Arx Runa — Chunking and Manifest Design
 
 > Status: Design complete. Implementation target: Phase 3.
-> Last updated: 2026-03-29
+> Last updated: 2026-04-08
 
 ---
 
@@ -74,13 +74,16 @@ A 0-byte file has no chunks. The `nodes` row exists with `size_bytes = 0` and `f
 CREATE TABLE nodes (
     node_id          TEXT PRIMARY KEY,     -- UUID v4
     parent_id        TEXT REFERENCES nodes(node_id) ON DELETE CASCADE,
-    node_type        TEXT NOT NULL,        -- 'file' or 'directory'
+    node_type        TEXT NOT NULL         -- 'file' or 'directory'
+                         CHECK (node_type IN ('file', 'directory')),
     name             TEXT NOT NULL,        -- plaintext (SQLCipher is the encryption layer)
     created_at       INTEGER NOT NULL,     -- Unix timestamp
     modified_at      INTEGER NOT NULL,     -- Unix timestamp
     size_bytes       INTEGER NOT NULL,     -- original file size (0 for directories)
     file_key_wrapped BLOB                  -- file_key encrypted with key_encryption_key
                                            -- NULL for directories, NOT NULL for files
+                         CHECK ((node_type = 'file'      AND file_key_wrapped IS NOT NULL)
+                             OR (node_type = 'directory' AND file_key_wrapped IS NULL))
 );
 
 CREATE TABLE chunks (
@@ -88,7 +91,8 @@ CREATE TABLE chunks (
     node_id          TEXT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
     chunk_index      INTEGER NOT NULL,     -- 0-based
     blob_name        TEXT NOT NULL,        -- UUID v4, no relation to file identity
-    size_padded      INTEGER NOT NULL,     -- always = chunk_size (4 MiB)
+    size_padded      INTEGER NOT NULL,     -- currently always = chunk_size (4 MiB);
+                                           -- retained for forward compatibility if variable chunk sizes are introduced
     blake3_checksum  BLOB NOT NULL,        -- 32 bytes, over encrypted blob
     UNIQUE(node_id, chunk_index)
 );
@@ -129,7 +133,8 @@ CREATE TABLE received_shares (
     file_key_wrapped     BLOB NOT NULL,
     chunk_count          INTEGER NOT NULL,
     chunk_size           INTEGER NOT NULL,
-    chunk_uuids          TEXT NOT NULL,
+    chunk_uuids          TEXT NOT NULL      -- JSON array of UUID v4 blob names, e.g. ["uuid1","uuid2"]
+                             CHECK (json_valid(chunk_uuids)),
     cloud_endpoint       TEXT NOT NULL,
     imported_at          INTEGER NOT NULL
 );
@@ -177,9 +182,10 @@ EXIF stripping is an optional pre-processing step that runs in RAM before the en
 | `image/jpeg` | EXIF, XMP, IPTC |
 | `image/png` | eXIf chunk, XMP (tEXt/iTXt) |
 | `image/tiff` | EXIF, XMP, IPTC |
-| `video/mp4`, `video/quicktime` | GPS and location metadata in moov atom |
 
-**Unsupported types** pass through to the encrypt pipeline unmodified.
+**Unsupported types** (including `video/mp4` and `video/quicktime`) pass through to the encrypt pipeline unmodified.
+
+> **Note — MP4/QuickTime**: The `moov` atom, which contains GPS coordinates and all file-level metadata, is placed at the **end** of the file in typical device recordings (`[ftyp][mdat][moov]`). A streaming single-pass read cannot reach moov without reading the entire file. MP4/QuickTime metadata stripping is therefore excluded from this pipeline to preserve the streaming invariant. Users who need GPS removed from video files should use an external tool (e.g. `ffmpeg -movflags +faststart` followed by ExifTool) before upload. Video stripping is an open question for a future non-streaming pre-processing step.
 
 ### Flow
 
@@ -215,14 +221,16 @@ Implementation target: Phase 3 (alongside the encrypt pipeline) or Phase 6 (as a
 ### Public API
 
 ```rust
-/// Result of encrypting a single chunk.
+/// A chunk record — both the output of encrypt_file and the type loaded
+/// from MetadataStore::get_chunks for decryption.
 struct ChunkRecord {
-    chunk_id: Uuid,
-    chunk_index: u32,
-    blob_name: String,        // UUID v4
-    size_padded: u64,         // always chunk_size
+    chunk_id:        Uuid,
+    chunk_index:     u32,
+    blob_name:       String,       // UUID v4; no relation to file identity
+    size_padded:     u64,          // always chunk_size
     blake3_checksum: [u8; 32],
-    blob_path: PathBuf,       // path in staging directory
+    // blob_path is intentionally absent: the staging path is derived at the
+    // call site as staging_directory/<blob_name>.blob and is not persisted.
 }
 
 /// Encrypts a file into padded, encrypted chunks in the staging directory.
@@ -369,7 +377,10 @@ All manifest mutations (insert, update, delete) are wrapped in SQLCipher transac
 ## MetadataStore Trait
 
 ```rust
+use async_trait::async_trait;
+
 /// Abstraction over the manifest database for testability.
+#[async_trait]
 trait MetadataStore: Send + Sync {
     /// Inserts a new node (file or directory).
     async fn insert_node(&self, node: &Node) -> Result<(), StorageError>;
@@ -386,6 +397,23 @@ trait MetadataStore: Send + Sync {
     /// Retrieves all chunks for a file, ordered by chunk_index.
     async fn get_chunks(&self, node_id: Uuid) -> Result<Vec<ChunkRecord>, StorageError>;
 
+    /// Renames a node. Updates modified_at to the provided Unix timestamp.
+    async fn rename_node(
+        &self,
+        node_id: Uuid,
+        new_name: &str,
+        modified_at: i64,
+    ) -> Result<(), StorageError>;
+
+    /// Moves a node to a new parent directory. Updates modified_at.
+    /// Pass None for new_parent_id to move to the root.
+    async fn move_node(
+        &self,
+        node_id: Uuid,
+        new_parent_id: Option<Uuid>,
+        modified_at: i64,
+    ) -> Result<(), StorageError>;
+
     /// Deletes a node and cascades to chunks.
     async fn delete_node(&self, node_id: Uuid) -> Result<Vec<String>, StorageError>;
     // Returns list of blob_names for cloud deletion
@@ -399,6 +427,13 @@ trait MetadataStore: Send + Sync {
     /// Increments and returns the new snapshot_counter.
     async fn increment_snapshot_counter(&self) -> Result<u64, StorageError>;
 }
+
+// Both concrete implementations require the attribute:
+// #[async_trait]
+// impl MetadataStore for SqlCipherMetadataStore { ... }
+//
+// #[async_trait]
+// impl MetadataStore for MockMetadataStore { ... }
 ```
 
 Implementations:
@@ -411,8 +446,9 @@ Implementations:
 
 | Decision | Options | Status |
 |----------|---------|--------|
-| Upload order randomisation | Randomise blob upload order to mask which blobs belong to the same file vs. sequential for simplicity | Extension point, not blocking |
+| Upload order randomisation | Randomise blob upload order to mask which blobs belong to the same file vs. sequential for simplicity | Extension point for Phase 4. Security rationale: sequential upload leaks temporal correlation — an observer sees which blobs belong to the same file by their upload timestamps, even though blob names are random UUIDs. Fisher-Yates shuffle of the upload queue eliminates this signal. See Phase 4 design |
 | Maximum file size | Implicit limit from chunk_index as u32 (2^32 chunks × 4 MiB = 16 PiB per file) — no practical limit needed | Not blocking |
+| Video metadata stripping | MP4/QuickTime excluded from EXIF stripping pipeline (moov-at-end incompatible with streaming). A future non-streaming pre-processing step could handle this | Deferred |
 
 ---
 
@@ -426,6 +462,12 @@ Implementations:
 | 0-byte files | Node row with no chunks, `size_bytes = 0` | Clean edge case, file_key still generated for future updates |
 | Staging directory | App data subdirectory | Encrypted blobs safe on disk, cleaned up on startup |
 | Error recovery | SQLCipher transactions + orphan blob cleanup | No partial manifest state, no data loss |
+| `MetadataStore` async dispatch | `#[async_trait]` macro | `async fn` in traits is not dyn-safe; `#[async_trait]` makes `Box<dyn MetadataStore>` compile while keeping the trait readable. Requires `async-trait = "0.1"` in `Cargo.toml` |
+| MP4/QuickTime EXIF stripping | Drop vs full-file read vs two-pass seek | Dropped: moov atom at end-of-file on device recordings breaks streaming; video stripping deferred |
+| Schema CHECK constraints | DDL enforcement vs prose-only | CHECK constraints added: catch corrupt node rows at write time; cross-column constraint enforces file_key_wrapped nullability invariant |
+| `ChunkRecord.blob_path` | Remove vs split into two structs | Removed: only used between encrypt_file and insert_chunks; staging path derived from blob_name at call site |
+| `received_shares.chunk_uuids` format | JSON array + CHECK vs normalised table vs comment-only | JSON array with `json_valid()` CHECK: consistent with share package format, enforced at write time |
+| Rename/move in MetadataStore | Two focused methods vs `update_node(NodePatch)` vs defer | Two focused methods: `rename_node` and `move_node`; consistent naming with existing trait methods |
 
 ---
 

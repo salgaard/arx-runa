@@ -9,14 +9,14 @@
 
 ## Overview
 
-This sub-phase roadmap decomposes the cryptographic primitives design (474 lines) into 3 independently testable implementation units, enabling incremental validation of the crypto layer before any other module depends on it.
+This sub-phase roadmap decomposes the cryptographic primitives design (484 lines) into 3 independently testable implementation units, enabling incremental validation of the crypto layer before any other module depends on it.
 
 **Total sub-phases**: 3 (Phases 1.1 through 1.3)
 
 **Rationale for decomposition**:
 -  **Size**: Exceeds ~100-150 lines (474 lines total)
 -  **Trait boundaries**: Key types, HKDF derivation, and nonce generation are logically separable from AEAD operations and from key-wrapping concerns
--  **Error surface**: Defines 3 distinct `CryptoError` variants (`DecryptionFailed`, `InvalidBlobFormat`, `HkdfError`) each requiring independent test coverage
+-  **Error surface**: Defines 3 distinct `CryptoError` variants (`DecryptionFailed`, `InvalidBlobFormat`, `KeyUnwrapFailed`) each requiring independent test coverage
 -  **Multi-step flows**: Key derivation → chunk encryption → key wrapping forms a strict dependency chain; each step is independently testable
 
 **Implementation strategy**: Establish key types and derivation primitives first (1.1), then build AEAD encrypt/decrypt on top of those types (1.2), then add key-wrapping and BLAKE3 checksums as the final layer (1.3).

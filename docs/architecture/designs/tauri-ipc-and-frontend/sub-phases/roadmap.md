@@ -49,7 +49,7 @@ This sub-phase roadmap decomposes the Tauri IPC and frontend design (1016 lines 
    - All IPC response types (`AuthResponse`, `FileEntry`, `ProgressUpdate`, etc.)
    - `AppState` struct
    - Input validation functions
-   - All 10 Tauri command signatures registered via `tauri::generate_handler![]` and `build.rs` allowlist
+   - All 24 Tauri command signatures registered via `tauri::generate_handler![]` and `build.rs` allowlist
    - **Estimated**: ~400 lines production code, ~150 lines tests
 
 2. **[Phase 6.2: Frontend State Contexts and Tauri Invoke Wrapper](6.2-frontend-state-and-invoke-wrapper.md)**

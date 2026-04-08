@@ -1,10 +1,4 @@
-# use-case-2: Cross-Device Synchronisation
-
-**Category**: Individual Privacy
-
-**Status**: Active
-
----
+# Use Case 2: Cross-Device Synchronisation
 
 ## Overview
 

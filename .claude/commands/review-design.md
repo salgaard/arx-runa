@@ -31,6 +31,7 @@ If the argument is ambiguous, list candidate matches and ask before proceeding.
 3. Check `docs/research/` for any prior research on this topic — link if found
 4. Check `docs/architecture-decisions/` for ADRs that constrain this design
 5. Note the design's existing **Decisions Made** table — these are the decisions to re-examine
+6. Check for `sub-phases/` directory — if present, read `sub-phases/roadmap.md` and each `sub-phases/*.md` file. Note anywhere a sub-phase file reproduces a spec verbatim from design.md (dep versions, code blocks, config values) — these are candidates for conversion to references.
 
 ---
 
@@ -185,6 +186,10 @@ For each confirmed finding:
 2. Update the design's **Decisions Made** table if the decision changed
 3. Update the design's `Last updated` date
 4. Mark the finding `Accepted` in the triage table (kept in the Recommendation section)
+5. **Propagate to sub-phases** — if `sub-phases/` exists, check whether any sub-phase reproduces the changed content verbatim:
+   - If a sub-phase duplicates the spec: update it to match design.md OR convert it to a reference (`See [Section Name](../design.md#anchor)`)
+   - If a sub-phase already references design.md: no change needed
+   - Prefer references over duplication — sub-phases own the implementation steps; design.md owns the spec
 
 For **Bugs**: fix immediately after confirmation — no design changes needed, just correct the error.
 For **Improvements/Gaps**: edit the relevant section of `design.md`.
@@ -202,7 +207,7 @@ For **Deferred/Won't fix**: record rationale in `## Open Questions`.
 3. Confirm `## Sources` has an entry for every cited paper, RFC, or standard
 4. Set `Status` to `Concluded` (all actionable findings resolved) or `Living document` (open questions remain)
 5. Add an entry to `docs/research/README.md`
-6. State: "Review complete. N changes applied to design.md."
+6. State: "Review complete. N changes applied to design.md, M changes applied to sub-phases."
 
 ---
 

@@ -1,10 +1,4 @@
-# use-case-3: Hardware MFA and Key Loss
-
-**Category**: Individual Privacy
-
-**Status**: Active
-
----
+# Use Case 3: Hardware MFA and Key Loss
 
 ## Overview
 

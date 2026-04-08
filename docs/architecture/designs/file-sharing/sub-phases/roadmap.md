@@ -158,7 +158,7 @@ cargo test sharing::revocation
 | ECIES implementation error produces ciphertext decryptable by wrong party | Dedicate a test to wrong-recipient rejection and MITM-substituted ephemeral key |
 | Ephemeral private key retained in memory after ECDH | Wrap in `zeroize::Zeroizing` and drop immediately; verified by code review and security-reviewer agent |
 | Revocation perceived as complete when recipient has already fetched | Explicit report statement in design (lines 165-169); limitation must surface in UI and report log |
-| Public blob discovery reveals share existence | Accepted per threat model (design lines 249-255); mitigated by fixed-size padding and UUID v4 blob names |
+| Public blob discovery reveals share existence | Accepted per threat model (design lines 349-355); mitigated by fixed-size padding and UUID v4 blob names |
 
 ---
 

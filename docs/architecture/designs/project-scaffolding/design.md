@@ -1,7 +1,7 @@
 # Arx Runa — Project Scaffolding Design
 
 > Status: Design complete. Implementation target: Phase 0.
-> Last updated: 2026-04-07
+> Last updated: 2026-04-08
 > **Sub-phase roadmap**: [`sub-phases/roadmap.md`](sub-phases/roadmap.md)
 
 ---
@@ -76,6 +76,7 @@ arx-runa/
 - **Workspace**: Allows future workspace members (e.g., a shared types crate) without restructuring. Standard Tauri pattern for v2.
 - **Trunk as frontend builder**: Purpose-built for WASM, handles `index.html` processing, asset bundling, and Tailwind hooks. Simpler than `cargo-leptos` for CSR-only desktop apps.
 - **`src/` outside workspace**: Trunk compiles `src/` independently to WASM. It does not participate in the Cargo workspace — Tauri orchestrates both builds via `cargo tauri dev`.
+- **Package+workspace manifest**: The root `Cargo.toml` follows the `create-tauri-app` Leptos template convention. A pure virtual workspace manifest (containing only `[workspace]`) is also valid — Trunk can target any directory with a `[package]` section — but would require placing the frontend in a `frontend/` subdirectory and pointing Trunk at it. The package+workspace approach is used here for consistency with the official template and to keep the frontend at the root.
 
 ---
 
@@ -83,11 +84,11 @@ arx-runa/
 
 | Component | Version | Rationale |
 |-----------|---------|-----------|
-| Rust edition | 2024 | Latest edition; enables modern patterns. Requires `rand >= 0.9` (`gen` keyword reserved). |
+| Rust edition | 2024 | Latest edition; enables modern patterns. Requires `rand >= 0.9` (`gen` keyword reserved). Current dep: `"0.10"`. |
 | Tauri | 2.x | Current stable. Improved security model, official Leptos template. |
 | Leptos | 0.8.x | Latest stable (0.8.17 at time of writing). Template generates 0.6 code — upgrade during scaffolding. |
 | Trunk | latest | WASM bundler for Leptos. Handles index.html, Tailwind hooks, hot-reload. |
-| Tailwind CSS | 3.x / 4.x | Utility-first CSS. Existing custom theme (void-\*, accent-\*, status colors) preserved. |
+| Tailwind CSS | 4.x | Utility-first CSS. Brand token palette (iron, stone, steel, rune, bone) defined in `input.css` `@theme` block, sourced from `docs/arx-runa-brand.css`. |
 
 ---
 
@@ -115,10 +116,10 @@ All dependencies use semver ranges. `Cargo.lock` pins exact versions.
 |-------|---------|---------|
 | `chacha20poly1305` | `"0.10"` | XChaCha20-Poly1305 AEAD |
 | `argon2` | `"0.5"` | Argon2id KDF |
-| `hkdf` | `"0.12"` | HKDF-SHA256 key derivation |
-| `sha2` | `"0.10"` | SHA-256 (HKDF dependency) |
+| `hkdf` | `"0.13"` | HKDF-SHA256 key derivation |
+| `sha2` | `"0.11"` | SHA-256 (HKDF dependency) |
 | `blake3` | `"1"` | BLAKE3 checksums |
-| `rand` | `"0.9"` | CSPRNG (`>= 0.9` required for edition 2024 — `gen` keyword) |
+| `rand` | `"0.10"` | CSPRNG (`>= 0.9` required for edition 2024 — `gen` keyword; 0.10 is current stable) |
 | `zeroize` | `"1"` | Memory zeroisation (with `derive` feature) |
 | `secrecy` | `"0.10"` | `Secret<T>` wrappers |
 | `x25519-dalek` | `"2"` | X25519 key exchange (Phase 5) |
@@ -127,7 +128,7 @@ All dependencies use semver ranges. `Cargo.lock` pins exact versions.
 
 | Crate | Version | Features | Purpose |
 |-------|---------|----------|---------|
-| `rusqlite` | `"0.34"` | `bundled-sqlcipher-vendored-openssl` | SQLCipher encrypted database |
+| `rusqlite` | `"0.39"` | `bundled-sqlcipher-vendored-openssl` | SQLCipher encrypted database |
 | `uuid` | `"1"` | `v4`, `serde` | Blob naming |
 
 #### Dev dependencies
@@ -145,9 +146,14 @@ The frontend Leptos code requires its own `Cargo.toml` at the project root (or T
 | Crate | Version | Features | Purpose |
 |-------|---------|----------|---------|
 | `leptos` | `"0.8"` | `csr` | Leptos framework (client-side rendering) |
+| `leptos_meta` | `"0.8"` | — | `<title>`, `<meta>` tag management in Leptos components |
+| `leptos_router` | `"0.8"` | — | Client-side routing between vault browser views |
 | `console_error_panic_hook` | `"0.1"` | — | WASM panic messages in browser console |
+| `console_log` | `"1"` | — | Routes `log::*` macros to browser console in WASM |
+| `log` | `"0.4"` | — | Logging facade (`log::info!`, `log::error!`, etc.) |
+| `serde-wasm-bindgen` | `"0.6"` | — | `to_value`/`from_value` for Tauri IPC bridge (Phase 6) |
 
-**Note**: The root `Cargo.toml` is a **package+workspace manifest** — it contains both `[package]` (the frontend crate, compiled by Trunk to WASM) and `[workspace]` (declaring `src-tauri` as a member). A pure virtual workspace manifest (containing only `[workspace]`) cannot be used as a Trunk build target; Trunk requires a `[package]` section to identify the crate to compile.
+**Note**: The root `Cargo.toml` is a **package+workspace manifest** — it contains both `[package]` (the frontend crate, compiled by Trunk to WASM) and `[workspace]` (declaring `src-tauri` as a member). See Workspace Layout rationale for the choice of this pattern over a virtual manifest.
 
 ---
 
@@ -228,19 +234,55 @@ target = "index.html"
 [[hooks]]
 stage = "pre_build"
 command = "npx"
-command_arguments = ["tailwindcss", "-i", "input.css", "-o", "output.css"]
+command_arguments = ["@tailwindcss/cli", "-i", "input.css", "-o", "output.css"]
+```
+
+**Note**: Tailwind v4 separates the CLI from the main `tailwindcss` package. Install both:
+
+```json
+{ "devDependencies": { "tailwindcss": "^4", "@tailwindcss/cli": "^4" } }
 ```
 
 ### Tailwind Integration
 
-The existing `tailwind.config.js` is preserved with the Arx Runa custom theme:
+Tailwind v4 uses a CSS-first configuration. There is no `tailwind.config.js`. The brand token palette is declared in `input.css` using an `@theme` block, sourced from `docs/arx-runa-brand.css`:
 
-- **void-\***: Blue-gray scale for backgrounds and text
-- **accent-\***: Muted teal for interactive elements
-- **Status**: `secure` (green), `locked` (gray), `warning` (amber), `danger` (red)
-- **Fonts**: Inter (sans), JetBrains Mono (mono)
+```css
+/* input.css */
+@import "tailwindcss";
 
-The `content` path scans `*.html` and `./src/**/*.rs` for Tailwind class usage.
+@theme {
+  /* Core palette */
+  --color-iron:  #09090B;   /* darkest — page fill */
+  --color-stone: #0C0E14;   /* card surfaces */
+  --color-steel: #222736;   /* borders, dividers */
+  --color-rune:  #5C7090;   /* primary accent, logomark */
+  --color-bone:  #DBD7CD;   /* primary text */
+
+  /* Text scale */
+  --color-text-primary:   #DBD7CD;
+  --color-text-secondary: #9AA3B0;
+  --color-text-muted:     #636D7E;
+  --color-text-ghost:     #3E4A5E;
+
+  /* Surface scale */
+  --color-surface-base:    #09090B;
+  --color-surface-raised:  #0C0E14;
+  --color-surface-overlay: #111420;
+
+  /* Border scale */
+  --color-border-subtle:  #181C26;
+  --color-border-default: #1C2030;
+  --color-border-strong:  #222736;
+
+  /* Typography */
+  --font-display: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-body:    Georgia, 'Times New Roman', serif;
+  --font-mono:    'Courier New', Courier, monospace;
+}
+```
+
+Generated utility classes: `bg-iron`, `bg-stone`, `text-bone`, `text-rune`, `border-steel`, `font-mono`, etc. Tailwind v4 auto-detects class usage in `*.html` and `./src/**/*.rs` — no `content` path configuration required.
 
 ---
 
@@ -260,7 +302,9 @@ The `content` path scans `*.html` and `./src/**/*.rs` for Tailwind class usage.
 
 ### Capabilities
 
-Phase 0 creates a minimal default capability. Permissions are expanded per-phase as Tauri commands are added (Phase 6).
+Phase 0 creates a minimal default capability. In Tauri v2 the default capability grants the frontend access to all registered commands — this is intentionally permissive for development.
+
+**Phase 6 must tighten this.** Each Tauri command should be explicitly listed in a named capability file scoped to the window that needs it. The tauri-ipc design covers per-command capability configuration. The Phase 0 default capability is a dev scaffold only and must not ship as-is.
 
 ---
 
@@ -282,10 +326,15 @@ Phase 0 creates a minimal default capability. Permissions are expanded per-phase
 | 2 | Tauri version | v2 (stable) | v1 (older, being phased out) |
 | 3 | Leptos version | 0.8.x (latest) | 0.6 (template default, would need migration later) |
 | 4 | Frontend build tool | Trunk | cargo-leptos (overkill for CSR-only) |
-| 5 | Existing files | Generate from template, merge custom theme | Preserve as-is (risk build pipeline mismatch); Regenerate (lose theme) |
-| 6 | SQLCipher strategy | `bundled-sqlcipher-vendored-openssl` | `bundled-sqlcipher` (needs system OpenSSL); system sqlcipher (hardest portability) |
-| 7 | Dependency versioning | Semver ranges | Exact pinning (misses patches, unusual in Rust) |
-| 8 | Module placeholders | Minimal (doc comments + types + error) | Stub traits (blurs Phase 0/1 boundary) |
+| 5 | Tailwind CSS version | v4 | v3 (hook worked as-is but requires a JS config that duplicates brand CSS tokens) |
+| 6 | Tailwind theme | Brand tokens from `docs/arx-runa-brand.css` (iron/stone/steel/rune/bone) in `input.css` `@theme` block | Previous `void-*`/`accent-*` palette in `tailwind.config.js` (did not match actual brand) |
+| 7 | SQLCipher strategy | `bundled-sqlcipher-vendored-openssl` | `bundled-sqlcipher` (needs system OpenSSL); system sqlcipher (hardest portability) |
+| 8 | Dependency versioning | Semver ranges | Exact pinning (misses patches, unusual in Rust) |
+| 9 | Module placeholders | Minimal (doc comments + types + error) | Stub traits (blurs Phase 0/1 boundary) |
+| 10 | `hkdf` + `sha2` versions | `"0.13"` + `"0.11"` | `"0.12"` + `"0.10"` (stale majors; docs.rs shows 0.13/0.11, causing Phase 1 compile errors) |
+| 11 | Frontend dep completeness | All five deps declared in Phase 0 (`leptos_meta`, `leptos_router`, `console_log`, `log`, `serde-wasm-bindgen`) | Defer `serde-wasm-bindgen` to Phase 6 — consistent with upfront backend dep declaration pattern |
+| 12 | `rand` version | `"0.10"` | `"0.9"` (stale major; 0.10 stable since 2026-02-08) |
+| 13 | `rusqlite` version | `"0.39"` | `"0.34"` (stale; breaking changes in 0.35 and 0.38; Phase 3 code should target current API) |
 
 ---
 
@@ -298,7 +347,7 @@ Phase 0 creates a minimal default capability. Permissions are expanded per-phase
 5. `cargo tauri dev` launches a window showing the Leptos app
 6. All five module directories exist with `mod.rs`, `error.rs`, and `types/mod.rs`
 7. `src-tauri/src/lib.rs` declares all modules
-8. Tailwind custom theme (void-\*, accent-\*, status colors) is present in the build
+8. Tailwind brand theme (iron, stone, steel, rune, bone palette) is present in the build output
 
 ---
 

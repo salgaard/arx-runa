@@ -43,7 +43,7 @@ This sub-phase roadmap decomposes the chunking and manifest design (378 lines) i
 
 1. **[Phase 3.1: SQLCipher Schema and MetadataStore Trait](3.1-schema-and-metadata-store.md)**
    - SQLCipher schema creation (`nodes`, `chunks`, `manifest_meta`, sharing tables)
-   - `MetadataStore` trait with 9 async methods
+   - `MetadataStore` trait with 11 async methods (including `rename_node`, `move_node`)
    - `SqlCipherMetadataStore` and `MockMetadataStore` implementations
    - `Node`, `ChunkRecord`, and `StorageError` types
    - **Estimated**: ~250 lines production code, ~150 lines tests

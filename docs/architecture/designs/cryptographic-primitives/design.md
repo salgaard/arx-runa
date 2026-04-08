@@ -335,6 +335,9 @@ pub enum CryptoError {
 
     #[error("key unwrap failed")]
     KeyUnwrapFailed,
+
+    #[error("checksum mismatch: blob has been tampered with or corrupted")]
+    ChecksumMismatch,
 }
 ```
 

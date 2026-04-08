@@ -1,10 +1,4 @@
-# use-case-4: Personal File Sharing
-
-**Category**: Individual Privacy
-
-**Status**: Active
-
----
+# Use Case 4: Personal File Sharing
 
 ## Overview
 

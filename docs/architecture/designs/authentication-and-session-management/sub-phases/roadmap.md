@@ -9,7 +9,7 @@
 
 ## Overview
 
-This sub-phase roadmap decomposes the authentication and session management design (382 lines) into 4 independently testable implementation units, enabling incremental validation of the two-factor authentication layer before implementing vault ceremonies.
+This sub-phase roadmap decomposes the authentication and session management design (432 lines) into 4 independently testable implementation units, enabling incremental validation of the two-factor authentication layer before implementing vault ceremonies.
 
 **Total sub-phases**: 4
 

@@ -185,13 +185,29 @@ cargo clippy -- -D warnings
 
 Create one file per sub-phase: `<X.N-kebab-title.md>`
 
+### SSOT principle
+
+Sub-phase files describe **how** to implement; `design.md` describes **what** to implement.
+
+- **Reference, don't reproduce**: For anything specified in design.md (dep versions, schemas, wire formats, config values, code blocks), link to the section and instruct the implementer to follow it. Do not copy the spec into the sub-phase file.
+- **Own the steps**: Commands to run, files to create, validation sequences, and test commands belong in the sub-phase.
+- **Own the gotchas**: Non-obvious constraints, platform quirks, and ordering notes belong in Implementation Notes.
+
+**Reference style** (correct):
+> Populate `src-tauri/Cargo.toml` using the [Cryptography dependencies table in `design.md`](../design.md#cryptography-phase-1). Use the exact versions listed there — do not reproduce the list here.
+
+**Reproduction style** (avoid — creates drift):
+> - `hkdf = "0.12"`, `sha2 = "0.10"`, `rand = "0.9"` ...
+
+This rule makes sub-phases resilient to design changes: when a spec detail changes in `design.md`, sub-phases need no update because they reference rather than repeat.
+
 Use this structure for each:
 
 ```markdown
 # Phase X.N: <Title>
 
 **Parent roadmap**: [roadmap.md](roadmap.md)
-**Design sections**: <Section names and approximate line ranges of design.md>
+**Design sections**: <Section names linking to design.md anchors>
 **Depends on**: <Previous sub-phase and/or cross-phase dependencies>
 
 ---

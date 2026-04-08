@@ -2,7 +2,7 @@
 
 > **Document type**: Exploration / feasibility research
 > **Status**: Living document
-> **Last updated**: 2026-04-06
+> **Last updated**: 2026-04-07
 
 This document surveys all known techniques for reducing the per-file padding overhead caused by Arx Runa's fixed-size 4 MiB chunk design, and evaluates each against Arx Runa's privacy model and implementation constraints.
 
@@ -617,6 +617,221 @@ A bin-packing implementation that uploads completed packs immediately (without e
 
 ---
 
+## Epoch Buffer Flush Triggers
+
+The hybrid auto-routing approach queues small files in a local epoch buffer until the buffer fills or another condition triggers upload. This raises a critical question: **what if the user adds a single small file and then does nothing else?**
+
+### The Single-File Problem
+
+```
+User: *uploads one 2 MB photo*
+Arx Runa: "File added successfully!" 
+         *puts file in staging buffer*
+         *waits for more files to fill the 4 MiB chunk*
+User: *locks vault and goes to bed*
+```
+
+If the only flush trigger is "buffer full", the file sits locally and is never backed up to the cloud. If the device fails before the next batch upload, **the file is lost**. This breaks the user's mental model of cloud backup.
+
+The flush trigger policy must balance three constraints:
+
+1. **Backup completeness**: Files in the buffer must eventually reach the cloud
+2. **Timing privacy**: Frequent flush events create observable patterns
+3. **User expectation**: Users expect "added" files to be "backed up" within a reasonable time
+
+---
+
+### Option 1 — Time-Based Flush
+
+```rust
+Buffer flush triggers:
+1. Buffer ≥ chunk_size (4 MiB) → flush immediately
+2. T seconds elapsed since first file added → flush partial buffer
+3. Vault lock → flush everything
+4. User clicks "Sync Now" → flush immediately
+```
+
+**Variants:**
+- T = 60 seconds: near-immediate backup, weak timing privacy (uploads every minute during active use)
+- T = 300 seconds (5 minutes): reasonable backup window, moderate timing privacy
+- T = 900 seconds (15 minutes): strong timing privacy, users may perceive backup as "slow"
+
+**Privacy analysis:**
+
+If T = 5 minutes, the adversary observing cloud uploads sees:
+
+```
+10:00 — user adds 1 photo      → starts 5-min timer
+10:05 — buffer flushes         → cloud sees 1 blob upload
+10:07 — user adds 10 photos    → starts new 5-min timer
+10:10 — user adds 5 more       → same timer still running
+10:12 — buffer flushes (≥ 4 MiB threshold)  → cloud sees 4 blobs (15 photos packed)
+```
+
+The adversary sees two upload events (at 10:05 and 10:12) but cannot determine:
+- Whether 10:05 was 1 file or multiple files added before the timer expired
+- How many files went into the 10:12 batch
+- The exact times individual files were added within each epoch
+
+**Compared to per-file upload:** much better (no 1:1 file-to-blob mapping)  
+**Compared to pure epoch batching:** weaker (timer creates periodic observable events)
+
+**Trade-off verdict:** Time-based flush is a **reasonable middle ground**. It prevents indefinite local-only storage while still providing meaningful timing obfuscation for multi-file batches.
+
+---
+
+### Option 2 — Lock-Only Flush (Pure Haystack Model)
+
+```rust
+Buffer flush triggers:
+1. Buffer ≥ chunk_size → flush
+2. Vault lock → flush everything
+```
+
+**Privacy:** Maximum timing obfuscation. No periodic events. The adversary only sees uploads when the vault locks — which may be once per day, or once per week.
+
+**Risk:** If the user never locks the vault (always-on desktop scenario), files accumulate locally for days. If the device crashes before the next lock, **all staged files are lost**.
+
+**UX problem:** Users adding files to an unlocked vault see "File added" but the cloud backup counter does not increment. The file is not backed up yet, but the UI suggests it is.
+
+**Mitigations:**
+- UI indicator: "N files staged, will sync when vault locks"
+- Auto-lock after 1 hour idle → forced flush
+- Persistent staging: buffer survives restarts → files eventually flush on next lock
+
+**Trade-off verdict:** Pure lock-only flush is **too risky for general use**. The "always-on vault" scenario is realistic (desktop vaults used for active work), and crash-before-lock data loss is unacceptable. This model is correct for write-once archival vaults (Haystack's design) but not for mutable active-use vaults.
+
+---
+
+### Option 3 — Adaptive Multi-Condition Flush
+
+```rust
+pub struct EpochFlushPolicy {
+    /// Flush after this duration since first file added
+    /// Default: 300 seconds (5 minutes)
+    pub time_threshold_seconds: u64,
+    
+    /// Flush when buffer exceeds this size
+    /// Default: 50 MB (~12 typical photos)
+    pub size_threshold_bytes: u64,
+}
+
+Buffer flush triggers:
+1. Buffer size ≥ size_threshold_bytes → flush
+2. time_threshold_seconds elapsed since first file added → flush
+3. Vault lock → flush
+4. User clicks "Sync Now" → flush
+```
+
+**Behavior examples:**
+
+| Scenario | What happens |
+|----------|-------------|
+| User adds 1 small file, nothing else | After 5 min: uploads as 1 padded blob |
+| User adds 20 photos in 30 seconds | After 30 sec: buffer hits 50 MB → flushes 3 blobs immediately |
+| User adds 5 photos over 10 minutes | After 5 min from first: flushes partial batch; 5 min later: flushes remaining |
+| User adds files, then locks vault | Immediate flush regardless of time/size |
+
+**Privacy:** Same as Option 1 (time-based) but with an additional size threshold to avoid holding large batches unnecessarily. The time threshold dominates the privacy trade-off.
+
+**Crash safety:** Vault lock always flushes → no sensitive data left in staging. On crash before flush, files in staging are re-queued on restart.
+
+**UI indicators:**
+
+```
+┌─────────────────────────────────────┐
+│ Vault: my-photos                    │
+│ Status: Unlocked                    │
+│                                     │
+│ ⏳ 3 files staged for sync          │
+│    (auto-sync in 2m 15s)            │
+│                                     │
+│ [Sync Now]         [Lock Vault]     │
+└─────────────────────────────────────┘
+```
+
+Users see:
+- How many files are pending
+- How long until auto-flush
+- Option to force immediate sync
+- Locking vault = guaranteed flush
+
+**Trade-off verdict:** Adaptive multi-condition flush is the **recommended approach**. It balances backup completeness (5-min max wait), timing privacy (batching during active use), and crash safety (lock always flushes). The time threshold is tunable for different threat models.
+
+---
+
+### Option 4 — Vault-Mode-Specific Policies
+
+```rust
+pub enum VaultMode {
+    /// Active mutable vault: 5-minute time threshold
+    GeneralPurpose,
+    
+    /// Archival write-once vault: lock-only flush
+    Archive,
+}
+```
+
+General-purpose vaults (default) use Option 3 (multi-condition flush). Archival vaults use Option 2 (lock-only). The user selects the mode at vault creation.
+
+**Rationale:** Archival vaults (photo library import, document backup) align with the Haystack model — write-once, no updates, flush on lock. The user understands "I'm loading 10,000 photos, they'll upload when I click Done." General-purpose vaults (active work) need predictable backup without manual intervention.
+
+**Trade-off verdict:** This is a **future refinement**. For the bachelor project, a single policy (Option 3) is sufficient. Document the vault-mode approach as a future enhancement.
+
+---
+
+### Recommendation
+
+**Implement Option 3 — Adaptive Multi-Condition Flush** with these defaults:
+
+```rust
+impl Default for EpochFlushPolicy {
+    fn default() -> Self {
+        Self {
+            time_threshold_seconds: 300,      // 5 minutes
+            size_threshold_bytes: 50_000_000, // 50 MB
+        }
+    }
+}
+```
+
+**Rationale:**
+
+1. **5-minute time threshold** is short enough to meet backup expectations without creating per-file timing leakage. Users adding a single document know it will reach the cloud within 5 minutes. Users batch-importing photos still get timing obfuscation if they add multiple files within the same 5-minute window.
+
+2. **50 MB size threshold** (~12 typical HEIC photos, ~10 JPEG photos) triggers flush for large batch imports without waiting 5 minutes. This improves perceived responsiveness during bulk operations.
+
+3. **Vault lock always flushes** ensures no sensitive plaintext is left in the staging directory after the session ends. This is a security requirement, not a performance optimization.
+
+4. **Manual "Sync Now"** gives users control for time-sensitive uploads (adding a file right before catching a flight, etc.).
+
+**Document the trade-off explicitly:**
+
+> The 5-minute auto-flush creates a weak timing side-channel: an adversary monitoring cloud uploads can observe that activity occurred within a given 5-minute window. This is strictly better than per-file upload timing (which reveals file-level granularity) but weaker than lock-only flushing (which reveals only session boundaries). The time threshold is a tunable parameter — users requiring maximum timing privacy can set it higher (or use an archival vault mode where it is disabled entirely). The default balances backup reliability against metadata leakage.
+
+**UI Requirements (Phase 6):**
+
+1. Status indicator showing staged file count and time until auto-flush
+2. "Sync Now" button to trigger immediate flush
+3. Visual confirmation when flush completes ("3 files backed up")
+4. Settings screen allowing users to adjust 	ime_threshold_seconds (advanced users only)
+
+---
+
+### Integration with Cloud Sync Design
+
+The flush policy affects the cloud synchronization design (Phase 4). When flush triggers:
+
+1. Epoch buffer contents are packed into one or more fixed-size chunks
+2. Each chunk is encrypted and moved to the staging directory as a standalone .blob file
+3. The standard cloud push flow (from Phase 4 design) uploads staged blobs to ault/
+4. After successful upload, staging .blob files are deleted
+5. Manifest chunks table is updated with poch_blob_id and byte offsets
+
+The push flow does not need to know whether blobs are standalone (large file chunks) or packed (epoch blobs). All blobs are 4 MiB + 40 bytes, all have UUID names, and all upload identically. The flush policy is entirely internal to the storage layer.
+
+---
+
 ## Upload Jitter — Why It Does Not Work
 
 A natural response to timing leakage is to add random delays between blob uploads — e.g., sleeping 1–5 seconds between each upload to blur burst boundaries. This is simple to implement and intuitively appealing. It does not solve the problem.
@@ -822,6 +1037,7 @@ This addresses the most common high-overhead scenario (photo library import) wit
 | **Upload jitter rejected as a timing defence** | Random delays between uploads, constant-rate dummy traffic | Cloud provider records server-side timestamps the client cannot influence; jitter does not remove these; epoch batching is the correct approach |
 | **Chunk size treated as an immutable vault property set at creation** | Per-file chunk size, globally mutable setting | Changing chunk size requires re-encrypting every blob; mixed blob sizes within one vault break the anonymity set |
 | **Hybrid auto-routing (Approach 7) chosen as the implementation approach** | Standard bin-packing, pure epoch batching, Padmé-only, smaller chunk size only | Eliminates write amplification from the start; matches bin-packing on storage efficiency; eliminates timing correlation for small files; no privacy trade-off required |
+| **Epoch buffer flush trigger: adaptive multi-condition policy (Option 3)** | Lock-only flush, time-only flush, single-file immediate upload | 5-minute time threshold balances backup reliability (files reach cloud promptly) against timing privacy (batches obscure individual additions); size threshold (50 MB) optimizes bulk imports; vault lock flush ensures no plaintext left in staging |
 
 ---
 
@@ -831,11 +1047,11 @@ This addresses the most common high-overhead scenario (photo library import) wit
 
 2. **Padmé as opt-in**: if implemented, Padmé changes the blob size contract. Vault metadata must record whether Padmé is enabled. Blobs from Padmé vaults and fixed-size vaults cannot be mixed in the same cloud path.
 
-3. **Epoch flush trigger**: for epoch batching, what triggers a flush? Time elapsed, total buffered size, user action, vault lock? Each has different UX and security implications (a longer epoch means more data at risk in the local staging buffer).
+3. **Combination approaches**: Padmé + epoch batching could be combined. Padmé handles the last chunk of each epoch; epoch batching handles full chunks. This would achieve near-optimal storage efficiency with only bounded leakage and no write amplification.
 
-4. **Combination approaches**: Padmé + epoch batching could be combined. Padmé handles the last chunk of each epoch; epoch batching handles full chunks. This would achieve near-optimal storage efficiency with only bounded leakage and no write amplification.
+4. **User communication**: how should storage overhead be communicated? A "vault storage efficiency" indicator (showing actual content size vs. cloud usage) would help users understand the trade-off they are accepting.
 
-5. **User communication**: how should storage overhead be communicated? A "vault storage efficiency" indicator (showing actual content size vs. cloud usage) would help users understand the trade-off they are accepting.
+5. **Vault-mode-specific flush policies**: should archival vaults (write-once photo library import) use lock-only flushing for maximum timing privacy, while general-purpose vaults use the 5-minute auto-flush? This would require a vault mode selection at creation time.
 
 ---
 

@@ -1,10 +1,5 @@
-# use-case-x: [Use Case Title]
+# Use Case x: [Use Case Title]
 
-**Category**: [Individual Privacy / Business & Enterprise / Developer & Technical]
-
-**Status**: [Draft]  <!-- Choose one: Draft | Active | Deprecated -->
-
----
 
 ## Overview
 

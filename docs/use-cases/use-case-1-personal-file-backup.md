@@ -1,10 +1,4 @@
-# use-case-1: Zero-Knowledge Personal Backup
-
-**Category**: Individual Privacy
-
-**Status**: Active
-
----
+# Use Case 1: Zero-Knowledge Personal Backup
 
 ## Overview
 
