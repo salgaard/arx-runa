@@ -12,7 +12,6 @@ create-missing = false
 [output.html]
 default-theme = "coal"
 preferred-dark-theme = "coal"
-theme-selector = false
 git-repository-url = "https://github.com/Chorizzio/arx-runa"
 git-repository-icon = "fa-github"
 edit-url-template = "https://github.com/Chorizzio/arx-runa/edit/master/docs/{path}"
@@ -20,6 +19,7 @@ site-url = "/arx-runa/"
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
 additional-css = ["arx-runa-brand.css"]
 favicon-svg = "arx-runa-logo.svg"
+no-section-label = true
 
 [output.html.fold]
 enable = true

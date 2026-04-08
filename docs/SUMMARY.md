@@ -17,6 +17,7 @@
 # Architecture
 
 - [Overview](architecture/README.md)
+- [Project Roadmap](roadmap.md)
 - [Designs](architecture/designs/README.md)
   - [Project Scaffolding](architecture/designs/project-scaffolding/design.md)
     - [Diagram: Build Pipeline](architecture/designs/project-scaffolding/diagrams/build-pipeline.md)
@@ -80,17 +81,16 @@
 
 ---
 
-# Reference
-
-- [Project Roadmap](roadmap.md)
-
----
-
 # Research
 
 - [Overview](research/README.md)
+  - [Authentication & Session Management Review](research/authentication-and-session-management-review.md)
+  - [Bin-Packing Small Files into Chunks](research/bin-packing.md)
+  - [Chunking & Manifest Review](research/chunking-and-manifest-review.md)
+  - [Compression and Cloud Storage Cost](research/compression-and-cloud-cost.md)
+  - [Cryptographic Primitives Review](research/cryptographic-primitives-review.md)
   - [Market & Future Directions](research/market-and-future-directions.md)
   - [Mobile: Encrypted Photo Backup](research/mobile-photo-backup.md)
-  - [Compression and Cloud Storage Cost](research/compression-and-cloud-cost.md)
-  - [Bin-Packing Small Files into Chunks](research/bin-packing.md)
-  - [Reducing Padding Overhead](research/padding-overhead-reduction.md)
+  - [Multi-Cloud and Storage Destinations](research/multi-cloud-and-storage-destinations.md)
+  - [Padding Overhead Reduction](research/padding-overhead-reduction.md)
+  - [Project Scaffolding Review](research/project-scaffolding-review.md)
