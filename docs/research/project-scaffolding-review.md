@@ -15,15 +15,17 @@ For the canonical design, see `docs/architecture/designs/project-scaffolding/des
 ## Table of Contents
 
 1. [The Problem](#the-problem)
-2. [Crate Version Accuracy](#crate-version-accuracy)
-3. [Tailwind CSS Version Ambiguity](#tailwind-css-version-ambiguity)
-4. [Rust Edition 2024 and the `gen` Keyword](#rust-edition-2024-and-the-gen-keyword)
-5. [Frontend Dependency Completeness](#frontend-dependency-completeness)
-6. [Leptos 0.8 and Tauri v2 Integration](#leptos-08-and-tauri-v2-integration)
-7. [Recommendation](#recommendation)
-8. [Decisions](#decisions)
-9. [Open Questions](#open-questions)
-10. [Sources](#sources)
+2. [Tailwind CSS Version](#tailwind-css-version)
+3. [Frontend Dependency Completeness](#frontend-dependency-completeness)
+4. [Workspace Layout and Alternatives](#workspace-layout-and-alternatives)
+5. [Tauri v2 Capability Model](#tauri-v2-capability-model)
+6. [Rust Edition 2024 — Resolver v3](#rust-edition-2024--resolver-v3)
+7. [Stale Dependency Versions](#stale-dependency-versions)
+8. [RustCrypto Digest Suite](#rustcrypto-digest-suite)
+9. [Recommendation](#recommendation)
+10. [Decisions](#decisions)
+11. [Open Questions](#open-questions)
+12. [Sources](#sources)
 
 ---
 
