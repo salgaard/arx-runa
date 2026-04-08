@@ -824,9 +824,9 @@ The flush policy affects the cloud synchronization design (Phase 4). When flush 
 
 1. Epoch buffer contents are packed into one or more fixed-size chunks
 2. Each chunk is encrypted and moved to the staging directory as a standalone .blob file
-3. The standard cloud push flow (from Phase 4 design) uploads staged blobs to ault/
+3. The standard cloud push flow (from Phase 4 design) uploads staged blobs to vault/
 4. After successful upload, staging .blob files are deleted
-5. Manifest chunks table is updated with poch_blob_id and byte offsets
+5. Manifest chunks table is updated with epoch_blob_id and byte offsets
 
 The push flow does not need to know whether blobs are standalone (large file chunks) or packed (epoch blobs). All blobs are 4 MiB + 40 bytes, all have UUID names, and all upload identically. The flush policy is entirely internal to the storage layer.
 
