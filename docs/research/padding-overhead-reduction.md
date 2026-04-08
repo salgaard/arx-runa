@@ -814,7 +814,7 @@ impl Default for EpochFlushPolicy {
 1. Status indicator showing staged file count and time until auto-flush
 2. "Sync Now" button to trigger immediate flush
 3. Visual confirmation when flush completes ("3 files backed up")
-4. Settings screen allowing users to adjust 	ime_threshold_seconds (advanced users only)
+4. Settings screen allowing users to adjust `time_threshold_seconds` (advanced users only)
 
 ---
 
