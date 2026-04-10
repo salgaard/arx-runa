@@ -207,18 +207,18 @@ The primary recovery mechanism is a **BIP-39 24-word mnemonic** that functions a
 ```
 recovery_salt         = CSPRNG(32 bytes)
 recovery_key          = Argon2id(phrase_words_joined, recovery_salt)   // same params as primary slot
-recovery_slot         = XChaCha20-Poly1305.encrypt(master_key, recovery_key, aad="arx-runa recovery v1")
+recovery_slot         = XChaCha20-Poly1305.encrypt(master_key, recovery_key, aad=b"arx-runa recovery v1" || vault_id_bytes)
 ```
 
 `recovery_slot` and `recovery_salt` are stored in vault metadata alongside the primary password slot. Either slot unlocks the vault independently.
 
 **Phrase generation**: 256 bits of entropy via `rand::rng().fill()`, encoded via the `bip39` crate. The last word is a checksum — mistyping any word is caught before the wrong key is derived.
 
-**Display policy**: shown exactly once during setup, immediately after vault creation. Never stored. User must acknowledge before proceeding.
+**Display policy**: shown exactly once during the recovery-setup ceremony (a separate post-creation flow via Security settings). Never stored. User must acknowledge before proceeding.
 
 **Argon2id parameters**: identical to the primary password slot — the recovery phrase is not a weaker path.
 
-**AAD**: the `aad` string `"arx-runa recovery v1"` binds the ciphertext to its context and version, preventing cross-slot confusion attacks.
+**AAD**: `b"arx-runa recovery v1" || vault_id_bytes` binds the ciphertext to its vault context and version, preventing both cross-vault recovery slot transplant attacks and cross-slot confusion attacks.
 
 ### Future phases (not shipped now)
 
