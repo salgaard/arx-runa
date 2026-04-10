@@ -543,6 +543,7 @@ None — all design decisions have been made.
 ## Related Documents
 
 - [Key Derivation Tree Diagram](diagrams/key-derivation-tree.md)
+- [Key Derivation — Recovery Slot Diagram](diagrams/key-derivation-recovery-slot.md)
 - [Chunk Encryption Flow](diagrams/chunk-encryption-flow.md)
 - [Key Derivation Flow](diagrams/key-derivation-flow.md)
 - [File Sharing Architecture](../file-sharing/design.md) — per-file key rationale

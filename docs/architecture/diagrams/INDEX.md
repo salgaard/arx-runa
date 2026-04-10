@@ -30,6 +30,7 @@ Design-specific diagrams have been moved to their respective design folders:
 | Chunk Pipeline | [`chunk-pipeline.md`](../designs/chunking-and-manifest/diagrams/chunk-pipeline.md) | Chunking & Manifest |
 | Cloud Sync Sequence | [`cloud-sync-sequence.md`](../designs/cloud-synchronisation/diagrams/cloud-sync-sequence.md) | Cloud Synchronisation |
 | Key Derivation Tree | [`key-derivation-tree.md`](../designs/cryptographic-primitives/diagrams/key-derivation-tree.md) | Cryptographic Primitives |
+| Key Derivation — Recovery Slot | [`key-derivation-recovery-slot.md`](../designs/cryptographic-primitives/diagrams/key-derivation-recovery-slot.md) | Cryptographic Primitives |
 | Chunk Encryption Flow | [`chunk-encryption-flow.md`](../designs/cryptographic-primitives/diagrams/chunk-encryption-flow.md) | Cryptographic Primitives |
 | Key Derivation Flow | [`key-derivation-flow.md`](../designs/cryptographic-primitives/diagrams/key-derivation-flow.md) | Cryptographic Primitives |
 | Manifest Schema | [`manifest-schema.md`](../designs/chunking-and-manifest/diagrams/manifest-schema.md) | Chunking & Manifest |
