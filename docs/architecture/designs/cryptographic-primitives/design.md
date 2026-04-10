@@ -135,7 +135,9 @@ where `vault_id_bytes` is the UUID v4 bytes of the vault (16 bytes raw, not the 
 /// Wraps `master_key` for storage in a vault header recovery slot.
 ///
 /// # Arguments
-/// * `master_key` - The 32-byte vault master key (consumed and zeroized after wrap)
+/// * `master_key` - The 32-byte vault master key; borrowed for the duration of the wrap
+///   operation. The caller retains ownership and zeroization is guaranteed by
+///   `MasterKey`'s `ZeroizeOnDrop` implementation when the caller's binding is dropped.
 /// * `recovery_key` - Derived from the user's BIP-39 recovery phrase via Argon2id
 /// * `vault_id` - The vault's UUID v4; included in AAD to prevent cross-vault attacks
 ///
