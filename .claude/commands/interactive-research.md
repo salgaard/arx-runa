@@ -109,6 +109,7 @@ N+3. [Sources](#sources)
 4. **Security claims require standards** — NIST, RFC, IACR, peer-reviewed paper
 5. **Flag speculation** — mark unverified claims with `<!-- TODO: verify -->`
 6. **Cross-reference** — link related research docs and design docs rather than duplicating content
+7. **Use the Ask tool** — with choices when options are clear
 
 ---
 

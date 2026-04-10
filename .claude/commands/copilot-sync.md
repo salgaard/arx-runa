@@ -1,10 +1,3 @@
----
-name: copilot-sync
-description: >
-  Sync tool for Claude rules → Copilot instructions.
-  Transforms .claude/rules/*.md to .github/instructions/*.instructions.md.
----
-
 Synchronise `.github/instructions/` files with `.claude/rules/` source files.
 
 ## Usage
@@ -28,7 +21,6 @@ be kept in sync with `.claude/rules/`:
 **Shared resources (no sync needed):**
 - `CLAUDE.md` — both read directly
 - `.claude/agents/*.md` — both read directly
-- `.claude/skills/*/SKILL.md` — both read directly
 - `.claude/commands/*.md` — both read directly
 
 ---

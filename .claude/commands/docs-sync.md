@@ -1,12 +1,3 @@
----
-name: docs-sync
-description: >
-  Documentation maintenance and GitHub Pages deployment tool. Validates
-  SUMMARY.md completeness, detects orphaned files, tests mdBook builds locally,
-  and checks deployment status. Invoke before commits touching docs/ or when
-  enabling GitHub Pages deployment.
----
-
 Documentation maintenance and GitHub Pages coordination for Arx Runa.
 
 ## Arguments
@@ -247,31 +238,11 @@ Ready for deployment: YES
 
 ## When to Use
 
-**Invoke proactively:**
-- Before any commit that modifies `docs/` content
-- After adding new documentation files
-- After creating new diagrams or ADRs
-- Before enabling GitHub Pages workflow for first time
-
 **Invoke manually:**
 - `/docs-sync` or `/docs-sync check` — validate documentation
 - `/docs-sync fix` — auto-fix orphaned files and broken links
 - `/docs-sync build` — test local build before pushing
 - `/docs-sync status` — check deployment configuration
-
----
-
-## Integration with Other Skills
-
-**With `/diagram`:**
-- After creating a new diagram, run `/docs-sync fix` to add it to SUMMARY.md
-
-**With `/architecture-decision-record`:**
-- After creating a new ADR, run `/docs-sync fix` to add it to SUMMARY.md
-
-**With Git workflow:**
-- Run `/docs-sync build` before `git commit` for docs changes
-- Run `/docs-sync check` in pre-commit hook (future automation)
 
 ---
 
@@ -288,7 +259,7 @@ These paths are intentionally excluded from public documentation:
 | `docs/README.md` | Landing page (implicit in mdBook) | YES (as Introduction) |
 | `docs/404.md` | Error page (implicit in mdBook) | NO |
 
-The skill must respect these exclusions when detecting orphaned files.
+The command must respect these exclusions when detecting orphaned files.
 
 ---
 
@@ -310,17 +281,3 @@ The skill must respect these exclusions when detecting orphaned files.
 - Capture full error output
 - Highlight relevant error lines
 - Suggest common fixes (broken links, invalid Mermaid syntax, missing files)
-
----
-
-## Future Enhancements
-
-Potential additions (not in initial implementation):
-
-- Link checking with `mdbook-linkcheck`
-- Automated heading ID validation
-- Cross-reference validation (internal links)
-- Mermaid diagram syntax validation
-- Citation marker detection (`<!-- CITE: -->`)
-- GitHub Actions API integration for deployment history
-- Pre-commit hook generation

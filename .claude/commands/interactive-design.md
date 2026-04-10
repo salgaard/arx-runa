@@ -186,5 +186,5 @@ Agent: "Recorded. Decision 2 - Storage format: ..."
 1. **Stop after each phase** — never auto-continue
 2. **One decision at a time** — don't overwhelm
 3. **Always present options** — even if one seems obviously better
-4. **Use `ask_user`** — with choices when options are clear
+4. **Use the Ask tool** — with choices when options are clear
 5. **Cite sources** — link to RFCs, docs, prior art

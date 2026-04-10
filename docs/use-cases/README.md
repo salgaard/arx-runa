@@ -9,7 +9,7 @@ Arx Runa lets you choose how strongly each vault is protected when you create it
 | Tier | What you need to unlock | Best for |
 |------|------------------------|----------|
 | **Tier 1** | Password only | Everyday use — accessible from any device |
-| **Tier 2** | Password + a specific USB file | High-value data — losing the USB means additional recovery steps |
+| **Tier 2** | Password + a specific USB file | High-value data — two physical factors required; opt-in recovery phrase available |
 
 Regardless of tier, the cloud never holds your encryption keys or unencrypted files.
 
@@ -19,7 +19,7 @@ Regardless of tier, the cloud never holds your encryption keys or unencrypted fi
 |-|----------|
 | [Personal File Backup](use-case-1-personal-file-backup.md) | Back up sensitive files to any cloud provider. Only you can read them, even if the provider is breached. |
 | [Cross-Device Access](use-case-2-cross-device-access.md) | Access the same vault from multiple devices. Changes sync automatically without leaking filenames or structure. |
-| [Hardware Key & Recovery](use-case-3-hardware-mfa-and-key-loss.md) | Use a physical USB file as a second factor. Covers what happens if the USB is lost. |
+| [Hardware Key & Recovery](use-case-3-hardware-mfa-and-key-loss.md) | Use a physical USB file as a second factor. Covers what happens if the USB or password is lost, and opt-in BIP-39 recovery phrase setup and use. |
 | [File Sharing](use-case-4-personal-file-sharing.md) | Share individual files with another person securely — without sharing your password or compromising the vault. |
 
 ## What Each Use Case Covers

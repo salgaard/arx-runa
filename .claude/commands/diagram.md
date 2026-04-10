@@ -1,11 +1,3 @@
----
-name: diagram
-description: >
-  Generate or update a Mermaid diagram for Arx Runa architecture, flows, or
-  data models. Invoke proactively when implementing a module, logging a
-  decision, or when a flow would benefit from visual documentation.
----
-
 Generate, update, or list Mermaid diagrams. Design-specific diagrams are saved to `docs/architecture/designs/<design-name>/diagrams/`. Cross-cutting diagrams go to `docs/architecture/diagrams/`.
 
 ## Arguments

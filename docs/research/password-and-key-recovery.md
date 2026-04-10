@@ -1,7 +1,7 @@
 # Arx Runa: Password and Key Recovery
 
 > **Document type**: Exploration / feasibility research
-> **Status**: Living document
+> **Status**: Concluded
 > **Last updated**: 2026-04-10
 
 Investigates every known mechanism for recovering vault access after a password or key file is lost, evaluated against Arx Runa's zero-knowledge threat model.
@@ -239,15 +239,25 @@ recovery_slot         = XChaCha20-Poly1305.encrypt(master_key, recovery_key, aad
 | Trusted contact wrap uses age encryption format (age-encryption.org/v1) | Arx Runa-native X25519 format | Contact can unwrap with `age -d` CLI — no dependency on Arx Runa being available; format is audited and standardised |
 | Ship BIP-39 phrase only; defer SLIP-39 and trusted contact wrap | Ship all four mechanisms, ship BIP-39 + SLIP-39 | Start with the simplest ZK-compatible mechanism; SLIP-39 crate maturity unverified; trusted contact requires age format integration |
 | Recovery is opt-in (no forced recovery setup) | Forced setup, no recovery at all | Follows the principle of least surprise; power users may not want the attack surface; honest about data loss risk |
+| Recovery slots re-wrapped during password/key change (phrase required) | Invalidate slots on change, wrap a stable intermediate key | Re-wrapping preserves the user's existing recovery setup; avoids forcing re-setup after every password change; integrity check confirms phrase correctness before re-wrap |
+| Recovery slot AAD includes vault_id: `b"arx-runa recovery v1" \|\| vault_id_bytes` | AAD without vault_id | Prevents cross-vault recovery slot transplant attacks; binds the ciphertext to its vault context |
+| Recovery setup is post-creation (Security settings + one-time prompt) | Inline during vault creation | Vault creation is already a 21-step ceremony for Tier 2; recovery setup requires password re-entry to re-derive `master_key`, which is a natural post-creation ceremony |
+| Same Argon2id parameters for recovery phrase as primary password slot | Weaker/faster parameters (phrase has 256-bit entropy) | Identical parameters provide slot indistinguishability in the vault header — an attacker cannot determine which salt/params belong to the recovery slot vs. primary slot |
+| Vault header uses `recovery_slots` array (supports multiple methods) | Single recovery slot field | Designed for future extensibility (SLIP-39, trusted contact) without vault header schema migration; in the BIP-39-only phase, at most one element |
 
 ---
 
 ## Open Questions
 
-- Is there a production-ready `slip39` Rust crate suitable for a security-sensitive application? The `slip39` crate on crates.io needs a maturity audit before the SLIP-39 feature is considered.
-- Should users be able to enable both a BIP-39 phrase and SLIP-39 shares simultaneously (two independent recovery slots)?
-- Should the recovery phrase slot use the same Argon2id parameters as the primary password slot, or weaker (faster) parameters given the phrase is 256-bit entropy and brute-force resistance matters less?
-- UX flow: should recovery setup be offered inline during vault creation, or as a separate "Security" settings page post-creation?
+All questions resolved. See Decisions table for rationale.
+
+- **Q1 — `slip39` Rust crate maturity**: **Resolved.** No production-ready `slip39` Rust crate exists with a security audit. The `slip39` crate on crates.io has limited adoption and no published audit. The `vsss-rs` crate provides Shamir field arithmetic but not the SLIP-39 word encoding with Reed-Solomon error correction. SLIP-39 is deferred per Decision 5. When pursued, implement the word layer on top of `vsss-rs` or wait for a crate to reach production maturity.
+
+- **Q2 — Simultaneous BIP-39 and SLIP-39 slots**: **Resolved.** Yes — the vault header uses a `recovery_slots` array, supporting multiple independent recovery methods. In the BIP-39-only phase, at most one element is present. Future phases may add SLIP-39 or trusted-contact slots alongside without a vault header schema migration.
+
+- **Q3 — Argon2id parameters for recovery phrase**: **Resolved.** Use the same Argon2id parameters as the primary password slot. The recovery phrase has 256-bit entropy, so Argon2id's brute-force resistance is redundant in practice. However, identical parameters provide **slot indistinguishability** in the vault header — an attacker cannot determine which salt belongs to the recovery slot vs. the primary slot. See Decisions table.
+
+- **Q4 — UX flow (inline vs. post-creation)**: **Resolved.** Post-creation, via a Security settings page, with a one-time dismissible prompt after vault creation. Vault creation is already a 21-step ceremony for Tier 2. Recovery setup is a separate ceremony that requires password re-entry to re-derive `master_key` — the critical invariant (no long-lived `master_key`) is preserved in both the creation and recovery-setup paths.
 
 ---
 

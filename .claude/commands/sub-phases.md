@@ -1,13 +1,3 @@
----
-name: sub-phases
-description: >
-  Decompose an Arx Runa design document into numbered, sequentially testable
-  sub-phases. Use when a design has multiple distinct implementation concerns
-  (trait + implementation, schema + pipeline, etc.) that benefit from
-  incremental delivery and independent validation. Invokable manually via
-  /sub-phases <design-name>.
----
-
 Decompose a design document into a numbered sub-phase roadmap and individual
 sub-phase files under `docs/architecture/designs/<design-name>/sub-phases/`.
 

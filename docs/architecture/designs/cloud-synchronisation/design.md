@@ -587,6 +587,11 @@ pub struct VaultHeader {
     /// BLAKE3 hash of the USB key file content, hex-encoded.
     /// Present only for Tier 2 vaults; `None` for Tier 1.
     pub key_file_blake3: Option<String>,
+
+    /// Recovery slots. Each slot independently wraps `master_key` under a
+    /// user-held recovery phrase. Empty if recovery is not configured.
+    #[serde(default)]
+    pub recovery_slots: Vec<RecoverySlot>,
 }
 
 /// Argon2id tuning parameters.
@@ -601,6 +606,29 @@ pub struct Argon2Params {
     /// Parallelism. Always 1 in Arx Runa.
     pub parallelism: u32,
 }
+
+/// A single recovery slot in the vault header.
+///
+/// Each slot is an independent LUKS-style key slot that wraps `master_key`
+/// under a user-held recovery phrase. Any slot can independently unlock the vault.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecoverySlot {
+    /// Recovery method identifier.
+    /// Current values: `"bip39"`. Future: `"slip39"`, `"trusted_contact"`.
+    pub method: String,
+
+    /// Argon2id salt for this slot, base64-encoded. 32 bytes (256 bits).
+    /// Public parameter by design — required before key derivation.
+    pub argon2_salt: String,
+
+    /// Argon2id parameters for this slot.
+    pub argon2_params: Argon2Params,
+
+    /// `master_key` wrapped with `recovery_key`.
+    /// Wire format: base64 of [24-byte nonce | 32-byte encrypted master_key | 16-byte tag] = 72 bytes.
+    /// AAD: `b"arx-runa recovery v1" || vault_id_bytes`.
+    pub wrapped_master_key: String,
+}
 ```
 
 Wire format (from Phase 2 auth design):
@@ -614,7 +642,8 @@ Wire format (from Phase 2 auth design):
   "tier": 1,
   "argon2_salt": "<base64-32-bytes>",
   "argon2_params": { "memory_cost": 19456, "time_cost": 2, "parallelism": 1 },
-  "key_file_blake3": null
+  "key_file_blake3": null,
+  "recovery_slots": []
 }
 ```
 
@@ -627,7 +656,29 @@ Wire format (from Phase 2 auth design):
   "tier": 2,
   "argon2_salt": "<base64-32-bytes>",
   "argon2_params": { "memory_cost": 19456, "time_cost": 2, "parallelism": 1 },
-  "key_file_blake3": "<hex-32-bytes>"
+  "key_file_blake3": "<hex-32-bytes>",
+  "recovery_slots": []
+}
+```
+
+**With a BIP-39 recovery slot configured (either tier):**
+
+```json
+{
+  "vault_id": "<uuid-v4>",
+  "schema_version": 1,
+  "tier": 1,
+  "argon2_salt": "<base64-32-bytes>",
+  "argon2_params": { "memory_cost": 19456, "time_cost": 2, "parallelism": 1 },
+  "key_file_blake3": null,
+  "recovery_slots": [
+    {
+      "method": "bip39",
+      "argon2_salt": "<base64-32-bytes>",
+      "argon2_params": { "memory_cost": 19456, "time_cost": 2, "parallelism": 1 },
+      "wrapped_master_key": "<base64-72-bytes>"
+    }
+  ]
 }
 ```
 
@@ -653,6 +704,11 @@ Wire format (from Phase 2 auth design):
    e. argon2_params.time_cost >= 2
    f. If tier == 2: key_file_blake3 decodes from hex to exactly 32 bytes
    g. If tier == 1: key_file_blake3 is null
+   h. For each element of recovery_slots:
+      - method is a known value ("bip39"; unknown values are silently skipped for forward compatibility)
+      - argon2_salt decodes from base64 to exactly 32 bytes
+      - argon2_params.memory_cost >= 19456 and argon2_params.time_cost >= 2
+      - wrapped_master_key decodes from base64 to exactly 72 bytes
 4. Delete temp file
 5. Return VaultHeader
 ```
@@ -669,6 +725,7 @@ All vault header fields are intentionally public. Storing them in plaintext does
 | `argon2_salt` | Public parameter by design — required before key derivation; NIST SP 800-132 designates salts as public <!-- CITE: NIST SP 800-132 §5.1 --> |
 | `argon2_params` | Public tuning parameters; an attacker who has the salt still needs the password (and key file for Tier 2) |
 | `key_file_blake3` | Tier 2 only; `null` for Tier 1. BLAKE3 is preimage-resistant; the hash cannot be reversed to recover the 32-byte key file. An attacker gains only the ability to verify a candidate file — equivalent to attempting authentication <!-- CITE: BLAKE3 specification — preimage resistance property --> |
+| `recovery_slots` | Each slot contains a salt (public — NIST SP 800-132), Argon2id params (public tuning parameters), and a `wrapped_master_key` ciphertext. The ciphertext is XChaCha20-Poly1305 encrypted `master_key` under a `recovery_key` derived from the user's 256-bit BIP-39 phrase. Without the phrase, decrypting `wrapped_master_key` is computationally infeasible. The slot AAD (`b"arx-runa recovery v1" \|\| vault_id_bytes`) is also public but binds the ciphertext to its vault — an attacker cannot transplant a slot from one vault to another. |
 
 ---
 

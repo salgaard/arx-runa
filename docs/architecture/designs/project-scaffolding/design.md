@@ -28,8 +28,7 @@ arx-runa/
 ├── Cargo.lock
 ├── Trunk.toml                  # Trunk build config for Leptos frontend
 ├── index.html                  # Trunk entry point
-├── input.css                   # Tailwind input (imports + directives)
-├── tailwind.config.js          # Arx Runa custom theme
+├── input.css                   # Tailwind input (imports + @theme block)
 ├── package.json                # Tailwind CSS dependency
 ├── src/                        # Leptos frontend (WASM, built by Trunk)
 │   ├── main.rs                 # Leptos mount point
@@ -58,6 +57,11 @@ arx-runa/
 │       │   ├── error.rs
 │       │   └── types/
 │       │       └── mod.rs
+│       ├── sync/               # Phase 4 (cloud synchronisation)
+│       │   ├── mod.rs
+│       │   ├── error.rs
+│       │   └── types/
+│       │       └── mod.rs
 │       ├── memory/             # Memory protection utilities
 │       │   ├── mod.rs
 │       │   └── error.rs
@@ -69,7 +73,7 @@ arx-runa/
 └── .claude/                    # AI rules and reference
 ```
 
-**Note**: The `sharing/` module is not created in Phase 0 — it is introduced in Phase 5 per the roadmap.
+**Note**: The `sharing/` module is not created in Phase 0 — it is introduced in Phase 5 per the roadmap, following the same `mod.rs` + `error.rs` + `types/mod.rs` placeholder pattern used here.
 
 ### Rationale
 
@@ -108,7 +112,9 @@ All dependencies use semver ranges. `Cargo.lock` pins exact versions.
 | `serde_json` | `"1"` | JSON serialisation |
 | `tokio` | `"1"` | Async runtime (with `full` feature) |
 | `thiserror` | `"2"` | Error type derivation |
-| `anyhow` | `"1"` | Error context propagation |
+| `async-trait` | `"0.1"` | Dyn-safe async traits (`MetadataStore` in Phase 3, `CloudTransport` in Phase 4) |
+| `tracing` | `"0.1"` | Structured logging (Phase 6 error logging before IPC sanitisation) |
+| `anyhow` | `"1"` | Error context propagation (dev/test use; production code uses typed `thiserror` enums) |
 
 #### Cryptography (Phase 1+)
 
@@ -116,6 +122,7 @@ All dependencies use semver ranges. `Cargo.lock` pins exact versions.
 |-------|---------|---------|
 | `chacha20poly1305` | `"0.10"` | XChaCha20-Poly1305 AEAD |
 | `argon2` | `"0.5"` | Argon2id KDF |
+| `bip39` | `"2"` | Mnemonic recovery phrase generation (Phase 2) |
 | `hkdf` | `"0.13"` | HKDF-SHA256 key derivation |
 | `sha2` | `"0.11"` | SHA-256 (HKDF dependency) |
 | `blake3` | `"1"` | BLAKE3 checksums |
@@ -152,6 +159,7 @@ The frontend Leptos code requires its own `Cargo.toml` at the project root (or T
 | `console_log` | `"1"` | — | Routes `log::*` macros to browser console in WASM |
 | `log` | `"0.4"` | — | Logging facade (`log::info!`, `log::error!`, etc.) |
 | `serde-wasm-bindgen` | `"0.6"` | — | `to_value`/`from_value` for Tauri IPC bridge (Phase 6) |
+| `gloo-timers` | `"0.3"` | — | WASM timer utilities for polling intervals (session timeout, sync status — Phase 6) |
 
 **Note**: The root `Cargo.toml` is a **package+workspace manifest** — it contains both `[package]` (the frontend crate, compiled by Trunk to WASM) and `[workspace]` (declaring `src-tauri` as a member). See Workspace Layout rationale for the choice of this pattern over a virtual manifest.
 
@@ -180,11 +188,14 @@ pub mod types;
 use thiserror::Error;
 
 /// Errors produced by the <module_name> module.
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum <Module>Error {
     // Variants added in implementation phases.
 }
 ```
+
+`#[non_exhaustive]` is chosen over `#[allow(dead_code)]` because all later designs mark their error enums `#[non_exhaustive]`. Committing to it here avoids a blanket edit when Phase 1 starts adding variants.
 
 ### `types/mod.rs` pattern
 
@@ -201,8 +212,11 @@ pub enum <Module>Error {
 | `crypto` | Cryptographic primitives: key derivation, chunk encryption, file key management, BLAKE3 checksums. |
 | `auth` | Authentication and session management: Argon2id KDF, USB key file, session lifecycle, memory locking. |
 | `storage` | Storage layer: fixed-size chunking, SQLCipher manifest database, file-to-blob pipeline. |
-| `memory` | Memory protection utilities: mlock/VirtualLock wrappers, zeroisation helpers. |
+| `sync` | Cloud synchronisation: provider-agnostic blob transport, push/pull flows, vault header management. |
+| `memory` | Memory protection utilities: mlock/VirtualLock wrappers, zeroisation helpers. Primary consumer: `auth` module (Phase 2) for session key memory locking. |
 | `ui` | Tauri IPC command handlers: input validation, error sanitisation, async command dispatch. |
+
+**Note**: The `sharing/` module (Phase 5) is not created in Phase 0. It will be added using the same placeholder pattern (`mod.rs`, `error.rs`, `types/mod.rs`).
 
 ---
 
@@ -331,6 +345,8 @@ Phase 0 creates a minimal default capability. In Tauri v2 the default capability
 | 7 | SQLCipher strategy | `bundled-sqlcipher-vendored-openssl` | `bundled-sqlcipher` (needs system OpenSSL); system sqlcipher (hardest portability) |
 | 8 | Dependency versioning | Semver ranges | Exact pinning (misses patches, unusual in Rust) |
 | 9 | Module placeholders | Minimal (doc comments + types + error) | Stub traits (blurs Phase 0/1 boundary) |
+| 14 | `sync/` module in Phase 0 | Included as placeholder — Phase 4 and Phase 6 both reference `sync::SyncError` | Add in Phase 4 (late creation breaks "all modules from Phase 0" convention) |
+| 15 | `#[non_exhaustive]` on error enums | Chosen over `#[allow(dead_code)]` | All Phase 1-6 designs use `#[non_exhaustive]`; consistent from the start avoids bulk edits |
 | 10 | `hkdf` + `sha2` versions | `"0.13"` + `"0.11"` | `"0.12"` + `"0.10"` (stale majors; docs.rs shows 0.13/0.11, causing Phase 1 compile errors) |
 | 11 | Frontend dep completeness | All five deps declared in Phase 0 (`leptos_meta`, `leptos_router`, `console_log`, `log`, `serde-wasm-bindgen`) | Defer `serde-wasm-bindgen` to Phase 6 — consistent with upfront backend dep declaration pattern |
 | 12 | `rand` version | `"0.10"` | `"0.9"` (stale major; 0.10 stable since 2026-02-08) |
@@ -345,7 +361,7 @@ Phase 0 creates a minimal default capability. In Tauri v2 the default capability
 3. `cargo test --all-targets` passes (no tests yet, but compilation succeeds)
 4. `cargo build --release` succeeds
 5. `cargo tauri dev` launches a window showing the Leptos app
-6. All five module directories exist with `mod.rs`, `error.rs`, and `types/mod.rs`
+6. All six module directories exist with `mod.rs`, `error.rs`, and `types/mod.rs` (`crypto`, `auth`, `storage`, `sync`, `memory`, `ui`)
 7. `src-tauri/src/lib.rs` declares all modules
 8. Tailwind brand theme (iron, stone, steel, rune, bone palette) is present in the build output
 

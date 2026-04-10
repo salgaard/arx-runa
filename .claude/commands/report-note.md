@@ -1,16 +1,3 @@
----
-name: report-note
-description: >
-  Capture a noteworthy moment for the bachelor report log. Invoke proactively
-  when a design decision, technical discovery, pivot, security trade-off,
-  complex implementation, or limitation occurs during a session — especially
-  when a threat is declared out-of-scope, a weaker-but-simpler approach is
-  chosen, or a known limitation is accepted. Also invoke proactively after a
-  meaningful git commit (implementation milestone, design decision, or
-  security-relevant change) — but NOT for routine fixes or formatting commits.
-  Invokable manually by the user via /report-note <topic>.
----
-
 Capture or manage bachelor report log entries in `docs/report-log/`.
 
 ## Arguments
@@ -72,7 +59,7 @@ Output one line: `Logged report note: <title>`
 
 ### Step 6 — Optionally diagram
 
-For `decision` or `implementation` entries: if the topic maps to a visualisable flow, structure, or schema, invoke the `diagram` skill. Check `docs/architecture/diagrams/INDEX.md` first to avoid duplicates.
+For `decision` or `implementation` entries: if the topic maps to a visualisable flow, structure, or schema, invoke the `/diagram` command. Check `docs/architecture/diagrams/INDEX.md` first to avoid duplicates.
 
 ---
 

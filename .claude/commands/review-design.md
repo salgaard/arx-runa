@@ -256,3 +256,4 @@ Good (research document style — write this):
 7. **Changes go in design.md** — the research doc captures reasoning; the design doc captures the outcome
 8. **Don't over-fix** — Notes do not require design changes
 9. **Standalone readable** — the finished document needs no conversation context to make sense
+10. **Use the Ask tool** — with choices when options are clear

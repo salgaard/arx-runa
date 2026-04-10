@@ -48,10 +48,10 @@ This sub-phase roadmap decomposes Phase 0 (Project Scaffolding) into 3 independe
 
 2. **[Phase 0.2: Dependencies and Module Skeleton](0.2-dependencies-and-modules.md)**
    - Populate `src-tauri/Cargo.toml` with all required crates (crypto, storage, dev-deps)
-   - Create `src-tauri/src/{crypto,auth,storage,memory,ui}/mod.rs`, `error.rs`, `types/mod.rs`
-   - Declare all modules in `src-tauri/src/lib.rs`
+   - Create `src-tauri/src/{crypto,auth,storage,sync,memory,ui}/mod.rs`, `error.rs`, `types/mod.rs`
+   - Declare all six modules in `src-tauri/src/lib.rs`
    - Verify `cargo clippy -- -D warnings` and `cargo test` pass
-   - **Estimated**: ~80 lines created, no test code (empty skeleton)
+   - **Estimated**: ~100 lines created, no test code (empty skeleton)
 
 3. **[Phase 0.3: Frontend Build Pipeline and Verification](0.3-frontend-build-pipeline.md)**
    - Write `Trunk.toml` with Tailwind v4 pre-build hook (`@tailwindcss/cli`)
@@ -93,7 +93,7 @@ cargo build --release
 ### Manual Testing Checklist
 
 - Phase 0.1: `cargo metadata` shows `src-tauri` as a workspace member; no top-level `[[bin]]` target
-- Phase 0.2: All five module paths exist; `cargo check` reports no errors or unresolved modules
+- Phase 0.2: All six module paths exist; `cargo check` reports no errors or unresolved modules
 - Phase 0.3: Tauri window appears with default Leptos content; Tailwind brand token classes (`bg-iron`, `text-bone`, `text-rune`) compile without warnings
 
 ---

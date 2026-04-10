@@ -79,7 +79,7 @@ Each file has a unique `file_key` — a random 256-bit value generated at file c
 pub fn generate_file_key() -> FileKey;
 ```
 
-Uses `rand::thread_rng().gen::<[u8; 32]>()` (CSPRNG).
+Uses `rand::rng().random::<[u8; 32]>()` (CSPRNG).
 
 ### Wrapping and Unwrapping
 
@@ -112,6 +112,68 @@ pub fn unwrap_file_key(
     wrapped: &WrappedFileKey,
     key_encryption_key: &KeyEncryptionKey,
 ) -> Result<FileKey, CryptoError>;
+```
+
+### Recovery Master Key Wrapping
+
+The recovery slot wraps `master_key` — not a `file_key`. This is a distinct operation with a distinct type and mandatory non-empty AAD. The AAD binds the ciphertext to its vault and purpose, preventing:
+
+- **Cross-vault transplant attacks**: a recovery slot from vault A cannot unlock vault B (different `vault_id`)
+- **Cross-slot confusion**: recovery slot blobs are authenticated differently from `file_key_wrapped` blobs (different AAD)
+
+The wire format is identical to `WrappedFileKey` (72 bytes: 24-byte nonce + 32-byte ciphertext + 16-byte tag).
+
+**AAD construction**:
+
+```
+aad = b"arx-runa recovery v1" || vault_id_bytes
+```
+
+where `vault_id_bytes` is the UUID v4 bytes of the vault (16 bytes raw, not the hyphenated string form).
+
+```rust
+/// Wraps `master_key` for storage in a vault header recovery slot.
+///
+/// # Arguments
+/// * `master_key` - The 32-byte vault master key (consumed and zeroized after wrap)
+/// * `recovery_key` - Derived from the user's BIP-39 recovery phrase via Argon2id
+/// * `vault_id` - The vault's UUID v4; included in AAD to prevent cross-vault attacks
+///
+/// # Returns
+/// 72-byte wire blob: [24-byte nonce | 32-byte encrypted master_key | 16-byte tag]
+pub fn wrap_master_key_for_recovery(
+    master_key: &MasterKey,
+    recovery_key: &RecoveryKey,
+    vault_id: &VaultId,
+) -> WrappedMasterKey;
+
+/// Unwraps `master_key` from a vault header recovery slot.
+///
+/// # Arguments
+/// * `wrapped` - The 72-byte wire blob from the vault header recovery slot
+/// * `recovery_key` - Derived from the user's BIP-39 recovery phrase via Argon2id
+/// * `vault_id` - Must match the vault_id used during wrapping
+///
+/// # Errors
+/// Returns `CryptoError::DecryptionFailed` if authentication fails (wrong phrase or wrong vault).
+pub fn unwrap_master_key_from_recovery(
+    wrapped: &WrappedMasterKey,
+    recovery_key: &RecoveryKey,
+    vault_id: &VaultId,
+) -> Result<MasterKey, CryptoError>;
+```
+
+New types:
+
+```rust
+/// 32-byte recovery key derived from the user's BIP-39 phrase via Argon2id.
+/// Zeroized on drop. Never stored — derived on demand from the phrase.
+pub struct RecoveryKey(Zeroizing<[u8; 32]>);
+
+/// 72-byte wire blob: [nonce | encrypted master_key | tag].
+/// Stored in the vault header recovery slot. Does not implement ZeroizeOnDrop
+/// because it is ciphertext, not key material.
+pub struct WrappedMasterKey([u8; 72]);
 ```
 
 ---
@@ -198,7 +260,7 @@ pub fn generate_nonce() -> [u8; 24];
 ```
 
 **Requirements**:
-- ✅ Use: CSPRNG (e.g., `rand::thread_rng()`)
+- ✅ Use: CSPRNG (e.g., `rand::rng().random::<[u8; 24]>()`)
 - ❌ Reject: Sequential nonces, counter-based nonces, derived nonces
 
 **Rationale**: Sequential nonces create catastrophic failure if counter is reset or reused. Random 192-bit nonces have negligible collision probability (2^-64 after 2^64 encryptions).
@@ -442,17 +504,17 @@ AEGIS-256 (IETF CFRG draft-irtf-cfrg-aegis-aead) offers ~2× higher throughput o
 ```toml
 [dependencies]
 chacha20poly1305 = "0.10"  # XChaCha20-Poly1305 AEAD
-hkdf = "0.12"              # HKDF-SHA256
-sha2 = "0.10"              # SHA-256 for HKDF
+hkdf = "0.13"              # HKDF-SHA256
+sha2 = "0.11"              # SHA-256 for HKDF
 blake3 = "1"               # BLAKE3 checksum
-rand = "0.9"               # CSPRNG — must be >= 0.9 for Rust edition 2024 (`gen` keyword reserved)
+rand = "0.10"              # CSPRNG — must be >= 0.9 for Rust edition 2024 (`gen` keyword reserved); 0.10 is current stable
 uuid = { version = "1", features = ["v4"] }
 zeroize = { version = "1", features = ["derive"] }
 secrecy = "0.10"           # Secret<T> wrapper
 thiserror = "2"            # Error handling
 ```
 
-> **Note on `rand` 0.9 API change**: In Rust 2024, `gen` is a reserved keyword, so method calls written as `.gen()` require escaping as `.r#gen()`. Prefer `rand::rng().random::<[u8; 32]>()` over `rand::thread_rng().r#gen::<[u8; 32]>()` for clarity and alignment with the `rand` 0.9 API.
+> **Note on `rand` 0.10 API**: `rand` 0.10 drops `thread_rng()` and the `.gen()` method. Use `rand::rng().random::<[u8; 32]>()`. In Rust 2024, `gen` is a reserved keyword — `.gen()` is unavailable anyway. The scaffolding pins `rand = "0.10"` (current stable since 2026-02-08).
 
 ---
 
@@ -473,6 +535,8 @@ None — all design decisions have been made.
 | Nonce strategy | Random 192-bit via CSPRNG | Avoids counter persistence issues |
 | AAD format | `file_id \|\| chunk_index` (big-endian) | Binds ciphertext to context |
 | BLAKE3 mode | Unkeyed; `VerifiedBlob` newtype enforces check-before-decrypt | Manifest is SQLCipher-encrypted so unkeyed is operationally sufficient; newtype makes skipping the check a compile error |
+| Recovery slot AAD | `b"arx-runa recovery v1" \|\| vault_id_bytes` | Prevents cross-vault transplant attacks (vault_id binds to vault) and cross-slot confusion with `file_key_wrapped` blobs (different AAD domain) |
+| Recovery wrapping uses dedicated functions | `wrap_master_key_for_recovery` / `unwrap_master_key_from_recovery` distinct from `wrap_file_key` | Type system enforces correct AAD usage; `MasterKey` and `FileKey` wrapping cannot be confused |
 
 ---
 
