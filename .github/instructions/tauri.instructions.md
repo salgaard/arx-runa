@@ -4,6 +4,8 @@ applyTo: "src-tauri/src/ui/**,src-tauri/tauri.conf.json,src-tauri/capabilities/*
 
 # Tauri — rules
 
+**Design specification**: `docs/architecture/designs/tauri-ipc-and-frontend/design.md`
+
 ## IPC / UI layer (`src/ui/`)
 - Sanitise before IPC: no key material, no paths, no stack traces
 - Return generic message; log details server-side (`RUST_LOG=debug`)
@@ -12,8 +14,9 @@ applyTo: "src-tauri/src/ui/**,src-tauri/tauri.conf.json,src-tauri/capabilities/*
 - `tauri::State<T>` for config — never for keys (those stay in mlocked memory)
 
 ## Config (`tauri.conf.json`)
-- CSP required: `default-src 'self'` — no `'unsafe-inline'`, no `'unsafe-eval'`
-- Never: `dangerousRemoteDomainIpcAccess`, `withGlobalTauri` in production
+- CSP required: `default-src 'self'` with explicit local-only directives (`connect-src`, `script-src`, `style-src`, `img-src`) per design
+- `withGlobalTauri: true` is required for Leptos WASM IPC; compensate with strict CSP and no remote script sources
+- Never enable `dangerousRemoteDomainIpcAccess`
 - Explicit `security.capabilities` list; sign release builds
 
 ## Capabilities (`capabilities/`)
@@ -24,9 +27,14 @@ applyTo: "src-tauri/src/ui/**,src-tauri/tauri.conf.json,src-tauri/capabilities/*
 
 ## Build (`build.rs`)
 - Whitelist commands via `AppManifest::commands()` — compile-time safety
-- Required: `unlock_vault`, `lock_vault`, `get_vault_status`, `list_directory`, `encrypt_and_upload_file`, `download_and_decrypt_file`, `delete_file`
+- Keep allowlist aligned with the design command set:
+  - Auth: `authenticate`, `create_vault`, `change_password`, `rotate_key_file`, `lock_session`, `get_session_status`, `delete_vault`
+  - Files: `list_directory`, `upload_file`, `download_file`, `delete_file`, `get_file_content`, `list_remote`
+  - Sync: `sync_to_cloud`, `recover_from_cloud`, `get_sync_status`, `migrate_vault`, `sync_backup`
+  - Destinations: `add_destination`, `list_destinations`, `delete_destination`
+  - Sharing: `export_public_key`, `add_contact`, `list_contacts`, `share_file`, `import_share`, `revoke_share`, `list_shares`, `list_received_shares`
 - Never expose: key material, internal paths, debug commands
 
 ## Plugins
-- Allowed: `dialog`, `fs` (scoped), `process`
-- Never: `shell`, `http`, `clipboard`, `fs:write-all`
+- Keep plugin surface minimal and tightly scoped
+- Never: `shell`, `http`, `clipboard`, or unrestricted filesystem permissions

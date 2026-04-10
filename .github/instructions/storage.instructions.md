@@ -12,7 +12,8 @@ applyTo: "src-tauri/src/storage/**"
 - `ON DELETE CASCADE` for node → chunks
 
 ## Chunking
-- Fixed 4 MiB chunks with zero-padding (no CDC — leaks size info)
+- Chunk size is immutable per vault (set at creation): 128 KiB-64 MiB, default 4 MiB
+- Zero-pad each chunk to `chunk_size_bytes` (no CDC — leaks size info)
 - `chunk_index` 0-based, stored in manifest and used as AAD
 - Blob names: random UUID v4 — no relation to file identity
 - See design doc for padding waste analysis table
@@ -23,11 +24,13 @@ applyTo: "src-tauri/src/storage/**"
 
 ## Cloud backup
 - Manifest encrypted with `manifest_key`
-- Vault header (unencrypted) uploaded BEFORE manifest — salt needed first
+- Manifest backup is a singleton blob (no AAD); vault header stays plaintext JSON at cloud root
+- Push flow uploads manifest backup, then uploads vault header idempotently on every push
 - Snapshot model: atomic full export, `snapshot_counter` increments each push
 
 ## Deletion
-- Immediate: delete blobs + remove rows in single transaction
+- Transaction order: read blob names, delete node row (CASCADE removes chunk rows), commit, then delete blobs
+- If blob deletion is interrupted, orphan encrypted blobs are cleaned on startup
 
 ## I/O
 - Stream via `BufReader`/`BufWriter` — never load full file

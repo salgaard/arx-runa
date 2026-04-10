@@ -14,8 +14,9 @@ applyTo: "src-tauri/src/crypto/**"
 - 24 bytes via CSPRNG per chunk — never sequential/derived
 
 ## AAD
-- Every encrypt/decrypt: AAD = `file_id || chunk_index` (big-endian)
-- Mismatch = silent auth failure; missing = chunk swap attacks possible
+- Every chunk encrypt/decrypt: AAD = `file_id || chunk_index` (big-endian)
+- Singleton blobs follow design-specific AAD rules (`file_key_wrapped` uses empty AAD; manifest backup uses no AAD)
+- Chunk AAD mismatch = silent auth failure; missing chunk AAD enables swap/reorder attacks
 
 ## Wire format
 - `[24B nonce | ciphertext | 16B tag]`

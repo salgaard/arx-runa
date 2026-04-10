@@ -2,7 +2,7 @@
 
 Zero-knowledge, bring-your-own-cloud file encryption tool with client-side encryption. Data is encrypted on the client before upload, arrives as opaque blobs, and returns readable only on the client. Cloud never holds keys, names, or metadata.
 
-Full specs: `docs/architecture/designs/` — crypto, auth, chunking, and session management.
+Full specs: `docs/architecture/designs/` — crypto, auth/session, chunking/manifest, cloud sync, file sharing, and Tauri IPC/frontend.
 Reference: `.claude/reference/rust-patterns.md`, `.claude/reference/code-structure.md`
 
 ## Naming

@@ -5,6 +5,8 @@ paths:
 
 # Leptos Frontend — rules
 
+**Design specification**: `docs/architecture/designs/tauri-ipc-and-frontend/design.md`
+
 For patterns and examples, see `.claude/reference/leptos-patterns.md`.
 
 ## Reactivity
@@ -23,6 +25,8 @@ For patterns and examples, see `.claude/reference/leptos-patterns.md`.
 
 ## Arx Runa constraints
 - **Zero-Trace**: No localStorage/sessionStorage for sensitive data
+- **Zero-Trace**: No IndexedDB and no service workers
 - **Zero-Trace**: Never log keys, passwords, decrypted content
+- **Zero-Trace**: Zeroize password strings before clearing UI state
 - **Zero-Trace**: Clear UI state when vault locks
 - All Tauri IPC via `invoke()` — backend handles crypto
