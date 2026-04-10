@@ -9,7 +9,7 @@ Arx Runa lets you choose how strongly each vault is protected when you create it
 | Tier | What you need to unlock | Best for |
 |------|------------------------|----------|
 | **Tier 1** | Password only | Everyday use — accessible from any device |
-| **Tier 2** | Password + a specific USB file | High-value data — two physical factors required; opt-in recovery phrase available |
+| **Tier 2** | Password + a specific USB file | High-value data — two factors required (password + physical USB key file); opt-in recovery phrase available |
 
 Regardless of tier, the cloud never holds your encryption keys or unencrypted files.
 
