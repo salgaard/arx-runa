@@ -6,7 +6,7 @@
 
 Investigates whether authenticator-app TOTP and national digital-identity systems (MitID) can serve as a second factor or recovery mechanism for Arx Runa vault authentication, evaluated against the zero-knowledge threat model.
 
-For background on the key derivation model and session management, see `authentication-and-session-management-review.md`.  
+For background on the key derivation model and session management, see `../design-reviews/authentication-and-session-management-review.md`.  
 For recovery mechanisms (BIP-39, Shamir's SSS), see `password-and-key-recovery.md`.  
 For the canonical auth design, see `docs/architecture/designs/authentication-and-session-management/design.md`.
 
