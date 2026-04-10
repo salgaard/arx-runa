@@ -267,4 +267,3 @@ recovery_slot         = XChaCha20-Poly1305.encrypt(master_key, recovery_key, aad
 | Microsoft BitLocker documentation | BitLocker recovery key design | https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/recovery-overview |
 | `bip39` Rust crate | BIP-39 mnemonic generation and validation | https://crates.io/crates/bip39 |
 | age encryption format specification v1 | X25519 recipient stanza and file key wrapping | https://age-encryption.org/v1 |
-| LUKS2 on-disk format specification | Multi-keyslot design for volume encryption | https://gitlab.com/cryptsetup/cryptsetup/-/wikis/LUKS-standard/on-disk-format.pdf |
