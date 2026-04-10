@@ -251,7 +251,7 @@ recovery_slot         = XChaCha20-Poly1305.encrypt(master_key, recovery_key, aad
 
 All questions resolved. See Decisions table for rationale.
 
-- **Q1 — `slip39` Rust crate maturity**: **Resolved.** No production-ready `slip39` Rust crate exists with a security audit. The `slip39` crate on crates.io has limited adoption and no published audit. The `vsss-rs` crate provides Shamir field arithmetic but not the SLIP-39 word encoding with Reed-Solomon error correction. SLIP-39 is deferred per Decision 5. When pursued, implement the word layer on top of `vsss-rs` or wait for a crate to reach production maturity.
+- **Q1 — `slip39` Rust crate maturity**: **Resolved.** No production-ready `slip39` Rust crate exists with a security audit. The `slip39` crate on crates.io has limited adoption <!-- TODO: verify current download/dependent counts --> and no published audit <!-- TODO: verify — check crates.io and any linked repository for audit reports -->. The `vsss-rs` crate provides Shamir field arithmetic but not the SLIP-39 word encoding with Reed-Solomon error correction. SLIP-39 is deferred per Decision 5. When pursued, implement the word layer on top of `vsss-rs` or wait for a crate to reach production maturity. See Sources: `slip39` Rust crate, `vsss-rs` Rust crate.
 
 - **Q2 — Simultaneous BIP-39 and SLIP-39 slots**: **Resolved.** Yes — the vault header uses a `recovery_slots` array, supporting multiple independent recovery methods. In the BIP-39-only phase, at most one element is present. Future phases may add SLIP-39 or trusted-contact slots alongside without a vault header schema migration.
 
@@ -274,6 +274,7 @@ All questions resolved. See Decisions table for rationale.
 | RFC 9380 — OPAQUE (IRTF CFRG) | OPAQUE asymmetric PAKE | https://www.rfc-editor.org/rfc/rfc9380 |
 | `sharks` Rust crate | Shamir's Secret Sharing in Rust | https://crates.io/crates/sharks |
 | `vsss-rs` Rust crate | Verifiable Secret Sharing in Rust | https://crates.io/crates/vsss-rs |
+| `slip39` Rust crate | SLIP-39 mnemonic shares in Rust (community crate) | https://crates.io/crates/slip39 |
 | Microsoft BitLocker documentation | BitLocker recovery key design | https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/recovery-overview |
 | `bip39` Rust crate | BIP-39 mnemonic generation and validation | https://crates.io/crates/bip39 |
 | age encryption format specification v1 | X25519 recipient stanza and file key wrapping | https://age-encryption.org/v1 |
