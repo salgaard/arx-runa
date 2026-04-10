@@ -69,7 +69,8 @@ async fn get_session_status(
 ///
 /// `chunk_size_bytes` must be in [131072, 67108864] (128 KiB–64 MiB) and is
 /// immutable after creation — changing it requires re-encrypting every blob.
-/// Defaults to 4194304 (4 MiB) if not specified.
+/// The UI layer should pre-fill 4194304 (4 MiB) as the default before invoking
+/// this command.
 ///
 /// `epoch_buffer_enabled` controls whether small files (< chunk_size_bytes) are
 /// staged locally and packed together before upload. When false, all files are
