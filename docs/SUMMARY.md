@@ -84,13 +84,12 @@
 # Research
 
 - [Overview](research/README.md)
-  - [Authentication & Session Management Review](research/authentication-and-session-management-review.md)
   - [Bin-Packing Small Files into Chunks](research/bin-packing.md)
-  - [Chunking & Manifest Review](research/chunking-and-manifest-review.md)
   - [Compression and Cloud Storage Cost](research/compression-and-cloud-cost.md)
-  - [Cryptographic Primitives Review](research/cryptographic-primitives-review.md)
   - [Market & Future Directions](research/market-and-future-directions.md)
   - [Mobile: Encrypted Photo Backup](research/mobile-photo-backup.md)
   - [Multi-Cloud and Storage Destinations](research/multi-cloud-and-storage-destinations.md)
   - [Padding Overhead Reduction](research/padding-overhead-reduction.md)
-  - [Project Scaffolding Review](research/project-scaffolding-review.md)
+  - [Password And Key Recovery](research/password-and-key-recovery.md)
+  - [MFA for Vault Authentication](research/mfa-for-vault-authentication.md)
+

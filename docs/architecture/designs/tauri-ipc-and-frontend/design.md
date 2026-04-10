@@ -32,8 +32,9 @@ src-tauri/src/ui/
 ├── mod.rs                 # Re-exports, invoke_handler registration
 ├── error.rs               # IpcError enum, From impls
 ├── auth_commands.rs       # authenticate, create_vault, change_password, rotate_key_file, delete_vault, lock_session, get_session_status
-├── file_commands.rs       # list_directory, upload_file, download_file, delete_file, get_file_content
-├── sync_commands.rs       # sync_to_cloud, recover_from_cloud, get_sync_status, migrate_vault
+├── file_commands.rs       # list_directory, upload_file, download_file, delete_file, get_file_content, list_remote
+├── sync_commands.rs       # sync_to_cloud, recover_from_cloud, get_sync_status, migrate_vault, sync_backup
+├── destination_commands.rs # add_destination, list_destinations, delete_destination
 ├── sharing_commands.rs    # export_public_key, add_contact, list_contacts, share_file, import_share, revoke_share, list_shares, list_received_shares
 └── types.rs               # IPC-specific types (responses, progress updates)
 ```
@@ -65,13 +66,23 @@ async fn get_session_status(
 ) -> Result<SessionStatus, IpcError>;
 
 /// Create a new vault. For Tier 2, generates a key file at the destination path.
+///
+/// `chunk_size_bytes` must be in [131072, 67108864] (128 KiB–64 MiB) and is
+/// immutable after creation — changing it requires re-encrypting every blob.
+/// Defaults to 4194304 (4 MiB) if not specified.
+///
+/// `epoch_buffer_enabled` controls whether small files (< chunk_size_bytes) are
+/// staged locally and packed together before upload. When false, all files are
+/// uploaded immediately padded to chunk_size_bytes.
 #[tauri::command]
 async fn create_vault(
     vault_name: String,
     password: String,
     tier: u8,
     key_file_destination: Option<PathBuf>,  // Required for Tier 2
-    cloud_endpoint: CloudEndpointConfig,
+    primary_destination: DestinationSessionConfig,  // Primary cloud/local destination
+    chunk_size_bytes: u64,          // 131072–67108864; immutable after creation
+    epoch_buffer_enabled: bool,     // pack small files before upload; off by default
     state: tauri::State<'_, AppState>,
 ) -> Result<AuthResponse, IpcError>;
 
@@ -169,10 +180,57 @@ async fn get_sync_status(
 /// No re-encryption required — blobs are opaque ciphertext.
 #[tauri::command]
 async fn migrate_vault(
-    new_endpoint: CloudEndpointConfig,
+    new_destination_id: String,
     progress: tauri::ipc::Channel<MigrationProgress>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), IpcError>;
+
+/// Sync the primary destination to one or more backup destinations.
+/// `destination_id` identifies which backup destination to sync to;
+/// if None, syncs to all configured backup destinations.
+#[tauri::command]
+async fn sync_backup(
+    destination_id: Option<String>,
+    progress: tauri::ipc::Channel<SyncProgressUpdate>,
+    state: tauri::State<'_, AppState>,
+) -> Result<SyncResult, IpcError>;
+
+// --- destination_commands.rs ---
+
+/// Add a new destination session (primary or backup) to the vault.
+/// Credentials are encrypted and stored in SQLCipher.
+/// Validates the destination by issuing an `rclone lsd` probe before saving.
+#[tauri::command]
+async fn add_destination(
+    config: DestinationSessionConfig,
+    state: tauri::State<'_, AppState>,
+) -> Result<DestinationEntry, IpcError>;
+
+/// List all configured destination sessions for the current vault.
+/// Returns metadata only — no credential material.
+#[tauri::command]
+async fn list_destinations(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<DestinationEntry>, IpcError>;
+
+/// Delete a destination session from the vault.
+/// The primary destination cannot be deleted while backup destinations remain.
+#[tauri::command]
+async fn delete_destination(
+    destination_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
+
+// --- file_commands.rs (addition) ---
+
+/// List files on the primary remote destination, resolved via the local manifest.
+/// Vault must be unlocked. Returns a manifest-linked view (real filenames).
+/// Blobs not present in the manifest are returned as orphaned entries.
+#[tauri::command]
+async fn list_remote(
+    remote_prefix: String,  // e.g. "vault/" or a sub-path; empty = root
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<RemoteFileEntry>, IpcError>;
 
 // --- sharing_commands.rs ---
 
@@ -257,11 +315,17 @@ pub fn run() {
             ui::download_file,
             ui::delete_file,
             ui::get_file_content,
+            ui::list_remote,
             // Sync
             ui::sync_to_cloud,
             ui::recover_from_cloud,
             ui::get_sync_status,
             ui::migrate_vault,
+            ui::sync_backup,
+            // Destinations
+            ui::add_destination,
+            ui::list_destinations,
+            ui::delete_destination,
             // Sharing
             ui::export_public_key,
             ui::add_contact,
@@ -287,9 +351,11 @@ fn main() {
                 tauri_build::AppManifest::new()
                     .commands(&[
                         "add_contact",
+                        "add_destination",
                         "authenticate",
                         "change_password",
                         "create_vault",
+                        "delete_destination",
                         "delete_file",
                         "delete_vault",
                         "download_file",
@@ -299,8 +365,10 @@ fn main() {
                         "get_sync_status",
                         "import_share",
                         "list_contacts",
+                        "list_destinations",
                         "list_directory",
                         "list_received_shares",
+                        "list_remote",
                         "list_shares",
                         "lock_session",
                         "migrate_vault",
@@ -308,6 +376,7 @@ fn main() {
                         "revoke_share",
                         "rotate_key_file",
                         "share_file",
+                        "sync_backup",
                         "sync_to_cloud",
                         "upload_file",
                     ])
@@ -631,15 +700,59 @@ pub struct MigrationProgress {
     pub current_phase: String,
 }
 
-/// Cloud endpoint configuration for vault creation and migration.
+/// Configuration for adding or updating a destination session.
+/// Credentials in `rclone_config_blob` are encrypted into SQLCipher on save.
+/// `CloudEndpointConfig` is retired; use this type for vault creation and migration.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CloudEndpointConfig {
+pub struct DestinationSessionConfig {
+    /// Human-readable label (e.g., "My Backblaze B2").
+    pub label: String,
+    /// Destination type: "cloud", "external_drive", or "local_path".
+    pub destination_type: String,
+    /// Non-sensitive endpoint metadata: remote name, bucket, region, endpoint URL.
+    /// Stored in cloud-config.json for new-device bootstrap (no credentials here).
     pub provider: String,
     pub bucket: String,
     pub region: String,
     pub endpoint: String,
     pub path_prefix: String,
+    /// Rclone config section for this remote (includes credentials).
+    /// Encrypted into SQLCipher on save; never written to disk in plaintext.
+    pub rclone_config_blob: String,
+    /// True if this is the primary destination for uploads.
+    pub is_primary: bool,
+    /// Backup sync mode: "mirror" or "accumulating". None for primary destinations.
+    pub backup_mode: Option<String>,
+}
+
+/// Metadata returned when listing or adding destinations.
+/// Never includes credential material.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DestinationEntry {
+    pub destination_id: String,
+    pub label: String,
+    pub destination_type: String,
+    pub provider: String,
+    pub bucket: String,
+    pub is_primary: bool,
+    pub backup_mode: Option<String>,
+}
+
+/// A file entry returned by list_remote, linked to the local manifest.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteFileEntry {
+    pub blob_id: String,
+    /// Resolved filename from the manifest, if present.
+    pub file_name: Option<String>,
+    /// Resolved vault path from the manifest, if present.
+    pub vault_path: Option<String>,
+    /// Blob size in bytes as reported by rclone lsjson.
+    pub size_bytes: u64,
+    /// True if the blob UUID has no matching manifest entry.
+    pub is_orphaned: bool,
 }
 ```
 
@@ -757,6 +870,18 @@ src/                           # Leptos frontend
 │   ├── file_item.rs           # Single file row
 │   ├── breadcrumbs.rs         # Path navigation
 │   └── upload_button.rs       # Upload trigger
+│
+├── remote/                    # Cloud file browser feature
+│   ├── mod.rs
+│   ├── remote_browser.rs      # Manifest-linked remote view (list_remote)
+│   ├── remote_file_list.rs    # Remote file rows (pull / delete actions)
+│   └── orphan_indicator.rs    # Display for blobs with no manifest entry
+│
+├── destinations/              # Destination session management
+│   ├── mod.rs
+│   ├── destination_list.rs    # List primary + backup destinations
+│   ├── add_destination.rs     # Guided setup wizard (5 backends + paste)
+│   └── destination_item.rs    # Single destination row (sync now, delete)
 │
 ├── transfer/                  # File transfer feature
 │   ├── mod.rs
@@ -1081,6 +1206,121 @@ pub fn VaultBrowser() -> impl IntoView {
 }
 ```
 
+#### Cloud File Browser
+
+```rust
+// src/remote/remote_browser.rs
+
+use leptos::*;
+use crate::layout::AppShell;
+
+/// Cloud file browser: lists files on the primary remote destination,
+/// resolved via the local manifest. Vault must be unlocked.
+#[component]
+pub fn RemoteBrowser() -> impl IntoView {
+    let (entries, set_entries) = signal::<Vec<RemoteFileEntry>>(vec![]);
+    let (loading, set_loading) = signal(true);
+    let (error, set_error) = signal::<Option<String>>(None);
+
+    // Load remote listing on mount
+    Effect::new(move |_| {
+        spawn_local(async move {
+            set_loading.set(true);
+            match invoke::<_, Vec<RemoteFileEntry>>("list_remote", &ListRemoteRequest {
+                remote_prefix: "vault/".into(),
+            }).await {
+                Ok(result) => {
+                    set_entries.set(result);
+                    set_loading.set(false);
+                }
+                Err(err) => {
+                    set_error.set(Some(err.message));
+                    set_loading.set(false);
+                }
+            }
+        });
+    });
+
+    view! {
+        <AppShell>
+            <div class="space-y-4">
+                <h2 class="text-xl font-semibold text-void-50">"Remote Files"</h2>
+
+                <Show
+                    when=move || !loading.get()
+                    fallback=|| view! { <Spinner /> }
+                >
+                    <RemoteFileList
+                        entries=move || entries.get()
+                        on_pull=move |blob_id| { /* invoke download_file */ }
+                        on_delete=move |blob_id| { /* invoke delete_file, refresh list */ }
+                    />
+                </Show>
+
+                {move || error.get().map(|e| view! {
+                    <div class="text-danger text-sm">{e}</div>
+                })}
+            </div>
+        </AppShell>
+    }
+}
+```
+
+#### Destination Manager
+
+```rust
+// src/destinations/destination_list.rs
+
+use leptos::*;
+use crate::layout::AppShell;
+
+/// Lists all configured destination sessions and provides add/delete/sync actions.
+#[component]
+pub fn DestinationList() -> impl IntoView {
+    let (destinations, set_destinations) = signal::<Vec<DestinationEntry>>(vec![]);
+    let (loading, set_loading) = signal(true);
+
+    Effect::new(move |_| {
+        spawn_local(async move {
+            if let Ok(result) = invoke::<_, Vec<DestinationEntry>>("list_destinations", &()).await {
+                set_destinations.set(result);
+                set_loading.set(false);
+            }
+        });
+    });
+
+    view! {
+        <AppShell>
+            <div class="space-y-4">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-xl font-semibold text-void-50">"Storage Destinations"</h2>
+                    <AddDestinationButton on_added=move |entry| {
+                        set_destinations.update(|d| d.push(entry));
+                    } />
+                </div>
+
+                <Show
+                    when=move || !loading.get()
+                    fallback=|| view! { <Spinner /> }
+                >
+                    <For
+                        each=move || destinations.get()
+                        key=|d| d.destination_id.clone()
+                        children=move |dest| view! {
+                            <DestinationItem
+                                destination=dest.clone()
+                                on_sync=move |id| { /* invoke sync_backup(Some(id)) */ }
+                                on_delete=move |id| { /* invoke delete_destination(id), refresh */ }
+                            />
+                        }
+                    />
+                </Show>
+            </div>
+        </AppShell>
+    }
+}
+```
+
 ### Tauri IPC Integration
 
 ```rust
@@ -1319,3 +1559,12 @@ The frontend runs in a WebView which is inherently less trusted than the Rust ba
 | Vault creation | `create_vault` command with tier selection | Completes the Phase 2 auth workflow |
 | File viewing | In-app for images/text, download-only for other types | Zero-Trace compliance; video deferred |
 | Sharing commands | Eight commands in `sharing_commands.rs` | Covers Phase 5 file sharing operations |
+| Vault chunk size | User-configurable at creation via `chunk_size_bytes` (128 KiB–64 MiB, default 4 MiB) | Chunk size is a privacy vs. efficiency dial; immutable after creation to preserve uniform blob size within the vault |
+| Epoch buffer | User-toggleable at creation via `epoch_buffer_enabled` (off by default) | Mandatory buffering harms everyday single-file usability; opt-in for users who want packing and timing privacy on bulk imports |
+| `CloudEndpointConfig` retired | Replaced by `DestinationSessionConfig` across all commands | Multi-destination model requires a richer type that includes credential blob, backup mode, and is_primary flag; old type had no concept of primary vs. backup |
+| Destination commands | New `destination_commands.rs` module (`add_destination`, `list_destinations`, `delete_destination`) | Destination session management is a distinct domain from sync operations; separating into its own module keeps `sync_commands.rs` focused |
+| `migrate_vault` parameter | `new_destination_id: String` (references an existing `DestinationSession`) instead of inline `CloudEndpointConfig` | Migration target must already be configured and validated as a destination session; passing raw config inline would bypass credential storage and validation |
+| `sync_backup` command | Optional `destination_id`; None = sync to all backup destinations | Gives users control (sync one specific backup vs. all at once) without requiring multiple invocations |
+| `list_remote` command | In `file_commands.rs`; returns `Vec<RemoteFileEntry>` with manifest-linked filenames | Remote listing is a file operation from the user's perspective; separating from sync commands keeps the IPC surface aligned with user intent |
+| Cloud file browser frontend | `src/remote/` module with `RemoteBrowser`, `RemoteFileList`, `OrphanIndicator` | Logically separate from local vault browser; orphan handling is remote-specific |
+| Destination manager frontend | `src/destinations/` module with `DestinationList`, `AddDestination`, `DestinationItem` | Destination management is a settings-like workflow, distinct from file browsing and sync status |

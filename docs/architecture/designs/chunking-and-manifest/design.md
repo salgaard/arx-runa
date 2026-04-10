@@ -15,13 +15,24 @@
 
 ---
 
-## Chunk Size: 4 MiB
+## Chunk Size
 
-**Decision**: 4 MiB (4,194,304 bytes) fixed chunk size.
+**Chunk size is set once at vault creation and is immutable thereafter.**
 
-### Quantified padding waste analysis
+Valid range: 131,072 bytes (128 KiB) to 67,108,864 bytes (64 MiB). Default: 4,194,304 bytes (4 MiB).
 
-Every file's last chunk is zero-padded to 4 MiB. The overhead depends on `file_size mod chunk_size`:
+Chunk size is a **privacy vs. storage efficiency dial**, not a performance parameter:
+
+- **Larger chunk size** → wider blob-count inference range → stronger privacy. An adversary correlating upload timing learns only that a file falls within a range of ±chunk_size. At 64 MiB, a 5 MiB document and a 60 MiB document both produce one blob — indistinguishable.
+- **Smaller chunk size** → narrower inference range → lower storage overhead. A 512 KiB chunk size reduces padding waste for small files at the cost of giving the adversary a tighter size estimate.
+
+Chunk size is immutable after creation because changing it would require downloading, re-encrypting, and re-uploading every blob in the vault — equivalent to recreating the vault. All blobs within a vault are identically sized, preserving the anonymity set.
+
+The chosen `chunk_size_bytes` is stored in `manifest_meta` and validated on every vault open.
+
+### Quantified padding waste (at default 4 MiB)
+
+Every file's last chunk is zero-padded to `chunk_size_bytes`. The overhead depends on `file_size mod chunk_size`:
 
 | File size | Chunks | Padded total | Waste | Waste % |
 |-----------|--------|-------------|-------|---------|
@@ -35,11 +46,9 @@ Every file's last chunk is zero-padded to 4 MiB. The overhead depends on `file_s
 | 100 MiB | 25 | 100 MiB | 0 | 0% |
 | 1 GiB | 256 | 1 GiB | 0 | 0% |
 
-For files larger than one chunk, the maximum waste is < 4 MiB (constant, not proportional to file size). For a vault with many files, the average waste per file converges to ~2 MiB.
+For files larger than one chunk the maximum waste is < chunk_size (constant, not proportional to file size).
 
-**Rationale for 4 MiB over 8 MiB**: Half the padding waste per file (2 MiB average vs 4 MiB), lower memory per chunk buffer during encrypt/decrypt, finer-grained resume on interrupted transfers.
-
-Per-chunk crypto overhead: 24 bytes (nonce) + 16 bytes (Poly1305 tag) = 40 bytes. For a 4 MiB chunk, this is 0.001% — negligible.
+Per-chunk crypto overhead: 24 bytes (nonce) + 16 bytes (Poly1305 tag) = 40 bytes. Negligible at any chunk size in the valid range.
 <!-- CITE: Breaking and Fixing Content-Defined Chunking — https://eprint.iacr.org/2025/558.pdf — supports fixed-size chunking for metadata privacy over CDC -->
 
 ---
@@ -106,6 +115,25 @@ CREATE TABLE manifest_meta (
 -- ('vault_id', '<uuid>')
 -- ('snapshot_counter', '0')
 -- ('last_synced_at', NULL)
+-- ('chunk_size_bytes', '4194304')   -- immutable; validated on every open
+-- ('epoch_buffer_enabled', 'false') -- user opt-in at vault creation
+
+-- Destination sessions (Phase 4 multi-destination, included here for schema completeness):
+CREATE TABLE destination_sessions (
+    destination_id   TEXT PRIMARY KEY,          -- UUID v4
+    label            TEXT NOT NULL,             -- human-readable name
+    destination_type TEXT NOT NULL              -- 'cloud', 'external_drive', 'local_path'
+                         CHECK (destination_type IN ('cloud', 'external_drive', 'local_path')),
+    rclone_remote_name TEXT NOT NULL,           -- remote name in the session-lived rclone.conf
+    rclone_config_blob TEXT NOT NULL,           -- encrypted Rclone config section (credentials)
+    bucket           TEXT NOT NULL DEFAULT '',  -- bucket/container; empty for local paths
+    path_prefix      TEXT NOT NULL DEFAULT '',  -- path prefix within the destination
+    is_primary       INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0, 1)),
+    backup_mode      TEXT                       -- 'mirror' | 'accumulating' | NULL (primary)
+                         CHECK (backup_mode IS NULL OR backup_mode IN ('mirror', 'accumulating')),
+    created_at       INTEGER NOT NULL
+);
+-- Constraint: exactly one primary destination per vault (enforced in application logic).
 
 -- Sharing tables (Phase 5, included here for schema completeness):
 CREATE TABLE contacts (

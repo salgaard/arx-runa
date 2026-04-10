@@ -2,7 +2,7 @@
 
 > **Document type**: Exploration / feasibility research
 > **Status**: Living document
-> **Last updated**: 2026-04-07
+> **Last updated**: 2026-04-10
 
 This document surveys all known techniques for reducing the per-file padding overhead caused by Arx Runa's fixed-size 4 MiB chunk design, and evaluates each against Arx Runa's privacy model and implementation constraints.
 
@@ -1035,9 +1035,11 @@ This addresses the most common high-overhead scenario (photo library import) wit
 |---|---|---|
 | **CDC (content-defined chunking) rejected** | FastCDC, Rabin fingerprinting, Gear hashing | Published fingerprinting attacks (Truong 2025) enable file membership inference from encrypted chunk sizes; incompatible with Arx Runa's adversarial cloud threat model |
 | **Upload jitter rejected as a timing defence** | Random delays between uploads, constant-rate dummy traffic | Cloud provider records server-side timestamps the client cannot influence; jitter does not remove these; epoch batching is the correct approach |
-| **Chunk size treated as an immutable vault property set at creation** | Per-file chunk size, globally mutable setting | Changing chunk size requires re-encrypting every blob; mixed blob sizes within one vault break the anonymity set |
-| **Hybrid auto-routing (Approach 7) chosen as the implementation approach** | Standard bin-packing, pure epoch batching, Padmé-only, smaller chunk size only | Eliminates write amplification from the start; matches bin-packing on storage efficiency; eliminates timing correlation for small files; no privacy trade-off required |
-| **Epoch buffer flush trigger: adaptive multi-condition policy (Option 3)** | Lock-only flush, time-only flush, single-file immediate upload | 5-minute time threshold balances backup reliability (files reach cloud promptly) against timing privacy (batches obscure individual additions); size threshold (50 MB) optimizes bulk imports; vault lock flush ensures no plaintext left in staging |
+| **Chunk size is user-configurable at vault creation (128 KB–64 MiB, immutable after creation)** | Fixed 4 MiB for all vaults, preset tiers only | Chunk size is a privacy vs. efficiency dial: larger = wider blob-count inference range = stronger privacy; smaller = lower overhead. Users choose the right point for their workload. Exposing it as a privacy parameter rather than a performance one is a differentiator over CryFS, Borg, and Azure. Immutable after creation because changing it requires re-encrypting every blob. Default remains 4 MiB. |
+| **Epoch buffer is user-configurable opt-in at vault creation (off by default)** | Always-on epoch buffer, no epoch buffer option | In everyday single-file use the epoch buffer adds upload delay for no packing or privacy benefit — one file still produces one blob. Mandatory buffering harms usability without improving privacy for the common case. Users who want maximum timing privacy for bulk imports can enable it explicitly at vault creation. |
+| **Auto-Sync UI (Drop Zone) chosen as primary file ingestion interface** | Explicit upload button only, system file picker only | Tauri WebView supports native drag-and-drop; a Drop Zone is the most natural interface for adding files to a vault and complements both immediate upload and epoch buffer modes without requiring menu navigation. Upload button retained as accessibility fallback. |
+| **Hybrid auto-routing (Approach 7) retained as the epoch buffer implementation** | Standard bin-packing, pure epoch batching | When epoch buffer is enabled: files smaller than chunk_size are staged locally and packed; files larger than chunk_size upload full chunks immediately. This gives zero blob-size and blob-count leakage for small files while large files remain immediately available in cloud. |
+| **Epoch buffer flush trigger: adaptive multi-condition policy (Option 3)** | Lock-only flush, time-only flush, single-file immediate upload | 5-minute time threshold balances backup reliability against timing privacy; 50 MB size threshold handles bulk imports; vault lock always flushes ensuring no plaintext left in staging. |
 
 ---
 

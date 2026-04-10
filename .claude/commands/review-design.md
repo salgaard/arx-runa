@@ -4,7 +4,7 @@ Critical review session for: $ARGUMENTS
 
 **Conversation, not automation.** Read the design, research alternatives, discuss findings one at a time, write a comprehensive standalone document, apply confirmed changes back to the design.
 
-This command produces a research document in the same style as `docs/research/compression-and-cloud-cost.md` and `docs/research/bin-packing.md` — topic-driven sections with full prose, comparison tables, and inline position statements. It is not a findings report. Someone should be able to read the output document without ever having seen this conversation.
+This command produces a design review document saved to `docs/design-reviews/`, written in the same style as `docs/research/compression-and-cloud-cost.md` and `docs/research/bin-packing.md` — topic-driven sections with full prose, comparison tables, and inline position statements. It is not a findings report. Someone should be able to read the output document without ever having seen this conversation.
 
 For open-ended topic research on a new subject, use `/research` instead.
 
@@ -37,7 +37,7 @@ If the argument is ambiguous, list candidate matches and ask before proceeding.
 
 ### 1. Set Up the Research File
 
-Derive a filename: `docs/research/<design-name>-review.md`
+Derive a filename: `docs/design-reviews/<design-name>-review.md`
 
 Create with this scaffold — topics are placeholders, replace with the actual design decisions found in step 0:
 
@@ -206,7 +206,7 @@ For **Deferred/Won't fix**: record rationale in `## Open Questions`.
 2. Confirm `## Decisions` table has a row for every choice made
 3. Confirm `## Sources` has an entry for every cited paper, RFC, or standard
 4. Set `Status` to `Concluded` (all actionable findings resolved) or `Living document` (open questions remain)
-5. Add an entry to `docs/research/README.md`
+5. Add an entry to `docs/design-reviews/README.md`
 6. State: "Review complete. N changes applied to design.md, M changes applied to sub-phases."
 
 ---

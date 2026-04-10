@@ -13,7 +13,7 @@
 [![Docs](https://github.com/Chorizzio/arx-runa/actions/workflows/documentation-check.yml/badge.svg)](https://github.com/Chorizzio/arx-runa/actions/workflows/documentation-check.yml)
 ![Rust](https://img.shields.io/badge/rust-2024-orange?logo=rust)
 
-**Zero-knowledge cloud storage** — files are encrypted on your device before upload. The cloud receives only opaque ciphertext. Keys never leave your machine.
+**Zero-knowledge file encryption tool** — files are encrypted on your device before upload. The cloud receives only opaque ciphertext. Keys never leave your machine.
 
 ---
 

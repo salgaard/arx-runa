@@ -201,7 +201,7 @@ All key buffers are locked into physical RAM via `mlock` (Linux) / `VirtualLock`
 
 1. **No session → Active**: user provides password; for Tier 2 vaults, the USB key file is also detected (or selected manually). Argon2id + HKDF derive `SessionKeys`. Keys are mlocked. SQLCipher DB is opened with `sqlcipher_key`.
 
-2. **Active → Expired**: activity-based timeout fires (default: 15 minutes of inactivity). All keys in `SessionKeys` are zeroed via `zeroize()`. SQLCipher connection is closed. The struct is dropped. File operations in progress must complete or be cancelled before zeroing.
+2. **Active → Expired**: activity-based timeout fires (default: 15 minutes of inactivity). All keys in `SessionKeys` are zeroed via `zeroize()`. SQLCipher connection is closed. The session-lived temp `rclone.conf` (written from SQLCipher-stored destination credentials at session open) is overwritten and deleted. The struct is dropped. File operations in progress must complete or be cancelled before zeroing.
 
 3. **Expired → Active**: user re-authenticates. Full derivation runs again (password only for Tier 1; password + USB key file for Tier 2).
 

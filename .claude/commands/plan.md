@@ -102,7 +102,7 @@ After generating the plan:
      (e.g., `phase-001-cryptographic-primitives.md`, zero-padded to 3 digits)
    - Ad-hoc: `YYYY-MM-DD-kebab-case-description.md`
      (e.g., `2026-03-29-refactor-error-handling.md`)
-2. Write the plan to `.claude/plans/<filename>` using this frontmatter:
+2. Write the plan to project folder `.claude/plans/<filename>` using this frontmatter:
 
 ```yaml
 ---

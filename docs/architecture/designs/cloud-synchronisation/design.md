@@ -176,7 +176,194 @@ pub struct CloudEndpoint {
 }
 ```
 
-**Where the owner's config is stored.** `%APPDATA%/arx-runa/cloud-config.json` (Windows) or `~/.local/share/arx-runa/cloud-config.json` (Linux). This file contains no secrets — Rclone credentials live in Rclone's own `rclone.conf`. The cloud config must be readable before authentication (required at step 1 of new-device recovery).
+**Where the owner's config is stored.** `%APPDATA%/arx-runa/cloud-config.json` (Windows) or `~/.local/share/arx-runa/cloud-config.json` (Linux). This file contains no secrets — it holds only the non-sensitive endpoint metadata (remote name, bucket, region, endpoint URL) needed to locate the vault header before authentication. Actual Rclone credentials are stored in the vault's SQLCipher database (see [Destination Session Storage](#destination-session-storage) below). The cloud config must be readable before authentication (required at step 1 of new-device recovery).
+
+---
+
+## Multi-Destination Model
+
+Each vault has exactly **one primary destination** and **zero or more backup destinations**:
+
+- **Primary destination** — where all uploads go. Must be reachable when the user pushes or pulls.
+- **Backup destinations** — synced from the primary on demand or on schedule. May be intermittently connected (e.g., USB drives, secondary cloud accounts). N is unbounded; 0–3 is the typical range.
+
+Destination records are vault-scoped (stored in the vault's SQLCipher database). There is no global credential store shared across vaults — this preserves least privilege and prevents cross-vault credential exposure.
+
+```rust
+/// Classification of a storage destination.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DestinationType {
+    /// Cloud or self-hosted remote backed by Rclone (the common case).
+    Cloud,
+    /// External or removable drive (local path, may be absent).
+    ExternalDrive,
+    /// Local filesystem path (always reachable; useful for development and testing).
+    LocalPath,
+}
+
+/// A named, persisted connection to a storage backend.
+///
+/// Stored as an encrypted row in the vault's SQLCipher database,
+/// unlocked only during an active session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DestinationSession {
+    /// Unique identifier for this destination (UUID v4).
+    pub destination_id: String,
+
+    /// Human-readable label (e.g., "My Backblaze B2", "Home NAS", "USB Archive").
+    pub label: String,
+
+    /// Destination type tag.
+    pub destination_type: DestinationType,
+
+    /// Rclone remote name as it appears in the in-memory rclone config.
+    pub rclone_remote_name: String,
+
+    /// Serialised Rclone config section for this remote (credentials included).
+    /// Stored encrypted in SQLCipher; never written to disk in plaintext.
+    pub rclone_config_blob: String,
+
+    /// Bucket or container name (provider-specific; empty for local paths).
+    pub bucket: String,
+
+    /// Optional path prefix within the destination (e.g., "arx-runa/").
+    pub path_prefix: String,
+
+    /// Whether this is the primary destination for uploads.
+    pub is_primary: bool,
+
+    /// Backup sync mode when this destination is a backup.
+    pub backup_mode: Option<BackupSyncMode>,
+}
+
+/// Sync behaviour when mirroring to a backup destination.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BackupSyncMode {
+    /// Mirror mode (default): backup matches current state of primary.
+    /// Blobs deleted on primary are deleted on backup.
+    Mirror,
+    /// Accumulating mode (opt-in per destination): blobs are never deleted
+    /// from backup. Provides recoverable history at the cost of storage growth.
+    Accumulating,
+}
+```
+
+### Credential lifecycle
+
+Credentials in `rclone_config_blob` are decrypted from SQLCipher at session open, used to construct a temporary `rclone.conf` in memory (or as a process-scoped temp file), and wiped when the session closes. They are never written to the Arx Runa app data directory in plaintext. The existing `rclone.conf` at `%APPDATA%/arx-runa/rclone.conf` is now a **session-lived temp file**, not a persistent credential store.
+
+### New-device recovery bootstrap
+
+`cloud-config.json` retains its role for new-device recovery step 1: it contains the non-sensitive `CloudEndpoint` fields (remote name, bucket, region, endpoint URL) for the primary destination, allowing Arx Runa to locate and download the vault header before any keys exist. After authentication, the full `DestinationSession` records (including credentials) are recovered from the decrypted SQLCipher manifest.
+
+---
+
+## Destination Session Storage
+
+Rclone remote credentials are stored as encrypted rows in the vault's SQLCipher database rather than in Rclone's own `rclone.conf`. This keeps all secrets under the Argon2id-hardened key chain, eliminates a second credential store, and ensures credentials are inaccessible when the session is closed and the master key is zeroized.
+
+### Session open flow
+
+```
+1. Authenticate → derive master_key → derive sqlcipher_key
+2. Open SQLCipher DB
+3. SELECT all rows FROM destination_sessions
+4. For each row:
+   a. Decrypt rclone_config_blob with session key
+   b. Append decrypted config section to in-memory rclone config string
+5. Write assembled rclone config to temp file in secure temp directory
+   (or pass via --config /dev/stdin on Unix)
+6. All subsequent rclone calls use --config <temp_path>
+```
+
+### Session close flow
+
+```
+1. Zeroize all decrypted rclone_config_blob values in memory
+2. Securely delete the temp rclone config file (overwrite then unlink)
+3. Zeroize master_key and derived keys
+```
+
+### Security properties
+
+| Property | Analysis |
+|---|---|
+| Credentials at rest | Encrypted in SQLCipher; inaccessible without the session key |
+| Credentials in transit (to Rclone) | Passed via temp file in a process-owned temp directory; not via command-line arguments (avoids ps/proclist exposure) |
+| Credentials after session close | Temp file overwritten and deleted; in-memory copies zeroized |
+| Cross-vault isolation | Each vault has its own SQLCipher DB; no shared credential store |
+
+---
+
+## Vault Backup
+
+### Backup mechanism
+
+Vault backup uses `rclone sync` to mirror the primary destination to one or more backup destinations. Because the primary remote already contains `vault-header.json`, `manifest/manifest-backup.blob`, and all `vault/<uuid>.blob` chunks, the backup destination is a complete, immediately restorable vault — no special packaging required.
+
+Blobs are already XChaCha20-Poly1305 ciphertext and are transferred without re-encryption. UUID blob names provide no filename leakage on the backup destination.
+
+### Sync command
+
+```
+rclone sync <primary_remote>:<bucket>/<path_prefix> \
+            <backup_remote>:<bucket>/<path_prefix> \
+            --config <temp_rclone_conf> \
+            --transfers <max_concurrent> \
+            --quiet
+```
+
+For accumulating mode, add `--immutable` to prevent Rclone from deleting destination blobs that no longer exist on the source.
+
+### Sync modes
+
+| Mode | Behaviour | Use case |
+|---|---|---|
+| **Mirror** (default) | Backup = current state of primary; deleted files are deleted on backup | Keeps backup clean and current |
+| **Accumulating** (opt-in per destination) | Blobs are never deleted from backup; new blobs are added | Historical archive; recovery from accidental deletion |
+
+### Sync trigger
+
+| Trigger | Availability |
+|---|---|
+| **Manual ("Sync now" button)** | Always available |
+| **Scheduled (daily / weekly / monthly)** | Opt-in; configured per destination |
+
+Arx Runa does not run a background daemon. Scheduled sync fires when the application is open and the vault is unlocked at the scheduled time (or on next open if the schedule was missed).
+
+### Progress reporting
+
+Backup sync reuses the `SyncProgress` enum from the push/pull flow. A new `SyncOperation::BackupSync { destination_id }` variant is added to distinguish backup progress from primary push/pull.
+
+---
+
+## Cloud File Browser
+
+The cloud file browser lists files on the primary destination using the vault's manifest to map blob UUIDs to real filenames and folder structure. The vault must be unlocked. Raw blob UUIDs are not exposed in the UI — users who need raw inspection can use their cloud provider's own interface.
+
+### View construction
+
+```
+1. Vault is unlocked (manifest decrypted in SQLCipher)
+2. list_blobs("vault/") → all blob UUIDs on the remote
+3. For each UUID: JOIN against chunks table → node_id → nodes table → path + name
+4. Render as a folder tree matching the original file structure
+```
+
+Blobs whose UUIDs are not present in the local manifest are displayed as `[orphaned blob]` with their size but no filename. This can occur after a failed partial delete.
+
+### Supported operations
+
+| Operation | Description |
+|---|---|
+| **Pull** | Fetch blob(s) from remote, decrypt in RAM via `decrypt_chunk`, write plaintext to user-chosen path. AEAD tag verification is automatic and inseparable from decryption. |
+| **Delete** | Remove blob(s) from remote and update manifest. Uses the existing cloud garbage collection flow. |
+
+Upload remains the existing drop zone flow: files are read from source, encrypted in RAM, and uploaded as chunks — no temp files written, zero-trace. Re-upload to backup destinations is handled by the Rclone sync mirror, not per-file.
+
+### Privacy considerations
+
+The file browser must not display any identifying information to an unauthenticated user. Unauthenticated list operations show only blob UUIDs and sizes — no filename or folder structure is inferable without the unlocked manifest.
 
 ---
 
@@ -324,8 +511,13 @@ Arx Runa provides a provider selection UI rather than requiring the user to run 
 
 | Provider | Type | Authentication |
 |----------|------|---------------|
-| S3-compatible (AWS, MinIO, Backblaze B2, Wasabi) | `s3` | Access key ID + secret access key |
+| S3-compatible (AWS, MinIO, Backblaze B2, Wasabi, Cloudflare R2) | `s3` | Access key ID + secret access key |
 | Google Drive | `drive` | OAuth 2.0 (browser flow) |
+| OneDrive | `onedrive` | OAuth 2.0 (browser flow) |
+| Local path / external drive | `local` | None (filesystem path) |
+| **Advanced: paste Rclone config** | Any | Provider-specific (user supplies raw config) |
+
+The guided forms cover the five most common backends. The advanced paste option handles all 70+ Rclone backends without requiring Arx Runa to maintain provider-specific UI for each.
 
 ### S3-compatible flow
 
@@ -358,9 +550,9 @@ Arx Runa passes credentials as arguments to `rclone config create`, not as envir
 
 ### Wizard security properties
 
-- Credentials are passed as arguments to `rclone config create`, validated against the remote path sanitisation rules
-- Credentials are not written to any Arx Runa file, not logged, and not held in memory after the wizard completes
-- Rclone's `rclone.conf` is the authoritative credential store
+- Credentials are collected in-process and serialised into a `rclone_config_blob` string that is immediately encrypted and written to SQLCipher — they are not written to any plaintext file, not logged, and not passed as command-line arguments (avoids proclist exposure)
+- The session-lived temp `rclone.conf` is written from the decrypted blob only after authentication; the temp file is overwritten and deleted on session close
+- SQLCipher is the authoritative credential store for all Rclone destination sessions (see [Destination Session Storage](#destination-session-storage))
 
 ---
 
@@ -803,7 +995,7 @@ Implementation target: Phase 4 (optional enhancement). Not blocking for core pus
 Rclone runs as a subprocess with the same OS permissions as Arx Runa. It has access to:
 - Blob files passed as file path arguments (AEAD ciphertext only — never plaintext)
 - The vault header file (plaintext JSON with public parameters only)
-- Rclone's `rclone.conf` (cloud credentials)
+- A session-lived temp `rclone.conf` containing cloud credentials (derived from SQLCipher; overwritten and deleted on session close)
 
 Rclone does **not** have access to:
 - Arx Runa's session keys (in mlocked memory, never passed to a subprocess)
@@ -999,7 +1191,7 @@ Cleanup:
 |----------|--------|-----------|
 | Rclone distribution | Tauri sidecar (bundled binary) | No user installation step; Tauri handles platform detection and path resolution; MIT license permits bundling |
 | Rclone invocation | `tokio::process::Command`, no shell | Prevents shell injection; arguments are separate OS strings |
-| Rclone config location | Arx Runa-specific `%APPDATA%/arx-runa/rclone.conf` | Isolated from system Rclone; prevents credential conflicts; self-contained uninstall |
+| Rclone config location | Session-lived temp file derived from SQLCipher; persistent `%APPDATA%/arx-runa/rclone.conf` is no longer the authoritative credential store | Credentials protected by the Argon2id key chain; inaccessible when session is closed; eliminates a second persistent secret store |
 | Remote path validation | Regex allowlist `^[a-zA-Z0-9._/-]+$`, reject `..` | Prevents path traversal from crafted manifest data |
 | Cloud storage layout | `vault-header.json` at root, `vault/` for blobs, `manifest/` for backup | Vault header accessible before auth; clean separation of concerns |
 | Upload order | Randomised (Fisher-Yates shuffle) | Breaks temporal correlation that could link blobs to files |
@@ -1012,8 +1204,15 @@ Cleanup:
 | Conflict detection | `snapshot_counter` comparison, detect-and-block | Correct; auto-merge is out of scope for this project |
 | Conflict resolution | Manual — user pulls, resolves, then pushes | Avoids silent data loss; honest scope declaration |
 | Remote configuration | Guided wizard calls `rclone config create` | Better UX than raw `rclone config`; Arx Runa never holds credentials |
-| Initial provider support | S3-compatible + Google Drive | Covers the most common use cases (privacy-focused and consumer) |
-| Stderr sanitisation | Strip lines containing credential keywords | Prevents `rclone.conf` leakage through error messages surfaced to frontend |
+| Initial provider support | S3-compatible, Google Drive, OneDrive, local path/external drive + advanced paste Rclone config | Guided forms for the five most common backends; paste fallback covers all 70+ Rclone backends without per-provider UI maintenance |
+| Stderr sanitisation | Strip lines containing credential keywords | Prevents credential leakage through error messages surfaced to frontend |
 | Cloud blob deletion | Best-effort; failures logged, not blocking | Orphaned ciphertext is harmless; availability is more important than strict cleanup |
 | Vault header upload on every push | Yes (unconditional, idempotent) | Ensures cloud header stays current after password change or key rotation without a separate trigger |
 | Vault deletion | Explicit flow: delete all blobs, manifest backup, vault header | Clean cloud state; user must confirm (Phase 6 UX) |
+| Destination sessions | Vault-scoped; stored as encrypted rows in SQLCipher | Preserves least privilege; no shared credential store across vaults; fits existing SQLCipher-per-vault model |
+| Multi-destination model | One primary + N backup destinations per vault | Write-all multi-primary blocks on slow/offline destinations; one primary keeps uploads simple; backup sync is explicit, which handles intermittently connected destinations |
+| Vault backup mechanism | `rclone sync` mirror from primary to backup destination(s) | Incremental; backup destination is a fully functional, immediately restorable vault; no special packaging required |
+| Vault backup sync modes | Mirror (default) + accumulating (opt-in per destination) | Mirror keeps backup = current vault state; accumulating opt-in for users who want recoverable history |
+| Vault backup trigger | Manual ("Sync now") + optional schedule (daily/weekly/monthly) | Manual always available; optional schedule for power users; no background daemon required |
+| Cloud file browser | Manifest-linked view only (real filenames via manifest); pull and delete operations | Raw blob UUID inspection is available in the cloud provider's own UI; manifest-linked is what users actually need; AEAD tag verification is automatic and inseparable from decryption, so a standalone verify operation is redundant |
+| Credential storage authority | SQLCipher (session key-protected), not Rclone's persistent `rclone.conf` | Credentials inaccessible when session is closed and master key is zeroized; no second password; consistent with zero-knowledge key chain |

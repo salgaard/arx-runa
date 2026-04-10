@@ -21,7 +21,7 @@
   </div>
 </div>
 
-**Arx Runa** is a personal cloud storage application built around one principle: your files should be unreadable to anyone but you — including the cloud service storing them.
+**Arx Runa** is a personal file encryption tool built around one principle: your files should be unreadable to anyone but you — including the cloud service storing them.
 
 When you upload a file, Arx Runa encrypts it on your device before it ever leaves. The cloud receives meaningless scrambled data. When you download, Arx Runa decrypts it locally. At no point does the cloud hold your encryption keys, your filenames, your folder structure, or any other metadata. This is called *zero-knowledge* storage.
 

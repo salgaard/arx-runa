@@ -127,9 +127,8 @@ Re-upload to a secondary destination is handled by the Rclone sync mirror (Optio
 
 | Operation | Description |
 |---|---|
-| **Download + decrypt** | Fetch blob(s), decrypt in RAM, write plaintext to user-chosen path — combined single action |
+| **Pull** | Fetch blob(s), decrypt in RAM, write plaintext to user-chosen path — AEAD tag verification is automatic and inseparable from decryption |
 | **Delete** | Remove blob from remote with manifest update |
-| **Verify** | Check AEAD tag integrity without full decrypt — optional, power-user feature |
 
 ### Privacy Considerations
 
@@ -222,9 +221,8 @@ Each vault has exactly **one primary destination** (where uploads go) and **N ba
 
 A manifest-linked file browser (vault must be unlocked) that shows real filenames and folder structure by mapping blob UUIDs via the local manifest. Raw blob view is not exposed in the UI. Supported operations:
 
-- **Download + decrypt** — fetch blob(s), decrypt in RAM, write plaintext to user-chosen path
+- **Pull** — fetch blob(s), decrypt in RAM, write plaintext to user-chosen path (AEAD tag verification is automatic and inseparable from decryption)
 - **Delete** — remove blob from remote with manifest update
-- **Verify** — check AEAD tag integrity without full decrypt (optional, power-user feature)
 
 Upload remains the existing drop zone flow: files are read from source, encrypted in RAM, uploaded as chunks — no temp files, zero-trace.
 
@@ -254,9 +252,9 @@ Sync behaviour:
 |---|---|---|
 | **Vault backup uses Rclone sync mirror (Option A)** | Snapshot archive (Option B), Hybrid (Option C) | Incremental transfers keep the secondary destination current without full re-uploads; backup destination is a fully functional vault that can be restored directly |
 | **Destination sessions are vault-scoped** | Global shared credential store, hybrid pool | Keeps each vault self-contained; no shared credential store outside the vault; fits existing SQLCipher-per-vault model |
-| **Rclone integration stays sidecar binary** | Go FFI / Rclone as library | Consistent with existing BYOC approach; avoids Go+Rust CGo complexity; `lsjson` JSON output is easy to parse in Rust |
+| **Rclone integration stays sidecar binary (bundled by Arx Runa)** | Go FFI / Rclone as library | Arx Runa ships the rclone binary — users install nothing; avoids Go+Rust CGo complexity; `lsjson` JSON output is easy to parse in Rust |
 | **Browser shows manifest-linked view only (no raw blob view in UI)** | Raw blob UUID view, both modes | Users who need raw blob inspection can use their cloud provider's UI; manifest-linked is what users actually need |
-| **Browser operations: download+decrypt (combined), delete, verify** | Separate download and decrypt steps, re-upload per-file | Download+decrypt is a single user intent; re-upload to secondary is handled by Rclone sync mirror, not per-file; verify is useful for integrity checks |
+| **Browser operations: pull, delete** | Separate download and decrypt steps, verify as standalone operation, re-upload per-file | Pull (fetch + decrypt) is a single user intent — AEAD tag verification is automatic and inseparable from decryption, so a standalone verify operation is redundant; re-upload to secondary is handled by Rclone sync mirror, not per-file |
 | **Upload via drop zone (encrypt in RAM, no temp files)** | FUSE virtual drive, filesystem-level sync | Drop zone gives full control over data flow, preserves zero-trace guarantee; consistent with Auto-Sync vision in market-and-future-directions.md |
 | **One primary destination + N backup destinations per vault** | Write-all multi-primary | Write-all blocks on slow/offline destinations; one primary keeps uploads simple; backup sync is explicit (manual or scheduled), which handles intermittently connected destinations (e.g. USB drives) |
 | **Backup sync trigger: manual + optional schedule (daily/weekly/monthly)** | Manual only, post-upload auto-sync | Manual always available for all users; optional schedule lets power users automate without requiring a full cron UI |
