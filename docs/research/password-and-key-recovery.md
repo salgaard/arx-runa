@@ -7,7 +7,7 @@
 Investigates every known mechanism for recovering vault access after a password or key file is lost, evaluated against Arx Runa's zero-knowledge threat model.
 
 For the canonical auth design, see `docs/architecture/designs/authentication-and-session-management/design.md`.  
-For background on the key derivation model, see `authentication-and-session-management-review.md`.
+For background on the key derivation model, see `../design-reviews/authentication-and-session-management-review.md`.
 
 ---
 
@@ -87,7 +87,7 @@ Encodes 128–256 bits of entropy as 12–24 human-readable words. Not SSS — i
 
 **ZK relevance**: Could be used to encode and display the vault master key (or a separately generated recovery key) as a mnemonic. Very user-friendly for "write this down."
 
-### OPAQUE (RFC draft, IRTF CFRG)
+### OPAQUE (RFC 9380, IRTF CFRG)
 An asymmetric PAKE protocol where the server never sees the password, even during registration. A server-side "secret oprf key" is mixed into derivation — changing the password requires server involvement. Does NOT help with password recovery, but eliminates password-at-rest exposure.
 
 **ZK relevance**: Interesting for passwordless future, but does not solve recovery.
@@ -261,7 +261,7 @@ recovery_slot         = XChaCha20-Poly1305.encrypt(master_key, recovery_key, aad
 | LUKS on-disk format v2 | Multi-keyslot design for volume encryption | https://gitlab.com/cryptsetup/cryptsetup/-/wikis/LUKS-standard/on-disk-format.pdf |
 | 1Password White Paper | Emergency Kit and Secret Key design | https://1passwordstatic.com/files/security/1password-white-paper.pdf |
 | Bitwarden Security White Paper | Emergency Access via asymmetric key wrapping | https://bitwarden.com/images/resources/security-white-paper-download.pdf |
-| IRTF CFRG OPAQUE (draft-irtf-cfrg-opaque) | OPAQUE asymmetric PAKE | https://datatracker.ietf.org/doc/draft-irtf-cfrg-opaque/ |
+| RFC 9380 — OPAQUE (IRTF CFRG) | OPAQUE asymmetric PAKE | https://www.rfc-editor.org/rfc/rfc9380 |
 | `sharks` Rust crate | Shamir's Secret Sharing in Rust | https://crates.io/crates/sharks |
 | `vsss-rs` Rust crate | Verifiable Secret Sharing in Rust | https://crates.io/crates/vsss-rs |
 | Microsoft BitLocker documentation | BitLocker recovery key design | https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/recovery-overview |
