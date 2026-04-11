@@ -56,7 +56,7 @@ flowchart TD
 ### Encrypt path
 
 1. Source file is read in configured `chunk_size_bytes` increments (default 4 MiB) via `BufReader`
-2. Each chunk is zero-padded to exactly `chunk_size` if the last segment is shorter
+2. Each chunk is zero-padded to exactly `chunk_size_bytes` if the last segment is shorter
 3. `encrypt_chunk` applies XChaCha20-Poly1305 with AAD = `file_id || chunk_index`
 4. BLAKE3 is computed over the full encrypted blob (`nonce || ciphertext || tag`)
 5. The blob is written to the staging directory with a random UUID v4 filename
@@ -69,8 +69,8 @@ flowchart TD
 2. Each blob is read from staging or a downloaded cloud copy
 3. BLAKE3 is recomputed and compared — if mismatch, return `ChecksumMismatch` without touching the ciphertext
 4. `decrypt_chunk` verifies the AEAD tag and decrypts
-5. All chunks except the last are written in full (`chunk_size` bytes)
-6. The last chunk is truncated to `file_size mod chunk_size` bytes, using `size_bytes` from the `nodes` row
+5. All chunks except the last are written in full (`chunk_size_bytes` bytes)
+6. The last chunk is truncated to `file_size mod chunk_size_bytes` bytes, using `size_bytes` from the `nodes` row
 
 ### Key lifecycle
 

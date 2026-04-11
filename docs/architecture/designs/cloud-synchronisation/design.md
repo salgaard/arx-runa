@@ -35,7 +35,7 @@
 - Remote paths must stay relative to cloud root and pass sanitisation (no traversal, no absolute-path escape).
 - `snapshot_counter` is monotonic and conflict checks gate every push before mutation.
 - Vault header remains plaintext bootstrap metadata, while `manifest/manifest-backup.blob` remains AEAD ciphertext under `manifest_key`.
-- Cross-phase invariant reference: `docs/architecture/design-invariants.md`.
+- Cross-phase invariant reference: [docs/architecture/design-invariants.md](../../design-invariants.md).
 
 ### Dependency contract
 

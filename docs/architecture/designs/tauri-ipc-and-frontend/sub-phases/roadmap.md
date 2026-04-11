@@ -67,10 +67,10 @@ This sub-phase roadmap decomposes the Tauri IPC and frontend design (1016 lines 
 3. **[Phase 6.3: Frontend Pages](6.3-frontend-pages.md)**
    - `LoginPage` with password input and `KeyFileIndicator`
    - `VaultBrowser` with `FileList`, `Breadcrumbs`, and `UploadButton`
-    - `ProgressModal` with real-time progress from `tauri::ipc::Channel`
-    - `AppShell` layout with `SessionStatus` display
-    - Vault creation UX for `chunk_size_bytes` and `epoch_buffer_enabled` with hybrid-routing explanation
-    - Generic UI components (`Button`, `Input`, `Modal`, `Spinner`)
+   - `ProgressModal` with real-time progress from `tauri::ipc::Channel`
+   - `AppShell` layout with `SessionStatus` display
+   - Vault creation UX for `chunk_size_bytes` and `epoch_buffer_enabled` with hybrid-routing explanation
+   - Generic UI components (`Button`, `Input`, `Modal`, `Spinner`)
    - Leptos routing: login view when locked, vault browser when unlocked
    - **Estimated**: ~400 lines production code, ~50 lines tests
 

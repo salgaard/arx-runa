@@ -35,7 +35,7 @@
 - Routing mode is stable per vault: with `epoch_buffer_enabled = false`, all files follow standalone chunk uploads; with `epoch_buffer_enabled = true`, files smaller than `chunk_size_bytes` are routed to epoch buffering while files `>= chunk_size_bytes` remain immediate standalone uploads.
 - Chunk cryptographic context is fixed: `AAD = file_id || chunk_index`; BLAKE3 verification occurs before decrypt.
 - Streaming invariant holds at most one chunk plaintext buffer in memory; node deletion cascades chunk-row deletion.
-- Cross-phase invariant reference: `docs/architecture/design-invariants.md`.
+- Cross-phase invariant reference: [docs/architecture/design-invariants.md](../../design-invariants.md).
 
 ### Dependency contract
 

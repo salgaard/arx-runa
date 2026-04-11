@@ -57,7 +57,7 @@ Phase 6 scope is documented with two profiles:
 - IPC responses must never expose key material, passwords, stack traces, or unsanitised internal filesystem details.
 - Tauri/UI state follows Zero-Trace: sensitive state is memory-only and frontend contexts are cleared on lock/timeout.
 - Command handlers remain async and all domain errors are mapped through explicit sanitisation boundaries.
-- Cross-phase invariant reference: `docs/architecture/design-invariants.md`.
+- Cross-phase invariant reference: [docs/architecture/design-invariants.md](../../design-invariants.md).
 
 ### Dependency contract
 

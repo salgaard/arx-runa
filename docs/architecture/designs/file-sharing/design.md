@@ -36,7 +36,7 @@
 - Per-file key isolation is preserved: sharing exposes only the selected file's `file_key` context, never vault-wide keys.
 - Share semantics are snapshot-based (`chunk_uuids` represent a fixed file version at share time).
 - Revocation guarantees future-fetch blocking only; it cannot retract plaintext already downloaded/decrypted by a recipient.
-- Cross-phase invariant reference: `docs/architecture/design-invariants.md`.
+- Cross-phase invariant reference: [docs/architecture/design-invariants.md](../../design-invariants.md).
 
 ### Dependency contract
 

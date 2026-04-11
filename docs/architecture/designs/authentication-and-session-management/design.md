@@ -37,7 +37,7 @@
 - Tier input construction is fixed: Tier 1 uses password bytes; Tier 2 uses password bytes concatenated with 32-byte key-file bytes.
 - Authentication failure semantics are non-oracular (`InvalidCredentials` must not distinguish wrong password vs wrong key file).
 - Session keys must remain mlocked and zeroized on lock/timeout; `master_key` remains scope-limited during derivation flows.
-- Cross-phase invariant reference: `docs/architecture/design-invariants.md`.
+- Cross-phase invariant reference: [docs/architecture/design-invariants.md](../../design-invariants.md).
 
 ### Dependency contract
 

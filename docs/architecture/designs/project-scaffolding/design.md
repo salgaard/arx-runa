@@ -34,7 +34,7 @@
 
 - Phase 0 establishes a compilable baseline where `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`, and `cargo build --release` succeed.
 - Workspace layout and module naming are stable inputs for all later design phases.
-- Cross-phase invariant reference: `docs/architecture/design-invariants.md`.
+- Cross-phase invariant reference: [docs/architecture/design-invariants.md](../../design-invariants.md).
 
 ### Dependency contract
 

@@ -144,15 +144,15 @@ When specifications in this roadmap conflict with design documents, **design doc
 **Sub-phase roadmap**: [`docs/architecture/designs/chunking-and-manifest/sub-phases/roadmap.md`](architecture/designs/chunking-and-manifest/sub-phases/roadmap.md) (recommended for incremental implementation)
 
 **Deliverables**:
-1. Fixed-size chunking with user-selected `chunk_size_bytes` (128 KiB–64 MiB, default 4 MiB), zero-pad to `chunk_size`, and truncate on reassembly using `size_bytes` — streaming via `BufReader`/`BufWriter` and `tokio::io`, never loading entire files into memory.
+1. Fixed-size chunking with user-selected `chunk_size_bytes` (128 KiB–64 MiB, default 4 MiB), zero-pad to `chunk_size_bytes`, and truncate on reassembly using `size_bytes` — streaming via `BufReader`/`BufWriter` and `tokio::io`, never loading entire files into memory.
 2. `MetadataStore` trait and SQLCipher implementation: `nodes` (with `file_key_wrapped`), `chunks`, `manifest_meta` tables with `ON DELETE CASCADE`. `MockMetadataStore` for testing.
 3. Encrypt pipeline: `encrypt_file(source, file_id, file_key, chunk_size, staging_dir)` → `Vec<ChunkRecord>`. Per chunk: read → zero-pad → encrypt → BLAKE3 → write blob to staging → return `ChunkRecord`.
-4. Decrypt pipeline: `decrypt_file(destination, file_id, file_key, file_size, chunks, blob_dir)`. Per chunk: read blob → verify BLAKE3 → decrypt → write (last chunk truncated to `file_size mod chunk_size`).
+4. Decrypt pipeline: `decrypt_file(destination, file_id, file_key, file_size, chunks, blob_dir)`. Per chunk: read blob → verify BLAKE3 → decrypt → write (last chunk truncated to `file_size mod chunk_size_bytes`).
 5. File key lifecycle: generate `file_key` → wrap with `key_encryption_key` → store `file_key_wrapped` in nodes table → use `file_key` for all chunks → zeroize.
 6. Staging directory management: app data subdirectory, cleanup orphaned blobs on startup.
 7. Error recovery: SQLCipher transactions wrap all manifest mutations; orphan blob scan on startup removes blobs not in `chunks` table.
 8. Hybrid routing support when `epoch_buffer_enabled` is on: files smaller than `chunk_size_bytes` route to epoch packing, while files `>= chunk_size_bytes` stay on immediate standalone chunk uploads.
-9. Tests: chunk boundary cases (0 bytes, 1 byte, 4 MiB-1, 4 MiB, 4 MiB+1, exact multiples), hybrid routing behavior, SQLCipher wrong-key rejection, CASCADE deletion, BLAKE3 mismatch rejection before decrypt, UUID v4 blob naming, 0-byte file edge case, staging orphan cleanup.
+9. Tests: chunk boundary cases (0 bytes, 1 byte, `chunk_size_bytes - 1`, `chunk_size_bytes`, `chunk_size_bytes + 1`, exact multiples; min `chunk_size_bytes` = 128 KiB, max = 64 MiB), hybrid routing behavior, SQLCipher wrong-key rejection, CASCADE deletion, BLAKE3 mismatch rejection before decrypt, UUID v4 blob naming, 0-byte file edge case, staging orphan cleanup.
 
 **Documentation**:
 - ADR `007-fixed-size-chunking.md` — rejection of content-defined chunking, user-selected chunk size bounds with default 4 MiB, and hybrid auto-routing semantics for optional epoch buffering.

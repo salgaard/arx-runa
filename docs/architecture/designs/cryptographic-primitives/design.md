@@ -33,7 +33,7 @@
 - Cipher contract is `XChaCha20Poly1305` only; nonces are random 24-byte CSPRNG values.
 - Chunk AEAD contract requires `AAD = file_id || chunk_index` (big-endian `u32`) for every chunk encrypt/decrypt operation.
 - `master_key` is never persisted and is zeroized after derivation; checksum verification precedes decrypt via `VerifiedBlob`.
-- Cross-phase invariant reference: `docs/architecture/design-invariants.md`.
+- Cross-phase invariant reference: [docs/architecture/design-invariants.md](../../design-invariants.md).
 
 ### Dependency contract
 
