@@ -108,7 +108,7 @@ When the owner shares a file, Arx Runa produces a share package — a small file
     "bucket": "alice-arx-runa",
     "region": "eu-west-1",
     "endpoint": "https://s3.eu-west-1.amazonaws.com",
-    "share_path": "shared/<file_share_id>/"
+    "path_prefix": "shared/<file_share_id>/"
   }
 }
 ```
@@ -315,6 +315,7 @@ CREATE TABLE received_shares (
     chunk_size           INTEGER NOT NULL,
     chunk_uuids          TEXT NOT NULL,      -- JSON array
     cloud_endpoint       TEXT NOT NULL,      -- JSON object
+    expires_at           INTEGER,            -- NULL = no expiration (Unix timestamp)
     imported_at          INTEGER NOT NULL
 );
 ```

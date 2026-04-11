@@ -339,12 +339,12 @@ First-run sequence when the user creates a new vault:
      Tier 1: Argon2id(new_password, new_salt)             → new_master_key
      Tier 2: Argon2id(new_password || key_file, new_salt) → new_master_key
 7. HKDF → new key_encryption_key, new sqlcipher_key, new manifest_key
-8. zeroize(new_master_key)
-9. Within a SQLCipher transaction: re-wrap all `file_key` values (decrypt with old `key_encryption_key`, encrypt with new) and re-wrap the X25519 private key. Commit the transaction only if all re-wraps succeed. On failure, rollback — the old wrapped keys are fully restored and the vault remains usable with the old credentials.
-10. After the transaction commits: re-key SQLCipher DB: `PRAGMA rekey = '<new_sqlcipher_key>'`
-11. Update vault header: new salt, same argon2_params (unless user requested upgrade), same key_file_blake3
+8. Within a SQLCipher transaction: re-wrap all `file_key` values (decrypt with old `key_encryption_key`, encrypt with new) and re-wrap the X25519 private key. Commit the transaction only if all re-wraps succeed. On failure, rollback — the old wrapped keys are fully restored and the vault remains usable with the old credentials.
+9. After the transaction commits: re-key SQLCipher DB: `PRAGMA rekey = '<new_sqlcipher_key>'`
+10. Update vault header: new salt, same argon2_params (unless user requested upgrade), same key_file_blake3
     [If recovery slot re-wrap succeeded] Re-encrypt: `new_wrapped_master_key` = XChaCha20-Poly1305.encrypt(new_master_key, recovery_key, aad); update `recovery_slots[0].wrapped_master_key`; zeroize recovery_key
     [If phrase not provided] Clear `recovery_slots` array
+11. zeroize(new_master_key)
 12. Upload updated vault header + manifest backup to cloud
 13. Zero old keys, replace `SessionKeys` with new derived keys
 
@@ -365,12 +365,12 @@ The key file is a cryptographic input, not a lookup key. Changing it requires re
 5. Generate new salt (mandatory — salt must change when any KDF input changes)
 6. Argon2id(password || new_key_file, new_salt) → new_master_key
 7. HKDF → new key_encryption_key, new sqlcipher_key, new manifest_key
-8. zeroize(new_master_key)
-9. Within a SQLCipher transaction: re-wrap all file_keys and X25519 private key (same as password change). Commit only if all re-wraps succeed; rollback on failure.
-10. After the transaction commits: re-key SQLCipher (`PRAGMA rekey`)
-11. Update vault header: new salt, new key_file_blake3
-    [If recovery slot re-wrap succeeded] Update `recovery_slots[0].wrapped_master_key` with new `master_key` encrypted under same `recovery_key`; zeroize recovery_key
+8. Within a SQLCipher transaction: re-wrap all file_keys and X25519 private key (same as password change). Commit only if all re-wraps succeed; rollback on failure.
+9. After the transaction commits: re-key SQLCipher (`PRAGMA rekey`)
+10. Update vault header: new salt, new key_file_blake3
+    [If recovery slot re-wrap succeeded] Update `recovery_slots[0].wrapped_master_key` with `new_master_key` encrypted under the same `recovery_key`; zeroize recovery_key
     [If phrase not provided] Clear `recovery_slots` array
+11. zeroize(new_master_key)
 12. Upload updated vault header + manifest backup
 13. Zero old keys, replace `SessionKeys`
 

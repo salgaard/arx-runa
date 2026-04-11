@@ -40,7 +40,7 @@ This sub-phase roadmap decomposes Phase 0 (Project Scaffolding) into 3 independe
 ## Sub-Phases
 
 1. **[Phase 0.1: Tauri Workspace Initialisation](0.1-tauri-workspace-init.md)**
-   - Run `cargo create-tauri-app` with the Leptos template
+   - Run `cargo create-tauri-app . --template leptos --identifier com.arxruna.app --app-name "Arx Runa" --manager cargo`
    - Convert root `Cargo.toml` to a `[workspace]` with `src-tauri/` as member
    - Remove the bare `src/main.rs` Rust binary
    - Verify `cargo build` succeeds on the generated skeleton

@@ -208,9 +208,10 @@ When specifications in this roadmap conflict with design documents, **design doc
    - Retrieve `file_key` for the target file from SQLCipher (unwrap with `key_encryption_key`)
    - Generate ephemeral X25519 keypair → ECDH with recipient's public key → HKDF → symmetric key
    - Encrypt `file_key` with that symmetric key (XChaCha20-Poly1305)
-   - Assemble share package JSON: `share_id`, `file_id`, `file_name`, `chunk_count`, `chunk_size`, `chunk_uuids`, `file_key_wrapped`, `ephemeral_public_key`, `cloud_endpoint`
+   - Assemble share package JSON: `share_id`, `file_id`, `file_name`, `chunk_count`, `chunk_size`, `chunk_uuids`, `file_key_wrapped`, optional `expires_at` (derived from `share_file(expiration_days)` when provided), `cloud_endpoint`
+   - Encode ECIES wire bytes with header fields `ephemeral_public_key` (32B) and `nonce` (24B) before ciphertext/tag; `ephemeral_public_key` is a wire-header field, not a JSON payload field
    - Encrypt the entire package as an ECIES envelope; export as a file
-4. Share package import: parse and decrypt the ECIES envelope using the local X25519 private key; store in the recipient's `received_shares` table; fetch blobs via Rclone.
+4. Share package import: parse and decrypt the ECIES envelope using the local X25519 private key; store in the recipient's `received_shares` table (including optional `expires_at`); fetch blobs via Rclone.
 5. Cloud layout: copy shared chunks to `shared/<file_share_id>/` with public read access; record `file_share_id` in the `shares` table.
 6. Revocation: delete `shared/<file_share_id>/` from cloud; set `revoked_at` in the `shares` table. Optional re-encryption flow: generate new `file_key`, re-encrypt all chunks, upload under new `file_share_id`, issue new share packages to remaining recipients.
 7. `shares`, `contacts`, and `received_shares` schema additions via SQLCipher migration.
@@ -229,18 +230,19 @@ When specifications in this roadmap conflict with design documents, **design doc
 
 **Depends on**: Phase 2 (auth commands), Phase 3 (storage commands), Phase 4 (sync commands), Phase 5 (sharing commands)
 
-**Objective**: expose backend functionality to the frontend through Tauri commands with proper error sanitisation, and build a minimal but functional web UI for authentication, vault browsing, upload, and download.
+**Objective**: expose backend functionality to the frontend through Tauri commands with proper error sanitisation, and build a functional web UI for authentication, vault browsing, transfer, sync, destination management, and sharing workflows.
 
 **Design document**: [`docs/architecture/designs/tauri-ipc-and-frontend/design.md`](architecture/designs/tauri-ipc-and-frontend/design.md)
 
 **Sub-phase roadmap**: [`docs/architecture/designs/tauri-ipc-and-frontend/sub-phases/roadmap.md`](architecture/designs/tauri-ipc-and-frontend/sub-phases/roadmap.md) (recommended for incremental implementation)
 
 **Deliverables**:
-1. Tauri command definitions: `authenticate`, `lock_session`, `get_session_status`, `list_directory`, `upload_file`, `download_file`, `delete_file`, `sync_to_cloud`, `recover_from_cloud`, `get_sync_status`.
-2. Error sanitisation layer: map `thiserror` enums from library modules to generic user-safe IPC responses via `anyhow`; no partial keys, file paths, or memory addresses reach the frontend.
+1. Tauri command definitions and registration for the full Phase 6 command surface (29 commands): Auth (7) `authenticate`, `create_vault`, `change_password`, `rotate_key_file`, `delete_vault`, `lock_session`, `get_session_status`; File (6) `list_directory`, `upload_file`, `download_file`, `delete_file`, `get_file_content`, `list_remote`; Sync (5) `sync_to_cloud`, `recover_from_cloud`, `get_sync_status`, `migrate_vault`, `sync_backup`; Destinations (3) `add_destination`, `list_destinations`, `delete_destination`; Sharing (8) `export_public_key`, `add_contact`, `list_contacts`, `share_file`, `import_share`, `revoke_share`, `list_shares`, `list_received_shares`.
+2. Error sanitisation layer: map `thiserror` enums from backend modules to user-safe `IpcError` responses via explicit `From` impls; no partial keys, sensitive internal filesystem paths, memory addresses, stack traces, or crypto internals reach the frontend in error payloads.
 3. Input validation on all Tauri command parameters.
 4. Frontend pages: login screen (password + USB key file selection), vault browser (file list, folder navigation), upload/download controls, session status indicator.
 5. Async command handlers using `tokio::spawn` to avoid blocking the Tauri UI thread.
+6. `withGlobalTauri: true` configured in `tauri.conf.json` before Phase 6.2 invoke-wrapper work; Phase 6.4 treats this as verification/hardening alongside CSP and capabilities.
 
 **Documentation**:
 - ADR `011-ipc-error-sanitisation.md` — what is filtered, the mapping strategy, and the rationale.

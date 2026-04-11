@@ -49,7 +49,7 @@ This sub-phase roadmap decomposes the Tauri IPC and frontend design (1016 lines 
    - All IPC response types (`AuthResponse`, `FileEntry`, `ProgressUpdate`, etc.)
    - `AppState` struct
    - Input validation functions
-   - All 24 Tauri command signatures registered via `tauri::generate_handler![]` and `build.rs` allowlist
+   - All 29 Tauri command signatures registered via `tauri::generate_handler![]` and `build.rs` allowlist
    - **Estimated**: ~400 lines production code, ~150 lines tests
 
 2. **[Phase 6.2: Frontend State Contexts and Tauri Invoke Wrapper](6.2-frontend-state-and-invoke-wrapper.md)**
@@ -107,7 +107,7 @@ trunk build          # Frontend must compile (from Phase 6.2 onwards)
 
 ## Security Review Checkpoints
 
-- **Phase 6.1**: Requires `security-reviewer` agent review — error sanitisation completeness, no key material in error messages, no file paths leaked through IPC
+- **Phase 6.1**: Requires `security-reviewer` agent review — error sanitisation completeness, no key material in error messages, no sensitive internal filesystem paths leaked through IPC errors
 - **Phase 6.2**: No security review needed (frontend state, no crypto)
 - **Phase 6.3**: No security review needed (page components, no crypto)
 - **Phase 6.4**: Requires `security-reviewer` agent review — Zero-Trace verification, CSP completeness, brute-force protection via auth backoff
@@ -156,7 +156,7 @@ cargo test ui::security
 
 ## Notes
 
-- **`withGlobalTauri: true`**: Required in `tauri.conf.json` for the Leptos WASM IPC wrapper to access `window.__TAURI__.core.invoke`. This setting must be in place before Phase 6.2.
+- **`withGlobalTauri: true`**: Required in `tauri.conf.json` for the Leptos WASM IPC wrapper to access `window.__TAURI__.core.invoke`. Treat this as a Phase 6.1/6.2 precondition; Phase 6.4 verifies and hardens the surrounding CSP/capabilities.
 - **Password zeroization**: The design mandates zeroing the password string immediately after the `authenticate` IPC call completes. This is introduced in Phase 6.3 (`LoginPage`) and verified in Phase 6.4.
 - **No localStorage anywhere**: The CSP in Phase 6.4 does not block `localStorage` at the HTTP level (CSP has no such directive), but the Zero-Trace audit verifies absence at the application level. Document this distinction.
 - **Polling cleanup**: `SessionProvider` polling must stop on `on_cleanup` to avoid stale intervals after the component unmounts during logout.
@@ -164,7 +164,7 @@ cargo test ui::security
 
 | Risk | Mitigation |
 |------|------------|
-| Error messages inadvertently leak file paths or key material | Exhaustive mapping in `From` impls; sanitisation unit tests with path/key fixture inputs |
+| Error messages inadvertently leak sensitive internal paths or key material | Exhaustive mapping in `From` impls; sanitisation unit tests with path/key fixture inputs |
 | Leptos `use_context` panics if provider missing | Enforce context hierarchy in routing: all consumers are children of all providers |
 | CSP blocks WASM execution | `'wasm-unsafe-eval'` in `script-src` is required; verify in Phase 6.4 |
 | Auth backoff state lost on process restart | Backoff tracked in `SessionManager` in memory; acceptable — process restart resets attempt counter |

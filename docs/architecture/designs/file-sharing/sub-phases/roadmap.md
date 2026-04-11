@@ -50,8 +50,8 @@ This sub-phase roadmap decomposes the file sharing design (282 lines) into 3 ind
 
 2. **[Phase 5.2: ECIES Construction and Share Packages](5.2-ecies-and-share-packages.md)**
    - ECIES encrypt/decrypt using ephemeral X25519 + HKDF-SHA256 + XChaCha20-Poly1305
-   - Share package creation: retrieve file_key → encrypt → assemble JSON envelope
-   - Share package import: parse ECIES envelope → extract file_key → store in received_shares
+   - Share package creation: retrieve file_key → encrypt → assemble JSON envelope (including optional `expires_at`)
+   - Share package import: parse ECIES envelope → extract file_key → store in received_shares (preserving optional `expires_at`)
    - Snapshot semantics: static chunk_uuids at time of sharing
    - **Estimated**: ~180 lines production code, ~120 lines tests
 

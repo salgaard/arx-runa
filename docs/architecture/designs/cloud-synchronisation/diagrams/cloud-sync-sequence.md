@@ -23,6 +23,9 @@ sequenceDiagram
     break cloud_counter #62; local_counter
         Sync-->>User: CONFLICT — pull first
     end
+    break cloud_counter #60; local_counter
+        Sync-->>User: CONFLICT — cloud manifest older than local
+    end
 
     Sync->>Meta: get all staged blob_names
     Sync->>Sync: Fisher-Yates shuffle(blob_list)
@@ -123,6 +126,9 @@ sequenceDiagram
     Sync->>Cloud: download manifest #45;#62; decrypt #45;#62; cloud_counter=7
     note right of Sync: cloud #62; local #45;#62; another device pushed
     Sync-->>User: CONFLICT: pull first (local=5, cloud=7)
+    Sync->>Cloud: download manifest #45;#62; decrypt #45;#62; cloud_counter=3
+    note right of Sync: cloud #60; local #45;#62; stale cloud state
+    Sync-->>User: CONFLICT: cloud older than local (local=5, cloud=3)
 ```
 
 ## Description
@@ -133,7 +139,7 @@ The cloud synchronisation flow covers three scenarios:
 
 2. **Pull (new-device recovery)**: downloads the vault header to obtain Argon2id parameters, authenticates the user, decrypts and imports the manifest backup, then downloads all blobs with BLAKE3 verification.
 
-3. **Conflict detection**: `snapshot_counter` comparison before every push; if the cloud counter exceeds the local counter, the push is aborted and the user must pull first.
+3. **Conflict detection**: `snapshot_counter` comparison before every push; if cloud and local counters differ (`cloud > local` or `cloud < local`), the push is aborted and the user must resolve divergence before retrying.
 
 ## Key invariants
 

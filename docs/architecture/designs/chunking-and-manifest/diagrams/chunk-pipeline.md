@@ -55,7 +55,7 @@ flowchart TD
 
 ### Encrypt path
 
-1. Source file is read in `chunk_size` (4 MiB) increments via `BufReader`
+1. Source file is read in configured `chunk_size_bytes` increments (default 4 MiB) via `BufReader`
 2. Each chunk is zero-padded to exactly `chunk_size` if the last segment is shorter
 3. `encrypt_chunk` applies XChaCha20-Poly1305 with AAD = `file_id || chunk_index`
 4. BLAKE3 is computed over the full encrypted blob (`nonce || ciphertext || tag`)

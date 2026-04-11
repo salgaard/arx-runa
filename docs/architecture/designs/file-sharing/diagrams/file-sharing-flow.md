@@ -22,10 +22,10 @@ sequenceDiagram
     Owner->>Owner: unwrap(file_key_wrapped, key_encryption_key) #45;#62; file_key
     Owner->>Owner: Generate ephemeral X25519 keypair
     Owner->>Owner: ECDH(ephemeral_private, recipient_public) #45;#62; shared_secret
-    Owner->>Owner: HKDF(shared_secret, info=arx-runa-share) #45;#62; symmetric_key
+    Owner->>Owner: HKDF(shared_secret, salt=ephemeral_public_key, info=arx-runa-share) #45;#62; symmetric_key
     Owner->>Owner: Encrypt file_key with symmetric_key #45;#62; file_key_wrapped
-    Owner->>Owner: Assemble share package (file_name, chunk_uuids, file_key_wrapped, ephemeral_public_key)
-    Owner->>Owner: Encrypt package with XChaCha20-Poly1305 (symmetric_key)
+    Owner->>Owner: Assemble share package JSON (file_name, chunk_uuids, file_key_wrapped, expires_at, cloud_endpoint)
+    Owner->>Owner: Encrypt package with XChaCha20-Poly1305, prepend wire header [ephemeral_public_key #124; nonce]
     Owner->>Cloud: Copy encrypted blobs to shared/[file_share_id]/ (public read)
     Owner->>Owner: INSERT into shares (share_id, file_share_id, contact_id)
 
@@ -34,11 +34,12 @@ sequenceDiagram
     Channel->>Recipient: Deliver share package
 
     note over Recipient,Cloud: Phase 3 — Recipient Imports and Fetches
+    Recipient->>Recipient: Parse wire header [ephemeral_public_key #124; nonce #124; ciphertext #124; tag]
     Recipient->>Recipient: ECDH(recipient_private, ephemeral_public) #45;#62; shared_secret
-    Recipient->>Recipient: HKDF(shared_secret, info=arx-runa-share) #45;#62; symmetric_key
+    Recipient->>Recipient: HKDF(shared_secret, salt=ephemeral_public_key, info=arx-runa-share) #45;#62; symmetric_key
     Recipient->>Recipient: Decrypt file_key_wrapped #45;#62; file_key
     Recipient->>Recipient: INSERT into received_shares
-    Recipient->>Cloud: Fetch blobs via Rclone (cloud_endpoint.share_path)
+    Recipient->>Cloud: Fetch blobs via Rclone (cloud_endpoint.path_prefix)
     Cloud->>Recipient: Return encrypted blobs
     Recipient->>Recipient: Verify BLAKE3 per blob
     Recipient->>Recipient: Decrypt chunks with file_key (XChaCha20-Poly1305 + AAD)
@@ -56,7 +57,7 @@ The file sharing flow has four phases:
 
 1. **Key exchange** (one-time): both parties export their X25519 public keys via any out-of-band channel (email, messaging app, USB). No Arx Runa server involvement. Optional fingerprint verification mitigates MITM attacks on the key exchange channel.
 
-2. **Share creation**: the owner retrieves the `file_key` for the target file, constructs an ECIES-encrypted share package containing the `file_key` and blob location, copies blobs to a public-read shared folder, and records the share in SQLCipher.
+2. **Share creation**: the owner retrieves the `file_key` for the target file, constructs an ECIES-encrypted share package JSON (including optional expiration), emits wire bytes with an `ephemeral_public_key` + nonce header, copies blobs to a public-read shared folder, and records the share in SQLCipher.
 
 3. **Recipient import and fetch**: the recipient decrypts the share package using their X25519 private key, obtains the `file_key`, fetches blobs from the cloud via Rclone using the `cloud_endpoint` descriptor, and decrypts the file locally.
 
@@ -64,6 +65,6 @@ The file sharing flow has four phases:
 
 ## Related
 
-- Design document: [../../architecture/designs/file-sharing.md](../../architecture/designs/file-sharing.md)
-- Key derivation: [key-derivation-tree.md](key-derivation-tree.md)
-- Report log: [../../report-log/2026-03-29-194331-file-sharing-architecture-design.md](../../report-log/2026-03-29-194331-file-sharing-architecture-design.md)
+- Design document: [../design.md](../design.md)
+- Key derivation: [../../cryptographic-primitives/diagrams/key-derivation-tree.md](../../cryptographic-primitives/diagrams/key-derivation-tree.md)
+- Report log: [../../../../report-log/2026-03-29-194331-file-sharing-architecture-design.md](../../../../report-log/2026-03-29-194331-file-sharing-architecture-design.md)

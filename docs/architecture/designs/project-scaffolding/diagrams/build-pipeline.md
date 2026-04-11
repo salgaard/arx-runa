@@ -20,6 +20,7 @@ flowchart TB
         crypto["crypto/"]
         auth["auth/"]
         storage["storage/"]
+        sync["sync/"]
         memory["memory/"]
         ui["ui/"]
     end
@@ -36,7 +37,7 @@ flowchart TB
     leptos -->|"wasm32-unknown-unknown"| wasm
 
     cargo -->|"compiles"| lib
-    lib --> crypto & auth & storage & memory & ui
+    lib --> crypto & auth & storage & sync & memory & ui
     cargo --> bin
 
     wasm -->|"embedded in"| bin

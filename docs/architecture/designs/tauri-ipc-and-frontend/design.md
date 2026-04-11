@@ -510,11 +510,13 @@ impl From<sync::SyncError> for IpcError {
 
 | Internal detail | Sanitised to |
 |-----------------|--------------|
-| File paths (`/Users/chris/...`) | "File not found" or generic |
+| Sensitive internal filesystem paths (`/Users/chris/...`, `C:\...`) in errors | "File not found" or generic |
 | Key derivation parameters | Never exposed |
 | Memory addresses | Never exposed |
 | Stack traces | Logged server-side only |
 | Specific crypto errors | "An error occurred" |
+
+User-selected output paths may be returned only in explicit success payloads where the command contract requires them; sanitisation rules apply to error text and internal diagnostics.
 
 ---
 
@@ -703,7 +705,7 @@ pub struct MigrationProgress {
 
 /// Configuration for adding or updating a destination session.
 /// Credentials in `rclone_config_blob` are encrypted into SQLCipher on save.
-/// `CloudEndpointConfig` is retired; use this type for vault creation and migration.
+/// `CloudEndpointConfig` is retired; use this type for vault creation and destination management.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DestinationSessionConfig {
@@ -1510,7 +1512,7 @@ sync_state.update(|s| {
 | Observable | Mitigation | Notes |
 |------------|------------|-------|
 | IPC command names visible in JS | Commands are generic ("upload_file") — no sensitive info in names | Acceptable |
-| Error messages reach frontend | Sanitised via IpcError — no paths, keys, or internals | Critical |
+| Error messages reach frontend | Sanitised via IpcError — no sensitive internal paths, keys, or internals | Critical |
 | Session status polling | Status contains only boolean + timeout — no keys | Acceptable |
 | Progress updates stream to frontend | Only percentages and byte counts — no file content | Acceptable |
 | Frontend state persists until lock | Vault lock clears all contexts via `VaultActions::clear()` | Critical for Zero-Trace |
@@ -1522,7 +1524,7 @@ sync_state.update(|s| {
 
 ### Frontend as untrusted
 
-The frontend runs in a WebView which is inherently less trusted than the Rust backend. Design principle: the frontend is a display layer only — it never holds keys or decrypted content.
+The frontend runs in a WebView which is inherently less trusted than the Rust backend. Design principle: the frontend is a display layer only — it never holds key material and never persistently stores decrypted content. Decrypted bytes may exist transiently in WebView/WASM memory during active rendering and are cleared on close or lock.
 
 - **Compromised WebView scenario**: If an attacker injects JS into the WebView (via XSS or browser exploit), they can call any exposed Tauri command. Mitigation: commands never return key material, and all destructive operations (delete, overwrite) require explicit user action in the frontend.
 
@@ -1562,7 +1564,7 @@ The frontend runs in a WebView which is inherently less trusted than the Rust ba
 | Sharing commands | Eight commands in `sharing_commands.rs` | Covers Phase 5 file sharing operations |
 | Vault chunk size | User-configurable at creation via `chunk_size_bytes` (128 KiB–64 MiB, default 4 MiB) | Chunk size is a privacy vs. efficiency dial; immutable after creation to preserve uniform blob size within the vault |
 | Epoch buffer | User-toggleable at creation via `epoch_buffer_enabled` (off by default) | Mandatory buffering harms everyday single-file usability; opt-in for users who want packing and timing privacy on bulk imports |
-| `CloudEndpointConfig` retired | Replaced by `DestinationSessionConfig` across all commands | Multi-destination model requires a richer type that includes credential blob, backup mode, and is_primary flag; old type had no concept of primary vs. backup |
+| `CloudEndpointConfig` retired | Replaced by `DestinationSessionConfig` for destination configuration commands | Multi-destination model requires a richer type that includes credential blob, backup mode, and is_primary flag; old type had no concept of primary vs. backup |
 | Destination commands | New `destination_commands.rs` module (`add_destination`, `list_destinations`, `delete_destination`) | Destination session management is a distinct domain from sync operations; separating into its own module keeps `sync_commands.rs` focused |
 | `migrate_vault` parameter | `new_destination_id: String` (references an existing `DestinationSession`) instead of inline `CloudEndpointConfig` | Migration target must already be configured and validated as a destination session; passing raw config inline would bypass credential storage and validation |
 | `sync_backup` command | Optional `destination_id`; None = sync to all backup destinations | Gives users control (sync one specific backup vs. all at once) without requiring multiple invocations |

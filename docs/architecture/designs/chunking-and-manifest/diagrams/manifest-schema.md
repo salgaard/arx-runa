@@ -21,13 +21,26 @@ erDiagram
         TEXT node_id FK "#45;#62; nodes.node_id (CASCADE)"
         INTEGER chunk_index "0-based"
         TEXT blob_name "UUID v4 (cloud identifier)"
-        INTEGER size_padded "always 4 MiB"
+        INTEGER size_padded "chunk_size_bytes (default 4 MiB)"
         BLOB blake3_checksum "32 bytes over encrypted blob"
     }
 
     manifest_meta {
         TEXT key PK "schema_version, vault_id, etc."
         TEXT value "configuration values"
+    }
+
+    destination_sessions {
+        TEXT destination_id PK
+        TEXT label
+        TEXT destination_type "cloud | external_drive | local_path"
+        TEXT rclone_remote_name
+        TEXT rclone_config_blob "encrypted config blob"
+        TEXT bucket
+        TEXT path_prefix
+        INTEGER is_primary "0 | 1"
+        TEXT backup_mode "mirror | accumulating | NULL"
+        INTEGER created_at
     }
 
     contacts {
@@ -72,11 +85,12 @@ erDiagram
 
 Entity-relationship diagram for the SQLCipher manifest database. The entire database is encrypted with `sqlcipher_key` (derived from `master_key` via HKDF-SHA256 during authentication).
 
-### Core tables (Phase 3)
+### Core tables (Phase 3 + Phase 4 groundwork)
 
 - **nodes**: Virtual filesystem tree. Files have `file_key_wrapped`; directories have `NULL`. Self-referencing via `parent_id` for the directory hierarchy.
 - **chunks**: One row per encrypted blob. Linked to nodes via `node_id` with CASCADE delete. `UNIQUE(node_id, chunk_index)` prevents duplicates.
-- **manifest_meta**: Key-value store for vault metadata (`schema_version`, `vault_id`, `snapshot_counter`, `last_synced_at`).
+- **manifest_meta**: Key-value store for vault metadata (`schema_version`, `vault_id`, `snapshot_counter`, `chunk_size_bytes`, `last_synced_at` once synced).
+- **destination_sessions**: Vault-scoped destination metadata and encrypted Rclone config blobs. The table is created in Phase 3 schema and used by Phase 4 cloud sync flows.
 
 ### Sharing tables (Phase 5)
 

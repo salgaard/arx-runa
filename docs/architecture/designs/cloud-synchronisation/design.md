@@ -176,7 +176,7 @@ pub struct CloudEndpoint {
 }
 ```
 
-**Where the owner's config is stored.** `%APPDATA%/arx-runa/cloud-config.json` (Windows) or `~/.local/share/arx-runa/cloud-config.json` (Linux). This file contains no secrets — it holds only the non-sensitive endpoint metadata (remote name, bucket, region, endpoint URL) needed to locate the vault header before authentication. Actual Rclone credentials are stored in the vault's SQLCipher database (see [Destination Session Storage](#destination-session-storage) below). The cloud config must be readable before authentication (required at step 1 of new-device recovery).
+**Where the owner's config is stored.** `%APPDATA%/arx-runa/cloud-config.json` (Windows) or `~/.local/share/arx-runa/cloud-config.json` (Linux). This file contains no secrets — it holds only the non-sensitive endpoint metadata (remote name, bucket, region, endpoint URL, `path_prefix`) needed to locate the vault header before authentication. Actual Rclone credentials are stored in the vault's SQLCipher database (see [Destination Session Storage](#destination-session-storage) below). The cloud config must be readable before authentication (required at step 1 of new-device recovery).
 
 ---
 
@@ -254,7 +254,7 @@ Credentials in `rclone_config_blob` are decrypted from SQLCipher at session open
 
 ### New-device recovery bootstrap
 
-`cloud-config.json` retains its role for new-device recovery step 1: it contains the non-sensitive `CloudEndpoint` fields (remote name, bucket, region, endpoint URL) for the primary destination, allowing Arx Runa to locate and download the vault header before any keys exist. After authentication, the full `DestinationSession` records (including credentials) are recovered from the decrypted SQLCipher manifest.
+`cloud-config.json` retains its role for new-device recovery step 1: it contains the non-sensitive `CloudEndpoint` fields (remote name, bucket, region, endpoint URL, `path_prefix`) for the primary destination, allowing Arx Runa to locate and download the vault header before any keys exist. After authentication, the full `DestinationSession` records (including credentials) are recovered from the decrypted SQLCipher manifest.
 
 ---
 
@@ -533,7 +533,7 @@ The guided forms cover the five most common backends. The advanced paste option 
      endpoint=<endpoint>
      --non-interactive
    ```
-4. Stores `CloudEndpoint` in `cloud-config.json`
+4. Stores `CloudEndpoint` (including `path_prefix`) in `cloud-config.json`
 
 Arx Runa passes credentials as arguments to `rclone config create`, not as environment variables or config file snippets. Rclone then stores them in its own `rclone.conf`. After the wizard, Arx Runa no longer holds the credentials.
 
@@ -787,11 +787,14 @@ The push flow moves all locally staged blobs to the cloud and updates the cloud 
     snapshot_counter
     - If cloud download fails with NotFound: first push, skip conflict check
     - If decryption fails: treat as conflict; abort
-3.  If cloud_counter > local_counter: CONFLICT — abort push, return error
-    "Another device has synced changes. Pull the latest changes first."
+3.  If cloud_counter != local_counter: CONFLICT — abort push, return error
+    - `cloud_counter > local_counter`: another device pushed; user must pull first
+    - `cloud_counter < local_counter`: cloud manifest is older than local state (rollback or stale cloud view); abort and require manual verification/pull
 4.  If cloud_counter == local_counter: safe to push (continue)
 5.  Collect all blob_names from the chunks table that have a corresponding
-    staging file in staging_dir/<blob_name>.blob
+     staging file in staging_dir/<blob_name>.blob
+    (performed via a SQLCipher-specific query helper in the sync module; not
+    part of the `MetadataStore` trait)
 6.  Shuffle blob list (Fisher-Yates) to randomise upload order
 7.  Upload in parallel (tokio::JoinSet, max_concurrent = 4):
     For each blob_name:
@@ -867,6 +870,8 @@ The pull flow is used for new-device recovery or re-synchronisation after anothe
 4.  Decrypt and import manifest (Section "Manifest Cloud Backup" download flow)
 5.  Open local SQLCipher with sqlcipher_key
 6.  Read all chunk rows from manifest → list of (blob_name, blake3_checksum)
+    (performed via a SQLCipher-specific query helper in the sync module; not
+    part of the `MetadataStore` trait)
 7.  Filter to blobs not already present in staging_dir or local blob store
 8.  Download in parallel (tokio::JoinSet, max_concurrent = 4):
     For each blob_name:
@@ -989,7 +994,7 @@ Migration uses the same `tokio::JoinSet` concurrency model as push/pull, bounded
 ```rust
 #[tauri::command]
 async fn migrate_vault(
-    new_endpoint: CloudEndpointConfig,
+    new_destination_id: String,
     progress: tauri::ipc::Channel<MigrationProgress>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), IpcError>;

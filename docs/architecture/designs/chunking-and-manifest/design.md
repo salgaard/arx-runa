@@ -100,8 +100,8 @@ CREATE TABLE chunks (
     node_id          TEXT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
     chunk_index      INTEGER NOT NULL,     -- 0-based
     blob_name        TEXT NOT NULL,        -- UUID v4, no relation to file identity
-    size_padded      INTEGER NOT NULL,     -- currently always = chunk_size (4 MiB);
-                                           -- retained for forward compatibility if variable chunk sizes are introduced
+    size_padded      INTEGER NOT NULL,     -- always equals configured chunk_size_bytes
+                                           -- default chunk_size_bytes is 4 MiB (4194304)
     blake3_checksum  BLOB NOT NULL,        -- 32 bytes, over encrypted blob
     UNIQUE(node_id, chunk_index)
 );
@@ -114,7 +114,7 @@ CREATE TABLE manifest_meta (
 -- ('schema_version', '1')
 -- ('vault_id', '<uuid>')
 -- ('snapshot_counter', '0')
--- ('last_synced_at', NULL)
+-- last_synced_at is not seeded; set on first successful push
 -- ('chunk_size_bytes', '4194304')   -- immutable; validated on every open
 -- ('epoch_buffer_enabled', 'false') -- user opt-in at vault creation
 
@@ -151,6 +151,7 @@ CREATE TABLE shares (
     file_share_id    TEXT NOT NULL,
     cloud_path       TEXT NOT NULL,
     created_at       INTEGER NOT NULL,
+    expires_at       INTEGER,             -- NULL = no expiration (Unix timestamp)
     revoked_at       INTEGER
 );
 
@@ -369,7 +370,7 @@ A subdirectory of the Arx Runa application data directory:
 1. **Write**: blobs are created during `encrypt_file`, named `<uuid>.blob`
 2. **Upload**: Phase 4 (cloud sync) reads from staging and uploads via Rclone
 3. **Delete**: after confirmed upload, the staging copy is deleted
-4. **Cleanup**: on startup, Arx Runa scans the staging directory for blobs not referenced by any `chunks.blob_name` in the manifest → delete them (orphans from interrupted operations)
+4. **Cleanup**: on startup, Arx Runa scans the staging directory for blobs not referenced by any `chunks.blob_name` in the manifest → delete them (orphans from interrupted operations). Global `chunks.blob_name` enumeration is performed via a SQLCipher-specific query helper in the storage implementation, not via the `MetadataStore` trait.
 
 ### Security
 
@@ -475,7 +476,7 @@ Implementations:
 | Decision | Options | Status |
 |----------|---------|--------|
 | Upload order randomisation | Randomise blob upload order to mask which blobs belong to the same file vs. sequential for simplicity | Extension point for Phase 4. Security rationale: sequential upload leaks temporal correlation — an observer sees which blobs belong to the same file by their upload timestamps, even though blob names are random UUIDs. Fisher-Yates shuffle of the upload queue eliminates this signal. See Phase 4 design |
-| Maximum file size | Implicit limit from chunk_index as u32 (2^32 chunks × 4 MiB = 16 PiB per file) — no practical limit needed | Not blocking |
+| Maximum file size | Implicit limit from chunk_index as u32 (2^32 chunks × `chunk_size_bytes`; default 4 MiB gives 16 PiB per file) — no practical limit needed | Not blocking |
 | Video metadata stripping | MP4/QuickTime excluded from EXIF stripping pipeline (moov-at-end incompatible with streaming). A future non-streaming pre-processing step could handle this | Deferred |
 
 ---
@@ -484,7 +485,7 @@ Implementations:
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Chunk size | 4 MiB | Half the padding waste of 8 MiB, lower memory, finer resume granularity |
+| Default chunk size | 4 MiB (`chunk_size_bytes`, user-configurable at vault creation) | Half the padding waste of 8 MiB, lower memory, finer resume granularity |
 | Padding | Zero-pad to chunk_size, truncate via `size_bytes` on reassembly | Simple, unambiguous, cloud sees uniform blob sizes |
 | `file_key_wrapped` location | `nodes` table (per-file) | Eliminates N redundant copies in chunks table; CASCADE still works |
 | 0-byte files | Node row with no chunks, `size_bytes = 0` | Clean edge case, file_key still generated for future updates |
