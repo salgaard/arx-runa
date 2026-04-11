@@ -132,4 +132,8 @@ An individual user wants to back up sensitive personal files (documents, photos,
 
 ## Notes
 
-This is the canonical use case for Arx Runa. Tier 1 is the default for accessibility — see [use-case-3](use-case-3-hardware-mfa-and-key-loss.md) for the full Tier 2 (USB key) setup and key-loss scenarios.
+This is the canonical use case for Arx Runa. Tier 1 is the default for accessibility.
+
+**Password loss warning**: For a Tier 1 vault, the password is the sole authentication factor. Forgetting it without a recovery phrase configured means permanent, unrecoverable data loss — there is no admin override or cloud-based reset. Users should either store their password in a password manager or configure the opt-in BIP-39 recovery phrase immediately after vault creation.
+
+See [use-case-3](use-case-3-hardware-mfa-and-key-loss.md) for all credential-loss and recovery flows, including Tier 1 password loss (with and without a recovery phrase) and the full Tier 2 (USB key) setup and key-loss scenarios.

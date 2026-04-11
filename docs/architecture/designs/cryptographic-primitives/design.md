@@ -47,9 +47,9 @@
 
 **Cipher**: `XChaCha20Poly1305` only (not `ChaCha20Poly1305`)
 
-- ✅ Use: `XChaCha20Poly1305` with 192-bit (24-byte) nonces
-- ❌ Reject: `ChaCha20Poly1305` (96-bit nonces insufficient for random generation)
-- ❌ Reject: AES-GCM (not used in Arx Runa)
+- Use: `XChaCha20Poly1305` with 192-bit (24-byte) nonces
+- Reject: `ChaCha20Poly1305` (96-bit nonces insufficient for random generation)
+- Reject: AES-GCM (not used in Arx Runa)
 
 **Rationale**: XChaCha20 extended nonce space (192-bit vs 96-bit) enables safe random nonce generation without collision concerns. With 96-bit nonces, the birthday bound becomes concerning after ~2^32 encryptions; with 192-bit, it's negligible even at 2^64 encryptions.
 
@@ -291,8 +291,8 @@ pub fn generate_nonce() -> [u8; 24];
 ```
 
 **Requirements**:
-- ✅ Use: CSPRNG (e.g., `rand::rng().random::<[u8; 24]>()`)
-- ❌ Reject: Sequential nonces, counter-based nonces, derived nonces
+- Use: CSPRNG (e.g., `rand::rng().random::<[u8; 24]>()`)
+- Reject: Sequential nonces, counter-based nonces, derived nonces
 
 **Rationale**: Sequential nonces create catastrophic failure if counter is reset or reused. Random 192-bit nonces have negligible collision probability (2^-64 after 2^64 encryptions).
 

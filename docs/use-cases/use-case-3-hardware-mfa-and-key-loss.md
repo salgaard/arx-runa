@@ -1,8 +1,8 @@
-# Use Case 3: Hardware MFA, Key Loss, and Recovery
+# Use Case 3: Hardware MFA, Recovery, and Key Loss
 
 ## Overview
 
-A user wants maximum security for a vault by choosing Tier 2 authentication — password plus a physical USB key file. This use case covers Tier 2 vault creation, daily access, loss scenarios for either authentication factor, and the opt-in BIP-39 recovery phrase that allows vault access when primary credentials are unavailable.
+This use case covers all credential-loss and recovery scenarios across both authentication tiers. The main flow demonstrates Tier 2 vault creation (password + USB key file). Alternate flows cover: password loss for Tier 1 and Tier 2 vaults (with and without a recovery phrase), USB key loss for Tier 2 vaults, backup USB key restoration, recovery phrase setup, password change with an active recovery slot, and USB key compromise. The opt-in BIP-39 recovery phrase is the single recovery mechanism available to users of either tier.
 
 ## Actors
 
@@ -34,21 +34,22 @@ A user wants maximum security for a vault by choosing Tier 2 authentication — 
 
 ## Alternate Flows
 
-### Password Loss (Tier 2 Vault) — Without Recovery Phrase
+### Password Loss — Without Recovery Phrase
 
-**Trigger**: User forgets vault password, has USB key, but has no recovery phrase configured
+**Trigger**: User forgets vault password and has no recovery phrase configured
 
 **Steps**:
-1. User inserts USB key and attempts vault unlock with incorrect password
-2. Arx Runa derives wrong master_key; SQLCipher decryption fails
-3. Arx Runa displays: "Authentication failed"
-4. No recovery slot is configured — Tier 2 vault data is permanently inaccessible
+1. *(Tier 2 only)* User inserts USB key
+2. User attempts vault unlock with incorrect password
+3. Arx Runa derives wrong `master_key`; SQLCipher decryption fails
+4. Arx Runa displays: "Authentication failed"
+5. No recovery slot is configured — vault data is permanently inaccessible
 
 **Outcome**: Data lost. Mitigations: store password in a password manager or physical safe; configure a recovery phrase at vault creation.
 
-### Password Loss (Tier 2 Vault) — With Recovery Phrase
+### Password Loss — With Recovery Phrase
 
-**Trigger**: User forgets vault password, has USB key, and has a recovery phrase configured
+**Trigger**: User forgets vault password but has a recovery phrase configured
 
 **Steps**:
 1. User selects "Recover with phrase" on the login screen
@@ -58,9 +59,9 @@ A user wants maximum security for a vault by choosing Tier 2 authentication — 
 5. Arx Runa derives `recovery_key` via Argon2id and decrypts `wrapped_master_key`
 6. HKDF derives vault-level session keys; session begins
 7. Arx Runa prompts: "Set a new password to complete recovery"
-8. User sets new password; vault is re-keyed; recovery slot re-wrapped under new master_key
+8. User sets new password; vault is re-keyed; recovery slot re-wrapped under new `master_key`
 
-**Outcome**: Vault recovered. User should verify backup USB key is still functional after recovery.
+**Outcome**: Vault recovered. *(Tier 2)* User should verify backup USB key is still functional after recovery.
 
 ### USB Key Loss (Tier 2 Vault) — Without Recovery Phrase
 
@@ -141,6 +142,7 @@ A user wants maximum security for a vault by choosing Tier 2 authentication — 
 
 ## Success Criteria
 
+- Tier 1 vault cannot be unlocked without the correct password — unless recovery phrase is used
 - Tier 2 vault cannot be unlocked with password alone (USB key mandatory) — unless recovery phrase is used
 - Tier 2 vault cannot be unlocked with USB key alone (password mandatory) — unless recovery phrase is used
 - USB key file is deterministic: identical bytes always produce the same master_key
