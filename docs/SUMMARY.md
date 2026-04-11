@@ -27,6 +27,7 @@
       - [0.3: Frontend Build Pipeline](architecture/designs/project-scaffolding/sub-phases/0.3-frontend-build-pipeline.md)
   - [Cryptographic Primitives](architecture/designs/cryptographic-primitives/design.md)
     - [Diagram: Key Derivation Tree](architecture/designs/cryptographic-primitives/diagrams/key-derivation-tree.md)
+    - [Diagram: Key Derivation — Recovery Slot](architecture/designs/cryptographic-primitives/diagrams/key-derivation-recovery-slot.md)
     - [Diagram: Key Derivation Flow](architecture/designs/cryptographic-primitives/diagrams/key-derivation-flow.md)
     - [Diagram: Chunk Encryption Flow](architecture/designs/cryptographic-primitives/diagrams/chunk-encryption-flow.md)
     - [Sub-Phase Roadmap](architecture/designs/cryptographic-primitives/sub-phases/roadmap.md)

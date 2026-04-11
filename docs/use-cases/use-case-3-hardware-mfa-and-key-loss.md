@@ -54,7 +54,7 @@ A user wants maximum security for a vault by choosing Tier 2 authentication — 
 1. User selects "Recover with phrase" on the login screen
 2. Arx Runa fetches vault header; confirms a `bip39` recovery slot is present
 3. User enters 24-word recovery phrase
-4. Arx Runa validates BIP-39 checksum — immediate error if any word is misspelled
+4. Arx Runa validates BIP-39 checksum — words not in the BIP-39 wordlist or an invalid checksum are caught immediately; if all words are valid but the phrase is incorrect, recovery fails with an authentication error
 5. Arx Runa derives `recovery_key` via Argon2id and decrypts `wrapped_master_key`
 6. HKDF derives vault-level session keys; session begins
 7. Arx Runa prompts: "Set a new password to complete recovery"
