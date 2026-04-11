@@ -1,7 +1,7 @@
 # Arx Runa — Tauri IPC Layer and Frontend Design
 
 > Status: Reviewed. Implementation target: Phase 6.
-> Last updated: 2026-03-31
+> Last updated: 2026-04-11
 
 ### Review Log
 
@@ -21,6 +21,52 @@
 
 ---
 
+## Scope Profiles
+
+Phase 6 scope is documented with two profiles:
+
+- **Full profile (canonical)**: complete IPC command surface and frontend scope. The single source of truth for command membership is [Canonical Command Surface (Normative)](#canonical-command-surface-normative).
+- **MVP profile (optional)**: delivery slicing for UI breadth (for example, [Supported types (MVP)](#supported-types-mvp) in the file-viewing section). MVP framing may defer UI capabilities, but it must not add or remove commands from the canonical full profile.
+
+---
+
+## How to Read This Design
+
+- **Normative** sections define required contract and scope.
+- **Illustrative** code blocks keep detailed implementation cues and examples; if they diverge, follow the normative sections.
+- Command inclusion/exclusion is governed only by [Canonical Command Surface (Normative)](#canonical-command-surface-normative).
+
+---
+
+## Contract Surface
+
+### Interface contract
+
+- Command surface is the registered async Tauri command set across `auth_commands`, `file_commands`, `sync_commands`, `destination_commands`, and `sharing_commands`, as defined in [Canonical Command Surface (Normative)](#canonical-command-surface-normative).
+- Long-running command contracts stream progress through `tauri::ipc::Channel<T>` (`upload_file`, `download_file`, `sync_to_cloud`, `migrate_vault`, `sync_backup`).
+- Build-time exposure contract is the `src-tauri/build.rs` `AppManifest::commands(...)` allowlist.
+
+### Data contract
+
+- Error payload contract is `IpcError` with sanitised, user-safe messages only.
+- Response payload contract is `src-tauri/src/ui/types.rs` (`AuthResponse`, `SessionStatus`, `FileEntry`, `SyncResult`, `DestinationEntry`, `RemoteFileEntry`, and related progress types).
+- Shared runtime state contract is `AppState { database, cloud_transport, device_monitor, session_manager, sync_status }` with key material excluded.
+
+### Invariant contract
+
+- IPC responses must never expose key material, passwords, stack traces, or unsanitised internal filesystem details.
+- Tauri/UI state follows Zero-Trace: sensitive state is memory-only and frontend contexts are cleared on lock/timeout.
+- Command handlers remain async and all domain errors are mapped through explicit sanitisation boundaries.
+- Cross-phase invariant reference: `docs/architecture/design-invariants.md`.
+
+### Dependency contract
+
+- UI command handlers depend on `auth`, `storage`, `sync`, and sharing-domain modules via typed `From` mappings into `IpcError`.
+- Runtime wiring depends on `CloudTransport`, `DeviceMonitor`, `SessionManager`, and SQLCipher access through `AppState`.
+- Security boundary depends on capability files, build.rs allowlisting, and CSP configuration.
+
+---
+
 ## IPC Layer Architecture
 
 ### Command Organisation
@@ -31,15 +77,33 @@ Commands are organised into domain-grouped submodules under `src-tauri/src/ui/`,
 src-tauri/src/ui/
 ├── mod.rs                 # Re-exports, invoke_handler registration
 ├── error.rs               # IpcError enum, From impls
-├── auth_commands.rs       # authenticate, create_vault, change_password, rotate_key_file, delete_vault, lock_session, get_session_status
-├── file_commands.rs       # list_directory, upload_file, download_file, delete_file, get_file_content, list_remote
-├── sync_commands.rs       # sync_to_cloud, recover_from_cloud, get_sync_status, migrate_vault, sync_backup
-├── destination_commands.rs # add_destination, list_destinations, delete_destination
-├── sharing_commands.rs    # export_public_key, add_contact, list_contacts, share_file, import_share, revoke_share, list_shares, list_received_shares
+├── auth_commands.rs       # Auth domain commands (see canonical command surface)
+├── file_commands.rs       # File domain commands (see canonical command surface)
+├── sync_commands.rs       # Sync domain commands (see canonical command surface)
+├── destination_commands.rs # Destination domain commands (see canonical command surface)
+├── sharing_commands.rs    # Sharing domain commands (see canonical command surface)
 └── types.rs               # IPC-specific types (responses, progress updates)
 ```
 
+### Canonical Command Surface (Normative)
+
+This is the **only canonical command list** for Phase 6.
+
+| Domain | Commands |
+|--------|----------|
+| Auth | `authenticate`, `create_vault`, `change_password`, `rotate_key_file`, `delete_vault`, `lock_session`, `get_session_status` |
+| File | `list_directory`, `upload_file`, `download_file`, `delete_file`, `get_file_content`, `list_remote` |
+| Sync | `sync_to_cloud`, `recover_from_cloud`, `get_sync_status`, `migrate_vault`, `sync_backup` |
+| Destination | `add_destination`, `list_destinations`, `delete_destination` |
+| Sharing | `export_public_key`, `add_contact`, `list_contacts`, `share_file`, `import_share`, `revoke_share`, `list_shares`, `list_received_shares` |
+
+All other command enumerations in this document are detailed implementation mirrors and must stay aligned with this section.
+
 ### Command Signatures
+
+> **Code block role: Illustrative**
+>  
+> The detailed signatures below show expected Rust command contracts. Command membership remains authoritative only in [Canonical Command Surface (Normative)](#canonical-command-surface-normative).
 
 ```rust
 // --- auth_commands.rs ---
@@ -72,9 +136,10 @@ async fn get_session_status(
 /// The UI layer should pre-fill 4194304 (4 MiB) as the default before invoking
 /// this command.
 ///
-/// `epoch_buffer_enabled` controls whether small files (< chunk_size_bytes) are
-/// staged locally and packed together before upload. When false, all files are
-/// uploaded immediately padded to chunk_size_bytes.
+/// `epoch_buffer_enabled` selects opt-in hybrid routing.
+/// When true: files < chunk_size_bytes are staged and packed; files >=
+/// chunk_size_bytes upload immediately via the standalone chunk path (including
+/// padded trailing partial chunks). When false: all files upload immediately.
 #[tauri::command]
 async fn create_vault(
     vault_name: String,
@@ -294,6 +359,10 @@ async fn list_received_shares(
 ```
 
 ### Command Registration
+
+> **Code block role: Illustrative**
+>  
+> These wiring examples show how commands are registered and allowlisted. Use [Canonical Command Surface (Normative)](#canonical-command-surface-normative) as the source of truth for the command set.
 
 All commands registered in `src-tauri/src/lib.rs`:
 
@@ -705,7 +774,7 @@ pub struct MigrationProgress {
 
 /// Configuration for adding or updating a destination session.
 /// Credentials in `rclone_config_blob` are encrypted into SQLCipher on save.
-/// `CloudEndpointConfig` is retired; use this type for vault creation and destination management.
+/// Legacy inline destination config is retired; use this type for vault creation and destination management.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DestinationSessionConfig {
@@ -1561,12 +1630,12 @@ The frontend runs in a WebView which is inherently less trusted than the Rust ba
 | Session status | 5-second polling | Simple, low overhead, immediate UI update on lock |
 | Vault creation | `create_vault` command with tier selection | Completes the Phase 2 auth workflow |
 | File viewing | In-app for images/text, download-only for other types | Zero-Trace compliance; video deferred |
-| Sharing commands | Eight commands in `sharing_commands.rs` | Covers Phase 5 file sharing operations |
+| Sharing commands | `sharing_commands.rs` command group (see canonical command surface) | Covers Phase 5 file sharing operations |
 | Vault chunk size | User-configurable at creation via `chunk_size_bytes` (128 KiB–64 MiB, default 4 MiB) | Chunk size is a privacy vs. efficiency dial; immutable after creation to preserve uniform blob size within the vault |
-| Epoch buffer | User-toggleable at creation via `epoch_buffer_enabled` (off by default) | Mandatory buffering harms everyday single-file usability; opt-in for users who want packing and timing privacy on bulk imports |
-| `CloudEndpointConfig` retired | Replaced by `DestinationSessionConfig` for destination configuration commands | Multi-destination model requires a richer type that includes credential blob, backup mode, and is_primary flag; old type had no concept of primary vs. backup |
+| Epoch buffer | User-toggleable at creation via `epoch_buffer_enabled` (off by default) | Opt-in hybrid routing: small files are packed via epoch buffering; large files remain immediate standalone uploads |
+| Legacy inline destination config retired | Replaced by `DestinationSessionConfig` for destination configuration commands | Multi-destination model requires a richer type that includes credential blob, backup mode, and is_primary flag; old type had no concept of primary vs. backup |
 | Destination commands | New `destination_commands.rs` module (`add_destination`, `list_destinations`, `delete_destination`) | Destination session management is a distinct domain from sync operations; separating into its own module keeps `sync_commands.rs` focused |
-| `migrate_vault` parameter | `new_destination_id: String` (references an existing `DestinationSession`) instead of inline `CloudEndpointConfig` | Migration target must already be configured and validated as a destination session; passing raw config inline would bypass credential storage and validation |
+| `migrate_vault` parameter | `new_destination_id: String` (references an existing `DestinationSession`) instead of inline legacy destination config | Migration target must already be configured and validated as a destination session; passing raw config inline would bypass credential storage and validation |
 | `sync_backup` command | Optional `destination_id`; None = sync to all backup destinations | Gives users control (sync one specific backup vs. all at once) without requiring multiple invocations |
 | `list_remote` command | In `file_commands.rs`; returns `Vec<RemoteFileEntry>` with manifest-linked filenames | Remote listing is a file operation from the user's perspective; separating from sync commands keeps the IPC surface aligned with user intent |
 | Cloud file browser frontend | `src/remote/` module with `RemoteBrowser`, `RemoteFileList`, `OrphanIndicator` | Logically separate from local vault browser; orphan handling is remote-specific |

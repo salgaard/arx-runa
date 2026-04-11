@@ -4,6 +4,17 @@ This document describes the security model of Arx Runa for a technically literat
 
 ---
 
+## Zero-Trace Interpretation (Transient vs Persisted Plaintext)
+
+Arx Runa's zero-trace policy separates transient runtime exposure from prohibited persistence:
+
+- **Expected (transient in-memory use)**: decrypted plaintext may exist briefly in process memory while the user is actively decrypting, viewing, or processing data.
+- **Prohibited (persisted/logged leakage)**: decrypted plaintext must not be written to durable or externally emitted outputs such as disk files, logs, telemetry, or developer-tooling output (for example debug traces or diagnostic command output).
+
+Zero-trace means no persisted plaintext artifacts under application control. It does not claim plaintext is "never in memory."
+
+---
+
 ## Authentication Tiers
 
 Arx Runa supports two authentication tiers. Both use Argon2id as the password-based key derivation function (KDF), but they differ in what material is fed into it.

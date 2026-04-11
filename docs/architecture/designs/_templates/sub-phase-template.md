@@ -2,6 +2,7 @@
 
 **Parent roadmap**: [roadmap.md](roadmap.md)  
 **Design sections**: [Reference specific sections or line ranges from parent design.md]  
+**Contract anchor**: [Contract Surface](../design.md#contract-surface) in the parent `design.md` is canonical for interface/data/invariant/dependency contracts; keep this sub-phase focused on implementation sequencing and validation.  
 **Depends on**: [List prerequisite sub-phases with links, or "None" if this is the first]
 
 ---

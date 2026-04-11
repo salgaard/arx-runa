@@ -1,6 +1,7 @@
 # Cloud Synchronisation — Sub-Phase Roadmap
 
 **Parent design**: [`design.md`](../design.md)  
+**Contract anchor**: [`design.md#contract-surface`](../design.md#contract-surface) is canonical for interface/data/invariant/dependency contracts; roadmap and sub-phases should reference it instead of duplicating full contract payloads.  
 **Created**: 2026-04-02  
 **Status**: Draft  
 **Implementation order**: 4.1 → 4.2 → 4.3 → 4.4 → 4.5 (strict dependencies)

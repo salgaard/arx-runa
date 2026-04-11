@@ -8,6 +8,10 @@ This section explains how Arx Runa is structured internally — the components, 
 
 Detailed specifications for each part of the system: authentication, encryption, file storage, cloud sync, and the user interface. Each design document explains the goals, the approach taken, and the security properties it must uphold.
 
+### [Global Design Invariants](design-invariants.md)
+
+Cross-phase contracts that apply across all designs, including AAD binding, nonce generation policy, HKDF constants, chunk-size contract, cloud path contract, and Zero-Trace handling rules.
+
 ### [Diagrams](diagrams/INDEX.md)
 
 Visual diagrams showing:

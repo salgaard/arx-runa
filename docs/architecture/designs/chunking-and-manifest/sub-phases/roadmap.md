@@ -1,6 +1,7 @@
 # Chunking and Manifest — Sub-Phase Roadmap
 
 **Parent design**: [`design.md`](../design.md)  
+**Contract anchor**: [`design.md#contract-surface`](../design.md#contract-surface) is canonical for schema/pipeline contracts; sub-phases should reference it rather than duplicate contract payloads.  
 **Created**: 2026-04-04  
 **Status**: Draft  
 **Implementation order**: 3.1 → 3.2 → 3.3 (strict dependencies)
@@ -49,10 +50,11 @@ This sub-phase roadmap decomposes the chunking and manifest design (378 lines) i
    - **Estimated**: ~250 lines production code, ~150 lines tests
 
 2. **[Phase 3.2: Encrypt and Decrypt Pipelines](3.2-encrypt-decrypt-pipelines.md)**
-   - `encrypt_file` — streaming, zero-pad, AEAD encrypt, BLAKE3 checksum, UUID blob naming
-   - `decrypt_file` — BLAKE3 verify before decrypt, truncate last chunk, zeroize plaintext
-   - File key lifecycle integration (generate → wrap → store → use → zeroize)
-   - Property-based tests for arbitrary file sizes
+    - `encrypt_file` — streaming, zero-pad, AEAD encrypt, BLAKE3 checksum, UUID blob naming
+    - `decrypt_file` — BLAKE3 verify before decrypt, truncate last chunk, zeroize plaintext
+    - Hybrid routing gate for `epoch_buffer_enabled` (small files buffered, large files immediate)
+    - File key lifecycle integration (generate → wrap → store → use → zeroize)
+    - Property-based tests for arbitrary file sizes
    - **Estimated**: ~200 lines production code, ~200 lines tests
 
 3. **[Phase 3.3: Staging Directory and Error Recovery](3.3-staging-and-error-recovery.md)**

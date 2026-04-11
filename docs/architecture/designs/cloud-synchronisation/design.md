@@ -16,6 +16,35 @@
 
 ---
 
+## Contract Surface
+
+### Interface contract
+
+- Cloud transport boundary is `CloudTransport` with `upload_blob`, `download_blob`, `delete_blob`, and `list_blobs` over cloud-root-relative paths.
+- Synchronisation boundary includes push, pull, backup sync, and migration flows with typed progress events (`SyncProgress`, `MigrationProgress`).
+- Endpoint/session configuration boundary is expressed through `CloudEndpoint`, `DestinationSession`, and `SyncConfig`.
+
+### Data contract
+
+- Canonical cloud layout is `<cloud_root>/vault-header.json`, `manifest/manifest-backup.blob`, `vault/<uuid>.blob`, and `shared/<file_share_id>/`.
+- Canonical bootstrap payload is `VaultHeader` with `Argon2Params` and optional `RecoverySlot` entries.
+- Canonical destination/session payloads include `DestinationType`, `BackupSyncMode`, and encrypted `rclone_config_blob` rows in `destination_sessions`.
+
+### Invariant contract
+
+- Remote paths must stay relative to cloud root and pass sanitisation (no traversal, no absolute-path escape).
+- `snapshot_counter` is monotonic and conflict checks gate every push before mutation.
+- Vault header remains plaintext bootstrap metadata, while `manifest/manifest-backup.blob` remains AEAD ciphertext under `manifest_key`.
+- Cross-phase invariant reference: `docs/architecture/design-invariants.md`.
+
+### Dependency contract
+
+- Concrete transport depends on the bundled Rclone sidecar and Tauri sidecar invocation model.
+- Consumes storage-manifest contracts (`nodes`/`chunks`/`manifest_meta`) and crypto contracts (XChaCha20-Poly1305 + BLAKE3 verification).
+- Consumes authentication-derived keys and vault-header semantics for new-device recovery.
+
+---
+
 ## Cloud Storage Layout
 
 ```

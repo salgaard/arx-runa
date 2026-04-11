@@ -18,6 +18,35 @@
 
 ---
 
+## Contract Surface
+
+### Interface contract
+
+- Authentication surface includes vault creation, login, password change, USB key file rotation, and recovery authentication ceremonies.
+- Session access boundary is `SharedSession = Arc<RwLock<Option<SessionKeys>>>` with lock/unlock transitions defined by session lifecycle rules.
+- External interfaces are `KeySource::read_key` and `DeviceMonitor::watch` (production plus mock implementations).
+
+### Data contract
+
+- Canonical session container is `SessionKeys { key_encryption_key, sqlcipher_key, manifest_key }`.
+- Canonical vault header fields are `vault_id`, `schema_version`, `tier`, `argon2_salt`, `argon2_params`, `key_file_blake3`, and `recovery_slots`.
+- Recovery slots use `method`, slot-local Argon2 parameters, and `wrapped_master_key` (base64 of the 72-byte wrap format).
+
+### Invariant contract
+
+- Tier input construction is fixed: Tier 1 uses password bytes; Tier 2 uses password bytes concatenated with 32-byte key-file bytes.
+- Authentication failure semantics are non-oracular (`InvalidCredentials` must not distinguish wrong password vs wrong key file).
+- Session keys must remain mlocked and zeroized on lock/timeout; `master_key` remains scope-limited during derivation flows.
+- Cross-phase invariant reference: `docs/architecture/design-invariants.md`.
+
+### Dependency contract
+
+- Depends on Phase 1 cryptographic primitives (Argon2id/HKDF chain, key wrapping, recovery-slot AEAD format).
+- Produces session keys consumed by storage (`sqlcipher_key`), key wrapping (`key_encryption_key`), and sync (`manifest_key`).
+- Integrates cloud vault-header bootstrap semantics and OS-specific removable-device monitoring backends.
+
+---
+
 ## USB Key File
 
 The USB key file is the hardware second factor in Tier 2 authentication. Tier 1 vaults do not use a key file; all subsections below apply specifically to Tier 2.

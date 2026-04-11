@@ -2,6 +2,7 @@
 
 ---
 **Parent design**: `docs/architecture/designs/<design-name>/design.md`  
+**Contract anchor**: `docs/architecture/designs/<design-name>/design.md#contract-surface` is canonical for interface/data/invariant/dependency contracts; roadmap and sub-phases should reference it instead of duplicating full contract payloads.  
 **Created**: [YYYY-MM-DDTHH:MM:SSZ]  
 **Status**: Draft  
 **Implementation order**: [List sub-phases with strict/flexible dependency indicator]

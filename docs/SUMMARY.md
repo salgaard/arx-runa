@@ -17,6 +17,7 @@
 # Architecture
 
 - [Overview](architecture/README.md)
+- [Global Design Invariants](architecture/design-invariants.md)
 - [Project Roadmap](roadmap.md)
 - [Designs](architecture/designs/README.md)
   - [Project Scaffolding](architecture/designs/project-scaffolding/design.md)

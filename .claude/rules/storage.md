@@ -14,6 +14,8 @@ paths:
 
 ## Chunking
 - Chunk size is immutable per vault (set at creation): 128 KiB-64 MiB, default 4 MiB
+- `epoch_buffer_enabled` is opt-in per vault (default `false`)
+- Hybrid routing when enabled: files `< chunk_size_bytes` are staged and packed; files `>= chunk_size_bytes` use immediate standalone chunk upload (including trailing partial chunks)
 - Zero-pad each chunk to `chunk_size_bytes` (no CDC — leaks size info)
 - `chunk_index` 0-based, stored in manifest and used as AAD
 - Blob names: random UUID v4 — no relation to file identity

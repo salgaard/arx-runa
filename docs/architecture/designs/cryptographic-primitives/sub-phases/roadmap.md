@@ -1,6 +1,7 @@
 # Cryptographic Primitives — Sub-Phase Roadmap
 
 **Parent design**: [`design.md`](../design.md)  
+**Contract anchor**: [`design.md#contract-surface`](../design.md#contract-surface) is canonical for interface/data/invariant/dependency contracts; roadmap and sub-phases should reference it instead of duplicating full contract payloads.  
 **Created**: 2026-04-04  
 **Status**: Draft  
 **Implementation order**: 1.1 → 1.2 → 1.3 (strict dependencies)

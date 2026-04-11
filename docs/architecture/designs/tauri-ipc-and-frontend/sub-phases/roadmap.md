@@ -1,6 +1,7 @@
 # Tauri IPC and Frontend — Sub-Phase Roadmap
 
 **Parent design**: [`design.md`](../design.md)  
+**Contract anchor**: [`design.md#contract-surface`](../design.md#contract-surface) is canonical for command/type/error contracts; sub-phases should reference it rather than duplicate full contract payloads.  
 **Created**: 2026-04-04  
 **Status**: Draft  
 **Implementation order**: 6.1 → 6.2 → 6.3 → 6.4 (strict dependencies)
@@ -21,6 +22,10 @@ This sub-phase roadmap decomposes the Tauri IPC and frontend design (1016 lines 
 -  **Multi-step flows**: Authentication flow, vault browse flow, file transfer with progress streaming, Zero-Trace state-clearing flow
 
 **Implementation strategy**: Define the IPC contract and error sanitisation boundary first → build frontend state contexts and type-safe invoke wrapper → build page components against the contexts → harden with Zero-Trace compliance and CSP
+
+**Profile framing**:
+- **Full profile (canonical)** command surface: [`design.md#canonical-command-surface-normative`](../design.md#canonical-command-surface-normative)
+- **MVP profile (optional)**: may narrow frontend UX slices, but must not change the canonical command surface
 
 ---
 
@@ -49,7 +54,7 @@ This sub-phase roadmap decomposes the Tauri IPC and frontend design (1016 lines 
    - All IPC response types (`AuthResponse`, `FileEntry`, `ProgressUpdate`, etc.)
    - `AppState` struct
    - Input validation functions
-   - All 29 Tauri command signatures registered via `tauri::generate_handler![]` and `build.rs` allowlist
+   - Tauri command signatures and registration aligned with [`design.md#canonical-command-surface-normative`](../design.md#canonical-command-surface-normative)
    - **Estimated**: ~400 lines production code, ~150 lines tests
 
 2. **[Phase 6.2: Frontend State Contexts and Tauri Invoke Wrapper](6.2-frontend-state-and-invoke-wrapper.md)**
@@ -62,9 +67,10 @@ This sub-phase roadmap decomposes the Tauri IPC and frontend design (1016 lines 
 3. **[Phase 6.3: Frontend Pages](6.3-frontend-pages.md)**
    - `LoginPage` with password input and `KeyFileIndicator`
    - `VaultBrowser` with `FileList`, `Breadcrumbs`, and `UploadButton`
-   - `ProgressModal` with real-time progress from `tauri::ipc::Channel`
-   - `AppShell` layout with `SessionStatus` display
-   - Generic UI components (`Button`, `Input`, `Modal`, `Spinner`)
+    - `ProgressModal` with real-time progress from `tauri::ipc::Channel`
+    - `AppShell` layout with `SessionStatus` display
+    - Vault creation UX for `chunk_size_bytes` and `epoch_buffer_enabled` with hybrid-routing explanation
+    - Generic UI components (`Button`, `Input`, `Modal`, `Spinner`)
    - Leptos routing: login view when locked, vault browser when unlocked
    - **Estimated**: ~400 lines production code, ~50 lines tests
 

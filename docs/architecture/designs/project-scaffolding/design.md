@@ -16,6 +16,34 @@
 
 ---
 
+## Contract Surface
+
+### Interface contract
+
+- Root `Cargo.toml` is the package+workspace contract: frontend crate at `src/` (Trunk) plus `src-tauri/` workspace member.
+- Phase 0 backend module scaffold is `mod.rs` + `error.rs` + `types/mod.rs` for `crypto`, `auth`, `storage`, `sync`, `memory`, and `ui`.
+- Build entrypoints are `cargo tauri dev` (development) and `cargo tauri build` (production packaging).
+
+### Data contract
+
+- Canonical scaffold artifacts are `Cargo.toml`, `Cargo.lock`, `Trunk.toml`, `index.html`, `input.css`, `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/capabilities/*`.
+- Placeholder module files keep only doc comments and type/error stubs until their implementation phases.
+- Capability configuration is intentionally permissive in Phase 0 and tightened in Phase 6.
+
+### Invariant contract
+
+- Phase 0 establishes a compilable baseline where `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`, and `cargo build --release` succeed.
+- Workspace layout and module naming are stable inputs for all later design phases.
+- Cross-phase invariant reference: `docs/architecture/design-invariants.md`.
+
+### Dependency contract
+
+- Backend baseline dependencies include `tauri`, `tokio`, `serde`, `thiserror`, `async-trait`, `tracing`, `anyhow`, plus phase-specific crypto/storage crates listed below.
+- Frontend baseline dependencies include `leptos`, `leptos_meta`, `leptos_router`, `console_error_panic_hook`, `console_log`, `log`, `serde-wasm-bindgen`, and `gloo-timers`.
+- Toolchain contract is Tauri v2 + Leptos 0.8 + Trunk + Tailwind CSS v4.
+
+---
+
 ## Project Structure
 
 ### Workspace Layout

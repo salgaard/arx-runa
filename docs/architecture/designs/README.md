@@ -16,6 +16,8 @@ Each major part of Arx Runa has a dedicated design document covering how it work
 ## Document Structure
 
 Each design folder contains:
-- **`design.md`** — The full specification: goals, data models, security analysis, and implementation notes
+- **`design.md`** — The full specification: goals, data models, security analysis, implementation notes, and a canonical **Contract Surface** section
 - **`diagrams/`** — Diagrams illustrating the flows described in the design
 - **`sub-phases/`** (where present) — The design broken into smaller implementation steps, each with its own roadmap
+
+`sub-phases/` and `diagrams/` should reference contract anchors in `design.md` instead of duplicating command/schema/wire contract details.

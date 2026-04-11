@@ -15,6 +15,36 @@
 
 ---
 
+## Contract Surface
+
+### Interface contract
+
+- Storage API surface is `encrypt_file` / `decrypt_file` plus the `MetadataStore` trait methods (`insert_node`, `insert_chunks`, `get_chunks`, `delete_node`, `increment_snapshot_counter`, and related metadata operations).
+- `ChunkRecord` is the canonical per-chunk contract between encryption and metadata persistence.
+- File upload/access/delete flows are transaction-backed and define how chunk/blob records are created, read, and removed.
+
+### Data contract
+
+- Canonical manifest tables are `nodes`, `chunks`, and `manifest_meta` with UUID identifiers and `UNIQUE(node_id, chunk_index)`.
+- `nodes.file_key_wrapped` is stored once per file; `chunks` stores `blob_name`, `chunk_index`, `size_padded`, and `blake3_checksum`.
+- `manifest_meta.chunk_size_bytes`, `manifest_meta.epoch_buffer_enabled`, and `manifest_meta.snapshot_counter` are canonical metadata keys consumed by later phases.
+
+### Invariant contract
+
+- `chunk_size_bytes` is immutable per vault; every chunk is padded to that exact size and reassembly truncates via `nodes.size_bytes`.
+- Routing mode is stable per vault: with `epoch_buffer_enabled = false`, all files follow standalone chunk uploads; with `epoch_buffer_enabled = true`, files smaller than `chunk_size_bytes` are routed to epoch buffering while files `>= chunk_size_bytes` remain immediate standalone uploads.
+- Chunk cryptographic context is fixed: `AAD = file_id || chunk_index`; BLAKE3 verification occurs before decrypt.
+- Streaming invariant holds at most one chunk plaintext buffer in memory; node deletion cascades chunk-row deletion.
+- Cross-phase invariant reference: `docs/architecture/design-invariants.md`.
+
+### Dependency contract
+
+- Depends on Phase 1 crypto contracts (`encrypt_chunk`, `decrypt_chunk`, file-key wrapping, BLAKE3 checksums, UUID blob naming).
+- Provides manifest + staging contracts consumed by cloud synchronisation push/pull, conflict checks, and garbage collection.
+- Depends on SQLCipher (`rusqlite`) and `async-trait` for production (`SqlCipherMetadataStore`) and test (`MockMetadataStore`) implementations.
+
+---
+
 ## Chunk Size
 
 **Chunk size is set once at vault creation and is immutable thereafter.**
@@ -29,6 +59,16 @@ Chunk size is a **privacy vs. storage efficiency dial**, not a performance param
 Chunk size is immutable after creation because changing it would require downloading, re-encrypting, and re-uploading every blob in the vault — equivalent to recreating the vault. All blobs within a vault are identically sized, preserving the anonymity set.
 
 The chosen `chunk_size_bytes` is stored in `manifest_meta` and validated on every vault open.
+
+### Hybrid auto-routing when `epoch_buffer_enabled = true`
+
+`epoch_buffer_enabled` is an opt-in vault setting (default off) that controls small-file routing:
+
+- Files with `size_bytes < chunk_size_bytes` are staged into an epoch buffer and packed before upload.
+- Files with `size_bytes >= chunk_size_bytes` bypass epoch buffering and use immediate standalone chunk upload.
+- The trailing partial chunk of large files is not deferred to epoch buffering; it is padded and uploaded in the same immediate upload path.
+
+This applies Approach 7 from `docs/research/padding-overhead-reduction.md` while preserving immediate large-file backup behavior.
 
 ### Quantified padding waste (at default 4 MiB)
 
@@ -49,6 +89,7 @@ Every file's last chunk is zero-padded to `chunk_size_bytes`. The overhead depen
 For files larger than one chunk the maximum waste is < chunk_size (constant, not proportional to file size).
 
 Per-chunk crypto overhead: 24 bytes (nonce) + 16 bytes (Poly1305 tag) = 40 bytes. Negligible at any chunk size in the valid range.
+The table applies directly to standalone mode and to the large-file path when hybrid routing is enabled.
 <!-- CITE: Breaking and Fixing Content-Defined Chunking — https://eprint.iacr.org/2025/558.pdf — supports fixed-size chunking for metadata privacy over CDC -->
 
 ---
@@ -486,6 +527,7 @@ Implementations:
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Default chunk size | 4 MiB (`chunk_size_bytes`, user-configurable at vault creation) | Half the padding waste of 8 MiB, lower memory, finer resume granularity |
+| Epoch buffer implementation | Hybrid auto-routing (opt-in via `epoch_buffer_enabled`) | Small files benefit from packing and timing privacy, while large files remain immediately available in cloud |
 | Padding | Zero-pad to chunk_size, truncate via `size_bytes` on reassembly | Simple, unambiguous, cloud sees uniform blob sizes |
 | `file_key_wrapped` location | `nodes` table (per-file) | Eliminates N redundant copies in chunks table; CASCADE still works |
 | 0-byte files | Node row with no chunks, `size_bytes = 0` | Clean edge case, file_key still generated for future updates |

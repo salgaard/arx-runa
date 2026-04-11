@@ -14,6 +14,35 @@
 - BLAKE3 checksums over encrypted blobs
 - All keys secured with `ZeroizeOnDrop` + `Secret<T>`
 
+## Contract Surface
+
+### Interface contract
+
+- Public API surface includes `derive_vault_keys`, `generate_file_key`, `wrap_file_key`, `unwrap_file_key`, `wrap_master_key_for_recovery`, `unwrap_master_key_from_recovery`, `encrypt_chunk`, `decrypt_chunk`, `generate_nonce`, `compute_checksum`, and `verify_checksum`.
+- Chunk encryption/decryption contract is contextual (`FileId`, `ChunkIndex`) and returns typed `CryptoError` results.
+- Wire-format outputs are explicit byte-layout contracts for wrapped keys and encrypted chunks.
+
+### Data contract
+
+- Canonical key containers are `VaultKeys`, `FileKey`, `KeyEncryptionKey`, `SqlcipherKey`, `ManifestKey`, `RecoveryKey`, `WrappedFileKey`, and `WrappedMasterKey`.
+- Canonical domain/value types are `FileId`, `ChunkIndex`, `Blake3Hash`, and `VerifiedBlob`.
+- Canonical encodings are chunk blobs `[24-byte nonce | ciphertext | 16-byte tag]` and wrapped keys `[24-byte nonce | 32-byte ciphertext | 16-byte tag]`.
+
+### Invariant contract
+
+- Cipher contract is `XChaCha20Poly1305` only; nonces are random 24-byte CSPRNG values.
+- Chunk AEAD contract requires `AAD = file_id || chunk_index` (big-endian `u32`) for every chunk encrypt/decrypt operation.
+- `master_key` is never persisted and is zeroized after derivation; checksum verification precedes decrypt via `VerifiedBlob`.
+- Cross-phase invariant reference: `docs/architecture/design-invariants.md`.
+
+### Dependency contract
+
+- Consumes auth-derived `master_key` and produces `key_encryption_key`, `sqlcipher_key`, and `manifest_key` for later phases.
+- Depends on `hkdf`/`sha2`, `chacha20poly1305`, `rand`, `blake3`, `secrecy`, `zeroize`, `uuid`, and `thiserror`.
+- Recovery-slot wrapping semantics align with the authentication and cloud vault-header designs.
+
+---
+
 ## Cipher Selection
 
 **Cipher**: `XChaCha20Poly1305` only (not `ChaCha20Poly1305`)

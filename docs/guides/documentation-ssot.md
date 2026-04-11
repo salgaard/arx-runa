@@ -123,6 +123,57 @@ paths:
 
 ---
 
+## Contract Surface Standard (for `design.md`)
+
+Every phase design should include a compact **Contract Surface** section that acts as the canonical anchor for derivative docs.
+
+**Purpose**:
+- Keep roadmap/sub-phase/diagram docs reference-based
+- Avoid duplicate contract text drifting out of sync
+- Make cross-phase handoffs explicit
+
+**Required contract fields**:
+1. **Interface contract**: command names, trait methods, or public API signatures
+2. **Data contract**: schema fields, wire-format fields, and canonical names
+3. **Invariant contract**: security and behavioral invariants that must hold
+4. **Dependency contract**: which upstream phases/contracts are required
+
+**Template**:
+```markdown
+## Contract Surface
+
+### Interface contract
+- ...
+
+### Data contract
+- ...
+
+### Invariant contract
+- ...
+
+### Dependency contract
+- ...
+```
+
+Derivative documents (`docs/roadmap.md`, `sub-phases/*.md`, `diagrams/*.md`) should reference this section using heading anchors rather than restating contract details.
+
+---
+
+## Contract-Change Checklist (Same PR)
+
+Use this checklist when any `## Contract Surface` content changes in a design document. This supplements (does not replace) the workflow below.
+
+- [ ] Update the canonical contract in `docs/architecture/designs/<design-name>/design.md` (`## Contract Surface`).
+- [ ] Update affected references in the same PR:
+  - [ ] `docs/roadmap.md`
+  - [ ] `docs/architecture/designs/<design-name>/sub-phases/*.md`
+  - [ ] Related diagrams in `docs/architecture/designs/**/diagrams/` or `docs/architecture/diagrams/`
+- [ ] Ensure CI consistency checks pass before merge.
+
+Do not merge contract-surface changes without these same-PR updates and green consistency checks.
+
+---
+
 ## Workflow
 
 ### Updating a Technical Specification
@@ -137,6 +188,16 @@ paths:
 1. **Design first**: Add to design document
 2. **Add to rules**: Add a brief summary in the relevant rule file
 3. **Sync**: Run `/copilot-sync`
+
+---
+
+## Design Consistency Review Cadence (Quarterly)
+
+Run a lightweight review once per quarter:
+
+- [ ] Confirm each active design `design.md` has a current `## Contract Surface`.
+- [ ] Verify roadmap/sub-phase/diagram documents still reference contract anchors (no stale duplicate contract text).
+- [ ] Run CI consistency checks; open follow-up issues for any drift.
 
 ---
 

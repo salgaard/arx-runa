@@ -17,6 +17,35 @@
 
 ---
 
+## Contract Surface
+
+### Interface contract
+
+- Sharing surface covers contact key exchange, share package export/import, revocation handling, receipt processing, and optional expiration enforcement.
+- Package confidentiality/integrity contract is ECIES: ephemeral X25519 + ECDH + HKDF + XChaCha20-Poly1305.
+- Delivery contract remains out-of-band; cloud stores encrypted shared blobs and encrypted receipt blobs.
+
+### Data contract
+
+- Canonical share package fields are `share_id`, `file_id`, `file_name`, `chunk_count`, `chunk_size`, `chunk_uuids`, `file_key_wrapped`, `cloud_endpoint`, and optional `expires_at`.
+- Canonical shared-cloud path contract is `shared/<file_share_id>/<uuid>.blob` plus `shared/<file_share_id>/receipts/<receipt_uuid>.blob`.
+- Canonical persistence tables are `contacts`, `shares`, and `received_shares` (including `revoked_at` / `expires_at` semantics).
+
+### Invariant contract
+
+- Per-file key isolation is preserved: sharing exposes only the selected file's `file_key` context, never vault-wide keys.
+- Share semantics are snapshot-based (`chunk_uuids` represent a fixed file version at share time).
+- Revocation guarantees future-fetch blocking only; it cannot retract plaintext already downloaded/decrypted by a recipient.
+- Cross-phase invariant reference: `docs/architecture/design-invariants.md`.
+
+### Dependency contract
+
+- Depends on cryptographic primitives for X25519/ECDH, HKDF `info="arx-runa-share"`, and XChaCha20-Poly1305 envelopes.
+- Depends on authentication/session storage of the local X25519 identity keypair and on phase-3 manifest contracts (`nodes.file_key_wrapped`, chunk metadata).
+- Depends on phase-4 cloud layout (`shared/` namespace) and sync cycles for receipt polling and expired-share cleanup.
+
+---
+
 ## Identity Model
 
 ### No central server for identity
