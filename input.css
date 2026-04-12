@@ -1,0 +1,32 @@
+/* input.css */
+@import "tailwindcss";
+
+@theme {
+  /* Core palette */
+  --color-iron:  #09090B;   /* darkest — page fill */
+  --color-stone: #0C0E14;   /* card surfaces */
+  --color-steel: #222736;   /* borders, dividers */
+  --color-rune:  #5C7090;   /* primary accent, logomark */
+  --color-bone:  #DBD7CD;   /* primary text */
+
+  /* Text scale */
+  --color-text-primary:   #DBD7CD;
+  --color-text-secondary: #9AA3B0;
+  --color-text-muted:     #636D7E;
+  --color-text-ghost:     #3E4A5E;
+
+  /* Surface scale */
+  --color-surface-base:    #09090B;
+  --color-surface-raised:  #0C0E14;
+  --color-surface-overlay: #111420;
+
+  /* Border scale */
+  --color-border-subtle:  #181C26;
+  --color-border-default: #1C2030;
+  --color-border-strong:  #222736;
+
+  /* Typography */
+  --font-display: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-body:    Georgia, 'Times New Roman', serif;
+  --font-mono:    'Courier New', Courier, monospace;
+}

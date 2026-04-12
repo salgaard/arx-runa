@@ -6,9 +6,24 @@
 - [Rust toolchain](https://rust-lang.org/learn/get-started) (stable, MSVC)
 - `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
 - [Trunk](https://trunkrs.dev/) (`cargo install trunk --locked`)
+- [Node.js](https://nodejs.org/) v18 or later (`node --version`) — required by the
+  Trunk pre-build hook which invokes `node ./node_modules/@tailwindcss/cli/dist/index.mjs`
+  to compile Tailwind CSS v4.
 - [Strawberry Perl](https://strawberryperl.com/) (Windows source builds only; required for vendored OpenSSL in `src-tauri`)
 - [VS Code](https://code.visualstudio.com/) with recommended extensions
   (see `.vscode/extensions.json`)
+
+---
+
+## First-time setup after cloning
+
+```bash
+npm install
+```
+
+Populates `node_modules/` with `tailwindcss` and `@tailwindcss/cli`. Required
+before the first `cargo tauri dev` or `cargo build --release`. `node_modules/`
+is gitignored.
 
 ---
 
@@ -72,8 +87,17 @@ cargo build
 # Run full app (frontend + backend)
 cargo tauri dev
 
+# Production bundle
+cargo tauri build
+
+# Frontend only (Leptos/WASM via Trunk)
+trunk serve
+
 # Run tests
 cargo test
+
+# Backend tests only
+cargo test -p arx-runa-tauri
 
 # Lint (enforced on all .rs edits via PostToolUse hook)
 cargo clippy -- -D warnings
@@ -90,6 +114,15 @@ Install `cargo-audit` if not present:
 ```bash
 cargo install cargo-audit
 ```
+
+---
+
+### Tailwind CSS v4
+
+Tailwind v4 has no `tailwind.config.js`. The brand token palette (iron, stone,
+steel, rune, bone) is declared in `input.css` inside an `@theme` block. Source:
+`docs/arx-runa-brand.css`. The Trunk pre-build hook (`Trunk.toml`) compiles
+`input.css` → `output.css` on every build.
 
 ---
 

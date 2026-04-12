@@ -4,7 +4,7 @@ Arx Runa is built in ten sequential phases, each delivering a distinct, self-con
 
 | Phase | What gets built | Status |
 |-------|----------------|--------|
-| 0 — Scaffolding | Project structure, build pipeline, CI | Planned |
+| 0 — Scaffolding | Project structure, build pipeline, CI | Complete |
 | 1 — Cryptographic Primitives | Encryption, key derivation, chunk encryption/decryption | Planned |
 | 2 — Authentication & Session | Login flow, USB key file, session lifecycle and timeout | Planned |
 | 3 — Storage & Chunking | File splitting, local encrypted database, blob staging | Planned |

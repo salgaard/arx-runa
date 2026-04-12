@@ -1,5 +1,10 @@
 [build]
-target = "./index.html"
+target = "index.html"
+
+[[hooks]]
+stage = "pre_build"
+command = "node"
+command_arguments = ["./node_modules/@tailwindcss/cli/dist/index.mjs", "-i", "input.css", "-o", "output.css"]
 
 [watch]
 ignore = ["./src-tauri"]

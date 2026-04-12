@@ -1,7 +1,7 @@
 ---
 title: "Phase 0.3 — Frontend Build Pipeline and Verification"
 created: "2026-04-13T00:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 0
 sub-phase: "0.3"
 design-document: "docs/architecture/designs/project-scaffolding/design.md"
@@ -484,4 +484,40 @@ cargo build --release
 6. **`cargo tauri dev` first run may trigger Trunk to download the `wasm32-unknown-unknown` toolchain.** Harmless; just slow.
 7. **Cross-platform**: the plan uses `npx`, `cargo`, and `trunk` commands that work identically on Windows, macOS, and Linux. Developer-docs prerequisites (Step 9) must mention Node.js for all three platforms, not just Windows.
 
-Plan status: `draft`. Ready for review and handoff to `/implement-plan phase-0-3-frontend-build-pipeline.md`.
+Plan status: `implemented`.
+
+## 10. Implementation Log
+
+- **Date**: 2026-04-12T22:32:05.3030720Z
+- **Branch**: `development`
+- **Files changed**:
+  - `C:\Users\chris\source\repos\arx-runa\.claude\plans\phase-0-3-frontend-build-pipeline.md`
+  - `C:\Users\chris\source\repos\arx-runa\.gitignore`
+  - `C:\Users\chris\source\repos\arx-runa\package.json` (new)
+  - `C:\Users\chris\source\repos\arx-runa\package-lock.json` (new)
+  - `C:\Users\chris\source\repos\arx-runa\input.css` (new)
+  - `C:\Users\chris\source\repos\arx-runa\Trunk.toml`
+  - `C:\Users\chris\source\repos\arx-runa\index.html`
+  - `C:\Users\chris\source\repos\arx-runa\styles.css` (deleted)
+  - `C:\Users\chris\source\repos\arx-runa\public\leptos.svg` (deleted)
+  - `C:\Users\chris\source\repos\arx-runa\public\tauri.svg` (deleted)
+  - `C:\Users\chris\source\repos\arx-runa\docs\guides\development.md`
+  - `C:\Users\chris\source\repos\arx-runa\docs\roadmap.md`
+- **Test results**:
+  - `cargo fmt --all -- --check` — passed
+  - `cargo clippy --all-targets --all-features -- -D warnings` — passed
+  - `cargo test --all-targets` — passed (`0 passed; 0 failed`)
+  - `cargo build --release` — passed
+  - `cargo tauri dev` startup smoke run — Trunk hook executed and backend app launched; visual window confirmation remains a manual desktop check
+- **Clippy results**:
+  - `cargo clippy --workspace -- -D warnings` — clean
+- **Security review**:
+  - N/A (plan section 6(b) = NO). Drift check: no touched files under `src-tauri/src/crypto/`, `src-tauri/src/auth/`, or `src-tauri/src/storage/`.
+- **Deviations from plan**:
+  - Updated the Trunk hook command from `npx @tailwindcss/cli ...` to `node ./node_modules/@tailwindcss/cli/dist/index.mjs ...` because Trunk could not spawn `npx`/`npm` on Windows (`program not found`) despite Node being installed; this restored successful `trunk build` and `cargo tauri dev` startup.
+  - Trunk outputs hashed CSS asset names in `dist/` (for example `output-1f664076d8e1f10e.css`) rather than literal `dist/output.css`; token verification was run against the generated `output-*.css` file.
+- **Documentation flagged**:
+  - **`C:\Users\chris\source\repos\arx-runa\docs\guides\development.md`** — update per Step 9: Node.js prerequisite, `npm install` first-time setup, `cargo tauri dev` / `cargo tauri build` / `trunk serve` commands, `cargo test -p arx-runa-tauri` for backend-only tests, new "Tailwind CSS v4" section pointing to `input.css` and `docs/arx-runa-brand.css`.
+  - **`C:\Users\chris\source\repos\arx-runa\docs\roadmap.md`** — flip Phase 0 row status `Planned` → `Complete` (Step 11).
+  - **`C:\Users\chris\source\repos\arx-runa\docs\report-log\`** — the existing post-commit hook auto-creates a stub when `src-tauri/src/` is touched; Phase 0.3 touches no backend code, so **no stub is expected**. If a stub appears, it's from an unrelated edit and should be investigated.
+  - **`C:\Users\chris\source\repos\arx-runa\docs\architecture\designs\project-scaffolding\`** — no design document changes. All facts in this plan come directly from the existing `design.md` and sub-phase file.
