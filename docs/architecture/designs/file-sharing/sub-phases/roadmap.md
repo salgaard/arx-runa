@@ -49,7 +49,7 @@ This sub-phase roadmap decomposes the file sharing design (282 lines) into 3 ind
    - Fingerprint display (first 16 hex chars of SHA-256)
    - **Estimated**: ~120 lines production code, ~80 lines tests
 
-2. **[Phase 5.2: HPKE Construction and Share Packages](5.2-ecies-and-share-packages.md)**
+2. **[Phase 5.2: HPKE Construction and Share Packages](5.2-hpke-and-share-packages.md)**
    - `CTX-ChaCha20-Poly1305` committing AEAD wrapper (BLAKE3 commitment tag)
    - HPKE one-shot seal/open: `DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + CTX-ChaCha20-Poly1305`
    - Share package creation: retrieve `file_key` → assemble JSON (including `file_key` and optional `expires_at`) → HPKE seal
