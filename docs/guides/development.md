@@ -6,6 +6,7 @@
 - [Rust toolchain](https://rust-lang.org/learn/get-started) (stable, MSVC)
 - `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
 - [Trunk](https://trunkrs.dev/) (`cargo install trunk --locked`)
+- [Strawberry Perl](https://strawberryperl.com/) (Windows source builds only; required for vendored OpenSSL in `src-tauri`)
 - [VS Code](https://code.visualstudio.com/) with recommended extensions
   (see `.vscode/extensions.json`)
 
@@ -36,6 +37,17 @@ Verify:
 ```bash
 rustup show
 ```
+
+If you build the backend from source on Windows, `rusqlite` with
+`bundled-sqlcipher-vendored-openssl` requires Perl on `PATH` during compile:
+
+```bash
+winget install StrawberryPerl.StrawberryPerl
+perl -v
+```
+
+This is a build-time prerequisite only; end users running packaged binaries do
+not need Perl.
 
 ---
 

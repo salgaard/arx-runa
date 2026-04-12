@@ -93,10 +93,14 @@ arx-runa/
 │       │       └── mod.rs
 │       ├── memory/             # Memory protection utilities
 │       │   ├── mod.rs
-│       │   └── error.rs
+│       │   ├── error.rs
+│       │   └── types/
+│       │       └── mod.rs
 │       └── ui/                 # Phase 6 (Tauri IPC commands)
 │           ├── mod.rs
-│           └── error.rs
+│           ├── error.rs
+│           └── types/
+│               └── mod.rs
 ├── docs/                       # Documentation (unchanged)
 ├── .github/workflows/          # CI (already exists)
 └── .claude/                    # AI rules and reference
@@ -398,7 +402,7 @@ Phase 0 creates a minimal default capability. In Tauri v2 the default capability
 3. `cargo test --all-targets` passes (no tests yet, but compilation succeeds)
 4. `cargo build --release` succeeds
 5. `cargo tauri dev` launches a window showing the Leptos app
-6. All six module directories exist with `mod.rs`, `error.rs`, and `types/mod.rs` (`crypto`, `auth`, `storage`, `sync`, `memory`, `ui`)
+6. All six module directories exist with `mod.rs`, `error.rs`, and `types/mod.rs` (`crypto`, `auth`, `storage`, `sync`, `memory`, `ui`) — 18 placeholder files total
 7. `src-tauri/src/lib.rs` declares all modules
 8. Tailwind brand theme (iron, stone, steel, rune, bone palette) is present in the build output
 

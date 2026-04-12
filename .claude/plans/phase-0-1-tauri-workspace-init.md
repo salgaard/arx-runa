@@ -1,7 +1,7 @@
 ---
 title: "Phase 0.1 — Tauri Workspace Initialisation"
 created: "2026-04-12T00:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 0
 sub-phase: "0.1"
 design-document: "docs/architecture/designs/project-scaffolding/design.md"

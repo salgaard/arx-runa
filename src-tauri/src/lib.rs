@@ -1,3 +1,12 @@
+//! Arx Runa backend library.
+
+pub mod auth;
+pub mod crypto;
+pub mod memory;
+pub mod storage;
+pub mod sync;
+pub mod ui;
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 /// Returns a greeting message from the backend.
