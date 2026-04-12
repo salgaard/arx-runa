@@ -14,7 +14,7 @@
             "name": "[Run] Frontend dev server (trunk)",
             "type": "node-terminal",
             "request": "launch",
-            "command": "trunk serve --port 1420 --open false",
+            "command": "trunk serve --port 1420",
             "cwd": "${workspaceFolder}"
         },
         {
