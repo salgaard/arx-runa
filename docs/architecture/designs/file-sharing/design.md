@@ -22,12 +22,12 @@
 ### Interface contract
 
 - Sharing surface covers contact key exchange, share package export/import, revocation handling, receipt processing, and optional expiration enforcement.
-- Package confidentiality/integrity contract is ECIES: ephemeral X25519 + ECDH + HKDF + XChaCha20-Poly1305.
+- Package confidentiality/integrity contract is HPKE (RFC 9180): `DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + CTX-ChaCha20-Poly1305` (committing AEAD).
 - Delivery contract remains out-of-band; cloud stores encrypted shared blobs and encrypted receipt blobs.
 
 ### Data contract
 
-- Canonical share package fields are `share_id`, `file_id`, `file_name`, `chunk_count`, `chunk_size`, `chunk_uuids`, `file_key_wrapped`, `cloud_endpoint`, and optional `expires_at`.
+- Canonical share package fields are `share_id`, `file_id`, `file_name`, `chunk_count`, `chunk_size`, `chunk_uuids`, `file_key`, `cloud_endpoint`, and optional `expires_at`.
 - Canonical shared-cloud path contract is `shared/<file_share_id>/<uuid>.blob` plus `shared/<file_share_id>/receipts/<receipt_uuid>.blob`.
 - Canonical persistence tables are `contacts`, `shares`, and `received_shares` (including `revoked_at` / `expires_at` semantics).
 
@@ -40,7 +40,7 @@
 
 ### Dependency contract
 
-- Depends on cryptographic primitives for X25519/ECDH, HKDF `info="arx-runa-share"`, and XChaCha20-Poly1305 envelopes.
+- Depends on HPKE (RFC 9180) with ciphersuite `DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + CTX-ChaCha20-Poly1305` for share package and receipt encryption; `info="arx-runa-share"` is the HPKE application context string.
 - Depends on authentication/session storage of the local X25519 identity keypair and on phase-3 manifest contracts (`nodes.file_key_wrapped`, chunk metadata).
 - Depends on phase-4 cloud layout (`shared/` namespace) and sync cycles for receipt polling and expired-share cleanup.
 
@@ -98,22 +98,46 @@ This design enables:
 
 ---
 
-## ECIES Construction
+## HPKE Construction
 
-Share packages are encrypted using the recipient's X25519 public key via ECIES (Elliptic Curve Integrated Encryption Scheme). The construction is:
+Share packages are encrypted using the recipient's X25519 public key via **HPKE (RFC 9180)** in one-shot Base mode. The ciphersuite is:
 
-1. Generate an ephemeral X25519 keypair (ephemeral private key is discarded after use)
-2. Perform ECDH between the ephemeral private key and the recipient's long-term public key → shared secret
-3. Derive a symmetric key: `HKDF-SHA256(shared_secret, salt=ephemeral_public_key, info="arx-runa-share")`
-4. Encrypt the share package content with that symmetric key using XChaCha20-Poly1305
-5. Transmit: `[ephemeral_public_key | nonce | ciphertext | Poly1305 tag]`
+```
+DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + CTX-ChaCha20-Poly1305
+```
 
-The recipient decrypts by:
-1. Performing ECDH between their long-term private key and the received ephemeral public key
-2. Deriving the same symmetric key via HKDF
-3. Decrypting with XChaCha20-Poly1305
+`CTX-ChaCha20-Poly1305` is a committing AEAD: the standard 16-byte Poly1305 tag is replaced with a 32-byte BLAKE3 commitment tag `BLAKE3(b"arx-runa-ctx-v1" || key || nonce || ciphertext)`. This achieves CMT-4 (full key commitment) security, defending against partition oracle attacks on `file_key`. See `docs/research/file-sharing-cryptography.md` for the full rationale.
 
-Reference implementation: the `age` encryption tool uses the same construction and is audited. The `x25519-dalek` crate provides the X25519 primitives.
+### Sender (share package creation)
+
+```
+(enc, ct) = HPKE.Seal(
+    mode      = Base,
+    recipient = recipient_public_key,   // X25519, 32 bytes
+    info      = b"arx-runa-share",
+    aad       = b"",
+    plaintext = package_json_bytes,
+)
+```
+
+HPKE generates the ephemeral X25519 keypair internally. Both the ephemeral and recipient public keys are automatically included in the KEM context — no manual HKDF salt construction is required. The ephemeral private key is discarded after encapsulation.
+
+### Recipient (share package decryption)
+
+```
+plaintext = HPKE.Open(
+    mode      = Base,
+    recipient = recipient_private_key,  // X25519, 32 bytes
+    enc       = enc,                    // 32-byte ephemeral public key from wire
+    info      = b"arx-runa-share",
+    aad       = b"",
+    ciphertext = ct,
+)
+```
+
+### Rust implementation
+
+The `hpke` crate (v0.13.0) provides RFC 9180 primitives. `CTX-ChaCha20-Poly1305` is a thin wrapper type in the sharing crypto module that replaces the AEAD tag with a BLAKE3 commitment.
 
 ---
 
@@ -121,7 +145,7 @@ Reference implementation: the `age` encryption tool uses the same construction a
 
 When the owner shares a file, Arx Runa produces a share package — a small file containing everything the recipient needs to fetch and decrypt the shared file.
 
-### Plaintext fields (inside the ECIES envelope)
+### Plaintext fields (inside the HPKE envelope)
 
 ```json
 {
@@ -131,7 +155,7 @@ When the owner shares a file, Arx Runa produces a share package — a small file
   "chunk_count": 12,
   "chunk_size": 4194304,
   "chunk_uuids": ["<uuid>", "<uuid>", "..."],
-  "file_key_wrapped": "<file_key encrypted with ECDH-derived symmetric key, base64>",
+  "file_key": "<32-byte file_key, base64>",
   "cloud_endpoint": {
     "provider": "s3",
     "bucket": "alice-arx-runa",
@@ -145,10 +169,12 @@ When the owner shares a file, Arx Runa produces a share package — a small file
 ### Wire format
 
 ```
-[32B ephemeral_public_key | 24B nonce | encrypted_package_json | 16B Poly1305 tag]
+[32B enc | ciphertext | 32B CTX tag]
 ```
 
-The `file_key_wrapped` field is the `file_key` encrypted with the ECDH-derived symmetric key. Once the outer envelope is decrypted, the recipient decrypts `file_key_wrapped` with the same symmetric key to obtain the `file_key` for chunk decryption.
+`enc` is the ephemeral X25519 public key output by HPKE's KEM encapsulation. The HPKE nonce is managed internally and does not appear in the wire format. The CTX tag is 32 bytes (vs 16 bytes for a plain Poly1305 tag).
+
+`file_key` is the raw 32-byte file encryption key in plaintext inside the HPKE-encrypted envelope. The outer HPKE layer (CTX-ChaCha20-Poly1305) provides all confidentiality and integrity — no inner wrapping is needed.
 
 ### Delivery
 
@@ -219,9 +245,9 @@ After a recipient successfully downloads and decrypts all chunks of a shared fil
 shared/<file_share_id>/receipts/<receipt_uuid>.blob
 ```
 
-The receipt is encrypted with the owner's X25519 public key via ECIES (the same construction used for share packages). Only the owner can decrypt it.
+The receipt is encrypted with the owner's X25519 public key via HPKE (the same construction used for share packages). Only the owner can decrypt it.
 
-### Receipt format (plaintext inside ECIES envelope)
+### Receipt format (plaintext inside HPKE envelope)
 
 ```json
 {
@@ -242,7 +268,7 @@ On the next manifest pull or sync operation, the owner's Arx Runa:
 
 ### Security properties
 
-- Only the owner can read receipts (ECIES with owner's public key)
+- Only the owner can read receipts (HPKE with owner's public key)
 - The cloud provider sees that a receipt blob was written but cannot read its content
 - A malicious recipient can choose not to write a receipt — receipts are cooperative, not enforceable
 - A malicious recipient can write a false receipt — the owner should treat receipts as informational, not authoritative
@@ -261,7 +287,7 @@ The owner may want a share to expire automatically after a specified period, wit
 
 ### Share package field
 
-The share package JSON (inside the ECIES envelope) gains an optional `expires_at` field:
+The share package JSON (inside the HPKE envelope) gains an optional `expires_at` field:
 
 ```json
 {
@@ -339,7 +365,7 @@ CREATE TABLE received_shares (
     share_id             TEXT PRIMARY KEY,   -- from the share package
     sender_contact_id    TEXT REFERENCES contacts(contact_id),
     file_name            TEXT NOT NULL,
-    file_key_wrapped     BLOB NOT NULL,      -- encrypted file_key, decrypted on access
+    file_key             BLOB NOT NULL,      -- raw file_key (32 bytes), decrypted from HPKE envelope on access
     chunk_count          INTEGER NOT NULL,
     chunk_size           INTEGER NOT NULL,
     chunk_uuids          TEXT NOT NULL,      -- JSON array
@@ -351,7 +377,7 @@ CREATE TABLE received_shares (
 
 ### Nodes table addition
 
-`file_key_wrapped` is stored in the `nodes` table (per file, not per chunk). This was established in the Phase 3 chunking design — one copy per file, cleaned up automatically by the existing CASCADE when a node is deleted. No schema addition is needed for sharing beyond the `shares`, `contacts`, and `received_shares` tables.
+`file_key_wrapped` is stored in the `nodes` table (per file, not per chunk) — this is the vault-internal KEK-wrapped key used for local decryption, and is unchanged. The `received_shares.file_key` column holds the raw `file_key` extracted from the HPKE share package envelope and stored at import time for use during chunk decryption. No further schema addition is needed beyond the `shares`, `contacts`, and `received_shares` tables.
 
 ---
 
@@ -404,7 +430,7 @@ Blobs in `shared/<file_share_id>/` are publicly readable. A party who discovers 
 | Key exchange | Out-of-band file or QR code export | No SMTP dependency, user controls delivery channel |
 | Email as label | Display name only, not transport | Avoids credential exposure |
 | Per-file keys | Yes, random `file_key` per file | Required for file-granularity sharing; enables secure deletion |
-| ECIES construction | Ephemeral X25519 → ECDH → HKDF → XChaCha20-Poly1305 | Standard ECIES; same as age tool |
+| HPKE construction | HPKE RFC 9180: `DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + CTX-ChaCha20-Poly1305` | Formal IND-CCA2 proof; both public keys in key schedule by construction; committing AEAD (CMT-4) via CTX layer; see `docs/research/file-sharing-cryptography.md` |
 | Share package delivery | Owner-exported file, out-of-band | Cloud never holds sharing metadata |
 | Cloud layout | Shared blobs in `shared/<file_share_id>/` (one copy per file) | Scalable; O(1) storage regardless of recipient count |
 | Cloud auth | Public readable blobs | No credentials in share package; AEAD guarantees protect content |

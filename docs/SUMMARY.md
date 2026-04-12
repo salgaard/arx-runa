@@ -94,4 +94,6 @@
   - [Padding Overhead Reduction](research/padding-overhead-reduction.md)
   - [Password And Key Recovery](research/password-and-key-recovery.md)
   - [MFA for Vault Authentication](research/mfa-for-vault-authentication.md)
+  - [Cryptographic Primitive Rationale](research/cryptographic-primitive-rationale.md)
+  - [File Sharing Cryptography](research/file-sharing-cryptography.md)
 

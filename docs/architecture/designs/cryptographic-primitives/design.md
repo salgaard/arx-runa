@@ -75,9 +75,9 @@ RFC 5869 HKDF is used to derive three purpose-specific keys from `master_key`. E
 
 **Salt**: Fixed domain separator `b"arx-runa-v1"`. Argon2id output has sufficient entropy, so the salt provides no additional entropy mixing — but RFC 5869 recommends a fixed salt even with high-entropy IKM to act as a domain separator, preventing cross-application key confusion if the same `master_key` were ever fed into a different HKDF context. The value encodes application identity and key hierarchy version.
 
-**Extensibility**: To add a new derived key, use the `derive-hkdf-key` skill. New keys are added by expanding with a distinct `info` string — the existing derived keys remain unchanged because HKDF produces independent outputs for different `info` values.
+**Extensibility**: New derived keys are added by expanding with a distinct `info` string — the existing derived keys remain unchanged because HKDF produces independent outputs for different `info` values.
 
-> **Note**: The file-sharing design (Phase 5) uses a separate HKDF derivation with `info="arx-runa-share"` for ECIES share packages. That derivation uses an ECDH shared secret as IKM, not `master_key`, and is documented in `docs/architecture/designs/file-sharing/design.md`. It is a distinct key derivation tree and does not affect the vault-key derivations above.
+> **Note**: The file-sharing design (Phase 5) uses HPKE (RFC 9180) for share package encryption. HPKE's internal key schedule uses HKDF-SHA256 with an ECDH shared secret as IKM and `info="arx-runa-share"` as the application context — a distinct key derivation tree that does not affect the vault-key derivations above. See `docs/architecture/designs/file-sharing/design.md`.
 
 ### Rust Signature
 
@@ -522,7 +522,7 @@ All key types implement `ZeroizeOnDrop` to ensure sensitive key material is over
 
 ### Key Non-Commitment
 
-XChaCha20-Poly1305 is not a *committing* AEAD — it does not provide binding security, meaning it is theoretically possible to find two different keys that both authenticate the same ciphertext. For symmetric file encryption this is not a practical concern: there is no protocol interaction where an attacker can present a ciphertext and ask the vault to try multiple keys. This limitation is relevant to the Phase 5 file-sharing layer (ECIES share package import), where it should be revisited.
+XChaCha20-Poly1305 is not a *committing* AEAD — it does not provide binding security, meaning it is theoretically possible to find two different keys that both authenticate the same ciphertext. For symmetric file encryption this is not a practical concern: there is no protocol interaction where an attacker can present a ciphertext and ask the vault to try multiple keys. The Phase 5 file-sharing layer addresses this by using HPKE with `CTX-ChaCha20-Poly1305` (a committing AEAD) for share package encryption — see `docs/architecture/designs/file-sharing/design.md`.
 
 ### Cipher Upgrade Path
 

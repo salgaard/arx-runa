@@ -16,12 +16,12 @@ This sub-phase roadmap decomposes the file sharing design (282 lines) into 3 ind
 
 **Rationale for decomposition**:
 -  **Size**: Exceeds ~100-150 lines (282 lines total)
--  **Trait boundaries**: Identity/contact management implementable independently of ECIES construction and cloud operations
--  **Integration breadth**: Touches crypto module (ECIES, HKDF), storage module (SQLCipher schema extension, CloudTransport), and auth module (key wrapping)
+-  **Trait boundaries**: Identity/contact management implementable independently of HPKE construction and cloud operations
+-  **Integration breadth**: Touches crypto module (HPKE, CTX-ChaCha20-Poly1305), storage module (SQLCipher schema extension, CloudTransport), and auth module (key wrapping)
 -  **Error surface**: Defines distinct error domains across identity, cryptographic, and cloud operations
 -  **Multi-step flows**: Key exchange flow, share package creation flow, revocation flow
 
-**Implementation strategy**: Build identity layer with contact management → implement ECIES construction and share packages → add cloud layout and revocation operations
+**Implementation strategy**: Build identity layer with contact management → implement HPKE construction and share packages → add cloud layout and revocation operations
 
 ---
 
@@ -30,7 +30,7 @@ This sub-phase roadmap decomposes the file sharing design (282 lines) into 3 ind
 ```
 5.1 (X25519 identity + contact management)
  ↓
-5.2 (ECIES construction + share packages)
+5.2 (HPKE construction + share packages)
  ↓
 5.3 (Cloud layout + revocation)
 ```
@@ -49,12 +49,13 @@ This sub-phase roadmap decomposes the file sharing design (282 lines) into 3 ind
    - Fingerprint display (first 16 hex chars of SHA-256)
    - **Estimated**: ~120 lines production code, ~80 lines tests
 
-2. **[Phase 5.2: ECIES Construction and Share Packages](5.2-ecies-and-share-packages.md)**
-   - ECIES encrypt/decrypt using ephemeral X25519 + HKDF-SHA256 + XChaCha20-Poly1305
-   - Share package creation: retrieve file_key → encrypt → assemble JSON envelope (including optional `expires_at`)
-   - Share package import: parse ECIES envelope → extract file_key → store in received_shares (preserving optional `expires_at`)
-   - Snapshot semantics: static chunk_uuids at time of sharing
-   - **Estimated**: ~180 lines production code, ~120 lines tests
+2. **[Phase 5.2: HPKE Construction and Share Packages](5.2-ecies-and-share-packages.md)**
+   - `CTX-ChaCha20-Poly1305` committing AEAD wrapper (BLAKE3 commitment tag)
+   - HPKE one-shot seal/open: `DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + CTX-ChaCha20-Poly1305`
+   - Share package creation: retrieve `file_key` → assemble JSON (including `file_key` and optional `expires_at`) → HPKE seal
+   - Share package import: HPKE open → deserialise JSON → store `file_key` in `received_shares`
+   - Snapshot semantics: static `chunk_uuids` at time of sharing
+   - **Estimated**: ~200 lines production code, ~140 lines tests
 
 3. **[Phase 5.3: Cloud Layout and Revocation](5.3-cloud-layout-and-revocation.md)**
    - Blob copy from `vault/` to `shared/<file_share_id>/` via CloudTransport
@@ -73,9 +74,9 @@ This sub-phase roadmap decomposes the file sharing design (282 lines) into 3 ind
 Each sub-phase includes its own test suite. Tests must pass before proceeding to the next sub-phase.
 
 **Test types**:
-- **Unit tests**: Core functionality in isolation (keypair generation, ECIES round-trips, fingerprint computation)
+- **Unit tests**: Core functionality in isolation (keypair generation, HPKE round-trips, CTX commitment, fingerprint computation)
 - **Mock-based tests**: Use `MockTransport` (from Phase 4.1) for cloud operations in Phases 5.2 and 5.3
-- **Property-based tests** (where applicable): ECIES wrong-recipient rejection, corrupted package detection
+- **Property-based tests** (where applicable): HPKE wrong-recipient rejection, corrupted package detection
 - **Integration tests**: Once all sub-phases complete, end-to-end share creation → import → decrypt round-trip
 
 ### Regression Testing
@@ -91,7 +92,7 @@ This ensures new code does not break earlier sub-phases.
 ### Manual Testing Checklist
 
 - Phase 5.1: Export public key file and verify it imports cleanly on a second Arx Runa instance
-- Phase 5.2: Create a share package, inspect the wire format bytes (first 32B is ephemeral key, next 24B is nonce)
+- Phase 5.2: Create a share package, inspect the wire format bytes (first 32B is `enc` / ephemeral public key; no explicit nonce follows)
 - Phase 5.3: Share a file, verify blobs appear under `shared/<file_share_id>/`; revoke and verify blobs are deleted
 
 ---
@@ -99,7 +100,7 @@ This ensures new code does not break earlier sub-phases.
 ## Security Review Checkpoints
 
 - **Phase 5.1**: Requires `security-reviewer` agent review (private key storage in SQLCipher, fingerprint correctness)
-- **Phase 5.2**: Requires `security-reviewer` agent review (ECIES correctness, ephemeral key disposal, HKDF salt construction)
+- **Phase 5.2**: Requires `security-reviewer` agent review (HPKE correctness, CTX commitment construction, `info` and `aad` values)
 - **Phase 5.3**: Requires `security-reviewer` agent review (revocation correctness, public blob exposure per threat model)
 
 ---
@@ -115,8 +116,9 @@ cargo test sharing::contacts
 
 # Phase 5.2
 /plan 5.2
-/implement-plan phase-005-2-ecies-and-share-packages.md
-cargo test sharing::ecies
+/implement-plan phase-005-2-hpke-and-share-packages.md
+cargo test sharing::ctx_aead
+cargo test sharing::hpke
 cargo test sharing::packages
 
 # Phase 5.3
@@ -142,7 +144,7 @@ cargo test sharing::revocation
 ### Design Clarifications
 
 - **file_share_id vs share_id**: `file_share_id` groups all blob copies for a given file in cloud storage (one per file, shared by all recipients). `share_id` identifies a per-recipient–file relationship in the `shares` table. These must not be conflated.
-- **file_key_wrapped in share package**: the `file_key_wrapped` JSON field inside the ECIES envelope is the `file_key` re-encrypted with the ECDH-derived symmetric key — it is not the same ciphertext as the one stored in the `nodes` table (which is wrapped with `key_encryption_key`).
+- **file_key in share package**: the `file_key` JSON field inside the HPKE envelope is the raw 32-byte file encryption key — it is not separately encrypted; the outer HPKE envelope (CTX-ChaCha20-Poly1305) provides all confidentiality and integrity. The `file_key_wrapped` column in the vault's `nodes` table is a distinct thing: the KEK-wrapped key used for local decryption.
 - **No schema addition for nodes**: the `file_key_wrapped` column is already established in Phase 3. Phase 5 only adds `contacts`, `shares`, and `received_shares` tables.
 
 ### Future Work
@@ -156,7 +158,7 @@ cargo test sharing::revocation
 
 | Risk | Mitigation |
 |------|------------|
-| ECIES implementation error produces ciphertext decryptable by wrong party | Dedicate a test to wrong-recipient rejection and MITM-substituted ephemeral key |
+| HPKE implementation error produces ciphertext decryptable by wrong party | Dedicate a test to wrong-recipient rejection and MITM-substituted `enc` value |
 | Ephemeral private key retained in memory after ECDH | Wrap in `zeroize::Zeroizing` and drop immediately; verified by code review and security-reviewer agent |
 | Revocation perceived as complete when recipient has already fetched | Explicit report statement in design (lines 165-169); limitation must surface in UI and report log |
 | Public blob discovery reveals share existence | Accepted per threat model (design lines 349-355); mitigated by fixed-size padding and UUID v4 blob names |
@@ -168,4 +170,4 @@ cargo test sharing::revocation
 - **Parent design**: `docs/architecture/designs/file-sharing/design.md`
 - **Roadmap entry**: `docs/roadmap.md` Phase 5
 - **Related phases**: Phase 1.3 (key wrapping pattern), Phase 3.1 (SQLCipher schema), Phase 4 (CloudTransport)
-- **Reference implementation**: `age` encryption tool (same ECIES construction, audited)
+- **Reference implementation**: `hpke` crate (RFC 9180, v0.13.0); `age` encryption tool (same X25519 + HKDF pattern, audited)
