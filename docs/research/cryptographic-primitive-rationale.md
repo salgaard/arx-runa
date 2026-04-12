@@ -45,7 +45,7 @@ This document justifies each primitive selected, presents alternatives that were
 
 ### Selected: XChaCha20-Poly1305 (192-bit nonce)
 
-XChaCha20-Poly1305 is the extended-nonce variant of ChaCha20-Poly1305, standardized in RFC 8439. The "X" prefix extends the nonce from 96 bits to 192 bits by running an additional HChaCha20 subkey derivation step, making random nonce generation safe at any practical volume.
+XChaCha20-Poly1305 is the extended-nonce variant of the ChaCha20-Poly1305 AEAD construction standardized in RFC 8439; the XChaCha nonce-extension construction itself is specified in draft-irtf-cfrg-xchacha-03. The "X" prefix extends the nonce from 96 bits to 192 bits by running an additional HChaCha20 subkey derivation step, making random nonce generation safe at any practical volume.
 
 ### Alternatives Considered
 
