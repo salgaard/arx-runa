@@ -73,9 +73,9 @@ For a personal vault encrypting thousands of chunks per file, the 192-bit nonce 
 
 ### AES-GCM Nonce Reuse Catastrophe
 
-When AES-GCM reuses a nonce, the Poly1305 authentication key (H) is directly computable by XOR of the two ciphertexts, and the auth tag reduces to a linear equation over GF(2^128). This allows both confidentiality breach (plaintext recovery) and integrity forgery. The 2016 "Nonce-Disrespecting Adversaries" paper (Böck et al., USENIX WOOT 2016) demonstrated this attack against real TLS implementations.
+When AES-GCM reuses a nonce, it reuses the same CTR keystream, so an attacker who sees two ciphertexts under the same key and nonce can derive the XOR of the corresponding plaintexts. Reuse also breaks authentication: GCM uses GHASH, not Poly1305, with hash subkey `H = AES_K(0^128)`, and repeated nonces give the attacker enough algebraic structure over GF(2^128) to recover `H` or otherwise forge valid tags after observing a small number of reused-nonce messages. This is why AES-GCM nonce reuse is considered catastrophic for both confidentiality and integrity. The 2016 "Nonce-Disrespecting Adversaries" paper (Bock et al., USENIX WOOT 2016) demonstrated this attack class against real TLS implementations.
 
-ChaCha20-Poly1305 nonce reuse leaks XOR of plaintexts but does not break the authentication key — a bad outcome but not as catastrophic.
+ChaCha20-Poly1305 nonce reuse is also serious: it repeats the ChaCha20 keystream, leaking the XOR of plaintexts, and it reuses the Poly1305 one-time key for that nonce, which can enable message forgeries. XChaCha20-Poly1305 reduces the practical risk of accidental reuse by expanding the nonce space to 192 bits, making random nonce collisions negligible at Arx Runa's scale.
 
 ### Key Non-Commitment
 
