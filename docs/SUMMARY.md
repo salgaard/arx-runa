@@ -61,7 +61,7 @@
     - [Diagram: File Sharing Flow](architecture/designs/file-sharing/diagrams/file-sharing-flow.md)
     - [Sub-Phase Roadmap](architecture/designs/file-sharing/sub-phases/roadmap.md)
       - [5.1: Identity and Contacts](architecture/designs/file-sharing/sub-phases/5.1-identity-and-contacts.md)
-      - [5.2: ECIES and Share Packages](architecture/designs/file-sharing/sub-phases/5.2-ecies-and-share-packages.md)
+      - [5.2: HPKE and Share Packages](architecture/designs/file-sharing/sub-phases/5.2-hpke-and-share-packages.md)
       - [5.3: Cloud Layout and Revocation](architecture/designs/file-sharing/sub-phases/5.3-cloud-layout-and-revocation.md)
   - [Tauri IPC & Frontend](architecture/designs/tauri-ipc-and-frontend/design.md)
     - [Diagram: Session State Machine](architecture/designs/tauri-ipc-and-frontend/diagrams/session-state-machine.md)
