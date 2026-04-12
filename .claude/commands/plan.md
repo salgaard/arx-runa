@@ -1,5 +1,3 @@
-Recommended model: `/model opusplan`
-
 Plan the implementation of: $ARGUMENTS
 
 ## Step 1 — Detect roadmap phase and sub-phase

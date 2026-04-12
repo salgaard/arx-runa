@@ -1,5 +1,3 @@
-Recommended model: `/model sonnet`
-
 Implement the saved plan: $ARGUMENTS
 
 ## Step 1 — Resolve the plan file

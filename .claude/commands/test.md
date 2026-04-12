@@ -1,5 +1,3 @@
-Recommended model: `/model sonnet`
-
 Run or write tests for: $ARGUMENTS
 
 **If $ARGUMENTS names a module** (e.g., "crypto", "auth", "storage"):

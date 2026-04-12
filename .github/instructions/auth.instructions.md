@@ -4,7 +4,7 @@ applyTo: "src-tauri/src/auth/**"
 
 # Auth module — rules
 
-**Design specification**: `docs/architecture/designs/authentication-and-session-management/design.md`
+**Design specification**: `docs/architecture/designs/authentication-and-session-management/design.md` — last verified against design dated 2026-04-07
 
 ## Authentication tiers
 - Tier 1: password only — `master_key = Argon2id(password, salt)`
@@ -20,7 +20,7 @@ applyTo: "src-tauri/src/auth/**"
 - Tier 1: `master_key = Argon2id(password, salt)`
 - Tier 2: `master_key = Argon2id(password || key_file_bytes, salt)`
 - Salt in unencrypted vault header (cloud) — needed before derivation
-- Argon2id minimums: m ≥ 19456, t ≥ 2, p = 1
+- Argon2id parameters: m = 65536 KiB, t = 3, p = 4 (RFC 9106 §4 recommended tier)
 - HKDF-SHA256 derives vault keys from `master_key`
 - See design doc for full parameter table and HKDF tree
 
@@ -30,8 +30,11 @@ applyTo: "src-tauri/src/auth/**"
 - Never persist session keys to disk
 
 ## Errors
-- Never reveal which factor failed — generic "authentication failed" only
+- `InvalidCredentials` for wrong password, wrong key file, or both — caller cannot distinguish the cases
+- `KeyFileNotFound` when no 32-byte file matches the vault header BLAKE3 hash — does not reveal password status
+- Other variants: `MemoryLockFailed`, `VaultHeaderInvalid`, `InvalidRecoveryPhrase`, `NoRecoverySlot`
 - Never log key file contents or derived keys
 
-## Trait
-- `KeySource` trait for key file access — enables mock testing
+## Traits
+- `KeySource` trait — `read_key() -> Result<Zeroizing<[u8; 32]>, KeySourceError>`; implementations: `FileKeySource` (prod), `MockKeySource` (test)
+- `DeviceMonitor` trait — `watch() -> Pin<Box<dyn Stream<Item = DeviceEvent> + Send>>`; implementations: `WindowsDeviceMonitor`, `LinuxDeviceMonitor`, `MacOsDeviceMonitor`, `MockDeviceMonitor` (test)

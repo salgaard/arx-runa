@@ -474,6 +474,7 @@ Arx Runa uses an **isolated `rclone.conf`** in the Arx Runa application data dir
 
 - **Windows**: `%APPDATA%/arx-runa/rclone.conf`
 - **Linux**: `~/.local/share/arx-runa/rclone.conf`
+- **macOS**: `~/Library/Application Support/arx-runa/rclone.conf`
 
 Every Rclone invocation includes `--config <arx_runa_rclone_conf_path>`.
 
@@ -523,7 +524,7 @@ impl Default for SyncConfig {
 }
 ```
 
-`SyncConfig` is stored in `%APPDATA%/arx-runa/sync-config.json` (or Linux equivalent). It is user-editable but not exposed in the initial UI — advanced users can modify it directly.
+`SyncConfig` is stored in the Arx Runa application data directory: `%APPDATA%/arx-runa/sync-config.json` (Windows), `~/.local/share/arx-runa/sync-config.json` (Linux), or `~/Library/Application Support/arx-runa/sync-config.json` (macOS). It is user-editable but not exposed in the initial UI — advanced users can modify it directly.
 
 **Why separate from `CloudEndpoint`**: `CloudEndpoint` describes *where* to sync (provider, bucket, credentials). `SyncConfig` describes *how* to sync (concurrency, timeouts). Keeping them separate allows:
 - Same sync behaviour across multiple vaults

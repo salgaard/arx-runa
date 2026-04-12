@@ -4,7 +4,7 @@ applyTo: "src-tauri/src/ui/**,src-tauri/tauri.conf.json,src-tauri/capabilities/*
 
 # Tauri — rules
 
-**Design specification**: `docs/architecture/designs/tauri-ipc-and-frontend/design.md`
+**Design specification**: `docs/architecture/designs/tauri-ipc-and-frontend/design.md` — last verified against design dated 2026-04-11
 
 ## IPC / UI layer (`src/ui/`)
 - Sanitise before IPC: no key material, no paths, no stack traces

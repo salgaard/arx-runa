@@ -405,6 +405,7 @@ If the transaction fails (crash, I/O error), no manifest state exists for the pa
 A subdirectory of the Arx Runa application data directory:
 - Windows: `%APPDATA%/arx-runa/staging/`
 - Linux: `~/.local/share/arx-runa/staging/`
+- macOS: `~/Library/Application Support/arx-runa/staging/`
 
 ### Lifecycle
 

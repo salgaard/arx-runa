@@ -3,6 +3,16 @@ name: add-tauri-command
 description: Add a new Tauri IPC command to Arx Runa. Use when exposing new backend functionality to the frontend via invoke().
 ---
 
+## When to update this skill
+
+Review this skill when the tauri-ipc-and-frontend design changes in these areas:
+- **Canonical Command Surface** — a command is added, removed, or renamed
+- **`IpcError` variants** — new error categories that need `From` impl guidance
+- **`AppState` structure** — new fields that commands should or should not access
+- **Security invariants** — new Zero-Trace requirements at the IPC boundary
+
+---
+
 Follow this procedure for every new Tauri command. The IPC boundary is a security boundary — treat all frontend inputs as untrusted and all errors as potentially leaky.
 
 **Reference:** See `docs/architecture/designs/tauri-ipc-and-frontend/design.md` for the canonical command surface, error types, and response types.
@@ -23,22 +33,7 @@ Place the new command in the appropriate domain file.
 
 ## Step 2: Define the command handler
 
-It must be `async`, return `Result<T, IpcError>`, and use the `?` operator with `From` impls for error conversion:
-
-```rust
-#[tauri::command]
-pub async fn encrypt_and_upload_file(
-    file_path: String,
-    vault_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<FileEntry, IpcError> {
-    validate_inputs(&file_path, &vault_id)?;
-    let session = state.session_manager.require_unlocked().await?;
-    let entry = state.storage.encrypt_and_upload(&file_path, &vault_id, &session)
-        .await?;  // From<StorageError> for IpcError handles conversion
-    Ok(entry)
-}
-```
+It must be `async`, return `Result<T, IpcError>`, and use the `?` operator with `From` impls for error conversion.
 
 For long-running operations that need progress streaming, accept a `tauri::ipc::Channel<T>`:
 
@@ -50,10 +45,11 @@ pub async fn upload_file(
     progress: tauri::ipc::Channel<ProgressUpdate>,
     state: tauri::State<'_, AppState>,
 ) -> Result<FileEntry, IpcError> {
-    // Send progress updates via the channel
+    validate_path(&source_path)?;
+    let session = state.session_manager.require_unlocked().await?;
     progress.send(ProgressUpdate { percent: 0, message: "Starting upload".into() })?;
-    // ... do work ...
-    progress.send(ProgressUpdate { percent: 100, message: "Complete".into() })?;
+    let entry = state.storage.encrypt_and_upload(&source_path, &vault_path, &session, &progress)
+        .await?;  // From<StorageError> for IpcError handles conversion
     Ok(entry)
 }
 ```
@@ -113,6 +109,7 @@ tauri_build::AppManifest::new()
 
 ## Security checklist before finishing
 
+- [ ] If command accepts `password: String` or similar sensitive string, zeroize it before returning (Zero-Trace invariant)
 - [ ] Return value contains no key material, no raw bytes, no derived key values
 - [ ] Return value contains no server-side file paths
 - [ ] No `From` impl string contains a user-supplied value or file path

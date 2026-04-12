@@ -5,7 +5,7 @@ paths:
 
 # Storage module — rules
 
-**Design specification**: `docs/architecture/designs/chunking-and-manifest/design.md`
+**Design specification**: `docs/architecture/designs/chunking-and-manifest/design.md` — last verified against design dated 2026-04-08
 
 ## Manifest (SQLCipher)
 - Keyed with `sqlcipher_key` — never `master_key`, never unencrypted
@@ -23,13 +23,19 @@ paths:
 
 ## BLAKE3
 - Checksum over encrypted blob (nonce + ciphertext + tag)
-- Verify before decryption — fail on mismatch, don't attempt decrypt
+- `verify_checksum` returns `VerifiedBlob`; pass to `decrypt_chunk` — the type system enforces check-before-decrypt order (skipping is a compile error)
 
 ## Cloud backup
 - Manifest encrypted with `manifest_key`
 - Manifest backup is a singleton blob (no AAD); vault header stays plaintext JSON at cloud root
 - Push flow uploads manifest backup, then uploads vault header idempotently on every push
 - Snapshot model: atomic full export, `snapshot_counter` increments each push
+
+## EXIF stripping
+- Opt-in pre-processing before the encrypt pipeline, enabled by default for `image/jpeg`, `image/png`, `image/tiff` (detected by magic bytes, not extension)
+- Strips EXIF, XMP, IPTC segments in RAM — original file on disk is never modified
+- MP4/QuickTime excluded: `moov` atom at end-of-file breaks the streaming invariant
+- Non-media types and unsupported containers pass through unmodified
 
 ## Deletion
 - Transaction order: read blob names, delete node row (CASCADE removes chunk rows), commit, then delete blobs

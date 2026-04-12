@@ -13,4 +13,3 @@ No abbreviations: `chunk_index` not `chunk_idx`, `encrypted_buffer` not `enc_buf
 ## Hard rules
 - Never write unencrypted sensitive data to disk
 - Never commit secrets or key files
-- `unsafe` requires `// SAFETY:` comment

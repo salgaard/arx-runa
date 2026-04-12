@@ -3,6 +3,16 @@ name: crypto-roundtrip-test
 description: Write the canonical Arx Runa crypto adversarial test suite. Use when adding tests to any module in src-tauri/src/crypto/.
 ---
 
+## When to update this skill
+
+Review this skill when the cryptographic-primitives design changes in these areas:
+- **`VerifiedBlob` contract** — if `verify_checksum` / `decrypt_chunk` signatures change
+- **AAD construction** — if `file_id || chunk_index` format changes
+- **Wire format** — if nonce size, tag size, or byte layout changes
+- **New `CryptoError` variants** — every variant needs a test that triggers it
+
+---
+
 Write all of the following test cases for the crypto function under test. Do not skip cases — every thiserror variant must have at least one test that triggers it.
 
 **Reference:** See `docs/architecture/designs/cryptographic-primitives/design.md` for the canonical wire format, AAD construction, nonce requirements, and `VerifiedBlob` flow that these tests verify.
@@ -96,16 +106,20 @@ assert!(after_drop.iter().all(|&b| b == 0));
 **13. Proptest arbitrary round-trip:**
 
 ```rust
+use proptest::prelude::*;
+
 proptest! {
     #[test]
     fn test_encrypt_decrypt_arbitrary_plaintext(
         plaintext in proptest::collection::vec(any::<u8>(), 0..=8192)
     ) {
-        let blob = encrypt_chunk(plaintext.clone().into(), &test_file_key(), &test_file_id(), ChunkIndex::new(0));
-        let checksum = compute_checksum(&blob);
-        let verified = verify_checksum(blob, &checksum).unwrap();
-        let decrypted = decrypt_chunk(verified, &test_file_key(), &test_file_id(), ChunkIndex::new(0)).unwrap();
-        prop_assert_eq!(decrypted, plaintext);
+        let result = encrypt_and_decrypt(
+            &plaintext,
+            &test_file_key(), &test_file_key(),
+            &test_file_id(), &test_file_id(),
+            ChunkIndex::new(0), ChunkIndex::new(0),
+        ).expect("round-trip should succeed");
+        prop_assert_eq!(result, plaintext);
     }
 }
 ```
