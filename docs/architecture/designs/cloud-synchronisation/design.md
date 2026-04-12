@@ -1,7 +1,7 @@
 # Arx Runa — Cloud Synchronisation Design
 
 > Status: Design complete. Implementation target: Phase 4.
-> Last updated: 2026-03-30
+> Last updated: 2026-04-12
 
 ---
 
@@ -35,6 +35,7 @@
 - Remote paths must stay relative to cloud root and pass sanitisation (no traversal, no absolute-path escape).
 - `snapshot_counter` is monotonic and conflict checks gate every push before mutation.
 - Vault header remains plaintext bootstrap metadata, while `manifest/manifest-backup.blob` remains AEAD ciphertext under `manifest_key`.
+- Vault-header Argon2 parameters are creation-time constants (`m=65536`, `t=3`, `p=4`) and must match the auth design; existing devices validate against trusted locally cached values.
 - Cross-phase invariant reference: [docs/architecture/design-invariants.md](../../design-invariants.md).
 
 ### Dependency contract
@@ -205,7 +206,7 @@ pub struct CloudEndpoint {
 }
 ```
 
-**Where the owner's config is stored.** `%APPDATA%/arx-runa/cloud-config.json` (Windows) or `~/.local/share/arx-runa/cloud-config.json` (Linux). This file contains no secrets — it holds only the non-sensitive endpoint metadata (remote name, bucket, region, endpoint URL, `path_prefix`) needed to locate the vault header before authentication. Actual Rclone credentials are stored in the vault's SQLCipher database (see [Destination Session Storage](#destination-session-storage) below). The cloud config must be readable before authentication (required at step 1 of new-device recovery).
+**Where owner bootstrap metadata is stored.** `%APPDATA%/arx-runa/cloud-config.json` (Windows) or `~/.local/share/arx-runa/cloud-config.json` (Linux) stores non-sensitive endpoint metadata (remote name, bucket, region, endpoint URL, `path_prefix`) needed to locate the vault header before authentication. `%APPDATA%/arx-runa/local-vault-params.json` stores trusted local `vault_id`, `argon2_salt`, and `argon2_params` for downgrade-resistant validation on existing devices. Actual Rclone credentials are stored in the vault's SQLCipher database (see [Destination Session Storage](#destination-session-storage) below). Both bootstrap files must be readable before authentication.
 
 ---
 
@@ -284,6 +285,23 @@ Credentials in `rclone_config_blob` are decrypted from SQLCipher at session open
 ### New-device recovery bootstrap
 
 `cloud-config.json` retains its role for new-device recovery step 1: it contains the non-sensitive `CloudEndpoint` fields (remote name, bucket, region, endpoint URL, `path_prefix`) for the primary destination, allowing Arx Runa to locate and download the vault header before any keys exist. After authentication, the full `DestinationSession` records (including credentials) are recovered from the decrypted SQLCipher manifest.
+
+### Local vault parameter cache
+
+`local-vault-params.json` is written at vault creation and updated after successful password/key-rotation ceremonies. It stores:
+
+```json
+{
+  "vault_id": "<uuid-v4>",
+  "argon2_salt": "<base64-32-bytes>",
+  "argon2_params": { "memory_cost": 65536, "time_cost": 3, "parallelism": 4 }
+}
+```
+
+Validation policy:
+
+- **Existing device (cache present):** downloaded vault header must match cached `vault_id`, `argon2_salt`, and `argon2_params` exactly.
+- **New device (no cache):** accept OWASP floors as bootstrap minimum (`memory_cost >= 19456`, `time_cost >= 2`, `parallelism >= 1`) and show a warning if downloaded params are below Arx Runa defaults (`65536/3/4`).
 
 ---
 
@@ -553,19 +571,14 @@ The guided forms cover the five most common backends. The advanced paste option 
 
 1. User selects provider and enters: access key ID, secret access key, bucket name, region, endpoint URL (optional; empty for AWS)
 2. Arx Runa generates a remote name: `arx-runa-<uuid>`
-3. Calls via sidecar:
-   ```
-   rclone config create arx-runa-<uuid> s3
-     provider=Other
-     access_key_id=<id>
-     secret_access_key=<secret>
-     region=<region>
-     endpoint=<endpoint>
-     --non-interactive
-   ```
-4. Stores `CloudEndpoint` (including `path_prefix`) in `cloud-config.json`
+3. Builds an S3 remote stanza in-process (no credential command-line arguments):
+   - `type = s3`
+   - `provider`, `region`, `endpoint`
+   - `access_key_id`, `secret_access_key`
+4. Encrypts and stores the stanza in SQLCipher as `destination_sessions.rclone_config_blob`
+5. Stores non-sensitive `CloudEndpoint` (including `path_prefix`) in `cloud-config.json`
 
-Arx Runa passes credentials as arguments to `rclone config create`, not as environment variables or config file snippets. Rclone then stores them in its own `rclone.conf`. After the wizard, Arx Runa no longer holds the credentials.
+Credentials are never passed via process arguments. They exist only in-process during wizard input and are then persisted only as SQLCipher-encrypted `rclone_config_blob`.
 
 ### Google Drive flow
 
@@ -627,13 +640,16 @@ pub struct VaultHeader {
 /// Argon2id tuning parameters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Argon2Params {
-    /// Memory cost in KiB. Minimum 19456 (OWASP).
+    /// Memory cost in KiB. Arx Runa default and creation-time target: 65536.
+    /// New-device bootstrap accepts OWASP minimum 19456 before local cache exists.
     pub memory_cost: u32,
 
-    /// Time cost (iterations). Minimum 2 (OWASP).
+    /// Time cost (iterations). Arx Runa default and creation-time target: 3.
+    /// New-device bootstrap accepts OWASP minimum 2 before local cache exists.
     pub time_cost: u32,
 
-    /// Parallelism. Always 1 in Arx Runa.
+    /// Parallelism lanes. Arx Runa default and creation-time target: 4.
+    /// New-device bootstrap accepts minimum 1 before local cache exists.
     pub parallelism: u32,
 }
 
@@ -671,7 +687,7 @@ Wire format (from Phase 2 auth design):
   "schema_version": 1,
   "tier": 1,
   "argon2_salt": "<base64-32-bytes>",
-  "argon2_params": { "memory_cost": 19456, "time_cost": 2, "parallelism": 1 },
+  "argon2_params": { "memory_cost": 65536, "time_cost": 3, "parallelism": 4 },
   "key_file_blake3": null,
   "recovery_slots": []
 }
@@ -685,7 +701,7 @@ Wire format (from Phase 2 auth design):
   "schema_version": 1,
   "tier": 2,
   "argon2_salt": "<base64-32-bytes>",
-  "argon2_params": { "memory_cost": 19456, "time_cost": 2, "parallelism": 1 },
+  "argon2_params": { "memory_cost": 65536, "time_cost": 3, "parallelism": 4 },
   "key_file_blake3": "<hex-32-bytes>",
   "recovery_slots": []
 }
@@ -699,13 +715,13 @@ Wire format (from Phase 2 auth design):
   "schema_version": 1,
   "tier": 1,
   "argon2_salt": "<base64-32-bytes>",
-  "argon2_params": { "memory_cost": 19456, "time_cost": 2, "parallelism": 1 },
+  "argon2_params": { "memory_cost": 65536, "time_cost": 3, "parallelism": 4 },
   "key_file_blake3": null,
   "recovery_slots": [
     {
       "method": "bip39",
       "argon2_salt": "<base64-32-bytes>",
-      "argon2_params": { "memory_cost": 19456, "time_cost": 2, "parallelism": 1 },
+      "argon2_params": { "memory_cost": 65536, "time_cost": 3, "parallelism": 4 },
       "wrapped_master_key": "<base64-72-bytes>"
     }
   ]
@@ -730,17 +746,25 @@ Wire format (from Phase 2 auth design):
    a. schema_version is supported
    b. tier is 1 or 2
    c. argon2_salt decodes from base64 to exactly 32 bytes
-   d. argon2_params.memory_cost >= 19456
-   e. argon2_params.time_cost >= 2
+   d. If local-vault-params.json exists on this device:
+      - vault_id matches cached vault_id
+      - argon2_salt matches cached argon2_salt
+      - argon2_params exactly matches cached argon2_params
+   e. If no local cache exists (new-device bootstrap):
+      - argon2_params.memory_cost >= 19456
+      - argon2_params.time_cost >= 2
+      - argon2_params.parallelism >= 1
+      - warn user if params are below Arx defaults (65536/3/4)
    f. If tier == 2: key_file_blake3 decodes from hex to exactly 32 bytes
    g. If tier == 1: key_file_blake3 is null
    h. For each element of recovery_slots:
       - method is a known value ("bip39"; unknown values are silently skipped for forward compatibility)
       - argon2_salt decodes from base64 to exactly 32 bytes
-      - argon2_params.memory_cost >= 19456 and argon2_params.time_cost >= 2
+      - argon2_params.memory_cost >= 19456, argon2_params.time_cost >= 2, argon2_params.parallelism >= 1
       - wrapped_master_key decodes from base64 to exactly 72 bytes
 4. Delete temp file
-5. Return VaultHeader
+5. If no local-vault-params.json exists and authentication later succeeds, persist vault_id/salt/params to local-vault-params.json
+6. Return VaultHeader
 ```
 
 ### Security analysis of plaintext fields
@@ -1236,6 +1260,8 @@ struct MockCloudTransport {
 - `test_vault_header_round_trip_serialise_upload_download_parse`
 - `test_vault_header_validation_rejects_undersized_salt`
 - `test_vault_header_validation_rejects_argon2_params_below_owasp_minimum`
+- `test_vault_header_validation_rejects_cached_argon2_mismatch`
+- `test_vault_header_validation_warns_when_bootstrap_params_below_arx_defaults`
 - `test_manifest_backup_encrypt_upload_download_decrypt_round_trip`
 - `test_remote_path_sanitisation_rejects_path_traversal`
 - `test_remote_path_sanitisation_rejects_absolute_path`
@@ -1295,7 +1321,9 @@ Cleanup:
 | Manifest I/O | Full buffer (explicit streaming exception) | Manifests are small (< 10 MiB); single AEAD operation is simpler and correct |
 | Conflict detection | `snapshot_counter` comparison, detect-and-block | Correct; auto-merge is out of scope for this project |
 | Conflict resolution | Manual — user pulls, resolves, then pushes | Avoids silent data loss; honest scope declaration |
-| Remote configuration | Guided wizard calls `rclone config create` | Better UX than raw `rclone config`; Arx Runa never holds credentials |
+| Remote configuration | Guided wizard builds/stores encrypted `rclone_config_blob` directly | Better UX than raw config editing; avoids credential exposure via process arguments |
+| Local vault parameter trust anchor | `local-vault-params.json` caches `vault_id` + Argon2 salt/params | Existing devices reject cloud-side parameter downgrade and salt swap attacks |
+| Vault-header Argon2 validation | Existing device: exact match with local cache; new device: OWASP floors + warning below Arx defaults | Preserves first-device bootstrap while hardening existing-device integrity checks |
 | Initial provider support | S3-compatible, Google Drive, OneDrive, local path/external drive + advanced paste Rclone config | Guided forms for the five most common backends; paste fallback covers all 70+ Rclone backends without per-provider UI maintenance |
 | Stderr sanitisation | Strip lines containing credential keywords | Prevents credential leakage through error messages surfaced to frontend |
 | Cloud blob deletion | Best-effort; failures logged, not blocking | Orphaned ciphertext is harmless; availability is more important than strict cleanup |

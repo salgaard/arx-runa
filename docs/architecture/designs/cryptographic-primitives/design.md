@@ -1,7 +1,7 @@
 # Arx Runa — Cryptographic Primitives Design
 
 > Status: Design complete. Implementation target: Phase 1.
-> Last updated: 2026-04-01 (reviewed)
+> Last updated: 2026-04-12 (reviewed)
 
 ---
 
@@ -118,6 +118,8 @@ File keys are stored encrypted (wrapped) with `key_encryption_key`. The wrapping
 - **AAD**: Empty (the wrapped key is self-contained)
 - **Plaintext**: 32-byte `file_key`
 
+`wrap_file_key` intentionally uses empty AAD because wrapped file-key blobs are scoped by the local SQLCipher manifest and the `key_encryption_key` domain. Recovery-slot wrapping uses distinct functions with mandatory non-empty AAD because recovery ciphertext is stored in the public vault header and must be bound to vault identity and purpose.
+
 Wire format for `file_key_wrapped`:
 
 ```
@@ -207,6 +209,8 @@ pub struct RecoveryKey(Zeroizing<[u8; 32]>);
 pub struct WrappedMasterKey([u8; 72]);
 ```
 
+Recovery-slot Argon2id parameter policy is owned by the authentication design (`same_params_as_primary`). This module consumes `RecoveryKey` as an input type and does not redefine KDF cost constants.
+
 ---
 
 ## Chunk Encryption and Decryption
@@ -219,6 +223,8 @@ pub struct WrappedMasterKey([u8; 72]);
 
 Total overhead: 40 bytes per chunk.
 
+**Versioning policy**: no per-blob version byte is embedded in chunk wire format. Backward-incompatible blob format changes are coordinated through vault/header `schema_version` plus explicit migration flows.
+
 ### AAD Construction
 
 Every AEAD operation on chunk data MUST include Associated Authenticated Data (AAD) binding the ciphertext to its file and position context. Operations on singleton blobs that use a purpose-specific key (e.g., the manifest backup encrypted with `manifest_key`) may omit AAD when there is no multi-instance context to bind — see the cloud-sync design for the manifest backup rationale.
@@ -230,6 +236,8 @@ AAD = file_id (16 bytes, UUID as raw bytes) || chunk_index (4 bytes, big-endian 
 This prevents:
 - Chunk reordering attacks (wrong `chunk_index` fails authentication)
 - Cross-file substitution attacks (wrong `file_id` fails authentication)
+
+Chunk size is intentionally defined outside this module. `encrypt_chunk`/`decrypt_chunk` operate on caller-provided buffers; canonical `chunk_size_bytes` source-of-truth and defaults are owned by the chunking/manifest design.
 
 ### Rust Signatures
 
@@ -568,6 +576,10 @@ None — all design decisions have been made.
 | BLAKE3 mode | Unkeyed; `VerifiedBlob` newtype enforces check-before-decrypt | Manifest is SQLCipher-encrypted so unkeyed is operationally sufficient; newtype makes skipping the check a compile error |
 | Recovery slot AAD | `b"arx-runa recovery v1" \|\| vault_id_bytes` | Prevents cross-vault transplant attacks (vault_id binds to vault) and cross-slot confusion with `file_key_wrapped` blobs (different AAD domain) |
 | Recovery wrapping uses dedicated functions | `wrap_master_key_for_recovery` / `unwrap_master_key_from_recovery` distinct from `wrap_file_key` | Type system enforces correct AAD usage; `MasterKey` and `FileKey` wrapping cannot be confused |
+| Chunk wire-format versioning | No per-blob version byte; upgrades via vault/header `schema_version` and migration | Keeps the chunk hot path minimal while preserving controlled format upgrades |
+| `wrap_file_key` AAD policy | Empty AAD | Wrapped file keys are local SQLCipher-scoped blobs under `key_encryption_key`; recovery blobs use separate non-empty AAD domain |
+| Chunk size ownership | `chunk_size_bytes` owned by chunking/manifest design | Prevents cross-phase source-of-truth drift; crypto remains buffer-oriented |
+| Recovery Argon2 policy ownership | Authentication design defines recovery Argon2 parameters | Avoids duplicate parameter definitions across phase contracts |
 
 ---
 

@@ -258,6 +258,8 @@ The `secure-types` crate on crates.io abstracts over both: it allocates with `me
 
 ## Argon2id Parameters
 
+> **Historical note (post-contract update):** This section reflects the pre-trust-anchor draft reviewed on 2026-04-07. The canonical contract now uses new-vault defaults `m=65536 KiB`, `t=3`, `p=4`, with exact-match validation against local `local-vault-params.json` on existing devices and OWASP floors only for first-device bootstrap.
+
 ### What the design chose
 
 m=19456 KiB (19 MiB), t=2, p=1. The design states these are OWASP minimums.

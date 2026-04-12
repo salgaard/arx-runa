@@ -4,7 +4,7 @@
 > **Status**: Concluded
 > **Last updated**: 2026-04-12
 
-Justification and alternative analysis for the cryptographic decisions in the Arx Runa Phase 5 file-sharing design: ECIES variant selection, elliptic curve choice (X25519 vs P-256), KDF construction inside ECIES, and committing AEAD selection (mandated by Phase 1 primitive research).
+Justification and alternative analysis for the cryptographic decisions in the Arx Runa Phase 5 file-sharing design: ECIES variant selection (historical draft), elliptic curve choice (X25519 vs P-256), KDF construction inside ECIES (historical draft), and committing AEAD selection (mandated by Phase 1 primitive research).
 
 For background on the cryptographic primitives used throughout Arx Runa, see `cryptographic-primitive-rationale.md`.
 For the file-sharing architecture, see `docs/architecture/designs/file-sharing/design.md`.
@@ -29,7 +29,7 @@ For the canonical cryptographic specification, see `docs/architecture/designs/cr
 
 ## The Problem
 
-The Arx Runa file-sharing design (Phase 5) encrypts share packages using ECIES: the sender performs an ephemeral ECDH with the recipient's long-term X25519 public key, derives a symmetric key via HKDF, and encrypts the share package payload (including the wrapped `file_key`) with XChaCha20-Poly1305.
+The original Phase 5 draft encrypted share packages using ad-hoc ECIES: the sender performed an ephemeral ECDH with the recipient's long-term X25519 public key, derived a symmetric key via HKDF, and encrypted the share package payload with XChaCha20-Poly1305. This research evaluated that draft and selected HPKE (RFC 9180) + CTX-ChaCha20-Poly1305 for the canonical design.
 
 The design raises four cryptographic questions that require principled justification:
 
@@ -42,9 +42,9 @@ The design raises four cryptographic questions that require principled justifica
 
 ## ECIES Variant Selection
 
-The Arx Runa design uses ad-hoc ECIES: a custom composition of X25519 ECDH + HKDF + XChaCha20-Poly1305. The primary alternative is **HPKE (RFC 9180)**.
+The original Arx Runa draft used ad-hoc ECIES: a custom composition of X25519 ECDH + HKDF + XChaCha20-Poly1305. The primary alternative evaluated here is **HPKE (RFC 9180)**.
 
-### Ad-Hoc ECIES (current design)
+### Ad-Hoc ECIES (original draft)
 
 The current construction — ephemeral X25519 → ECDH → HKDF-SHA256 → XChaCha20-Poly1305 — matches the construction used by the **`age` encryption tool** (Filippo Valsorda, 2019). The `age` tool is widely adopted and well-regarded; its X25519 recipient type uses:
 

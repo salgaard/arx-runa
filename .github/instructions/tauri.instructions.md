@@ -4,13 +4,16 @@ applyTo: "src-tauri/src/ui/**,src-tauri/tauri.conf.json,src-tauri/capabilities/*
 
 # Tauri — rules
 
-**Design specification**: `docs/architecture/designs/tauri-ipc-and-frontend/design.md` — last verified against design dated 2026-04-11
+**Design specification**: `docs/architecture/designs/tauri-ipc-and-frontend/design.md` — last verified against design dated 2026-04-12
 
 ## IPC / UI layer (`src/ui/`)
 - Sanitise before IPC: no key material, no paths, no stack traces
 - Return generic message; log details server-side (`RUST_LOG=debug`)
 - UI knows: `vault_id`, status, display metadata — never raw keys
-- All I/O commands `async`; use `tauri::ipc::Channel<T>` for streaming
+- All I/O commands `async`; long-running operations use `tauri::ipc::Channel<T>` for streaming
+- `get_file_content` is non-streaming and must reject files above 50 MiB with `InvalidInput`
+- Validate vault-relative paths with allowlist + explicit traversal/absolute-path rejection (not denylist-only checks)
+- For password-bearing IPC payloads, immediately convert `String` to `Zeroizing<Vec<u8>>`, scrub String backing bytes, and drop the original
 - `tauri::State<T>` for config — never for keys (those stay in mlocked memory)
 
 ## Config (`tauri.conf.json`)

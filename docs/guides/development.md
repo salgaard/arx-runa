@@ -276,5 +276,4 @@ claude plugin install commit-commands
 | Local DB | SQLite + SQLCipher |
 | Cloud transport | Rclone |
 
-See [Architecture Decisions](../architecture-decisions/) and
-[System Architecture](../architecture/) for full design rationale.
+See [System Architecture](../architecture/) for full design rationale.

@@ -6,21 +6,21 @@ Terms used consistently across Arx Runa documentation, use cases, and source cod
 
 ## Vault
 
-The entire encrypted storage namespace for a single user. A vault is not a folder — it is the top-level container that groups all of a user's encrypted files under one set of authentication credentials.
+The entire encrypted storage namespace for a single user. A vault is not a folder - it is the top-level container that groups all of a user's encrypted files under one set of authentication credentials.
 
 In cloud storage (Google Drive, Backblaze B2, S3, etc.) a vault appears as a configured root directory containing:
 
 ```
 <cloud-root>/
-  vault-header.json        ← plaintext JSON (public parameters)
+  vault-header.json        <- plaintext JSON (public parameters)
   manifest/
-    manifest-backup.blob   ← encrypted manifest backup
+    manifest-backup.blob   <- encrypted manifest backup
   vault/
-    <uuid>.blob            ← encrypted file chunks (flat, no structure)
-  shared/                  ← reserved for file sharing (Phase 5)
+    <uuid>.blob            <- encrypted file chunks (flat, no structure)
+  shared/                  <- reserved for file sharing (Phase 5)
 ```
 
-The cloud provider sees blob count, uniform blob sizes, and access timing — never filenames, folder structure, or file contents.
+The cloud provider sees blob count, uniform blob sizes, and access timing - never filenames, folder structure, or file contents.
 
 ---
 
@@ -28,13 +28,21 @@ The cloud provider sees blob count, uniform blob sizes, and access timing — ne
 
 A plaintext JSON file stored at the cloud root (`vault-header.json`). It contains only public parameters needed to bootstrap key derivation on a new device:
 
-- `vault_id` — UUID v4 identifying the vault
-- `tier` — authentication tier selected at vault creation: `1` (password only) or `2` (password + USB key file)
-- `argon2_salt` — 32-byte Argon2id salt (CSPRNG-generated at vault creation)
-- `argon2_params` — Argon2id cost parameters (memory, iterations, parallelism)
-- `key_file_blake3` — BLAKE3 fingerprint of the USB key file (Tier 2 only; `null` for Tier 1; preimage-resistant, does not reveal key material)
+- `vault_id` - UUID v4 identifying the vault
+- `tier` - authentication tier selected at vault creation: `1` (password only) or `2` (password + USB key file)
+- `argon2_salt` - 32-byte Argon2id salt (CSPRNG-generated at vault creation)
+- `argon2_params` - Argon2id cost parameters (memory, iterations, parallelism)
+- `key_file_blake3` - BLAKE3 fingerprint of the USB key file (Tier 2 only; `null` for Tier 1; preimage-resistant, does not reveal key material)
 
 The vault header is intentionally unencrypted: it must be downloadable before any keys exist, so a new device can derive the correct keys without prior authentication.
+
+---
+
+## local-vault-params.json
+
+A trusted local cache of vault-header KDF parameters stored in app data. It contains `vault_id`, `argon2_salt`, and `argon2_params`.
+
+On existing devices, downloaded `vault-header.json` values must match this cache exactly. This blocks parameter downgrade and salt-swap attacks. The file is written at vault creation and updated after successful password or key-file rotation.
 
 ---
 
@@ -44,7 +52,7 @@ The encrypted index of all files in a vault. The manifest is stored in a **SQLCi
 
 The manifest records, for each file:
 - Filenames and directory structure
-- Per-file `file_key_wrapped`: the file encryption key, wrapped with `key_encryption_key` (HKDF-derived from `master_key`); stored in the `nodes` table
+- Per-file `file_key_wrapped` stored in the `nodes` table
 - Chunk map: ordered list of UUID blob names and their sizes
 - `snapshot_counter` for sync conflict detection
 
@@ -71,7 +79,7 @@ The chunk size is fixed (not content-defined) to prevent file size inference fro
 The root key material for a vault session, derived by Argon2id from the user's password (and USB key file bytes for Tier 2). All other vault keys are derived from `master_key` via HKDF-SHA256.
 
 - **Tier 1**: `master_key = Argon2id(password, salt)`
-- **Tier 2**: `master_key = Argon2id(password ‖ key_file_bytes, salt)`
+- **Tier 2**: `master_key = Argon2id(password || key_file_bytes, salt)`
 
 `master_key` exists only in RAM during an active session and is zeroized on vault lock.
 
@@ -79,7 +87,19 @@ The root key material for a vault session, derived by Argon2id from the user's p
 
 ## file_key
 
-A 32-byte random key generated per file at encryption time. Used as the actual XChaCha20-Poly1305 encryption key for that file's chunks. Stored encrypted inside the SQLCipher manifest (wrapped under `key_encryption_key`, HKDF-derived from `master_key`) as `file_key_wrapped` in the `nodes` table.
+A 32-byte random key generated per file at encryption time. It is the XChaCha20-Poly1305 encryption key for that file's chunks. At rest, it is stored only as `file_key_wrapped` in the `nodes` table.
+
+---
+
+## key_encryption_key
+
+A vault-level key derived from `master_key` via HKDF with info `b"arx-runa-key-encryption"`. It wraps and unwraps at-rest file keys (`nodes.file_key_wrapped` and `received_shares.file_key_wrapped`). It is not used for chunk encryption.
+
+---
+
+## manifest_key
+
+A vault-level key derived from `master_key` via HKDF with info `b"arx-runa-manifest-backup"`. It encrypts and decrypts the singleton cloud manifest backup `manifest/manifest-backup.blob`.
 
 ---
 
@@ -91,7 +111,7 @@ A vault-level key derived from `master_key` via HKDF, used to encrypt the local 
 
 ## USB Key File
 
-A 32-byte file of cryptographically random entropy stored on a physical USB drive. Used as the hardware second factor in Tier 2 authentication. The key file is identified by its BLAKE3 fingerprint stored in the vault header — the filename is irrelevant.
+A 32-byte file of cryptographically random entropy stored on a physical USB drive. Used as the hardware second factor in Tier 2 authentication. The key file is identified by its BLAKE3 fingerprint stored in the vault header - the filename is irrelevant.
 
 Losing the USB key file without a backup means permanent loss of access to Tier 2 vaults. See [Use Case 3](../use-cases/use-case-3-hardware-mfa-and-key-loss.md).
 
@@ -104,9 +124,9 @@ Authentication tiers selected when creating a vault:
 | Tier | Factors | Key derivation |
 |------|---------|---------------|
 | **Tier 1** | Password only | `Argon2id(password, salt)` |
-| **Tier 2** | Password + USB key file | `Argon2id(password ‖ key_file_bytes, salt)` |
+| **Tier 2** | Password + USB key file | `Argon2id(password || key_file_bytes, salt)` |
 
-Both tiers are zero-knowledge — the cloud provider never holds key material. Tier 2 additionally requires physical possession of the USB key file on every access.
+Both tiers are zero-knowledge - the cloud provider never holds key material. Tier 2 additionally requires physical possession of the USB key file on every access.
 
 ---
 
@@ -140,10 +160,34 @@ An integer stored in the manifest that increments on every push. Used to detect 
 
 ## AAD (Additional Authenticated Data)
 
-The binding value included in every XChaCha20-Poly1305 encryption call: `file_id ‖ chunk_index`. AAD prevents chunk-swap attacks — a chunk from one file cannot be spliced into another file's chunk sequence without causing an authentication failure.
+The binding value included in every XChaCha20-Poly1305 encryption call: `file_id || chunk_index`. AAD prevents chunk-swap attacks - a chunk from one file cannot be spliced into another file's chunk sequence without causing an authentication failure.
+
+---
+
+## file_share_id
+
+A UUID v4 that identifies the shared blob set at `shared/<file_share_id>/`. All recipients of the same shared file snapshot reference the same `file_share_id`. This is distinct from `share_id`, which is per recipient-file pair.
+
+---
+
+## share_id
+
+A UUID v4 that identifies one recipient-file share relationship. It appears in each share package and is the primary key in `shares` and `received_shares`. Multiple `share_id` values can reference one `file_share_id`.
+
+---
+
+## sender_public_key
+
+The owner's 32-byte X25519 public key in the share package, stored as `received_shares.sender_public_key`. Recipients use it to encrypt download receipts even when no contact row exists.
+
+---
+
+## received_shares.file_key_wrapped
+
+The recipient-side at-rest file key in SQLCipher. During import, raw `file_key` from the HPKE package is wrapped with local `key_encryption_key`, and only the wrapped value is persisted. Raw key bytes are zeroized after wrapping.
 
 ---
 
 ## File Sharing Key
 
-There is no separate `share_key` in Arx Runa. When a file is shared, the existing `file_key` is re-encrypted inside an ECIES envelope (using an ECDH-derived symmetric key) addressed to the recipient's X25519 public key. The resulting `file_key_wrapped` is included in the share package. Share metadata is stored in the `shares` table (sender side) and `received_shares` table (recipient side) of the SQLCipher database. See [Use Case 4](../use-cases/use-case-4-personal-file-sharing.md).
+There is no separate `share_key` in Arx Runa. Share packages carry the existing per-file `file_key` inside the HPKE envelope. See [Use Case 4](../use-cases/use-case-4-personal-file-sharing.md).

@@ -68,6 +68,8 @@ fn validate_inputs(file_path: &str, vault_id: &str) -> Result<(), IpcError> {
 }
 ```
 
+For vault-relative paths, use an allowlist character policy plus explicit traversal/absolute-path rejection (do not rely on denylist-only checks).
+
 ## Step 4: Add `From` impls for any new domain error types
 
 If the command introduces a new domain error type, add a `From` impl in `src-tauri/src/ui/error.rs`. Never expose internal details:
@@ -109,7 +111,7 @@ tauri_build::AppManifest::new()
 
 ## Security checklist before finishing
 
-- [ ] If command accepts `password: String` or similar sensitive string, zeroize it before returning (Zero-Trace invariant)
+- [ ] If command accepts `password: String` or similar sensitive string, convert to `Zeroizing<Vec<u8>>`, scrub the original `String` backing bytes, and drop it immediately (Zero-Trace invariant)
 - [ ] Return value contains no key material, no raw bytes, no derived key values
 - [ ] Return value contains no server-side file paths
 - [ ] No `From` impl string contains a user-supplied value or file path

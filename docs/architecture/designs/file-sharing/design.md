@@ -1,7 +1,7 @@
 # Arx Runa — File Sharing Architecture Design
 
 > Status: Design complete. Implementation target: Phase 5.
-> Last updated: 2026-03-29
+> Last updated: 2026-04-12
 
 ---
 
@@ -27,9 +27,9 @@
 
 ### Data contract
 
-- Canonical share package fields are `share_id`, `file_id`, `file_name`, `chunk_count`, `chunk_size`, `chunk_uuids`, `file_key`, `cloud_endpoint`, and optional `expires_at`.
+- Canonical share package fields are `share_id`, `file_id`, `file_name`, `chunk_count`, `chunk_size`, `chunk_uuids`, `file_key`, `sender_public_key`, `cloud_endpoint`, and optional `expires_at`.
 - Canonical shared-cloud path contract is `shared/<file_share_id>/<uuid>.blob` plus `shared/<file_share_id>/receipts/<receipt_uuid>.blob`.
-- Canonical persistence tables are `contacts`, `shares`, and `received_shares` (including `revoked_at` / `expires_at` semantics).
+- Canonical persistence tables are `contacts`, `shares`, and `received_shares` (including `revoked_at` / `expires_at` semantics, `received_shares.file_key_wrapped`, and `received_shares.sender_public_key`).
 
 ### Invariant contract
 
@@ -138,6 +138,7 @@ plaintext = HPKE.Open(
 ### Rust implementation
 
 The `hpke` crate (v0.13.0) provides RFC 9180 primitives. `CTX-ChaCha20-Poly1305` is a thin wrapper type in the sharing crypto module that replaces the AEAD tag with a BLAKE3 commitment.
+Implementation must include adversarial tests that flip one bit in `enc`, ciphertext, and the 32-byte CTX tag; all variants must fail decryption with authentication error.
 
 ---
 
@@ -156,6 +157,7 @@ When the owner shares a file, Arx Runa produces a share package — a small file
   "chunk_size": 4194304,
   "chunk_uuids": ["<uuid>", "<uuid>", "..."],
   "file_key": "<32-byte file_key, base64>",
+  "sender_public_key": "<32-byte X25519 public key, base64>",
   "cloud_endpoint": {
     "provider": "s3",
     "bucket": "alice-arx-runa",
@@ -175,6 +177,8 @@ When the owner shares a file, Arx Runa produces a share package — a small file
 `enc` is the ephemeral X25519 public key output by HPKE's KEM encapsulation. The HPKE nonce is managed internally and does not appear in the wire format. The CTX tag is 32 bytes (vs 16 bytes for a plain Poly1305 tag).
 
 `file_key` is the raw 32-byte file encryption key in plaintext inside the HPKE-encrypted envelope. The outer HPKE layer (CTX-ChaCha20-Poly1305) provides all confidentiality and integrity — no inner wrapping is needed.
+
+`sender_public_key` is the owner's X25519 public key. Recipients use this field for receipt encryption even when no local contact entry exists for the sender.
 
 ### Delivery
 
@@ -227,7 +231,15 @@ Cryptographic revocation of already-fetched plaintext is impossible. The owner c
 
 If a file is shared with multiple recipients and the owner revokes access for one:
 - Deleting the shared folder would revoke all recipients
-- The correct action for single-recipient revocation when others remain: mark the share as revoked in the local `shares` table; if a stronger guarantee is needed, re-encrypt the file, upload new blobs, re-share with remaining recipients, and delete the old folder
+- The correct action for single-recipient revocation when others remain is a two-path flow:
+
+1. **Default (cooperative)**: set `shares.revoked_at` for the revoked recipient and stop issuing new share packages to that contact. This does not prevent access for a recipient that already has package + blobs.
+2. **Strong revocation (enforced)**:
+   - Generate a new random `file_key`
+   - Re-encrypt the file and upload chunks under a new `file_share_id`
+   - Create fresh share packages for remaining recipients only
+   - Delete the old `shared/<old_file_share_id>/` folder
+   - Mark all old rows tied to the old `file_share_id` as revoked (`revoked_at`)
 
 ---
 
@@ -245,7 +257,7 @@ After a recipient successfully downloads and decrypts all chunks of a shared fil
 shared/<file_share_id>/receipts/<receipt_uuid>.blob
 ```
 
-The receipt is encrypted with the owner's X25519 public key via HPKE (the same construction used for share packages). Only the owner can decrypt it.
+The receipt is encrypted with the owner's X25519 public key via HPKE (the same construction used for share packages). The recipient reads this public key from `sender_public_key` in the imported share package, so receipt encryption does not depend on a pre-existing contact record. Only the owner can decrypt it.
 
 ### Receipt format (plaintext inside HPKE envelope)
 
@@ -307,6 +319,8 @@ The canonical `shares` table definition (see [Database Schema](#database-schema)
 
 ```sql
 ALTER TABLE shares ADD COLUMN expires_at INTEGER;  -- Unix timestamp, NULL = no expiration
+CREATE INDEX IF NOT EXISTS idx_shares_active_file ON shares(file_id) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_shares_active_expiry ON shares(expires_at) WHERE revoked_at IS NULL AND expires_at IS NOT NULL;
 ```
 
 ### Enforcement
@@ -355,6 +369,14 @@ CREATE TABLE shares (
     revoked_at      INTEGER,            -- NULL = active
     expires_at      INTEGER             -- NULL = no expiration (Unix timestamp)
 );
+
+CREATE INDEX idx_shares_active_file
+    ON shares(file_id)
+    WHERE revoked_at IS NULL;
+
+CREATE INDEX idx_shares_active_expiry
+    ON shares(expires_at)
+    WHERE revoked_at IS NULL AND expires_at IS NOT NULL;
 ```
 
 ### Recipient side
@@ -364,8 +386,9 @@ CREATE TABLE shares (
 CREATE TABLE received_shares (
     share_id             TEXT PRIMARY KEY,   -- from the share package
     sender_contact_id    TEXT REFERENCES contacts(contact_id),
+    sender_public_key    BLOB NOT NULL,      -- X25519 public key from share package, 32 bytes
     file_name            TEXT NOT NULL,
-    file_key             BLOB NOT NULL,      -- raw file_key (32 bytes), decrypted from HPKE envelope on access
+    file_key_wrapped     BLOB NOT NULL,      -- KEK-wrapped file_key for at-rest protection
     chunk_count          INTEGER NOT NULL,
     chunk_size           INTEGER NOT NULL,
     chunk_uuids          TEXT NOT NULL,      -- JSON array
@@ -377,7 +400,7 @@ CREATE TABLE received_shares (
 
 ### Nodes table addition
 
-`file_key_wrapped` is stored in the `nodes` table (per file, not per chunk) — this is the vault-internal KEK-wrapped key used for local decryption, and is unchanged. The `received_shares.file_key` column holds the raw `file_key` extracted from the HPKE share package envelope and stored at import time for use during chunk decryption. No further schema addition is needed beyond the `shares`, `contacts`, and `received_shares` tables.
+`file_key_wrapped` is stored in the `nodes` table (per file, not per chunk) — this is the vault-internal KEK-wrapped key used for local decryption, and is unchanged. On share import, Arx Runa decrypts the package to recover raw `file_key`, immediately wraps it with local `key_encryption_key`, and persists only `received_shares.file_key_wrapped`. Raw `file_key` bytes are zeroized after wrapping. `received_shares.sender_public_key` is stored so receipts remain possible even when no sender contact exists.
 
 ---
 
@@ -436,3 +459,7 @@ Blobs in `shared/<file_share_id>/` are publicly readable. A party who discovers 
 | Cloud auth | Public readable blobs | No credentials in share package; AEAD guarantees protect content |
 | Revocation | Blob deletion + optional re-encryption | Honest model; stronger guarantee available at cost of re-encryption |
 | Share semantics | Snapshot at time of sharing | Simple, correct, deliberate |
+| Share package sender key | Include `sender_public_key` in every package | Enables receipt encryption without coupling to local contact DB state |
+| Received-share key storage | Persist `received_shares.file_key_wrapped` (not raw `file_key`) | Keeps at-rest treatment consistent with node file keys and zeroization model |
+| Single-recipient revocation | Cooperative `revoked_at` default; strong path rotates `file_key` and `file_share_id` | Makes revocation behavior explicit and implementable for both low-cost and enforced cases |
+| Share expiration query performance | Partial indexes on active rows (`file_id`, `expires_at`) | Avoids full scans during sync/push enforcement loops as share volume grows |

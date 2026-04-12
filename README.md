@@ -17,18 +17,19 @@
 
 ---
 
-**📖 [Read the full documentation](https://chorizzio.github.io/arx-runa/)** — architecture, design decisions, threat model, and development guides.
+**📖 [Read the full documentation](https://chorizzio.github.io/arx-runa/)** — architecture, threat model, roadmap, and development guides.
 
 ## Core Pillars
 
-- **Client-side encryption** — XChaCha20-Poly1305 (AEAD), never plaintext
-  in the cloud
-- **Hardware MFA** — USB key file as a mandatory cryptographic factor;
-  password alone cannot compromise data
-- **Zero-Trace** — sensitive data zeroed from RAM immediately after use;
-  no temp files, no plaintext on disk
-- **Fixed-size padded chunks** — cloud provider cannot infer file sizes,
-  structure, or metadata
+- **Client-side encryption** — files are encrypted before upload; the cloud
+  stores opaque ciphertext blobs only
+- **Tiered authentication** — Tier 1 (password only) or Tier 2 (password +
+  32-byte USB key file)
+- **Zero-Trace policy** — plaintext is transient in active memory only and is
+  never persisted to disk, logs, or telemetry
+- **Metadata-minimizing storage** — fixed-size padded chunks and random blob
+  names reduce leakage of file structure and sizes
+- **Secure sharing** — share packages use HPKE with X25519 identities
 - **Bring Your Own Cloud** — encrypted blobs via Rclone; no provider lock-in
 
 ## Technology Stack
@@ -39,14 +40,13 @@
 | Framework | Tauri (web frontend + Rust backend) |
 | Encryption | XChaCha20-Poly1305 via `chacha20poly1305` crate |
 | KDF | Argon2id → HKDF-SHA256 key separation |
-| MFA | USB key file (32 bytes random entropy) |
+| Authentication | Tier 1 password-only or Tier 2 password + USB key file |
+| File sharing | HPKE (RFC 9180) with X25519 identities |
 | Local DB | SQLite + SQLCipher |
 | Cloud transport | Rclone |
 | Memory safety | `zeroize`, `secrecy`, `mlock`/`VirtualLock` |
 
 ## Documentation
-
-**📖 [Full Documentation on GitHub Pages](https://chorizzio.github.io/arx-runa/)**
 
 Quick links:
 - [Use Cases](https://chorizzio.github.io/arx-runa/use-cases/index.html) — Real-world scenarios Arx Runa is designed for

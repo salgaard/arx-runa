@@ -1,13 +1,14 @@
 # Arx Runa — Tauri IPC Layer and Frontend Design
 
 > Status: Reviewed. Implementation target: Phase 6.
-> Last updated: 2026-04-11
+> Last updated: 2026-04-12
 
 ### Review Log
 
 | Date | Reviewer | Outcome |
 |------|----------|---------|
 | 2026-03-31 | Interactive design session | Critical fixes applied (password zeroization, polling cleanup), recommendations added |
+| 2026-04-12 | Cross-phase consistency remediation | IPC/password/path/viewing/share terminology and auth-backoff alignment fixes applied |
 
 ---
 
@@ -112,7 +113,7 @@ All other command enumerations in this document are detailed implementation mirr
 /// Returns vault_id on success. Does NOT return any key material.
 #[tauri::command]
 async fn authenticate(
-    password: String,
+    password: String, // Immediately convert to Zeroizing<Vec<u8>>, scrub String bytes, then drop
     key_file_path: Option<PathBuf>,  // None for Tier 1 vaults
     state: tauri::State<'_, AppState>,
 ) -> Result<AuthResponse, IpcError>;
@@ -143,7 +144,7 @@ async fn get_session_status(
 #[tauri::command]
 async fn create_vault(
     vault_name: String,
-    password: String,
+    password: String, // Immediately convert to Zeroizing<Vec<u8>>, scrub String bytes, then drop
     tier: u8,
     key_file_destination: Option<PathBuf>,  // Required for Tier 2
     primary_destination: DestinationSessionConfig,  // Primary cloud/local destination
@@ -156,8 +157,8 @@ async fn create_vault(
 /// For Tier 2, the USB key file must be present.
 #[tauri::command]
 async fn change_password(
-    current_password: String,
-    new_password: String,
+    current_password: String, // Immediately convert to Zeroizing<Vec<u8>>, scrub String bytes, then drop
+    new_password: String,     // Immediately convert to Zeroizing<Vec<u8>>, scrub String bytes, then drop
     state: tauri::State<'_, AppState>,
 ) -> Result<(), IpcError>;
 
@@ -211,8 +212,9 @@ async fn delete_file(
 ) -> Result<(), IpcError>;
 
 /// Decrypt and return file content for in-app viewing (Zero-Trace).
-/// Returns base64-encoded content for small files. For large files,
-/// streams chunks via the channel.
+/// Returns base64-encoded content for files up to 50 MiB.
+/// Files above 50 MiB return InvalidInput:
+/// "File too large for in-app viewing; use download instead".
 #[tauri::command]
 async fn get_file_content(
     file_id: String,
@@ -322,7 +324,7 @@ async fn list_contacts(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<ContactEntry>, IpcError>;
 
-/// Share a file with a contact. Creates an ECIES share package.
+/// Share a file with a contact. Creates an HPKE (RFC 9180) share package.
 #[tauri::command]
 async fn share_file(
     file_id: String,
@@ -882,21 +884,29 @@ All Tauri command inputs are validated before processing:
 ```rust
 /// Validates a vault path (no traversal, valid characters).
 fn validate_vault_path(path: &str) -> Result<(), IpcError> {
-    // Reject path traversal
-    if path.contains("..") {
-        return Err(IpcError::InvalidInput("Invalid path".into()));
+    // Allowlist: only expected filename/path characters.
+    let allowed = regex::Regex::new(r"^[a-zA-Z0-9 ._\\-/]*$")
+        .map_err(|_| IpcError::InternalError("Path validator misconfigured".into()))?;
+    if !allowed.is_match(path) {
+        return Err(IpcError::InvalidInput("Invalid characters in path".into()));
     }
-    
-    // Reject absolute paths
+
+    // Reject absolute paths.
     if path.starts_with('/') || path.starts_with('\\') {
         return Err(IpcError::InvalidInput("Path must be relative".into()));
     }
-    
-    // Reject control characters
+
+    // Reject traversal after normalising separators.
+    let normalized = path.replace('\\', "/");
+    if normalized.split('/').any(|segment| segment == "..") {
+        return Err(IpcError::InvalidInput("Invalid path".into()));
+    }
+
+    // Reject control characters.
     if path.chars().any(|c| c.is_control()) {
         return Err(IpcError::InvalidInput("Invalid characters in path".into()));
     }
-    
+
     Ok(())
 }
 
@@ -914,6 +924,28 @@ fn validate_password(password: &str) -> Result<(), IpcError> {
     }
     // Note: We don't enforce password complexity — user choice
     Ok(())
+}
+```
+
+### Rust-side password zeroization at IPC boundary
+
+Handlers that accept `String` passwords must scrub the Rust-side IPC copy immediately after converting to a zeroizing byte buffer:
+
+```rust
+use zeroize::Zeroizing;
+
+#[tauri::command]
+async fn authenticate(
+    mut password: String,
+    key_file_path: Option<PathBuf>,
+    state: tauri::State<'_, AppState>,
+) -> Result<AuthResponse, IpcError> {
+    let password_bytes = Zeroizing::new(password.as_bytes().to_vec());
+    // SAFETY: password points to a valid mutable UTF-8 buffer for password.len() bytes.
+    unsafe { std::ptr::write_bytes(password.as_mut_ptr(), 0, password.len()) };
+    drop(password);
+
+    auth::authenticate_with_bytes(password_bytes, key_file_path, &state).await
 }
 ```
 
@@ -1192,10 +1224,10 @@ pub fn LoginPage() -> impl IntoView {
     };
     
     view! {
-        <div class="min-h-screen bg-void-950 flex items-center justify-center p-4">
+        <div class="min-h-screen bg-iron flex items-center justify-center p-4">
             <div class="w-full max-w-md">
-                <div class="bg-void-900 border border-void-700 rounded-xl p-6 shadow-xl">
-                    <h1 class="text-2xl font-semibold text-void-50 text-center mb-6">
+                <div class="bg-stone border border-steel rounded-xl p-6 shadow-xl">
+                    <h1 class="text-2xl font-semibold text-bone text-center mb-6">
                         "Unlock Vault"
                     </h1>
                     
@@ -1316,7 +1348,7 @@ pub fn RemoteBrowser() -> impl IntoView {
     view! {
         <AppShell>
             <div class="space-y-4">
-                <h2 class="text-xl font-semibold text-void-50">"Remote Files"</h2>
+                <h2 class="text-xl font-semibold text-bone">"Remote Files"</h2>
 
                 <Show
                     when=move || !loading.get()
@@ -1365,7 +1397,7 @@ pub fn DestinationList() -> impl IntoView {
         <AppShell>
             <div class="space-y-4">
                 <div class="flex justify-between items-center">
-                    <h2 class="text-xl font-semibold text-void-50">"Storage Destinations"</h2>
+                    <h2 class="text-xl font-semibold text-bone">"Storage Destinations"</h2>
                     <AddDestinationButton on_added=move |entry| {
                         set_destinations.update(|d| d.push(entry));
                     } />
@@ -1496,13 +1528,17 @@ For supported file types, Arx Runa decrypts file content into WASM memory and re
 
 1. User selects a file in the vault browser and chooses "View"
 2. Frontend invokes `get_file_content(file_id)`
-3. Backend decrypts all chunks into a RAM buffer, assembles the file, and returns it as base64 in a `FileContent` response
+3. Backend validates file size:
+   - If `size_bytes > 50 MiB`: return `IpcError::InvalidInput("File too large for in-app viewing; use download instead")`
+   - Else: decrypt all chunks into a RAM buffer, assemble the file, and return it as base64 in a `FileContent` response
 4. Frontend creates a `blob:` URL from the decoded bytes and renders it in the appropriate viewer component
 5. On close or vault lock, the `blob:` URL is revoked and the buffer is released
 
 ### Size limits
 
-For files exceeding 50 MiB, in-app viewing is not offered — the user must use `download_file` to export a decrypted copy. This limit prevents excessive WASM memory usage.
+For files exceeding 50 MiB, in-app viewing is rejected with:
+`IpcError::InvalidInput("File too large for in-app viewing; use download instead")`.
+The user must use `download_file` to export a decrypted copy. This limit prevents excessive WASM memory usage.
 
 ### Security property
 
@@ -1599,7 +1635,7 @@ The frontend runs in a WebView which is inherently less trusted than the Rust ba
 
 - **Clipboard attack**: A malicious script could read/write clipboard. Mitigation: clipboard capability denied in Tauri config.
 
-- **Brute-force authentication**: A compromised WebView could attempt rapid auth attempts. Mitigation: backend implements exponential backoff (1s base, 30s max) on failed authentication attempts.
+- **Brute-force authentication**: A compromised WebView could attempt rapid auth attempts. Mitigation: backend applies per-vault in-memory exponential backoff in `SessionManager` (`delay = min(30s, 2^(attempt-1)s)`), resets counter on successful authentication, and does not persist counters across app restarts. Delay is applied before returning `InvalidCredentials`.
 
 ### Out of scope
 
@@ -1640,3 +1676,8 @@ The frontend runs in a WebView which is inherently less trusted than the Rust ba
 | `list_remote` command | In `file_commands.rs`; returns `Vec<RemoteFileEntry>` with manifest-linked filenames | Remote listing is a file operation from the user's perspective; separating from sync commands keeps the IPC surface aligned with user intent |
 | Cloud file browser frontend | `src/remote/` module with `RemoteBrowser`, `RemoteFileList`, `OrphanIndicator` | Logically separate from local vault browser; orphan handling is remote-specific |
 | Destination manager frontend | `src/destinations/` module with `DestinationList`, `AddDestination`, `DestinationItem` | Destination management is a settings-like workflow, distinct from file browsing and sync status |
+| IPC password handling | Convert incoming `String` to `Zeroizing<Vec<u8>>`, scrub backing bytes, drop original String immediately | Removes Rust-side heap residue for passwords after IPC deserialization |
+| `share_file` terminology | HPKE (RFC 9180), not ECIES | Aligns command docs with Phase 5 canonical sharing construction |
+| `get_file_content` behavior | Full response only; reject files above 50 MiB with explicit `InvalidInput` error | Matches command signature and avoids implicit streaming ambiguity |
+| Vault path validation | Allowlist character regex + explicit traversal/absolute-path checks | Stronger boundary than denylist-only validation |
+| Auth brute-force mitigation | Per-vault in-memory exponential backoff (1s base, 30s max), reset on success, non-persistent | Deterministic anti-automation behavior aligned with auth/session lifecycle |

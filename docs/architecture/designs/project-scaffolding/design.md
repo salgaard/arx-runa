@@ -1,7 +1,7 @@
 # Arx Runa — Project Scaffolding Design
 
 > Status: Design complete. Implementation target: Phase 0.
-> Last updated: 2026-04-08
+> Last updated: 2026-04-12
 > **Sub-phase roadmap**: [`sub-phases/roadmap.md`](sub-phases/roadmap.md)
 
 ---
@@ -38,8 +38,9 @@
 
 ### Dependency contract
 
-- Backend baseline dependencies include `tauri`, `tokio`, `serde`, `thiserror`, `async-trait`, `tracing`, `anyhow`, plus phase-specific crypto/storage crates listed below.
+- Backend baseline dependencies include `tauri`, `tokio`, `serde`, `thiserror`, `async-trait`, and `tracing`, plus phase-specific crypto/storage crates listed below.
 - Frontend baseline dependencies include `leptos`, `leptos_meta`, `leptos_router`, `console_error_panic_hook`, `console_log`, `log`, `serde-wasm-bindgen`, and `gloo-timers`.
+- X25519 dependency strategy is single-stack: prefer one crate family per major version (no parallel curve implementations for the same purpose).
 - Toolchain contract is Tauri v2 + Leptos 0.8 + Trunk + Tailwind CSS v4.
 
 ---
@@ -138,11 +139,10 @@ All dependencies use semver ranges. `Cargo.lock` pins exact versions.
 | `tauri-build` | `"2"` | Build script (build-dependency) |
 | `serde` | `"1"` | Serialisation (with `derive` feature) |
 | `serde_json` | `"1"` | JSON serialisation |
-| `tokio` | `"1"` | Async runtime (with `full` feature) |
+| `tokio` | `"1"` | Async runtime (explicit feature set: `macros`, `rt-multi-thread`, `fs`, `io-util`, `sync`, `time`) |
 | `thiserror` | `"2"` | Error type derivation |
 | `async-trait` | `"0.1"` | Dyn-safe async traits (`MetadataStore` in Phase 3, `CloudTransport` in Phase 4) |
 | `tracing` | `"0.1"` | Structured logging (Phase 6 error logging before IPC sanitisation) |
-| `anyhow` | `"1"` | Error context propagation (dev/test use; production code uses typed `thiserror` enums) |
 
 #### Cryptography (Phase 1+)
 
@@ -157,7 +157,7 @@ All dependencies use semver ranges. `Cargo.lock` pins exact versions.
 | `rand` | `"0.10"` | CSPRNG (`>= 0.9` required for edition 2024 — `gen` keyword; 0.10 is current stable) |
 | `zeroize` | `"1"` | Memory zeroisation (with `derive` feature) |
 | `secrecy` | `"0.10"` | `Secret<T>` wrappers |
-| `x25519-dalek` | `"2"` | X25519 key exchange (Phase 5) |
+| `x25519-dalek` | `"2"` | X25519 identity-key operations (Phase 5); keep aligned with HPKE transitive version to avoid duplicate X25519 stacks |
 
 #### Storage (Phase 3+)
 
@@ -173,6 +173,7 @@ All dependencies use semver ranges. `Cargo.lock` pins exact versions.
 | `proptest` | `"1"` | Property-based testing |
 | `tempfile` | `"3"` | Temporary directories in tests |
 | `assert_matches` | `"1"` | Pattern matching assertions |
+| `anyhow` | `"1"` | Error context helpers for tests/tooling; production paths remain typed `thiserror` |
 
 ### Frontend (`src/` — compiled by Trunk)
 
@@ -348,6 +349,10 @@ Phase 0 creates a minimal default capability. In Tauri v2 the default capability
 
 **Phase 6 must tighten this.** Each Tauri command should be explicitly listed in a named capability file scoped to the window that needs it. The tauri-ipc design covers per-command capability configuration. The Phase 0 default capability is a dev scaffold only and must not ship as-is.
 
+**Enforcement mechanism**: release readiness requires both checks below to pass:
+1. `build.rs` command allowlist matches the canonical command surface (compile-time contract)
+2. Capability audit check fails if a default capability grants unrestricted command access in release configuration
+
 ---
 
 ## Edition 2024 Considerations
@@ -379,6 +384,10 @@ Phase 0 creates a minimal default capability. In Tauri v2 the default capability
 | 11 | Frontend dep completeness | All five deps declared in Phase 0 (`leptos_meta`, `leptos_router`, `console_log`, `log`, `serde-wasm-bindgen`) | Defer `serde-wasm-bindgen` to Phase 6 — consistent with upfront backend dep declaration pattern |
 | 12 | `rand` version | `"0.10"` | `"0.9"` (stale major; 0.10 stable since 2026-02-08) |
 | 13 | `rusqlite` version | `"0.39"` | `"0.34"` (stale; breaking changes in 0.35 and 0.38; Phase 3 code should target current API) |
+| 16 | `tokio` feature policy | Explicit minimal runtime features (`macros`, `rt-multi-thread`, `fs`, `io-util`, `sync`, `time`) | `full` feature flag (broader surface than needed in scaffold) |
+| 17 | `anyhow` placement | `dev-dependencies` only | Runtime dependency in `[dependencies]` (unnecessary in typed-error production modules) |
+| 18 | X25519 crate strategy | Single-stack version alignment (`x25519-dalek` aligned with HPKE transitive dependency) | Parallel X25519 implementations with independent version drift risk |
+| 19 | Capability tightening enforcement | Release gate requires command allowlist + capability audit check | Rely on manual reminder in Phase 6 only |
 
 ---
 

@@ -332,7 +332,7 @@ No changes to the design are recommended based on this research. The one open co
 | Decision | Alternatives considered | Rationale |
 |---|---|---|
 | Argon2id parameters: 64 MiB, 3 iterations, parallelism 4 | OWASP minimum (19 MiB / 2 / 1); 1Password-tier (650 MiB / 3 / 4) | OWASP recommended tier; matches Bitwarden and KeePassXC; ~300–500 ms on modern desktop; significantly stronger against GPU attackers than the minimum |
-| Phase 5 file sharing uses CTX-ChaCha20-Poly1305 as committing AEAD | AES-GCM-SIV (not committing), AEGIS-256-MAC (draft only), UtC prefix | XChaCha20-Poly1305 is non-committing — partition oracle attacks are theoretically possible in multi-key ECIES contexts; CTX construction (Chan & Rogaway, IACR 2022) replaces Poly1305 tag with BLAKE3 commitment, achieving CMT-4 security; decided in file-sharing-cryptography research |
+| Phase 5 file sharing uses CTX-ChaCha20-Poly1305 as committing AEAD | AES-GCM-SIV (not committing), AEGIS-256-MAC (draft only), UtC prefix | XChaCha20-Poly1305 is non-committing — partition oracle attacks are theoretically possible in multi-key public-key envelope contexts (original ad-hoc ECIES draft, now HPKE envelope); CTX construction (Chan & Rogaway, IACR 2022) replaces Poly1305 tag with BLAKE3 commitment, achieving CMT-4 security; decided in file-sharing-cryptography research |
 
 ---
 

@@ -25,8 +25,8 @@ Arx Runa supports two authentication tiers. Both use Argon2id as the password-ba
 master_key = Argon2id(password_utf8_bytes, argon2_salt, params)
 ```
 
-The 32-byte `argon2_salt` is generated via CSPRNG at vault creation and stored in the vault header. The Argon2id parameters (`m=19456 KiB`, `t=2`, `p=1`) are also stored in the vault header, satisfying the OWASP minimum for Argon2id.
-<!-- CITE: OWASP Password Storage Cheat Sheet — Argon2id parameter minimums -->
+The 32-byte `argon2_salt` is generated via CSPRNG at vault creation and stored in the vault header. New vaults use Argon2id defaults (`m=65536 KiB`, `t=3`, `p=4`), and these parameters are stored in the header for cross-device bootstrap. On existing devices, downloaded `vault_id`/Argon2 values are treated as untrusted cloud input and must exactly match locally cached `local-vault-params.json`; only first bootstrap (no cache) accepts OWASP floors (`19456/2/1`) with a warning below Arx defaults.
+<!-- CITE: OWASP Password Storage Cheat Sheet — Argon2id baseline guidance; Arx Runa uses stronger defaults -->
 
 **Tier 2 — password + USB key file**
 
@@ -71,7 +71,7 @@ Argon2id is the recommended algorithm for offline password hashing because its l
 <!-- CITE: OWASP Password Storage Cheat Sheet — Argon2id as preferred algorithm -->
 <!-- CITE: RFC 9106 — Argon2 Memory-Hard Function for Password Hashing and Proof-of-Work Applications -->
 
-At the Arx Runa minimum parameters (`m=19456 KiB`, `t=2`), each derivation requires approximately 19 MiB of RAM. GPU cores have limited per-core memory bandwidth; the memory requirement prevents the massive parallelism that makes GPUs effective against algorithms such as PBKDF2 or bcrypt.
+At Arx Runa defaults (`m=65536 KiB`, `t=3`), each derivation requires approximately 64 MiB of RAM. GPU cores have limited per-core memory bandwidth; the memory requirement prevents the massive parallelism that makes GPUs effective against algorithms such as PBKDF2 or bcrypt.
 <!-- CITE: Argon2 original paper — Biryukov, Dinu, Khovratovich 2016 — GPU memory-hardness analysis -->
 
 The practical result is that GPU parallelism is severely limited compared to algorithms such as PBKDF2 or bcrypt, making offline brute force substantially harder for a given hardware budget.
@@ -90,7 +90,7 @@ Tier 2 brute force resistance is not dependent on password quality in the same w
 
 If an attacker obtains the correct password, the following steps are required to access vault contents. Each step is a prerequisite for the next.
 
-1. Obtain the vault header from cloud storage — requires cloud provider credentials (Google Drive, S3, Dropbox, etc.)
+1. Obtain the vault header from cloud storage — plaintext bootstrap metadata that must be treated as untrusted input
 2. Extract `argon2_salt` and `argon2_params` from the vault header
 3. Derive `master_key = Argon2id(password, argon2_salt, params)`
 4. Derive `key_encryption_key` and `sqlcipher_key` via HKDF-SHA256
@@ -100,7 +100,7 @@ If an attacker obtains the correct password, the following steps are required to
 8. Authenticate to the cloud provider and download individual encrypted blobs
 9. Decrypt blobs using the per-file `file_key` and the AEAD construction
 
-The password alone is not sufficient. Steps 1 and 5 require independent cloud provider credentials. An attacker who obtains the password but not the cloud credentials cannot reach step 3 in a useful way, because there is nothing to decrypt without the vault header and blobs.
+The password alone is not sufficient. For owner-private data, steps 5 and 8 still require independent cloud provider credentials. Existing devices also pin `vault_id` + Argon2 salt/params in `local-vault-params.json`, so cloud-side header tampering is rejected before derivation.
 
 **Effect of Tier 2**: step 3 requires `password || key_file_bytes` as Argon2id input. Without the physical USB key file, `master_key` cannot be derived from the correct password alone. The entire chain from step 3 onward is blocked.
 
@@ -129,11 +129,11 @@ A common point of confusion is which vault resources require cloud authenticatio
 
 | Resource | Access requirement | Rationale |
 |---|---|---|
-| Vault header (`vault-header.json`) | Cloud provider credentials | Plaintext JSON, but gated by provider authentication — "plaintext" means unencrypted, not world-accessible |
+| Vault header (`vault-header.json`) | None (plaintext bootstrap metadata) | Intentionally public bootstrap parameters; existing devices validate `vault_id` + Argon2 salt/params against local `local-vault-params.json` trust anchor |
 | Private vault blobs (`vault/<uuid>.blob`) | Cloud provider credentials | Owner's encrypted chunks; accessible only to the authenticated cloud account |
 | SQLCipher manifest backup (`manifest/manifest-backup.blob`) | Cloud provider credentials | Encrypted, but also gated by cloud provider authentication |
 | Shared blobs (`shared/<file_share_id>/<uuid>.blob`) | None (publicly readable) | Recipients hold no cloud credentials; AEAD with per-file `file_key` protects content |
-| Shared blob content | `file_key` from share package | Delivered inside an ECIES-encrypted share package; without `file_key` the ciphertext is permanently inaccessible |
+| Shared blob content | `file_key` from share package | Delivered inside an HPKE-encrypted share package; without `file_key` the ciphertext is permanently inaccessible |
 
 ### Rationale for the public shared/ path
 
@@ -154,9 +154,9 @@ The X25519 private key is stored in SQLCipher, wrapped with `key_encryption_key`
 The X25519 public key is shared out-of-band — exported as a file or QR code and delivered via the user's own channel (email, messaging application, physical media). Arx Runa does not publish public keys to any directory and does not require an email address or any network-accessible identity.
 
 Only parties to whom the user has explicitly delivered their public key can construct share packages addressed to that user. The security of key exchange is as strong as the out-of-band delivery channel. Arx Runa displays a short fingerprint (first 16 hex characters of the SHA-256 hash of the public key) to allow out-of-band verification; this verification is opt-in.
-<!-- CITE: age encryption tool (filippo.io/age) — same out-of-band key exchange model and ECIES construction -->
+<!-- CITE: age encryption tool (filippo.io/age) — same out-of-band key exchange model -->
 
-Share packages are encrypted using ECIES: an ephemeral X25519 keypair is generated, ECDH is performed against the recipient's long-term public key, a symmetric key is derived via HKDF-SHA256, and the package content (including the per-file `file_key`) is encrypted with XChaCha20-Poly1305. The ephemeral private key is discarded after use; forward secrecy for the share package itself is provided at the per-share level.
+Share packages are encrypted using HPKE (RFC 9180) with `DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + CTX-ChaCha20-Poly1305`. The owner seals a JSON payload (including per-file `file_key`) to the recipient's long-term X25519 public key, and the ephemeral private key used for encapsulation is discarded after use.
 
 ---
 

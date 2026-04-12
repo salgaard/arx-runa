@@ -8,6 +8,7 @@ Critical review of the existing cryptographic primitives design against academic
 
 For the canonical design see `docs/architecture/designs/cryptographic-primitives/design.md`.
 For broader context on the "broken cloud storage ecosystem" failures that validate the AAD choices here, see [Sources](#sources).
+> **Historical terminology note:** Mentions of "ECIES" in this concluded review refer to the pre-HPKE Phase 5 draft under review at that time. The canonical sharing construction is now HPKE (RFC 9180) with CTX-ChaCha20-Poly1305.
 
 ---
 

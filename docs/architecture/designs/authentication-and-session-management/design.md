@@ -1,7 +1,7 @@
 # Arx Runa — Authentication and Session Management Design
 
 > Status: Design complete. Implementation target: Phase 2.
-> Last updated: 2026-04-07 (reviewed)
+> Last updated: 2026-04-12 (reviewed)
 
 ---
 
@@ -230,9 +230,17 @@ All key buffers are locked into physical RAM via `mlock` (Linux) / `VirtualLock`
 
 1. **No session → Active**: user provides password; for Tier 2 vaults, the USB key file is also detected (or selected manually). Argon2id + HKDF derive `SessionKeys`. Keys are mlocked. SQLCipher DB is opened with `sqlcipher_key`.
 
-2. **Active → Expired**: activity-based timeout fires (default: 15 minutes of inactivity). All keys in `SessionKeys` are zeroed via `zeroize()`. SQLCipher connection is closed. The session-lived temp `rclone.conf` (written from SQLCipher-stored destination credentials at session open) is overwritten and deleted. The struct is dropped. File operations in progress must complete or be cancelled before zeroing.
+2. **Active → Expired**: activity-based timeout fires (default: 15 minutes of inactivity). All keys in `SessionKeys` are zeroed via `zeroize()`. SQLCipher connection is closed. The session-lived temp `rclone.conf` (written from SQLCipher-stored destination credentials at session open) is best-effort overwritten and deleted. The struct is dropped. File operations in progress must complete or be cancelled before zeroing.
 
 3. **Expired → Active**: user re-authenticates. Full derivation runs again (password only for Tier 1; password + USB key file for Tier 2).
+
+### Session-lived `rclone.conf` handling
+
+- **Location:** process-scoped temp directory under the OS temp root (not project workspace, not user documents).
+- **Permissions at creation:** owner-only read/write (`0600` equivalent on Unix; restrictive ACL on Windows).
+- **Cleanup on normal lock/exit:** best-effort overwrite + unlink.
+- **Cleanup on startup:** before opening a session, delete any stale `arx-runa-rclone-*.conf` temp files left by abnormal termination.
+- **SSD caveat:** overwrite is best-effort and may not physically overwrite flash cells. The primary protection is that credentials are authoritative only in SQLCipher and temp files are short-lived.
 
 ### Timeout mechanism
 
@@ -276,6 +284,8 @@ pub enum AuthenticationError {
 ```
 
 `InvalidCredentials` is returned for wrong password, wrong key file, or wrong password + wrong key file — the caller cannot distinguish the cases. `KeyFileNotFound` is only returned when no 32-byte file matches the vault header's BLAKE3 hash — this does not reveal the password status. `InvalidRecoveryPhrase` is returned when BIP-39 checksum validation fails before any Argon2id derivation runs — this is a fast, cheap check that catches transcription errors immediately. `NoRecoverySlot` is returned when the user attempts recovery but `recovery_slots` in the vault header is empty.
+
+**Timing note:** checksum-invalid recovery phrases fail faster than valid-checksum phrases that proceed into Argon2id and AEAD checks. Arx Runa accepts this timing difference because the threat model excludes remote timing attackers (desktop local app, no recovery API exposed over network). If local malware timing resistance becomes in-scope, add a fixed-cost dummy Argon2id run on checksum failure.
 
 ---
 
@@ -355,29 +365,37 @@ First-run sequence when the user creates a new vault:
 
 ## Password Change Flow
 
-1. Authenticate with current credentials → current `SessionKeys`; re-derive `master_key` from current credentials (needed for re-wrapping)
-2. User enters new password
-3. [If `recovery_slots` non-empty] Prompt: "Enter your recovery phrase to update your recovery slot"
+1. Authenticate with current credentials → current `SessionKeys`.
+2. **Step 0 (explicit):** run a full current-credential KDF:
+   - Tier 1: `current_master_key = Argon2id(current_password, current_salt, current_params)`
+   - Tier 2: `current_master_key = Argon2id(current_password || current_key_file, current_salt, current_params)`
+   This is a full Argon2id derivation, not a lookup from session state.
+3. User enters new password
+4. [If `recovery_slots` non-empty] Prompt: "Enter your recovery phrase to update your recovery slot"
    - Validate BIP-39 checksum of phrase; return `InvalidRecoveryPhrase` if invalid
    - Derive `recovery_key` = Argon2id(phrase, slot.argon2_salt, slot.argon2_params)
    - Decrypt `slot.wrapped_master_key` with `recovery_key` and AAD — verify it yields current `master_key` (integrity check)
    - If user cannot provide phrase: warn that recovery slot will be removed; proceed without re-wrap
-4. [If Tier 2] Read key file from USB (must be present during password change)
-5. Generate new 32-byte salt via CSPRNG (reusing salt with a different password is a vulnerability — same password-salt pair must never be reused)
-6. Key derivation (tier-dependent):
-     Tier 1: Argon2id(new_password, new_salt)             → new_master_key
-     Tier 2: Argon2id(new_password || key_file, new_salt) → new_master_key
-7. HKDF → new key_encryption_key, new sqlcipher_key, new manifest_key
-8. Within a SQLCipher transaction: re-wrap all `file_key` values (decrypt with old `key_encryption_key`, encrypt with new) and re-wrap the X25519 private key. Commit the transaction only if all re-wraps succeed. On failure, rollback — the old wrapped keys are fully restored and the vault remains usable with the old credentials.
-9. After the transaction commits: re-key SQLCipher DB: `PRAGMA rekey = '<new_sqlcipher_key>'`
-10. Update vault header: new salt, same argon2_params (unless user requested upgrade), same key_file_blake3
+5. [If Tier 2] Read key file from USB (must be present during password change)
+6. Generate new 32-byte salt via CSPRNG (reusing salt with a different password is a vulnerability — same password-salt pair must never be reused)
+7. Key derivation (tier-dependent):
+      Tier 1: Argon2id(new_password, new_salt)             → new_master_key
+      Tier 2: Argon2id(new_password || key_file, new_salt) → new_master_key
+8. HKDF → new key_encryption_key, new sqlcipher_key, new manifest_key
+9. Within a SQLCipher transaction: re-wrap all `file_key` values (decrypt with old `key_encryption_key`, encrypt with new) and re-wrap the X25519 private key. Commit the transaction only if all re-wraps succeed. On failure, rollback — the old wrapped keys are fully restored and the vault remains usable with the old credentials.
+10. After the transaction commits: re-key SQLCipher DB: `PRAGMA rekey = '<new_sqlcipher_key>'`
+11. Build updated vault header in memory: new salt, same argon2_params (unless user requested upgrade), same key_file_blake3
     [If recovery slot re-wrap succeeded] Re-encrypt: `new_wrapped_master_key` = XChaCha20-Poly1305.encrypt(new_master_key, recovery_key, aad); update `recovery_slots[0].wrapped_master_key`; zeroize recovery_key
     [If phrase not provided] Clear `recovery_slots` array
-11. zeroize(new_master_key)
-12. Upload updated vault header + manifest backup to cloud
-13. Zero old keys, replace `SessionKeys` with new derived keys
+12. Write updated vault header to local crash-recovery staging file (`pending-vault-header.json`) with owner-only permissions
+13. Upload updated vault header to cloud
+14. Upload updated manifest backup to cloud
+15. On successful upload completion, delete `pending-vault-header.json`
+16. zeroize(new_master_key); zero old keys; replace `SessionKeys` with new derived keys
 
 **Key property**: file_keys themselves do not change — only their wrapping changes. Encrypted blobs in the cloud are completely unaffected. No chunk re-encryption is needed.
+
+**Transaction-duration note:** this write lock is expected to be seconds-scale for personal vault sizes. A conservative bound of ~2 ms per key row implies ~20 seconds for 10,000 files. This is acceptable for explicit credential-rotation ceremonies and avoids more complex staged-key migration in v1.
 
 ---
 
@@ -387,25 +405,40 @@ Key file rotation applies only to Tier 2 vaults. Tier 1 vaults have no key file 
 
 The key file is a cryptographic input, not a lookup key. Changing it requires re-derivation:
 
-1. Authenticate with current credentials → current `SessionKeys`; re-derive `master_key` from current credentials (needed for re-wrapping)
-2. [If `recovery_slots` non-empty] Prompt: "Enter your recovery phrase to update your recovery slot" (same verification flow as password change step 3)
-3. User inserts new USB drive (or same drive with a new file)
-4. Arx Runa generates new 32-byte key file, writes to new location
-5. Generate new salt (mandatory — salt must change when any KDF input changes)
-6. Argon2id(password || new_key_file, new_salt) → new_master_key
-7. HKDF → new key_encryption_key, new sqlcipher_key, new manifest_key
-8. Within a SQLCipher transaction: re-wrap all file_keys and X25519 private key (same as password change). Commit only if all re-wraps succeed; rollback on failure.
-9. After the transaction commits: re-key SQLCipher (`PRAGMA rekey`)
-10. Update vault header: new salt, new key_file_blake3
+1. Authenticate with current credentials → current `SessionKeys`.
+2. **Step 0 (explicit):** run full Argon2id with current credentials and current salt/params to re-derive `current_master_key` for unwrap/re-wrap operations.
+3. [If `recovery_slots` non-empty] Prompt: "Enter your recovery phrase to update your recovery slot" (same verification flow as password change step 4)
+4. User inserts new USB drive (or same drive with a new file)
+5. Arx Runa generates new 32-byte key file, writes to new location
+6. Generate new salt (mandatory — salt must change when any KDF input changes)
+7. Argon2id(password || new_key_file, new_salt) → new_master_key
+8. HKDF → new key_encryption_key, new sqlcipher_key, new manifest_key
+9. Within a SQLCipher transaction: re-wrap all file_keys and X25519 private key (same as password change). Commit only if all re-wraps succeed; rollback on failure.
+10. After the transaction commits: re-key SQLCipher (`PRAGMA rekey`)
+11. Build updated vault header in memory: new salt, new key_file_blake3
     [If recovery slot re-wrap succeeded] Update `recovery_slots[0].wrapped_master_key` with `new_master_key` encrypted under the same `recovery_key`; zeroize recovery_key
     [If phrase not provided] Clear `recovery_slots` array
-11. zeroize(new_master_key)
-12. Upload updated vault header + manifest backup
-13. Zero old keys, replace `SessionKeys`
+12. Write updated vault header to local crash-recovery staging file (`pending-vault-header.json`) with owner-only permissions
+13. Upload updated vault header to cloud
+14. Upload updated manifest backup to cloud
+15. On successful upload completion, delete `pending-vault-header.json`
+16. zeroize(new_master_key); zero old keys; replace `SessionKeys`
 
 **Sharing relationships survive key file rotation.** The X25519 identity keypair is re-wrapped under the new `key_encryption_key`, but the keypair itself does not change. Contacts who have the user's X25519 public key can still create share packages for them. This is a correction from the initial sharing design document, which assumed key rotation would break sharing relationships.
 
 **Requirement**: the old key file must be present (accessible) during the rotation ceremony. Arx Runa needs the old key file to derive the old keys, unwrap file_keys and the X25519 private key, then re-wrap with the new keys.
+
+### Rotation crash-recovery protocol
+
+To close the crash window between local re-wrap commit and cloud vault-header update:
+
+1. Write `pending-vault-header.json` before starting cloud upload.
+2. On startup, before normal sync/auth flows, check for this staging file.
+3. If present, attempt to upload it to `vault-header.json` in cloud.
+4. If upload succeeds, delete staging file and continue startup.
+5. If upload fails, keep the staging file and block destructive operations until retry succeeds.
+
+This guarantees a recoverable path after power loss or force-quit during credential rotation.
 
 ---
 
@@ -471,6 +504,7 @@ When the user selects "Recover with phrase":
 2.   If recovery_slots is empty: return NoRecoverySlot
 3.   User enters 24-word recovery phrase
 4.   BIP-39 checksum validation — return InvalidRecoveryPhrase immediately if invalid
+     (fast-fail timing difference vs. Argon2 path is accepted by current local threat model)
 5.   For each slot in recovery_slots where method == "bip39":
        recovery_key = Argon2id(phrase, slot.argon2_salt, slot.argon2_params)
        master_key   = XChaCha20-Poly1305.decrypt(slot.wrapped_master_key, recovery_key, aad)
@@ -563,3 +597,6 @@ Implementations:
 | Recovery Argon2id params | Same parameters as primary password slot | Slot indistinguishability — attacker cannot distinguish recovery slot from primary slot in vault header |
 | Recovery slot lifecycle | Re-wrap slot during password change/key rotation (phrase required); remove slot if phrase unavailable | Preserves recovery setup across routine credential changes; avoids forcing re-setup |
 | Recovery UX | Post-creation; Security settings + one-time dismissible prompt | Vault creation already 21 steps for Tier 2; recovery requires password re-entry (separate ceremony) |
+| Recovery checksum fast-fail timing | Keep immediate `InvalidRecoveryPhrase` | Threat model excludes remote timing attackers; fast local feedback catches transcription errors quickly |
+| Rotation crash safety | Local `pending-vault-header.json` staging + startup retry | Prevents permanent lockout if app crashes after SQLCipher re-wrap commit but before cloud header upload |
+| Session temp rclone config | Owner-only temp file, stale-file cleanup on startup, best-effort overwrite+unlink on lock | Minimises plaintext credential exposure window and handles abnormal termination safely |

@@ -127,6 +127,3 @@ cargo build --release
 
 - **Parent design**: `docs/architecture/designs/project-scaffolding/design.md`
 - **Roadmap entry**: `docs/roadmap.md` Phase 0
-- **ADR-002**: Frontend stack selection (Leptos rationale)
-- **ADR-004**: Project scaffolding decisions (workspace, Tauri v2, SQLCipher strategy)
-- **Related phases**: Phase 1 (first code in `crypto/`), Phase 2 (first code in `auth/`)

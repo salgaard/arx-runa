@@ -20,7 +20,7 @@ sequenceDiagram
     note over Owner,Cloud: Phase 1 #45;#45; Share a File
     Owner->>Owner: SELECT file_key_wrapped from nodes (SQLCipher)
     Owner->>Owner: unwrap_file_key(file_key_wrapped, key_encryption_key) #45;#62; file_key
-    Owner->>Owner: Assemble JSON#58; file_key, chunk_uuids, cloud_endpoint, expires_at
+    Owner->>Owner: Assemble JSON#58; file_key, sender_public_key, chunk_uuids, cloud_endpoint, expires_at
     Owner->>Owner: HPKE.Seal(recipient_pub, info=arx-runa-share, plaintext=JSON) #45;#62; (enc, ct)
     Owner->>Owner: Wire#58; [enc(32) #124; ct #124; CTX_tag(32)]
     Owner->>Cloud: Copy encrypted blobs to shared/[file_share_id]/ (public read)
@@ -33,11 +33,13 @@ sequenceDiagram
     note over Recipient,Cloud: Phase 3 #45;#45; Recipient Imports and Fetches
     Recipient->>Recipient: Parse wire#58; enc=bytes[0..32], ct=bytes[32..]
     Recipient->>Recipient: HPKE.Open(recipient_priv, enc, info=arx-runa-share, ct) #45;#62; JSON
-    Recipient->>Recipient: Deserialise JSON #45;#62; file_key, chunk_uuids, cloud_endpoint
-    Recipient->>Recipient: INSERT into received_shares (file_key, chunk_uuids, ...)
+    Recipient->>Recipient: Deserialise JSON #45;#62; file_key, sender_public_key, chunk_uuids, cloud_endpoint
+    Recipient->>Recipient: Wrap file_key with key_encryption_key #45;#62; file_key_wrapped
+    Recipient->>Recipient: INSERT into received_shares (sender_public_key, file_key_wrapped, chunk_uuids, ...)
     Recipient->>Cloud: Fetch blobs via Rclone (cloud_endpoint.path_prefix)
     Cloud->>Recipient: Return encrypted blobs
     Recipient->>Recipient: Verify BLAKE3 per blob
+    Recipient->>Recipient: Unwrap file_key_wrapped #45;#62; file_key
     Recipient->>Recipient: Decrypt chunks with file_key (XChaCha20-Poly1305 + AAD)
     Recipient->>Recipient: Reassemble file
 
@@ -53,9 +55,9 @@ The file sharing flow has four phases:
 
 1. **Key exchange** (one-time): both parties export their X25519 public keys via any out-of-band channel (email, messaging app, USB). No Arx Runa server involvement. Optional fingerprint verification mitigates MITM attacks on the key exchange channel.
 
-2. **Share creation**: the owner retrieves and unwraps the `file_key` for the target file, assembles the share package JSON (including `file_key`, `chunk_uuids`, `cloud_endpoint`, and optional `expires_at`), seals the JSON with HPKE (`DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + CTX-ChaCha20-Poly1305`), copies blobs to a public-read shared folder, and records the share in SQLCipher. Wire format: `[enc(32) | ciphertext | CTX_tag(32)]`.
+2. **Share creation**: the owner retrieves and unwraps the `file_key` for the target file, assembles the share package JSON (including `file_key`, `sender_public_key`, `chunk_uuids`, `cloud_endpoint`, and optional `expires_at`), seals the JSON with HPKE (`DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + CTX-ChaCha20-Poly1305`), copies blobs to a public-read shared folder, and records the share in SQLCipher. Wire format: `[enc(32) | ciphertext | CTX_tag(32)]`.
 
-3. **Recipient import and fetch**: the recipient opens the HPKE envelope using their X25519 private key, deserialises the JSON to obtain `file_key` and `chunk_uuids`, stores the result in `received_shares`, fetches blobs from the cloud via Rclone, and decrypts the file locally.
+3. **Recipient import and fetch**: the recipient opens the HPKE envelope using their X25519 private key, deserialises the JSON to obtain `file_key`, `sender_public_key`, and `chunk_uuids`, wraps `file_key` for at-rest storage in `received_shares.file_key_wrapped`, fetches blobs from the cloud via Rclone, unwraps the key in memory, and decrypts the file locally.
 
 4. **Revocation**: the owner deletes the shared blob folder. If the recipient has already fetched and decrypted, re-encryption under a new `file_key` is the only way to prevent access to the updated file.
 

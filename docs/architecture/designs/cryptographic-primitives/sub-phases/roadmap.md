@@ -114,4 +114,3 @@ This ensures new code does not break earlier sub-phases.
 
 - **Parent design**: `docs/architecture/designs/cryptographic-primitives/design.md`
 - **Roadmap entry**: `docs/roadmap.md` Phase 1
-- **Related ADRs**: `docs/architecture-decisions/002-xchacha20-poly1305-cipher.md`, `docs/architecture-decisions/003-hkdf-sha256-key-derivation.md`

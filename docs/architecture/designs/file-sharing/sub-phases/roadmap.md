@@ -144,7 +144,8 @@ cargo test sharing::revocation
 ### Design Clarifications
 
 - **file_share_id vs share_id**: `file_share_id` groups all blob copies for a given file in cloud storage (one per file, shared by all recipients). `share_id` identifies a per-recipient–file relationship in the `shares` table. These must not be conflated.
-- **file_key in share package**: the `file_key` JSON field inside the HPKE envelope is the raw 32-byte file encryption key — it is not separately encrypted; the outer HPKE envelope (CTX-ChaCha20-Poly1305) provides all confidentiality and integrity. The `file_key_wrapped` column in the vault's `nodes` table is a distinct thing: the KEK-wrapped key used for local decryption.
+- **file_key in share package**: the `file_key` JSON field inside the HPKE envelope is the raw 32-byte file encryption key — it is not separately encrypted; the outer HPKE envelope (CTX-ChaCha20-Poly1305) provides all confidentiality and integrity. On import, Arx Runa immediately wraps this key for at-rest storage as `received_shares.file_key_wrapped` and zeroizes the raw bytes. The `file_key_wrapped` column in the vault's `nodes` table remains the local per-file KEK-wrapped key used for owner-side decryption.
+- **sender public key in share package**: include `sender_public_key` in the package JSON so recipients can encrypt download receipts even when no local contact row exists for the sender.
 - **No schema addition for nodes**: the `file_key_wrapped` column is already established in Phase 3. Phase 5 only adds `contacts`, `shares`, and `received_shares` tables.
 
 ### Future Work
