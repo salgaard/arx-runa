@@ -1,31 +1,53 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug executable 'arx-runa'",
-            "type": "lldb",
+            // Starts the full app (frontend + backend) without attaching a debugger.
+            "name": "[Run] Tauri dev (no debugger)",
+            "type": "node-terminal",
             "request": "launch",
-            "cargo": {
-                "args": [
-                    "run",
-                    "--bin=arx-runa"
-                ]
-            },
-            "args": []
+            "command": "cargo tauri dev",
+            "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Debug unit tests in executable 'arx-runa'",
-            "type": "lldb",
+            // Starts only the frontend dev server used by Tauri's devUrl.
+            "name": "[Run] Frontend dev server (trunk)",
+            "type": "node-terminal",
             "request": "launch",
-            "cargo": {
-                "args": [
-                    "test",
-                    "--bin=arx-runa"
-                ]
-            }
+            "command": "trunk serve --port 1420 --open false",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            // Debugs native Rust backend code in src-tauri/src/** on Windows.
+            "name": "[Debug] Backend core (Windows)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\target\\debug\\arx-runa-tauri.exe",
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "build:tauri-debug",
+            "logging": {
+                "moduleLoad": false,
+                "programOutput": true,
+                "exceptions": true
+            },
+            "environment": [
+                {
+                    "name": "RUST_LOG",
+                    "value": "debug"
+                }
+            ],
+            "args": []
+        }
+    ],
+    "compounds": [
+        {
+            // One-click developer workflow: UI server + backend debugger together.
+            "name": "[One-click] Debug UI + Backend (Windows)",
+            "configurations": [
+                "[Run] Frontend dev server (trunk)",
+                "[Debug] Backend core (Windows)"
+            ],
+            "stopAll": true
         }
     ]
 }

@@ -3,7 +3,9 @@
 ## Prerequisites
 
 - Windows 10/11
-- [Rust toolchain](https://rust-lang.org/learn/get-started) (stable)
+- [Rust toolchain](https://rust-lang.org/learn/get-started) (stable, MSVC)
+- `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
+- [Trunk](https://trunkrs.dev/) (`cargo install trunk --locked`)
 - [VS Code](https://code.visualstudio.com/) with recommended extensions
   (see `.vscode/extensions.json`)
 
@@ -19,18 +21,21 @@ cargo --version
 
 ---
 
-## 2. GNU toolchain (required for debugging on Windows)
+## 2. MSVC toolchain (required for the VS Code one-click debugger)
 
-By default Windows uses the MSVC toolchain, which has limitations for Rust
-variable inspection in CodeLLDB. Install the GNU toolchain for full debugger
-support:
+This workspace uses the VS Code Windows debugger (`cppvsdbg`) for backend
+breakpoints, so keep the default toolchain on MSVC:
 
 ```bash
-rustup toolchain install stable-x86_64-pc-windows-gnu
-rustup default stable-x86_64-pc-windows-gnu
+rustup toolchain install stable-x86_64-pc-windows-msvc
+rustup default stable-x86_64-pc-windows-msvc
 ```
 
-This ensures CodeLLDB can correctly interpret Rust formatters during debugging.
+Verify:
+
+```bash
+rustup show
+```
 
 ---
 
@@ -40,8 +45,8 @@ Open the project in VS Code — it will prompt you to install recommended
 extensions from `.vscode/extensions.json`:
 
 - `rust-lang.rust-analyzer` — language server, inline hints, completions
-- `ms-vscode.cpptools` — native debug adapter
-- `vadimcn.vscode-lldb` — CodeLLDB debugger with Rust formatters
+- `ms-vscode.cpptools` — Windows backend debugger (`cppvsdbg`)
+- `vadimcn.vscode-lldb` — optional backend debugger (especially useful on macOS/Linux)
 - `tauri-apps.tauri-vscode` — Tauri project support
 
 ---
@@ -52,8 +57,8 @@ extensions from `.vscode/extensions.json`:
 # Build
 cargo build
 
-# Run
-cargo run
+# Run full app (frontend + backend)
+cargo tauri dev
 
 # Run tests
 cargo test
@@ -78,9 +83,19 @@ cargo install cargo-audit
 
 ## 5. Debugging
 
-1. Set a breakpoint in your code (e.g., `src-tauri/src/main.rs`).
+1. Set backend breakpoints in `src-tauri/src/**` (for example `src-tauri/src/lib.rs`).
 2. Press `F5` or open **Run and Debug** in the VS Code sidebar.
-3. Select the **"Arx Runa: Debug"** profile.
+3. Select **"[One-click] Debug UI + Backend (Windows)"**.
+
+Profiles in `.vscode/launch.json`:
+
+- **`[One-click] Debug UI + Backend (Windows)`** — starts Trunk UI server and attaches backend debugger.
+- **`[Run] Tauri dev (no debugger)`** — runs full app without a debugger.
+- **`[Debug] Backend core (Windows)`** — backend-only debugger session.
+
+If you place breakpoints in `src/app.rs` or `src/main.rs`, VS Code may show
+`No executable code ...` warnings during backend debugging. Those files are
+frontend Rust compiled to WASM, not native backend code.
 
 ---
 

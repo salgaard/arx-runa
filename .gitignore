@@ -1,17 +1,18 @@
 /target
+/dist/
 
-# Claude Code — local settings (personal, not shared)
+# Claude Code - local settings (personal, not shared)
 .claude/settings.local.json
-# Claude Code — session log (local only)
+# Claude Code - session log (local only)
 .claude/session.log
-# Secrets — never commit these
+# Secrets - never commit these
 *.key
 *.pem
 *.p12
 .env
 .env.*
 secrets/
-# Cursor IDE — not shared
+# Cursor IDE - not shared
 .cursor/
 # mdBook build output
 docs/book/
