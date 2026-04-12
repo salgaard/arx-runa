@@ -18,7 +18,7 @@ Locate the plan file from $ARGUMENTS:
 
 Before touching the plan, verify the working environment is sane. Any failure here halts execution — do not try to "fix" these conditions automatically, they represent work in progress that the user may not want disturbed.
 
-1. **Working directory**: confirm cwd is the repo root (the directory containing `CLAUDE.md` and `src-tauri/`). If not, halt with the actual and expected paths.
+1. **Working directory**: confirm cwd is the repo root (the directory containing `CLAUDE.md`). If not, halt with the actual and expected paths.
 2. **Git state**: run `git status --porcelain` and `git branch --show-current`. Record the branch for the Implementation Log. If the working tree is not clean, display the dirty files and halt — the user must commit, stash, or explicitly approve proceeding by re-running with a `--force-dirty` argument (do **not** prompt; this is a hard gate on unattended runs).
 3. **Baseline build**: run `cargo check --workspace` from the repo root. If it fails, halt and report the errors — the baseline must be green so that any later failure can be attributed to the implementation, not pre-existing breakage.
 
