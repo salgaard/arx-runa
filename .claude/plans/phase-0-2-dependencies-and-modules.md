@@ -1,7 +1,7 @@
 ---
 title: "Phase 0.2 — Dependencies and Module Skeleton"
 created: "2026-04-12T00:00:00Z"
-status: draft
+status: approved
 roadmap-phase: 0
 sub-phase: "0.2"
 design-document: "docs/architecture/designs/project-scaffolding/design.md"
