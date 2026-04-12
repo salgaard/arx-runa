@@ -882,23 +882,27 @@ These live in `SessionManager` which controls mlocked memory regions.
 All Tauri command inputs are validated before processing:
 
 ```rust
-/// Validates a vault path (no traversal, valid characters).
+/// Validates a vault path (no traversal, valid characters, forward slashes only).
 fn validate_vault_path(path: &str) -> Result<(), IpcError> {
+    // Reject backslashes. Vault-relative paths use '/' on all platforms.
+    if path.contains('\\') {
+        return Err(IpcError::InvalidInput("Use forward slashes in paths".into()));
+    }
+
     // Allowlist: only expected filename/path characters.
-    let allowed = regex::Regex::new(r"^[a-zA-Z0-9 ._\\-/]*$")
+    let allowed = regex::Regex::new(r"^[a-zA-Z0-9 ._/-]*$")
         .map_err(|_| IpcError::InternalError("Path validator misconfigured".into()))?;
     if !allowed.is_match(path) {
         return Err(IpcError::InvalidInput("Invalid characters in path".into()));
     }
 
     // Reject absolute paths.
-    if path.starts_with('/') || path.starts_with('\\') {
+    if path.starts_with('/') {
         return Err(IpcError::InvalidInput("Path must be relative".into()));
     }
 
-    // Reject traversal after normalising separators.
-    let normalized = path.replace('\\', "/");
-    if normalized.split('/').any(|segment| segment == "..") {
+    // Reject traversal segments.
+    if path.split('/').any(|segment| segment == "..") {
         return Err(IpcError::InvalidInput("Invalid path".into()));
     }
 
@@ -929,21 +933,18 @@ fn validate_password(password: &str) -> Result<(), IpcError> {
 
 ### Rust-side password zeroization at IPC boundary
 
-Handlers that accept `String` passwords must scrub the Rust-side IPC copy immediately after converting to a zeroizing byte buffer:
+Handlers that accept `String` passwords must consume the Rust-side IPC copy into a zeroizing byte buffer at the boundary:
 
 ```rust
 use zeroize::Zeroizing;
 
 #[tauri::command]
 async fn authenticate(
-    mut password: String,
+    password: String,
     key_file_path: Option<PathBuf>,
     state: tauri::State<'_, AppState>,
 ) -> Result<AuthResponse, IpcError> {
-    let password_bytes = Zeroizing::new(password.as_bytes().to_vec());
-    // SAFETY: password points to a valid mutable UTF-8 buffer for password.len() bytes.
-    unsafe { std::ptr::write_bytes(password.as_mut_ptr(), 0, password.len()) };
-    drop(password);
+    let password_bytes = Zeroizing::new(password.into_bytes());
 
     auth::authenticate_with_bytes(password_bytes, key_file_path, &state).await
 }

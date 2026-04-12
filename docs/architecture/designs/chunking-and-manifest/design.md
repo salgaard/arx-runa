@@ -53,7 +53,7 @@ Valid range: 131,072 bytes (128 KiB) to 67,108,864 bytes (64 MiB). Default: 4,19
 
 Chunk size is a **privacy vs. storage efficiency dial**, not a performance parameter:
 
-- **Larger chunk size** → wider blob-count inference range → stronger privacy. An adversary correlating upload timing learns only that a file falls within a range of ±chunk_size. At 64 MiB, a 5 MiB document and a 60 MiB document both produce one blob — indistinguishable.
+- **Larger chunk size** → wider blob-count inference range → stronger privacy. An adversary correlating upload timing learns only that a file falls within a range of ±chunk_size_bytes. At 64 MiB, a 5 MiB document and a 60 MiB document both produce one blob — indistinguishable.
 - **Smaller chunk size** → narrower inference range → lower storage overhead. A 512 KiB chunk size reduces padding waste for small files at the cost of giving the adversary a tighter size estimate.
 
 Chunk size is immutable after creation because changing it would require downloading, re-encrypting, and re-uploading every blob in the vault — equivalent to recreating the vault. All blobs within a vault are identically sized, preserving the anonymity set.
@@ -72,7 +72,7 @@ This applies Approach 7 from `docs/research/padding-overhead-reduction.md` while
 
 ### Quantified padding waste (at default 4 MiB)
 
-Every file's last chunk is zero-padded to `chunk_size_bytes`. The overhead depends on `file_size mod chunk_size`:
+Every file's last chunk is zero-padded to `chunk_size_bytes`. The overhead depends on `file_size mod chunk_size_bytes`:
 
 | File size | Chunks | Padded total | Waste | Waste % |
 |-----------|--------|-------------|-------|---------|
@@ -86,7 +86,7 @@ Every file's last chunk is zero-padded to `chunk_size_bytes`. The overhead depen
 | 100 MiB | 25 | 100 MiB | 0 | 0% |
 | 1 GiB | 256 | 1 GiB | 0 | 0% |
 
-For files larger than one chunk the maximum waste is < chunk_size (constant, not proportional to file size).
+For files larger than one chunk the maximum waste is < chunk_size_bytes (constant, not proportional to file size).
 
 Per-chunk crypto overhead: 24 bytes (nonce) + 16 bytes (Poly1305 tag) = 40 bytes. Negligible at any chunk size in the valid range.
 The table applies directly to standalone mode and to the large-file path when hybrid routing is enabled.
@@ -96,15 +96,15 @@ The table applies directly to standalone mode and to the large-file path when hy
 
 ## Padding Scheme
 
-**Zero-pad to `chunk_size`, truncate on reassembly using `size_bytes` from manifest.**
+**Zero-pad to `chunk_size_bytes`, truncate on reassembly using `size_bytes` from manifest.**
 
 ### Encrypt path
 
-Each chunk's plaintext is zero-filled to exactly `chunk_size` bytes before encryption. If the file's last segment is shorter than `chunk_size`, the remaining bytes are filled with `0x00`.
+Each chunk's plaintext is zero-filled to exactly `chunk_size_bytes` bytes before encryption. If the file's last segment is shorter than `chunk_size_bytes`, the remaining bytes are filled with `0x00`.
 
 ### Decrypt path
 
-On reassembly, the file's `size_bytes` from the `nodes` table determines where to truncate the last chunk's decrypted output. All preceding chunks are written in full (`chunk_size` bytes each); the last chunk is truncated to `size_bytes - (chunk_count - 1) * chunk_size`.
+On reassembly, the file's `size_bytes` from the `nodes` table determines where to truncate the last chunk's decrypted output. All preceding chunks are written in full (`chunk_size_bytes` bytes each); the last chunk is truncated to `size_bytes - (chunk_count - 1) * chunk_size_bytes`.
 
 ### Security property
 
@@ -306,7 +306,7 @@ struct ChunkRecord {
     chunk_id:        Uuid,
     chunk_index:     u32,
     blob_name:       String,       // UUID v4; no relation to file identity
-    size_padded:     u64,          // always chunk_size
+    size_padded:     u64,          // always chunk_size_bytes
     blake3_checksum: [u8; 32],
     // blob_path is intentionally absent: the staging path is derived at the
     // call site as staging_directory/<blob_name>.blob and is not persisted.
@@ -355,17 +355,17 @@ async fn decrypt_file(
 2. Verify: blake3::hash(wire_blob) == expected blake3_checksum
    If mismatch → return ChecksumMismatch error, do NOT attempt decryption
 3. decrypt_chunk(wire_blob, file_key, file_id, chunk_index)
-   → padded_plaintext (chunk_size bytes)
+   → padded_plaintext (chunk_size_bytes bytes)
 4. If this is the last chunk:
-   bytes_to_write = file_size - (chunk_index * chunk_size)
+   bytes_to_write = file_size - (chunk_index * chunk_size_bytes)
    Write only bytes_to_write bytes to destination via BufWriter
-5. Else: write full chunk_size bytes to destination
+5. Else: write full chunk_size_bytes bytes to destination
 6. Zeroize padded_plaintext
 ```
 
 ### Streaming invariant
 
-At no point is more than one chunk's worth of plaintext in memory simultaneously. The `BufReader` reads `chunk_size` bytes, the chunk is encrypted, the plaintext buffer is zeroed, and the next chunk is read.
+At no point is more than one chunk's worth of plaintext in memory simultaneously. The `BufReader` reads `chunk_size_bytes` bytes, the chunk is encrypted, the plaintext buffer is zeroed, and the next chunk is read.
 
 ---
 
@@ -548,7 +548,7 @@ Implementations:
 |----------|--------|-----------|
 | Default chunk size | 4 MiB (`chunk_size_bytes`, user-configurable at vault creation) | Half the padding waste of 8 MiB, lower memory, finer resume granularity |
 | Epoch buffer implementation | Hybrid auto-routing (opt-in via `epoch_buffer_enabled`) | Small files benefit from packing and timing privacy, while large files remain immediately available in cloud |
-| Padding | Zero-pad to chunk_size, truncate via `size_bytes` on reassembly | Simple, unambiguous, cloud sees uniform blob sizes |
+| Padding | Zero-pad to chunk_size_bytes, truncate via `size_bytes` on reassembly | Simple, unambiguous, cloud sees uniform blob sizes |
 | `file_key_wrapped` location | `nodes` table (per-file) | Eliminates N redundant copies in chunks table; CASCADE still works |
 | 0-byte files | Node row with no chunks, `size_bytes = 0` | Clean edge case, file_key still generated for future updates |
 | Staging directory | App data subdirectory | Encrypted blobs safe on disk, cleaned up on startup |

@@ -129,7 +129,7 @@ A common point of confusion is which vault resources require cloud authenticatio
 
 | Resource | Access requirement | Rationale |
 |---|---|---|
-| Vault header (`vault-header.json`) | None (plaintext bootstrap metadata) | Intentionally public bootstrap parameters; existing devices validate `vault_id` + Argon2 salt/params against local `local-vault-params.json` trust anchor |
+| Vault header (`vault-header.json`) | Cloud provider credentials (owner remote), no vault auth | Plaintext bootstrap metadata fetched before vault authentication; existing devices validate `vault_id` + Argon2 salt/params against local `local-vault-params.json` trust anchor |
 | Private vault blobs (`vault/<uuid>.blob`) | Cloud provider credentials | Owner's encrypted chunks; accessible only to the authenticated cloud account |
 | SQLCipher manifest backup (`manifest/manifest-backup.blob`) | Cloud provider credentials | Encrypted, but also gated by cloud provider authentication |
 | Shared blobs (`shared/<file_share_id>/<uuid>.blob`) | None (publicly readable) | Recipients hold no cloud credentials; AEAD with per-file `file_key` protects content |
