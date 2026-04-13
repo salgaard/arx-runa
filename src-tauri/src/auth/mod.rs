@@ -6,15 +6,22 @@
 pub mod autodetect;
 pub mod device_monitor;
 pub mod error;
+#[allow(dead_code)]
+pub mod kdf;
 pub mod key_source;
 pub mod path_hint;
+#[allow(dead_code)]
+pub mod session;
 pub mod types;
 
 pub use autodetect::find_key_file;
 pub use device_monitor::{DeviceEvent, DeviceMonitor};
-pub use error::KeySourceError;
+pub use error::{AuthenticationError, KeySourceError};
+pub use kdf::Argon2Params;
 pub use key_source::{FileKeySource, KeySource};
 pub use path_hint::{KeyHintStore, VaultHint};
+#[allow(unused_imports)]
+pub(crate) use session::SessionKeys;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use device_monitor::MockDeviceMonitor;

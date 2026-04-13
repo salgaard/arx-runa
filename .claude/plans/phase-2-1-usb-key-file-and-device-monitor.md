@@ -1,7 +1,7 @@
 ---
 title: "Phase 2.1 — USB Key File Format and DeviceMonitor"
 created: "2026-04-13T00:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 2
 sub-phase: "2.1"
 design-document: "docs/architecture/designs/authentication-and-session-management/design.md"

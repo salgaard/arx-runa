@@ -186,15 +186,14 @@ The fixed salt `b"arx-runa-v1"` acts as a domain separator per RFC 5869 §3.1, p
 ```rust
 /// Holds all derived keys for the duration of an authenticated session.
 /// All fields are mlocked and zeroed on drop.
-#[derive(ZeroizeOnDrop)]
 struct SessionKeys {
-    key_encryption_key: SecretBox<[u8; 32]>,
-    sqlcipher_key: SecretBox<[u8; 32]>,
-    manifest_key: SecretBox<[u8; 32]>,
+    key_encryption_key: SecureBytes<32>,
+    sqlcipher_key: SecureBytes<32>,
+    manifest_key: SecureBytes<32>,
 }
 ```
 
-`SessionKeys` is the single owner of all sensitive key material during a session. It is allocated in mlocked memory and implements `ZeroizeOnDrop`.
+`SessionKeys` is the single owner of all sensitive key material during a session. It is allocated in mlocked memory with fields backed by `SecureBytes<32>`, whose drop path enforces zeroize -> unlock -> free.
 
 ### Session ownership and sharing
 

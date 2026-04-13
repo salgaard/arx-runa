@@ -1,7 +1,7 @@
 ---
 title: "Phase 2.2 — Argon2id KDF and SessionKeys"
 created: "2026-04-13T00:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 2
 sub-phase: "2.2"
 design-document: "docs/architecture/designs/authentication-and-session-management/design.md"
@@ -1718,3 +1718,102 @@ Traps to watch for:
 - Phase 2.1's `tokio-stream` / `walkdir` / platform device-monitor dependencies must remain intact. Do not remove them while editing Cargo.toml in Step 5.1.
 
 Plan is self-contained — Codex does not need to re-read the sub-phase doc. All inline signatures, deliverable mappings, and DDL-equivalent details are transcribed into Section 5. The sub-phase doc remains the authoritative source for the original intent, but any deviation recorded here takes precedence and is doc-synced per Section 8.
+
+## Implementation Log
+
+- **Date**: 2026-04-13T21:09:04.5296963Z
+- **Branch**: development
+
+### Agent evidence
+
+| Approach step | Agent | Agent ID | Outcome |
+|---|---|---|---|
+| 5.1 Add dependencies | Copilot CLI | local | Completed: updated `src-tauri/Cargo.toml` for `libc` and `Win32_System_Memory`. |
+| 5.2 Extend the `memory` module | Copilot CLI | local | Completed: added platform lock wrappers, `SecureBytes`, `MemoryLockError`, and tests. |
+| 5.3 Extend the `auth` module | Copilot CLI | local | Completed: added `AuthenticationError`, `kdf.rs`, `session.rs`, and module wiring. |
+| 5.4 Refactor `crypto::hkdf` | Copilot CLI | local | Completed: exposed `expand_vault_key_into` and `pub(crate)` HKDF constants; kept public `derive_vault_keys` behavior. |
+| 5.5 Update `src-tauri/src/crypto/mod.rs` (if needed) | Copilot CLI | local | Completed: no change required. |
+| 5.6 Lint, format, test | Copilot CLI | local | Completed: `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`, and full `cargo test` pass. |
+| 5.6 Test expansion (required) | test-writer | phase2-2-test-writer | Completed: added property/adversarial/boundary tests in Phase 2.2 scope. |
+| 5.7 Security review | security-reviewer | phase2-2-security | Completed: 0 CRITICAL findings, 2 WARNING findings, 0 NOTE findings. |
+
+### Files changed
+
+- `.claude/plans/phase-2-1-usb-key-file-and-device-monitor.md`
+- `.claude/plans/phase-2-2-argon2id-and-session-keys.md`
+- `.claude/rules/auth.md`
+- `.claude/rules/memory-protection.md`
+- `.github/instructions/auth.instructions.md`
+- `.github/instructions/memory-protection.instructions.md`
+- `Cargo.lock`
+- `docs/architecture/designs/authentication-and-session-management/design.md`
+- `docs/architecture/designs/authentication-and-session-management/sub-phases/2.2-argon2id-and-session-keys.md`
+- `docs/architecture/designs/tauri-ipc-and-frontend/sub-phases/roadmap.md`
+- `src-tauri/Cargo.toml`
+- `src-tauri/src/auth/error.rs`
+- `src-tauri/src/auth/mod.rs`
+- `src-tauri/src/auth/kdf.rs` (new)
+- `src-tauri/src/auth/session.rs` (new)
+- `src-tauri/src/crypto/hkdf.rs`
+- `src-tauri/src/memory/error.rs`
+- `src-tauri/src/memory/mod.rs`
+- `src-tauri/src/memory/platform/mod.rs` (new)
+- `src-tauri/src/memory/platform/unix.rs` (new)
+- `src-tauri/src/memory/platform/windows.rs` (new)
+- `src-tauri/src/memory/secure_buffer.rs` (new)
+
+### Test results
+
+- `cargo test`: **ok** — `102 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out`.
+- Scoped runs from plan sequence (`auth::kdf`, `auth::session`, `auth::error`, `crypto::hkdf`, `memory`) completed successfully.
+- Ignored default-params smoke test: `auth::kdf::tests::test_derive_master_key_default_params_succeeds` passed via `cargo test ... -- --ignored`.
+
+### Clippy results
+
+- `cargo clippy --workspace -- -D warnings`: **clean**.
+- `cargo clippy --all-targets -- -D warnings`: blocked by **pre-existing** dead-code items in `src-tauri/src/crypto/types/mod.rs`:
+  - `SqlcipherKey::from_bytes`
+  - `ManifestKey::from_bytes`
+- No new Phase 2.2 clippy findings remain.
+
+### Security review
+
+- `security-reviewer` findings:
+  - **WARNING**: `master_key` is derived in `session.rs` into a stack `Zeroizing<[u8; 32]>` buffer that is not mlocked.
+  - **WARNING**: `crypto::hkdf::expand_into_secret_box` currently copies `scratch` into `SecretBox::new(Box::new(*scratch))`, producing a transient stack copy.
+- **CRITICAL** findings: none.
+
+### Governance sync
+
+- Action count: **5** (GS-1..GS-5).
+- Updated files:
+  - `.claude/rules/auth.md`
+  - `.claude/rules/memory-protection.md`
+  - `.github/instructions/auth.instructions.md`
+  - `.github/instructions/memory-protection.instructions.md`
+- `/copilot-sync` outcome: completed and mirror parity verified for `auth` and `memory-protection`.
+
+### Sub-phase decisions sync
+
+- Target doc: `docs/architecture/designs/authentication-and-session-management/sub-phases/2.2-argon2id-and-session-keys.md`
+- `## Implementation Decisions` section added with **4** decisions updated.
+
+### Deviations from plan
+
+- Dependency gate unblocking: prerequisite plan `.claude/plans/phase-2-1-usb-key-file-and-device-monitor.md` was marked `implemented` before continuing Phase 2.2.
+- `cargo clippy --all-targets -- -D warnings` remains blocked by unrelated pre-existing dead-code items in `crypto/types`.
+
+### Documentation flagged
+
+1. **`docs/architecture/designs/authentication-and-session-management/sub-phases/2.2-argon2id-and-session-keys.md`**:
+   - Deliverable 2 (line 17): change "Integration with Phase 1.1's `derive_vault_keys` function: pass `master_key` to HKDF expansion to produce…" to explicitly reference `crypto::hkdf::expand_vault_key_into` as the shared helper, keeping `derive_vault_keys` as a separate non-locked convenience API. Resolution for DC-2.
+   - Deliverable 3 (line 18): change "fields `key_encryption_key: SecretBox<[u8; 32]>`, `sqlcipher_key: SecretBox<[u8; 32]>`, `manifest_key: SecretBox<[u8; 32]>`, derived with `#[derive(ZeroizeOnDrop)]`" to "fields `key_encryption_key: SecureBytes<32>`, `sqlcipher_key: SecureBytes<32>`, `manifest_key: SecureBytes<32>`" with a note that `SecureBytes` is the RAII container introduced in `src-tauri/src/memory/secure_buffer.rs` to unify `mlock` + `ZeroizeOnDrop`. Resolution for DC-1.
+   - Deliverable 8 bullets 3–5 (lines 26–28): replace "Wrong password (Tier 1) → `InvalidCredentials`" family with "different credentials produce different `SessionKeys` bytes" tests, and note that `InvalidCredentials` is raised by Phase 2.4's vault-header probe rather than by the KDF wrapper. Resolution for DC-3.
+   - Implementation Notes (line 76): add macOS to the `mlock` note — the Unix platform module covers both Linux and macOS via POSIX `libc::mlock`. Resolution for DC-7.
+
+2. **`docs/architecture/designs/authentication-and-session-management/design.md`**:
+   - Lines 186–195 (`SessionKeys` struct snippet): update field types from `SecretBox<[u8; 32]>` to the new `SecureBytes<32>` container. Keep the `#[derive(ZeroizeOnDrop)]` line if the final implementation uses it; remove if the implementation uses manual `Drop`. Resolution for DC-1.
+
+3. **`docs/architecture/designs/tauri-ipc-and-frontend/sub-phases/roadmap.md`** line 53: change `AuthError` → `AuthenticationError` in the "`From` impls" bullet. Resolution for DC-4. This is a forward-looking doc fix; no Phase 6.1 plan exists yet.
+
+4. **`.claude/plans/phase-2-2-argon2id-and-session-keys.md`** (this file) — status moves from `draft` to `approved` after user review, then to `implemented` after verify passes.

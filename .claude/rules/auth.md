@@ -29,6 +29,7 @@ paths:
 - Read key file once at start — hold derived keys in mlocked memory
 - Timeout: zeroize all keys, then drop
 - Never persist session keys to disk
+- Session keys live in SessionKeys (src-tauri/src/auth/session.rs) with fields backed by SecureBytes<32>; drop order runs zeroize -> munlock/VirtualUnlock -> free.
 
 ## Errors
 - `InvalidCredentials` for wrong password, wrong key file, or both — caller cannot distinguish the cases

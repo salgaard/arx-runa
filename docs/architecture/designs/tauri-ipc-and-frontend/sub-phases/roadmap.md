@@ -50,7 +50,7 @@ This sub-phase roadmap decomposes the Tauri IPC and frontend design (1016 lines 
 
 1. **[Phase 6.1: IPC Core, Error Sanitisation, and Types](6.1-ipc-core-and-error-sanitisation.md)**
    - `IpcError` enum with `serde(tag = "kind")` serialisation
-   - `From` impls for `AuthError`, `StorageError`, `SyncError`
+   - `From` impls for `AuthenticationError`, `StorageError`, `SyncError`
    - All IPC response types (`AuthResponse`, `FileEntry`, `ProgressUpdate`, etc.)
    - `AppState` struct
    - Input validation functions

@@ -5,11 +5,19 @@ use crate::crypto::types::{KeyEncryptionKey, ManifestKey, SqlcipherKey};
 use hkdf::Hkdf;
 use secrecy::SecretBox;
 use sha2::Sha256;
+use zeroize::Zeroizing;
 
-const HKDF_SALT: &[u8] = b"arx-runa-v1";
-const HKDF_INFO_KEY_ENCRYPTION: &[u8] = b"arx-runa-key-encryption";
-const HKDF_INFO_SQLCIPHER: &[u8] = b"arx-runa-sqlcipher";
-const HKDF_INFO_MANIFEST_BACKUP: &[u8] = b"arx-runa-manifest-backup";
+/// Fixed HKDF-SHA256 salt used for all vault-level derivations.
+pub(crate) const HKDF_SALT: &[u8] = b"arx-runa-v1";
+
+/// HKDF `info` string for the key-encryption key.
+pub(crate) const HKDF_INFO_KEY_ENCRYPTION: &[u8] = b"arx-runa-key-encryption";
+
+/// HKDF `info` string for the SQLCipher DB key.
+pub(crate) const HKDF_INFO_SQLCIPHER: &[u8] = b"arx-runa-sqlcipher";
+
+/// HKDF `info` string for the manifest-backup key.
+pub(crate) const HKDF_INFO_MANIFEST_BACKUP: &[u8] = b"arx-runa-manifest-backup";
 
 /// Vault-level keys derived from one master key.
 pub struct VaultKeys {
@@ -21,46 +29,49 @@ pub struct VaultKeys {
     pub manifest_key: ManifestKey,
 }
 
+/// Runs a single HKDF-SHA256 extract/expand into a caller-provided buffer.
+///
+/// # Errors
+/// Returns `CryptoError::KeyDerivationFailed` if HKDF expansion fails.
+pub(crate) fn expand_vault_key_into(
+    master_key_bytes: &[u8; 32],
+    info: &[u8],
+    output: &mut [u8; 32],
+) -> Result<(), CryptoError> {
+    let hkdf = Hkdf::<Sha256>::new(Some(HKDF_SALT), master_key_bytes);
+    hkdf.expand(info, output)
+        .map_err(|_| CryptoError::KeyDerivationFailed)
+}
+
 /// Derives vault keys from 32 bytes of master key material.
 ///
 /// # Errors
-/// Returns `CryptoError::KeyDerivationFailed` if HKDF expansion fails. For
-/// a 32-byte output with SHA-256 this is unreachable in practice, but the
-/// fallible surface lets callers propagate unexpected failures instead of
-/// panicking.
+/// Returns `CryptoError::KeyDerivationFailed` if HKDF expansion fails.
 pub fn derive_vault_keys(master_key_bytes: &[u8; 32]) -> Result<VaultKeys, CryptoError> {
-    let hkdf = Hkdf::<Sha256>::new(Some(HKDF_SALT), master_key_bytes);
-
     Ok(VaultKeys {
         key_encryption_key: KeyEncryptionKey::from_secret_box(expand_into_secret_box(
-            &hkdf,
+            master_key_bytes,
             HKDF_INFO_KEY_ENCRYPTION,
         )?),
         sqlcipher_key: SqlcipherKey::from_secret_box(expand_into_secret_box(
-            &hkdf,
+            master_key_bytes,
             HKDF_INFO_SQLCIPHER,
         )?),
         manifest_key: ManifestKey::from_secret_box(expand_into_secret_box(
-            &hkdf,
+            master_key_bytes,
             HKDF_INFO_MANIFEST_BACKUP,
         )?),
     })
 }
 
 /// Runs HKDF-SHA256 expand into a fresh `SecretBox` heap buffer.
-///
-/// Captures the expansion result out of `init_with_mut`'s closure and maps
-/// any failure to `CryptoError::KeyDerivationFailed`.
 fn expand_into_secret_box(
-    hkdf: &Hkdf<Sha256>,
+    master_key_bytes: &[u8; 32],
     info: &[u8],
 ) -> Result<SecretBox<[u8; 32]>, CryptoError> {
-    let mut expand_result: Result<(), hkdf::InvalidLength> = Ok(());
-    let secret_box = SecretBox::<[u8; 32]>::init_with_mut(|derived_key| {
-        expand_result = hkdf.expand(info, derived_key);
-    });
-    expand_result.map_err(|_| CryptoError::KeyDerivationFailed)?;
-    Ok(secret_box)
+    let mut scratch: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+    expand_vault_key_into(master_key_bytes, info, &mut scratch)?;
+    Ok(SecretBox::new(Box::new(*scratch)))
 }
 
 #[cfg(test)]
@@ -120,5 +131,15 @@ mod tests {
         );
         assert_ne!(keys.key_encryption_key.expose(), keys.manifest_key.expose());
         assert_ne!(keys.sqlcipher_key.expose(), keys.manifest_key.expose());
+    }
+
+    #[test]
+    fn test_expand_vault_key_into_matches_derive_vault_keys_output() {
+        let master_key_bytes = [0x77u8; 32];
+        let vault_keys = derive_vault_keys(&master_key_bytes).expect("derive must succeed");
+        let mut output = [0u8; 32];
+        expand_vault_key_into(&master_key_bytes, HKDF_INFO_KEY_ENCRYPTION, &mut output)
+            .expect("expand must succeed");
+        assert_eq!(&output, vault_keys.key_encryption_key.expose());
     }
 }
