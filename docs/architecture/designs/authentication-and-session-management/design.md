@@ -72,6 +72,19 @@ At vault creation, Arx Runa computes `blake3::hash(key_file_content)` and stores
 
 **Local path hint:** On the same machine, Arx Runa stores the last-used key file path in a local config file (not SQLCipher, not the vault header). On subsequent logins, it checks the remembered path first before scanning the whole drive. If the file has moved, it falls back to full-drive scanning.
 
+Path-hint schema (per vault):
+
+```json
+{
+  "schema_version": 1,
+  "hints": {
+    "<vault_id_uuid>": {
+      "last_key_file_path": "/absolute/path/to/file"
+    }
+  }
+}
+```
+
 ### Device monitoring
 
 Arx Runa uses OS-native device notification APIs for USB detection:

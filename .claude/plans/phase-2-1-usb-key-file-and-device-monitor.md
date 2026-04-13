@@ -7,7 +7,7 @@ sub-phase: "2.1"
 design-document: "docs/architecture/designs/authentication-and-session-management/design.md"
 sub-phase-roadmap: "docs/architecture/designs/authentication-and-session-management/sub-phases/roadmap.md"
 test-agent-required: false
-governance-sync-required: false
+governance-sync-required: true
 tags: [auth, phase-2, usb-key-file, device-monitor, blake3, platform]
 ---
 

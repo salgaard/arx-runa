@@ -112,6 +112,19 @@ Read the plan's **Testing Strategy** section:
   - Proceed to `cargo test` and `cargo clippy -- -D warnings` verification.
 - If the decision is unchecked or ambiguous, halt at Step 3's testing-agent gate.
 
+### Sub-phase Implementation Decisions sync (mandatory for sub-phase plans)
+
+If `sub-phase` is present in frontmatter, `/implement-plan` must update the corresponding sub-phase document with concrete implementation choices made during Step 4.
+
+1. Locate the sub-phase document path:
+   - Prefer an explicit path in the plan body (e.g., `Sub-phase doc: docs/architecture/designs/.../sub-phases/2.1-....md`).
+   - If ambiguous or missing, halt and report the path-resolution failure (do not guess among multiple candidates).
+2. Ensure the sub-phase doc contains a `## Implementation Decisions` section.
+   - Create it if missing.
+3. Append or update bullets for decisions that were actually made during implementation and were previously optional/ambiguous in the sub-phase (crate selection, limits/caps, platform filtering strategy, stub scope, etc.).
+4. Keep entries concise and factual: **decision + rationale + any deferred follow-up**.
+5. This sync is required before Step 6 status can be set to `implemented`.
+
 ### Validation checkpoint
 
 **If this is a sub-phase plan** (detected in Step 3):
@@ -128,9 +141,13 @@ Read the plan's **Testing Strategy** section:
 
 ## Step 6 — Mark complete and report
 
-1. Update `status:` to `implemented` in the plan file's frontmatter.
+1. **Sub-phase decision-sync gate (hard)**:
+   - If this is a sub-phase plan, verify the target sub-phase doc has an `## Implementation Decisions` section reflecting this implementation run.
+   - If missing or stale, halt and return to Step 4's decision-sync subsection before marking complete.
 
-2. Append an **Implementation Log** section to the plan file with:
+2. Update `status:` to `implemented` in the plan file's frontmatter.
+
+3. Append an **Implementation Log** section to the plan file with:
     - **Date** — ISO 8601 datetime
     - **Branch** — the branch recorded in Step 2
     - **Agent evidence** — table with `Approach step | Agent | Agent ID | Outcome`; include one record per implemented step, plus `test-writer` / `security-reviewer` entries when used
@@ -139,12 +156,13 @@ Read the plan's **Testing Strategy** section:
     - **Clippy results** — clean / warnings introduced / pre-existing noted
     - **Security review** — agent findings if run, or "N/A" if no sensitive modules touched
     - **Governance sync** — action count, files updated, `/copilot-sync` outcome when applicable
+    - **Sub-phase decisions sync** — target doc path + count of Implementation Decisions added/updated (or "N/A" for non-sub-phase plans)
     - **Deviations from plan** — any small adjustments made (large deviations should have halted at Step 4's deviation protocol)
     - **Documentation flagged** — verbatim list from the plan's **Documentation impact** section (do **not** cross-reference roadmap docs, diagrams, or ADRs here — that's the job of a separate documentation pass)
 
-3. **Do not commit, push, or open a pull request.** Leave the working tree dirty. The user inspects the diff and decides what to commit. If the CLI has autonomous commit behaviour, it must be suppressed here.
+4. **Do not commit, push, or open a pull request.** Leave the working tree dirty. The user inspects the diff and decides what to commit. If the CLI has autonomous commit behaviour, it must be suppressed here.
 
-4. **Report to the user**. Use this structure:
+5. **Report to the user**. Use this structure:
 
 **If this is a sub-phase plan**:
 ```
@@ -157,6 +175,7 @@ Read the plan's **Testing Strategy** section:
 → Acceptance criteria (manual): [list from sub-roadmap]
 → Files changed: [list]
 → Governance sync: [summary]
+→ Sub-phase decisions sync: [doc path + decisions count]
 → Documentation flagged: [list from Documentation impact]
 → Next sub-phase: [X.Y+1 title, or "end of roadmap"]
 ```

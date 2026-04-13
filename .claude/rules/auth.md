@@ -5,7 +5,7 @@ paths:
 
 # Auth module — rules
 
-**Design specification**: `docs/architecture/designs/authentication-and-session-management/design.md` — last verified against design dated 2026-04-07
+**Design specification**: `docs/architecture/designs/authentication-and-session-management/design.md` — last verified against design dated 2026-04-12
 
 ## Authentication tiers
 - Tier 1: password only — `master_key = Argon2id(password, salt)`

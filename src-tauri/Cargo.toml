@@ -17,6 +17,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+default = []
+test-utils = []
+
 [dependencies]
 # --- Core (design.md Backend Core table) ---
 tauri = { version = "2", features = [] }
@@ -43,6 +47,22 @@ x25519-dalek = "2"
 # --- Storage (design.md Backend Storage table — Phase 3+) ---
 rusqlite = { version = "0.39", features = ["bundled-sqlcipher-vendored-openssl"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+
+# --- Auth / Phase 2.1 ---
+tokio-stream = "0.1"
+walkdir = "2"
+dirs = "5"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+udev = "0.9"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wmi = "0.14"
+windows = { version = "0.58", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
 
 [dev-dependencies]
 proptest = "1"
