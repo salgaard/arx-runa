@@ -6,7 +6,6 @@ roadmap-phase: 1
 sub-phase: "1.2"
 design-document: "docs/architecture/designs/cryptographic-primitives/design.md"
 sub-phase-roadmap: "docs/architecture/designs/cryptographic-primitives/sub-phases/roadmap.md"
-implementation-agent: rust-implementer
 test-agent-required: false
 tags: [crypto, phase-1, aead, xchacha20poly1305, wire-format]
 ---
@@ -620,9 +619,9 @@ If any of the following changes during implementation, upgrade to YES and run `s
 
 ## 7. Execution and Testing Strategy
 
-**Implementation agent: rust-implementer (Required)**. Rationale: Phase 1.2 is a pure Rust crypto module change — no frontend, no schema, no IPC. It matches the rust-implementer remit exactly (new Rust modules, tests alongside new code, `cargo clippy -- -D warnings` hygiene) and the agent's Arx Runa coding standards awareness is load-bearing for the doc-comment and one-concern-per-file rules in `.claude/rules/rust.md`.
+**Implementation execution**: run the Approach steps directly in order. Rationale: Phase 1.2 is a pure Rust crypto module change — no frontend, no schema, no IPC — and must satisfy Arx Runa Rust standards (`thiserror` error handling, tests alongside new code, `cargo clippy -- -D warnings` hygiene, doc comments, and one-concern-per-file layout).
 
-**Fallback**: If `rust-implementer` is unavailable or fails repeatedly, mark the plan blocked. No manual fallback implementation is permitted — the crypto module is security-critical and must be produced through the agent that enforces the project's Rust standards.
+**Fallback**: If implementation cannot proceed as written, mark the plan blocked via the plan-deviation protocol. No speculative contract reshaping is permitted in this security-critical module.
 
 **Test coverage checklist**:
 - [x] Unit tests — `test_encrypt_chunk_produces_wire_format_with_forty_byte_overhead`, `test_encrypt_chunk_empty_plaintext_produces_forty_byte_blob`, `test_encrypt_chunk_two_calls_same_plaintext_produce_different_blobs`, `test_encrypt_decrypt_round_trip_returns_original_plaintext` (encrypt side); `test_decrypt_chunk_wrong_file_id_fails_with_decryption_failed`, `test_decrypt_chunk_wrong_chunk_index_fails_with_decryption_failed`, `test_decrypt_chunk_wrong_key_fails_with_decryption_failed`, `test_decrypt_chunk_corrupted_ciphertext_fails_with_decryption_failed`, `test_decrypt_chunk_corrupted_tag_fails_with_decryption_failed`, `test_decrypt_chunk_truncated_blob_returns_invalid_blob_format`, `test_decrypt_chunk_blob_thirty_nine_bytes_returns_invalid_blob_format`, `test_decrypt_chunk_exactly_forty_bytes_empty_plaintext_round_trip_succeeds`, `test_decrypt_chunk_empty_blob_returns_invalid_blob_format` (decrypt side).
@@ -631,7 +630,7 @@ If any of the following changes during implementation, upgrade to YES and run `s
 - [ ] Integration tests — N/A for this sub-phase.
 - [ ] Zeroize tests — N/A for this sub-phase; `FileKey` zeroize is covered in Phase 1.1, and decrypt-path zeroization is exercised indirectly by the corrupted-ciphertext and corrupted-tag tests returning `Err` rather than leaking plaintext.
 
-**Invoke test-writer agent? NO**. Rationale: the sub-phase enumerates the exact test list (Deliverables #6 and #7); Step 4 above codifies every named test plus two sub-phase-derived boundary tests and an additional `prop_different_nonces_produce_different_blobs`. `rust-implementer` writes tests alongside new code per its agent definition, and this plan gives it every test name and body shape verbatim. Bringing in `test-writer` would duplicate work. If adversarial gaps are identified during implementation review, `test-writer` can be invoked retroactively as a separate pass.
+**Invoke test-writer agent? NO**. Rationale: the sub-phase enumerates the exact test list (Deliverables #6 and #7); Step 4 above codifies every named test plus two sub-phase-derived boundary tests and an additional `prop_different_nonces_produce_different_blobs`. The plan gives every test name and body shape verbatim, so adding `test-writer` here would duplicate work. If adversarial gaps are identified during implementation review, `test-writer` can be invoked retroactively as a separate pass.
 
 **Validation checkpoint (from sub-phase 1.2 lines 22–41)**:
 - `cargo test crypto::encrypt_chunk` — all tests pass.

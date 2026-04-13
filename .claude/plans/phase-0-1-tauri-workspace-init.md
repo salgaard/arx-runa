@@ -327,7 +327,7 @@ Must exit 0 with no errors.
 **Invoke test-writer agent?**
 
 - [ ] **YES**
-- [x] **NO** — Phase 0.1 has no application logic. `rust-implementer`'s inline tests are unnecessary because there is nothing to test. Validation is 100% compiler-driven. Adversarial and property-based testing begin in Phase 1 (crypto primitives). Invoking `test-writer` here would produce no meaningful output.
+- [x] **NO** — Phase 0.1 has no application logic. Inline tests are unnecessary because there is nothing to test. Validation is 100% compiler-driven. Adversarial and property-based testing begin in Phase 1 (crypto primitives). Invoking `test-writer` here would produce no meaningful output.
 
 **Test acceptance criteria**: `cargo build` returns 0; no other gates enforced in 0.1.
 

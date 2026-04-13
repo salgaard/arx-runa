@@ -674,7 +674,7 @@ The sub-phase mandates it (§ Security Review, line 67). Independent review by t
 - 1000-sample nonce uniqueness (matches acceptance criterion)
 - HKDF expansion on three distinct info strings produces three mutually distinct outputs
 
-**Invoke test-writer agent?** **NO** — rust-implementer's inline tests cover the full sub-phase acceptance criteria and the plan's supplementary cases. Rationale: (a) the test surface is modest (~14 tests, ~150 LOC); (b) `proptest` property tests are premature without encrypt/decrypt in scope; (c) the zeroize test is a delicate ownership/lifetime pattern that benefits from being authored alongside the type definition, not retroactively; (d) `cargo-tarpaulin` or manual review can confirm branch coverage during security review. The crypto-roundtrip-test skill becomes appropriate in Phase 1.2 when `encrypt_chunk`/`decrypt_chunk` land.
+**Invoke test-writer agent?** **NO** — tests written during implementation cover the full sub-phase acceptance criteria and the plan's supplementary cases. Rationale: (a) the test surface is modest (~14 tests, ~150 LOC); (b) `proptest` property tests are premature without encrypt/decrypt in scope; (c) the zeroize test is a delicate ownership/lifetime pattern that benefits from being authored alongside the type definition, not retroactively; (d) `cargo-tarpaulin` or manual review can confirm branch coverage during security review. The crypto-roundtrip-test skill becomes appropriate in Phase 1.2 when `encrypt_chunk`/`decrypt_chunk` land.
 
 **Test acceptance criteria**:
 - All 14 tests pass on `cargo test crypto` with no warnings under `-D warnings`.

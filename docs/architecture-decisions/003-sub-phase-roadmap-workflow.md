@@ -11,7 +11,7 @@
 The Arx Runa project uses a three-command workflow for converting architectural vision into working code:
 1. `/design <topic>` → creates detailed technical designs in `docs/architecture/designs/`
 2. `/plan <topic>` → generates implementation plans in `.claude/plans/`
-3. `/implement-plan <file>` → executes via the `rust-implementer` agent
+3. `/implement-plan <file>` → executes the approved plan through the invoking implementation flow
 
 Analysis of the six existing design documents revealed significant size variation:
 

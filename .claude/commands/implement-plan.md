@@ -2,7 +2,7 @@ Implement the saved plan: $ARGUMENTS
 
 **Implementer-agnostic**: this command is designed to be run by any CLI agent that can read `.claude/` resources (Claude Code, Copilot CLI with alternate models, etc.). It assumes no specific model and no human in the loop beyond the hard gates below. Interactive confirmation is reserved for destructive or ambiguous actions — routine checks pass or fail, they do not prompt.
 
-**Execution contract (hard)**: for Arx Runa plans, code implementation must be performed through the `rust-implementer` agent when `implementation-agent: rust-implementer` is declared in plan frontmatter. If that requirement cannot be satisfied, halt and block the plan; do not silently fall back to manual implementation.
+**Execution contract (hard)**: for Arx Runa plans, code implementation is performed directly by the invoking agent according to the approved plan. Do not require or assume a named implementation agent in plan frontmatter.
 
 ## Step 1 — Resolve the plan file
 
@@ -47,22 +47,33 @@ Before touching the plan, verify the working environment is sane. Any failure he
    - Extract the specific sub-phase section (e.g., "Phase 4.1: ...").
    - Note the dependencies (e.g., "Depends on: Phase 4.1").
    - Check if prerequisite sub-phases are complete: look for plan files matching the prerequisite pattern (e.g., `phase-4-1-*.md`) with `status: implemented`. If prerequisite is missing or not implemented, halt with the list of missing prerequisites.
-8. **Execution-agent gate** (hard):
-   - Require frontmatter field `implementation-agent`. If missing, halt with: "Plan missing `implementation-agent`. Re-run `/plan` or add the field before `/implement-plan`."
-   - Require `implementation-agent: rust-implementer`. If set to any other value, halt with: "Plan requires unsupported implementation agent `<value>`. This command only permits `rust-implementer`."
+8. **Testing-agent gate** (hard):
    - Require frontmatter field `test-agent-required` (`true`/`false`). If missing, halt with: "Plan missing `test-agent-required`. Re-run `/plan` or add the field before `/implement-plan`."
    - Parse the Testing Strategy for an explicit "Invoke test-writer agent? YES/NO" decision.
    - If the Testing Strategy decision is missing or ambiguous, halt.
    - If Testing Strategy says YES but `test-agent-required` is not `true`, halt.
    - If Testing Strategy says NO but `test-agent-required` is not `false`, halt.
-9. Update `status` to `in-progress` in the plan file's frontmatter.
+9. **Governance-sync gate** (hard, pre-implementation):
+   - Require frontmatter field `governance-sync-required` (`true`/`false`). If missing, halt with: "Plan missing `governance-sync-required`. Re-run `/plan` or add the field before `/implement-plan`."
+   - Parse the plan's **Governance sync actions (pre-implementation)** section.
+   - Consistency checks:
+     - If `governance-sync-required: true` but the section is missing or says "None", halt.
+     - If `governance-sync-required: false` but the section lists one or more actions, halt.
+   - If actions are listed:
+     1. Execute them in order **before** Step 4 implementation work.
+     2. Apply `.claude/rules/*.md`, `.claude/reference/*.md`, and `.claude/agents/*.md` updates exactly as declared in the action list.
+     3. If any action touches `.claude/rules/*.md`, run `/copilot-sync` once after rule edits so `.github/instructions/*.instructions.md` is regenerated from the updated rules.
+     4. Do not manually edit mirrored `.github/instructions/*.instructions.md` files when a corresponding `.claude/rules/*.md` source exists, unless the plan explicitly marks an exception and rationale.
+     5. Re-read each target file and confirm the declared update is present.
+   - If any governance sync action cannot be completed or verified, invoke the Plan-deviation protocol and halt before Step 4.
+10. Update `status` to `in-progress` in the plan file's frontmatter.
 
 ## Step 4 — Implement
 
 Follow the **Approach** section of the plan step by step, in order.
 
-1. **Mandatory implementation agent**: execute every Approach step via the `rust-implementer` agent, referencing `.claude/reference/rust-patterns.md` and `docs/architecture/design-invariants.md`.
-2. **No manual fallback**: direct code edits by the invoking agent are prohibited, except plan-file status/log/deviation updates. If `rust-implementer` is unavailable or fails repeatedly on a step, follow the Plan-deviation protocol and halt.
+1. Execute every Approach step directly as written, referencing `.claude/reference/rust-patterns.md` and `docs/architecture/design-invariants.md`.
+2. **No speculative fallback**: if a step cannot be completed as written, follow the Plan-deviation protocol and halt rather than improvising signatures, schemas, or behavior.
 3. After each Approach step, run `cargo check --workspace` as a fast fail-check. If it breaks, fix it before moving to the next step — don't let compile errors accumulate.
 4. **Security review** is driven by the plan's **Security implications** section, not by an automatic path trigger. Read that section and act:
    - **If `Invoke security-reviewer agent?` is YES** → after implementation is complete (or at a sensible midpoint for long runs), invoke `security-reviewer` on the touched files under `src-tauri/src/crypto/`, `src-tauri/src/auth/`, or `src-tauri/src/storage/`. Pass the plan's "What the reviewer should check" list as focus. Fix any **CRITICAL** findings before continuing. Record **WARNING** and **NOTE** findings in the Implementation Log but do not block on them.
@@ -71,7 +82,7 @@ Follow the **Approach** section of the plan step by step, in order.
 
 ### Plan-deviation protocol
 
-If any Approach step cannot be executed as written — signature won't compile, file state is unexpected, a cited dependency is missing, the inlined DDL doesn't match the current schema, a trait signature from the plan turns out to be infeasible, or the required `rust-implementer`/`test-writer` agent cannot be used as mandated — **stop implementing and do not guess**. Instead:
+If any Approach step cannot be executed as written — or a required governance sync action from Step 3.9 cannot be completed exactly as specified — **stop implementing and do not guess**. Signature won't compile, file state is unexpected, a cited dependency is missing, the inlined DDL doesn't match the current schema, a trait signature from the plan turns out to be infeasible, or a required test/review agent cannot be used as mandated are all Plan Deviations. Instead:
 
 1. Revert or stash any partial work for that step so the repo is in a consistent state.
 2. Append a `## Plan Deviation` section to the plan file with:
@@ -97,9 +108,9 @@ Read the plan's **Testing Strategy** section:
   4. Report test results and any new failures.
 - If "Invoke test-writer agent?" is checked **NO**:
   - Do not invoke `test-writer`.
-  - Rely on the implementer's inline tests.
+  - Rely on tests written during implementation.
   - Proceed to `cargo test` and `cargo clippy -- -D warnings` verification.
-- If the decision is unchecked or ambiguous, halt at Step 3's execution-agent gate.
+- If the decision is unchecked or ambiguous, halt at Step 3's testing-agent gate.
 
 ### Validation checkpoint
 
@@ -122,15 +133,16 @@ Read the plan's **Testing Strategy** section:
 2. Append an **Implementation Log** section to the plan file with:
     - **Date** — ISO 8601 datetime
     - **Branch** — the branch recorded in Step 2
-    - **Agent evidence** — table with `Approach step | Agent | Agent ID | Outcome`; include one `rust-implementer` record per implemented step, plus `test-writer` / `security-reviewer` entries when used
+    - **Agent evidence** — table with `Approach step | Agent | Agent ID | Outcome`; include one record per implemented step, plus `test-writer` / `security-reviewer` entries when used
     - **Files changed** — list of modified / created files
     - **Test results** — `cargo test` summary (pass count, any skipped or failing)
     - **Clippy results** — clean / warnings introduced / pre-existing noted
     - **Security review** — agent findings if run, or "N/A" if no sensitive modules touched
+    - **Governance sync** — action count, files updated, `/copilot-sync` outcome when applicable
     - **Deviations from plan** — any small adjustments made (large deviations should have halted at Step 4's deviation protocol)
     - **Documentation flagged** — verbatim list from the plan's **Documentation impact** section (do **not** cross-reference roadmap docs, diagrams, or ADRs here — that's the job of a separate documentation pass)
 
-3. **Do not commit, push, or open a pull request.** Leave the working tree dirty. The user inspects the diff and decides what to commit. If the implementer's CLI has autonomous commit behaviour, it must be suppressed here.
+3. **Do not commit, push, or open a pull request.** Leave the working tree dirty. The user inspects the diff and decides what to commit. If the CLI has autonomous commit behaviour, it must be suppressed here.
 
 4. **Report to the user**. Use this structure:
 
@@ -144,9 +156,10 @@ Read the plan's **Testing Strategy** section:
 → Validation checkpoint (manual): [checkpoint description from sub-roadmap]
 → Acceptance criteria (manual): [list from sub-roadmap]
 → Files changed: [list]
+→ Governance sync: [summary]
 → Documentation flagged: [list from Documentation impact]
 → Next sub-phase: [X.Y+1 title, or "end of roadmap"]
 ```
 
 **If this is a full-phase or ad-hoc plan**:
-Report what was implemented, branch, agent evidence summary, test results, clippy results, files changed, and the verbatim Documentation impact list. Do not cross-reference or audit the doc state.
+Report what was implemented, branch, agent evidence summary, test results, clippy results, governance-sync summary, files changed, and the verbatim Documentation impact list. Do not cross-reference or audit the doc state.

@@ -125,8 +125,8 @@ mod tests {
 
     #[test]
     fn test_wrap_file_key_wire_format_is_seventy_two_bytes() {
-        let wrapped = wrap_file_key(&make_file_key(0xAA), &make_kek(0xBB))
-            .expect("wrap must succeed");
+        let wrapped =
+            wrap_file_key(&make_file_key(0xAA), &make_kek(0xBB)).expect("wrap must succeed");
         assert_eq!(wrapped.0.len(), WRAPPED_LEN);
         assert_eq!(WRAPPED_LEN, 72);
     }
@@ -149,8 +149,7 @@ mod tests {
     #[test]
     fn test_unwrap_file_key_wrong_kek_fails_with_decryption_failed() {
         let file_key = make_file_key(0x11);
-        let wrapped =
-            wrap_file_key(&file_key, &make_kek(0x22)).expect("wrap must succeed");
+        let wrapped = wrap_file_key(&file_key, &make_kek(0x22)).expect("wrap must succeed");
 
         let result = unwrap_file_key(&wrapped, &make_kek(0x33));
 

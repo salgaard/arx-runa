@@ -31,7 +31,7 @@ paths:
 - See `docs/architecture/designs/authentication-and-session-management/design.md` for HKDF tree
 
 ## Memory
-- All keys: `ZeroizeOnDrop` + `Secret<T>`
+- All keys: `ZeroizeOnDrop` + `SecretBox<[u8; 32]>`
 - Encrypt/decrypt in-place — no plaintext copies
 
 ## HKDF info strings

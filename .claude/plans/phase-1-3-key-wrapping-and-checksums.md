@@ -6,7 +6,6 @@ roadmap-phase: 1
 sub-phase: "1.3"
 design-document: "docs/architecture/designs/cryptographic-primitives/design.md"
 sub-phase-roadmap: "docs/architecture/designs/cryptographic-primitives/sub-phases/roadmap.md"
-implementation-agent: rust-implementer
 test-agent-required: false
 tags: [crypto, phase-1, wrap-key, blake3, checksum, verified-blob]
 ---
@@ -849,10 +848,10 @@ The sub-phase roadmap's Security Review Checkpoints (sub-phases/roadmap.md line 
 
 ## 7. Execution and testing strategy
 
-**Implementation agent**: Invoke `rust-implementer` (Required). Rationale: this plan creates three new Rust modules, edits two more, and must satisfy the project's Rust rules (`thiserror` error handling, `ZeroizeOnDrop` discipline, inline `#[cfg(test)]` modules, `pub(crate)` scoping, doc comments on every `pub` item, no inline `//` narrative comments). The `rust-implementer` agent is specialized for these conventions. **Fallback**: if `rust-implementer` is unavailable or fails repeatedly, mark the plan `blocked` — no manual fallback implementation.
+**Implementation execution**: run Approach Steps 5.1–5.8 directly in order. Rationale: this plan creates three new Rust modules, edits two more, and must satisfy the project's Rust rules (`thiserror` error handling, `ZeroizeOnDrop` discipline, inline `#[cfg(test)]` modules, `pub(crate)` scoping, doc comments on every `pub` item, no inline `//` narrative comments). **Fallback**: if any step cannot be executed as written, mark the plan `blocked` via the Plan Deviation protocol — no speculative fallback implementation.
 
 **Test scope**:
-- [x] Basic unit tests (rust-implementer writes inline, per Steps 5.3–5.5)
+- [x] Basic unit tests (written inline during implementation, per Steps 5.3–5.5)
 - [x] Adversarial tests: wrong KEK, tampered nonce/ciphertext/tag bytes inside `WrappedFileKey`, all-zero wrapped blob, tampered checksum, wrong expected hash (per Steps 5.4–5.5)
 - [x] Property-based tests: `prop_checksum_deterministic` (per Step 5.4)
 - [ ] Integration tests — none at this phase (Phase 1 is a pure library surface with no I/O)
@@ -884,7 +883,7 @@ All must pass, plus `cargo test crypto` (full-module regression) and `cargo clip
 - Every `CryptoError` variant used in this phase (`DecryptionFailed`, `ChecksumMismatch`) has at least one test that triggers it (per `.claude/rules/rust.md` testing rule).
 - `cargo clippy -- -D warnings` is clean.
 
-**Invoke test-writer agent? NO.** Rationale: the sub-phase's test list plus the adversarial additions from Design Concern #5 are narrow and fully enumerated in Steps 5.3–5.7. `rust-implementer` writes tests inline alongside the production code it creates, matching the pattern Phase 1.1 and Phase 1.2 plans used (both had `test-agent-required: false`). The adversarial dimensions (nonce reuse, tamper of each byte region, checksum mismatch, wrong expected hash, round-trip identity) are exhaustively listed here; a separate adversarial sweep by `test-writer` would be duplicated effort. If the post-implementation `security-reviewer` pass surfaces a missed edge case, re-enter via a targeted patch.
+**Invoke test-writer agent? NO.** Rationale: the sub-phase's test list plus the adversarial additions from Design Concern #5 are narrow and fully enumerated in Steps 5.3–5.7. Tests are written inline alongside the production code, matching the pattern Phase 1.1 and Phase 1.2 plans used (both had `test-agent-required: false`). The adversarial dimensions (nonce reuse, tamper of each byte region, checksum mismatch, wrong expected hash, round-trip identity) are exhaustively listed here; a separate adversarial sweep by `test-writer` would be duplicated effort. If the post-implementation `security-reviewer` pass surfaces a missed edge case, re-enter via a targeted patch.
 
 ## 8. Documentation impact
 
@@ -920,15 +919,15 @@ You are working in `C:\Users\chris\source\repos\arx-runa`, Rust edition 2024, in
 
 | Approach step | Agent | Agent ID | Outcome |
 | --- | --- | --- | --- |
-| 5.1 | rust-implementer | `phase-1-3-impl` | Confirmed required dependency pins already present; no dependency edits. |
-| 5.2 | rust-implementer | `phase-1-3-impl` | Added `FileKey::from_secret_box` in `src-tauri/src/crypto/types/mod.rs`. |
-| 5.3 | rust-implementer | `phase-1-3-impl` | Created `src-tauri/src/crypto/generate_file_key.rs` with generation API and tests. |
-| 5.4 | rust-implementer | `phase-1-3-impl` | Created `src-tauri/src/crypto/checksum.rs` with `compute_checksum`, `verify_checksum`, `VerifiedBlob`, tests, and proptest. |
-| 5.5 | rust-implementer | `phase-1-3-impl` | Created `src-tauri/src/crypto/wrap_key.rs` with wrap/unwrap APIs and adversarial tests. |
-| 5.5 (follow-up fix) | rust-implementer | `phase-1-3-wrapkey-fix` | Replaced `assert_matches!` usages on `Result<FileKey, _>` with `matches!` assertions to avoid requiring `Debug` on `FileKey`. |
-| 5.6 | rust-implementer | `phase-1-3-impl` | Migrated `decrypt_chunk` to consume `VerifiedBlob`; updated docs/imports/tests and added verified-blob end-to-end test. |
-| 5.7 | rust-implementer | `phase-1-3-impl` | Updated `encrypt_chunk.rs` test/proptest callsites to verify checksum before decrypt. |
-| 5.8 | rust-implementer | `phase-1-3-impl` | Registered/re-exported `checksum`, `generate_file_key`, and `wrap_key` in `src-tauri/src/crypto/mod.rs`. |
+| 5.1 | invoking-agent | `phase-1-3-impl` | Confirmed required dependency pins already present; no dependency edits. |
+| 5.2 | invoking-agent | `phase-1-3-impl` | Added `FileKey::from_secret_box` in `src-tauri/src/crypto/types/mod.rs`. |
+| 5.3 | invoking-agent | `phase-1-3-impl` | Created `src-tauri/src/crypto/generate_file_key.rs` with generation API and tests. |
+| 5.4 | invoking-agent | `phase-1-3-impl` | Created `src-tauri/src/crypto/checksum.rs` with `compute_checksum`, `verify_checksum`, `VerifiedBlob`, tests, and proptest. |
+| 5.5 | invoking-agent | `phase-1-3-impl` | Created `src-tauri/src/crypto/wrap_key.rs` with wrap/unwrap APIs and adversarial tests. |
+| 5.5 (follow-up fix) | invoking-agent | `phase-1-3-wrapkey-fix` | Replaced `assert_matches!` usages on `Result<FileKey, _>` with `matches!` assertions to avoid requiring `Debug` on `FileKey`. |
+| 5.6 | invoking-agent | `phase-1-3-impl` | Migrated `decrypt_chunk` to consume `VerifiedBlob`; updated docs/imports/tests and added verified-blob end-to-end test. |
+| 5.7 | invoking-agent | `phase-1-3-impl` | Updated `encrypt_chunk.rs` test/proptest callsites to verify checksum before decrypt. |
+| 5.8 | invoking-agent | `phase-1-3-impl` | Registered/re-exported `checksum`, `generate_file_key`, and `wrap_key` in `src-tauri/src/crypto/mod.rs`. |
 | Security review (Section 6.c) | security-reviewer | `phase-1-3-security` | No CRITICAL or WARNING findings; verdict: safe to proceed. |
 
 ### Files changed
@@ -960,7 +959,7 @@ You are working in `C:\Users\chris\source\repos\arx-runa`, Rust edition 2024, in
 ### Deviations from plan
 
 - The initial `wrap_key` tests used `assert_matches!` for `Result<FileKey, CryptoError>` error assertions, which required `Debug` on `FileKey`. This was adjusted to `assert!(matches!(...))` to preserve secret-key type semantics without adding `Debug` to key newtypes.
-- `rust-implementer` agent runs in this environment could not execute `cargo` commands directly, so compile/lint/test validation was executed immediately afterward by the invoking agent with all required commands passing.
+- The implementation-step runner in this environment could not execute `cargo` commands directly, so compile/lint/test validation was executed immediately afterward by the invoking agent with all required commands passing.
 
 ### Documentation flagged
 

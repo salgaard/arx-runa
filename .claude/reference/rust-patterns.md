@@ -25,14 +25,16 @@ Use for: `FileId`, `ChunkIndex`, `NodeId`, `VaultId`, `BlobName`, `FileKey`,
 
 ## RAII guards and ZeroizeOnDrop
 Resources that require cleanup on scope exit use RAII. Sensitive key types
-implement `ZeroizeOnDrop` and wrap contents in `Secret<T>`:
+implement `ZeroizeOnDrop` and wrap contents in `SecretBox<[u8; 32]>`:
 ```rust
-use secrecy::Secret;
+use secrecy::SecretBox;
 use zeroize::ZeroizeOnDrop;
 
 #[derive(ZeroizeOnDrop)]
-pub struct FileKey(Secret<[u8; 32]>);
+pub struct FileKey(SecretBox<[u8; 32]>);
 ```
+Prefer `SecretBox::init_with_mut(...)` or `SecretBox::new(Box::new(bytes))`
+for secret initialization rather than transient unprotected stack copies.
 Use for: all key types, database connections, file locks, session handles.
 
 ## Builder pattern

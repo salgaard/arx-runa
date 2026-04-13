@@ -31,7 +31,7 @@ applyTo: "src-tauri/src/storage/**"
 - Snapshot model: atomic full export, `snapshot_counter` increments each push
 
 ## EXIF stripping
-- Optional pre-processing before the encrypt pipeline, enabled by default for `image/jpeg`, `image/png`, `image/tiff` and disableable per vault/settings (detected by magic bytes, not extension)
+- Optional pre-processing before the encrypt pipeline; enabled by default for `image/jpeg`, `image/png`, `image/tiff`, and can be disabled (detected by magic bytes, not extension)
 - Strips EXIF, XMP, IPTC segments in RAM — original file on disk is never modified
 - MP4/QuickTime excluded: `moov` atom at end-of-file breaks the streaming invariant
 - Non-media types and unsupported containers pass through unmodified

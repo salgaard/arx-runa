@@ -8,8 +8,11 @@ use zeroize::ZeroizeOnDrop;
 pub struct FileKey(SecretBox<[u8; 32]>);
 
 impl FileKey {
-    /// Constructs a file key from raw key bytes.
-    #[allow(dead_code)]
+    /// Constructs a file key from raw key bytes for deterministic tests.
+    ///
+    /// Test-only helper to avoid exposing a production constructor that accepts
+    /// plain key bytes by value.
+    #[cfg(test)]
     pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(SecretBox::new(Box::new(bytes)))
     }
@@ -39,8 +42,11 @@ impl KeyEncryptionKey {
         Self(secret_box)
     }
 
-    /// Constructs a key-encryption key from raw key bytes.
-    #[allow(dead_code)]
+    /// Constructs a key-encryption key from raw key bytes for deterministic tests.
+    ///
+    /// Test-only helper to avoid exposing a production constructor that accepts
+    /// plain key bytes by value.
+    #[cfg(test)]
     pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
         Self::from_secret_box(SecretBox::new(Box::new(bytes)))
     }
@@ -62,8 +68,11 @@ impl SqlcipherKey {
         Self(secret_box)
     }
 
-    /// Constructs a SQLCipher key from raw key bytes.
-    #[allow(dead_code)]
+    /// Constructs a SQLCipher key from raw key bytes for deterministic tests.
+    ///
+    /// Test-only helper to avoid exposing a production constructor that accepts
+    /// plain key bytes by value.
+    #[cfg(test)]
     pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
         Self::from_secret_box(SecretBox::new(Box::new(bytes)))
     }
@@ -85,8 +94,11 @@ impl ManifestKey {
         Self(secret_box)
     }
 
-    /// Constructs a manifest key from raw key bytes.
-    #[allow(dead_code)]
+    /// Constructs a manifest key from raw key bytes for deterministic tests.
+    ///
+    /// Test-only helper to avoid exposing a production constructor that accepts
+    /// plain key bytes by value.
+    #[cfg(test)]
     pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
         Self::from_secret_box(SecretBox::new(Box::new(bytes)))
     }

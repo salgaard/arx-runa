@@ -2,7 +2,7 @@ Plan the implementation of: $ARGUMENTS
 
 **Implementer context**: plans produced by this command are typically handed off to Copilot Codex (or another agent with no conversation context) for implementation. Write the plan as a self-contained artefact: inline trait signatures, error enums, and DDL verbatim rather than pointing to them; use absolute file paths; do not assume the reader can infer intent from prior discussion.
 
-**Execution contract (hard)**: plans produced here must be executable through the `rust-implementer` agent for code changes. Do not leave agent choice implicit. Emit explicit agent metadata so `/implement-plan` can fail closed when required fields are missing or inconsistent.
+**Execution contract (hard)**: plans produced here must be executable by `/implement-plan` without requiring any specific implementation agent. Keep execution guidance explicit, but do not couple the plan to a named agent.
 
 ## Step 1 — Detect roadmap phase and sub-phase
 
@@ -82,6 +82,30 @@ Record every finding. These become the plan's **Design Concerns / Open Questions
 
 If there are any blocking concerns, the plan's status is `blocked` (not `draft`) and the recommended next step is to revise the sub-phase via `/design` or manual edit — **not** `/implement-plan`.
 
+## Step 1.8 — Governance drift review of operational guidance
+
+Before structuring the final plan, review planned behavior and contract changes against:
+- `.claude/rules/*.md`
+- `.github/instructions/*.instructions.md` (rule mirrors)
+- `.claude/reference/*.md`
+- `.claude/agents/*.md`
+
+Check for:
+1. **Contradictions** — guidance now conflicts with the planned implementation behavior.
+2. **Stale or missing guardrails** — rules/checklists/examples omit newly required constraints.
+3. **Outdated execution guidance** — references/agent prompts would steer implementers to obsolete behavior.
+4. **Rule-mirror drift** — `.claude/rules/*.md` and `.github/instructions/*.instructions.md` are out of sync.
+
+Classify each finding as:
+- **Blocking** — requires a design/product decision or ambiguous rewrite that cannot be safely automated.
+- **Non-blocking** — deterministic file updates that can be executed automatically before implementation starts.
+
+Handling requirements:
+- Record every finding in **Design Concerns / Open Questions** with file path(s) and impact.
+- Every non-blocking governance finding must also produce an action in **Governance sync actions (pre-implementation)** with exact target files and edits.
+- When a finding touches `.claude/rules/*.md`, treat the rule file as source-of-truth and note that `/implement-plan` will run `/copilot-sync` before coding to regenerate `.github/instructions/*.instructions.md`.
+- If any blocking governance finding remains unresolved, set plan status to `blocked`.
+
 ## Step 2 — Generate the plan
 
 Structure the plan as follows:
@@ -92,7 +116,7 @@ Structure the plan as follows:
      deliverables list, and any pending architectural decisions from the
      roadmap
    - **If sub-phase**: include dependencies from the sub-roadmap (e.g., "Depends on Phase 4.1"), estimated scope, and any implementation notes
-3. **Design Concerns / Open Questions** — findings from Step 1.75. Each entry:
+3. **Design Concerns / Open Questions** — findings from Steps 1.75 and 1.8. Each entry:
     - **Concern** — one-line summary of the issue
     - **Source** — where in the sub-phase / design it appears (line numbers or section)
     - **Impact** — what breaks or gets guessed if left unresolved
@@ -113,15 +137,12 @@ Structure the plan as follows:
    b. **Invoke security-reviewer agent? YES / NO** with rationale — mirrors the test-writer decision in item 7. YES means `/implement-plan` will invoke `security-reviewer` on the touched files regardless of path. NO means the plan takes responsibility for the decision — `/implement-plan` will skip the review, **but** the drift check in (a) still fires if sensitive paths get touched anyway.
    c. **What the reviewer should check** — if YES, list the specific concerns (trait boundaries, zeroization, nonce generation, AAD scope, etc.). If NO, list the specific reasons the review is unnecessary (e.g., "module performs no cryptographic operations; BLAKE3 is used only as a preimage-resistant fingerprint comparator").
    - **If sub-phase**: check the sub-roadmap's Security Review Checkpoints section. If the sub-phase self-asserts "Security Review: Not required", verify independently in Step 1.75 and either confirm (set YES/NO explicitly with rationale) or flag as a Design Concern — do not mirror the self-assessment blindly. Opus's independent decision, recorded here, overrides the sub-phase's self-assessment.
-7. **Execution and testing strategy** — what agent executes implementation, what tests are needed, and what boundary cases matter
-   - **Explicitly require**: `Implementation agent: Invoke rust-implementer (Required)` with rationale.
-   - **Explicitly state fallback**: if `rust-implementer` is unavailable or fails repeatedly, mark the plan blocked; no manual fallback implementation.
+7. **Execution and testing strategy** — what tests are needed and what boundary cases matter
    - Use the template's structured format with checkboxes for test types
    - **Explicitly decide**: check "Invoke test-writer agent? YES/NO" with rationale
-   - Mirror these decisions in frontmatter as:
-     - `implementation-agent: rust-implementer`
+   - Mirror this decision in frontmatter as:
      - `test-agent-required: true|false`
-     Values must match the prose in this section.
+     Value must match the prose in this section.
    - **If sub-phase**: include the Validation checkpoint from the sub-roadmap (automated tests, manual verification, acceptance criteria)
    - Include any additional edge-case tests surfaced by the Step 1.75 review
 8. **Documentation impact** — which `docs/` files need creating or updating
@@ -129,7 +150,16 @@ Structure the plan as follows:
    - This section must include documentation updates required by any planned deviations from current canonical design/sub-phase docs.
    - Treat any sub-phase-roadmap `## Documentation Impact` text as advisory only. Never suppress required doc sync updates just because a roadmap says "No documentation updates."
    - If no docs need updates, state why no deviation or new contract surface was introduced.
-9. **Handoff Notes for Implementer** — one short paragraph framed for an agent with zero conversation context (typically Copilot Codex). State the working directory, the order of operations, whether the plan is self-contained or requires re-reading the sub-phase, and any traps (platform-specific code paths, feature flags, gated tests). If the plan status is `blocked`, instead write "Do not implement — resolve Design Concerns first."
+9. **Governance sync actions (pre-implementation)** — ordered, machine-actionable actions that `/implement-plan` must execute before Step 4 coding.
+   - For each action include:
+     - **Action ID**
+     - **Reason / linked concern**
+     - **Target files** (absolute paths)
+     - **Required edit** (specific add/remove/replace instruction)
+     - **Verification** (what to re-read/check after editing)
+   - If any action touches `.claude/rules/*.md`, include "Run `/copilot-sync` after rule edits."
+   - If no governance sync is required, state "None."
+10. **Handoff Notes for Implementer** — one short paragraph framed for an agent with zero conversation context (typically Copilot Codex). State the working directory, the order of operations, whether the plan is self-contained or requires re-reading the sub-phase, and any traps (platform-specific code paths, feature flags, gated tests). If the plan status is `blocked`, instead write "Do not implement — resolve Design Concerns first."
 
 ## Step 3 — Save the plan to disk
 
@@ -153,11 +183,15 @@ roadmap-phase: <number or null>
 sub-phase: <"N.S" or null>
 design-document: <relative path or null>
 sub-phase-roadmap: <relative path or null>
-implementation-agent: rust-implementer
 test-agent-required: <true|false>
+governance-sync-required: <true|false>
 tags: [<relevant tags>]
 ---
 ```
+
+`governance-sync-required` must match Section 9:
+- `true` when one or more governance sync actions are listed
+- `false` when Section 9 is explicitly "None."
 
 Valid `status` values: `draft` (ready for review / implementation), `blocked` (blocking Design Concerns must be resolved first), `approved` (user-approved, ready for `/implement-plan`), `implemented`.
 

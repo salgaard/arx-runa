@@ -12,7 +12,7 @@ paths:
 
 ## Patterns
 - Newtype wrappers for domain types — see `.claude/reference/rust-patterns.md`
-- `ZeroizeOnDrop` + `Secret<T>` for all key types
+- `ZeroizeOnDrop` + `SecretBox<T>` for all key types
 - Borrowed signatures: `&[u8]` not `&Vec<u8>`, `&str` not `&String`
 - Trait boundaries: `CloudTransport`, `KeySource`, `MetadataStore`
 
@@ -25,7 +25,7 @@ paths:
 - No inline `//` comments in function bodies — code must be self-documenting
 
 ## Memory
-- Sensitive types: `ZeroizeOnDrop` + `secrecy::Secret<T>`
+- Sensitive types: `ZeroizeOnDrop` + `secrecy::SecretBox<T>`
 - Encrypt/decrypt in-place on `&mut [u8]` — no plaintext copies
 
 ## I/O

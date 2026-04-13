@@ -7,6 +7,10 @@ Synchronise `.github/instructions/` files with `.claude/rules/` source files.
 /copilot-sync check    # compare and report only (no changes)
 ```
 
+This command is also the canonical mirror step inside `/implement-plan`'s
+pre-implementation governance-sync phase whenever planned updates touch
+`.claude/rules/*.md`.
+
 ---
 
 ## What needs syncing
@@ -106,3 +110,4 @@ Run `/copilot-sync` to fix.
 - After editing design documents and updating rule summaries
 - Before commits that touch rules
 - When the PostToolUse hook reminds you
+- During `/implement-plan` governance sync when the plan includes rule updates

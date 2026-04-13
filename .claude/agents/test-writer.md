@@ -3,9 +3,8 @@ name: test-writer
 description: >
   Use to write, audit, or expand tests for existing Arx Runa code. Invoke
   when a module lacks coverage, for adversarial crypto tests, or for
-  property-based test suites. The rust-implementer writes tests alongside
-  new code — this agent focuses on retroactive coverage and adversarial
-  edge cases.
+  property-based test suites. This agent focuses on retroactive coverage and
+  adversarial edge cases beyond baseline tests written during implementation.
 tools: Read, Write, MultiEdit, Bash, Glob, Grep
 model: GPT-5.3-Codex
 ---

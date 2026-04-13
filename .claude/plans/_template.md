@@ -35,7 +35,7 @@ should check afterward. If no, state "None."
 ## Testing Strategy
 
 **Test scope:**
-- [ ] Basic unit tests (rust-implementer writes these inline)
+- [ ] Basic unit tests (written during implementation)
 - [ ] Adversarial tests (cryptographic edge cases, corrupted data, wrong keys)
 - [ ] Property-based tests (proptest for randomized input validation)
 - [ ] Integration tests
@@ -49,7 +49,7 @@ should check afterward. If no, state "None."
 **Invoke test-writer agent?**
 - [ ] **YES** — requires adversarial or property-based tests
   - Reason: [Explain why — e.g., "crypto module needs AAD mismatch, tag tampering, nonce uniqueness tests"]
-- [ ] **NO** — rust-implementer's inline tests are sufficient
+- [ ] **NO** — tests written during implementation are sufficient
   - Reason: [Explain why — e.g., "simple CRUD operations, no security-critical edge cases"]
 
 **Test acceptance criteria:**
