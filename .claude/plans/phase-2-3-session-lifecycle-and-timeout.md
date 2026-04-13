@@ -1,7 +1,7 @@
 ---
 title: "Phase 2.3 — Session Lifecycle and Timeout"
 created: "2026-04-13T00:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 2
 sub-phase: "2.3"
 design-document: "docs/architecture/designs/authentication-and-session-management/design.md"
@@ -959,3 +959,102 @@ Traps to watch:
 - Do NOT touch `src-tauri/src/crypto/**`, `src-tauri/src/memory/**` (Phase 2.2 territory), or `src-tauri/src/auth/device_monitor/**` (Phase 2.1 territory). Any touch outside Section 6a's expected path set is a Plan Deviation.
 - Do NOT add exponential backoff, vault-header loading, SQLCipher open, or rclone.conf cleanup — all four are deferred (see DCs 1, 2, 3, 11).
 - Platform parity: the plan is platform-agnostic; `dirs`, `tokio`, and `zeroize` behave identically across Windows/macOS/Linux. Run `cargo test` on at least one platform; CI covers the rest.
+
+## 11. Implementation Log
+
+- **Date**: 2026-04-13T22:58:00Z
+- **Branch**: development
+
+### Agent evidence
+
+| Approach step | Agent | Agent ID | Outcome |
+|---|---|---|---|
+| Step 1 — Extend `AuthenticationError` | copilot-cli | primary | Implemented `SessionAlreadyActive` variant and display test |
+| Step 2 — Create timeout config loader | copilot-cli | primary | Added `auth/config.rs` loader, schema clamp, parser + filesystem tests |
+| Step 3 — Register `config` module | copilot-cli | primary | Registered `pub mod config;` in `auth/mod.rs` |
+| Step 4 — Define `SessionEvent` and `LifecycleState` | copilot-cli | primary | Added lifecycle enum, event enum, shared session alias, timer handle |
+| Step 5 — Implement constructors | copilot-cli | primary | Added `from_config`, `with_timeout`, test-only `with_timeout_and_warning`, `state`, `subscribe` |
+| Step 6 — Implement `authenticate()` | copilot-cli | primary | Added async authenticate, key-source error mapping, spawn_blocking derive, active-state gate, TODO hooks |
+| Step 7 — Implement `lock()` | copilot-cli | primary | Added cancel/wait/drop/expire flow with idempotency and `Locked` broadcast |
+| Step 8 — Implement `reset_timer()` and timer helpers | copilot-cli | primary | Added timer restart/cancel task, warning + timeout lock path |
+| Step 9 — Implement operation gate | copilot-cli | primary | Added `OperationGuard`, watch-counter gate, gate-close ordering hardening |
+| Step 10 — Re-export from `auth::mod` | copilot-cli | primary | Re-exported `LifecycleState`, `OperationGuard`, `SessionEvent`, `SessionManager`; removed stale allow attributes |
+| Step 11 — Tests | copilot-cli | primary | Added full session-manager test matrix + config parser tests |
+| Step 11 — test-writer review | test-writer | phase23-test-writer | Added race/state-chain tests and timing-margin hardening |
+| Step 12 — Deferred integration hooks | copilot-cli | primary | Preserved TODO hooks for Phase 3.1/4 and backoff deferral |
+| Security review checkpoint | security-reviewer | phase23-security-review | Reported 1 CRITICAL + 2 WARNING findings |
+| Security re-review | security-reviewer | phase23-security-rereview | Verified CRITICAL resolved; no remaining CRITICAL findings |
+
+### Files changed
+
+- `.claude/plans/phase-2-3-session-lifecycle-and-timeout.md`
+- `.claude/rules/auth.md`
+- `.github/instructions/auth.instructions.md`
+- `src-tauri/src/auth/error.rs`
+- `src-tauri/src/auth/mod.rs`
+- `src-tauri/src/auth/session.rs`
+- `src-tauri/src/auth/config.rs` (new)
+- `docs/architecture/designs/authentication-and-session-management/sub-phases/2.3-session-lifecycle-and-timeout.md`
+- `docs/architecture/designs/authentication-and-session-management/design.md`
+- `docs/report-log/2026-04-13-224500-phase-2-3-session-lifecycle-timeout.md` (new)
+- `docs/report-log/INDEX.md`
+
+### Test results
+
+- `cargo test --workspace auth::session` → pass (`33 passed`, `0 failed`, `0 ignored`)
+- `cargo test --workspace auth::config` → pass (`7 passed`, `0 failed`, `0 ignored`)
+- `cargo test --workspace` → pass (`134 passed`, `0 failed`, `1 ignored`)
+
+### Clippy results
+
+- `cargo clippy --workspace -- -D warnings` → clean
+- Pre-existing test-profile warnings observed during `cargo test`: unused `from_bytes` constructors in `src-tauri/src/crypto/types/mod.rs` (unchanged by this implementation)
+
+### Security review
+
+- Initial review (`phase23-security-review`) findings:
+  - **CRITICAL**: operation-gate TOCTOU permitting post-wait registration before zeroize
+  - **WARNING**: non-atomic lifecycle/session transition windows
+  - **WARNING**: non-zeroizing temporary password/key-file copies
+- Resolution:
+  - Added `operation_gate_closed` sequencing in lock/timeout + registration double-check in `begin_operation()`
+  - Converted password and key-file derive inputs to `Zeroizing`-managed buffers for authenticate path
+- Re-review (`phase23-security-rereview`):
+  - **CRITICAL**: none
+  - **WARNING**: lifecycle/session transitions remain split-lock windows (accepted for this phase)
+
+### Governance sync
+
+- Actions executed: 1 (`GS-1`)
+- Updated files:
+  - `.claude/rules/auth.md`
+  - `.github/instructions/auth.instructions.md` (regenerated mirror)
+- `/copilot-sync` outcome: sync performed and verified for `auth` rule/instruction pair
+
+### Sub-phase decisions sync
+
+- Target doc: `docs/architecture/designs/authentication-and-session-management/sub-phases/2.3-session-lifecycle-and-timeout.md`
+- `## Implementation Decisions` updates: 4 entries added/updated
+
+### Deviations from plan
+
+- Assumption A-3 referenced prior Phase 2.1 use of `dirs::config_dir()`, but the existing key-hint store uses `dirs::data_local_dir()`; Phase 2.3 still intentionally uses `dirs::config_dir()` for `config.json`.
+- Added explicit operation-gate close/open hardening to address security-review CRITICAL race.
+- Added additional timing/race tests from mandatory `test-writer` audit (beyond initial baseline matrix).
+
+### Documentation flagged
+
+- `docs/architecture/designs/authentication-and-session-management/sub-phases/2.3-session-lifecycle-and-timeout.md`:
+  - Deliverable 2 (line 13) — update per DC-1, DC-3.
+  - Deliverable 3 (line 14) — update per DC-2.
+  - Deliverable 4 (line 15) and Implementation Notes (line 68) — update per DC-8.
+  - Deliverable 7 (line 18) — update per DC-5.
+  - Notes (new line) — cross-reference DC-11 (backoff deferral).
+- `docs/architecture/designs/authentication-and-session-management/design.md`:
+  - Lines 199–210 (Session ownership and sharing) — add lifecycle enum note per DC-4.
+  - Lines 225–270 (Timeout mechanism) — add two-guard clarification per DC-7 and config schema per DC-8.
+  - Lines 276–296 (`AuthenticationError`) — add `SessionAlreadyActive` variant per DC-9.
+- `.claude/rules/auth.md`:
+  - Session section — extend with `SessionManager` lifecycle, state enum, operation gate, timer cadence, event channel. Error list — append `SessionAlreadyActive`. This is Governance Sync Action GS-1 (see Section 9).
+- `.github/instructions/auth.instructions.md`:
+  - Regenerated automatically by `/copilot-sync` after GS-1.

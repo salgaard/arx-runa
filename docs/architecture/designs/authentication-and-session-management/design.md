@@ -208,6 +208,7 @@ type SharedSession = Arc<RwLock<Option<SessionKeys>>>;
 - **Authentication** acquires a write lock and replaces `None` with `Some(SessionKeys { … })`.
 
 This model ensures keys are never copied out of the lock guard, concurrent file operations proceed without contention, and the zeroing on timeout is both guaranteed (by `ZeroizeOnDrop`) and sequenced correctly (the write lock cannot be acquired while any reader holds a guard).
+`SessionManager` also tracks a parallel lifecycle enum (`NoSession`, `Active`, `Expired`) so callers can distinguish "never authenticated" from "previous session expired" even though both are represented as `None` in `SharedSession`.
 
 ### Memory locking
 
@@ -240,7 +241,7 @@ All key buffers are locked into physical RAM via `mlock` (Linux) / `VirtualLock`
 
 **State transitions:**
 
-1. **No session → Active**: user provides password; for Tier 2 vaults, the USB key file is also detected (or selected manually). Argon2id + HKDF derive `SessionKeys`. Keys are mlocked. SQLCipher DB is opened with `sqlcipher_key`.
+1. **No session → Active**: user provides password; for Tier 2 vaults, the USB key file is also detected (or selected manually). Argon2id + HKDF derive `SessionKeys`. Keys are mlocked. SQLCipher DB is opened with `sqlcipher_key` in the full integrated flow (wired by Phase 3.1).
 
 2. **Active → Expired**: activity-based timeout fires (default: 15 minutes of inactivity). All keys in `SessionKeys` are zeroed via `zeroize()`. SQLCipher connection is closed. The session-lived temp `rclone.conf` (written from SQLCipher-stored destination credentials at session open) is best-effort overwritten and deleted. The struct is dropped. File operations in progress must complete or be cancelled before zeroing.
 
@@ -261,8 +262,9 @@ All key buffers are locked into physical RAM via `mlock` (Linux) / `VirtualLock`
 - Default: 15 minutes of inactivity
 - A timer resets on every Tauri IPC command invocation (file upload, download, browse, etc.)
 - The timer runs as a `tokio` task. When it fires, it acquires a write lock on `SharedSession` and sets the `Option` to `None`, triggering `ZeroizeOnDrop`
-- If an operation is in progress when the timeout fires, the write lock blocks until all active read guards are released — operations complete naturally before zeroing. Operations are not aborted mid-stream to avoid partial writes.
-- The timeout duration is stored in local config (not SQLCipher — must be readable before authentication)
+- Session zeroization uses two coordinated guards: (1) `SharedSession` read/write lock guards the key-borrow window; (2) an operation counter gate blocks timeout/manual lock until all in-flight operations drop their `OperationGuard`.
+- When timeout/manual lock starts, the operation gate is closed first, then the manager waits for `operation_counter == 0`, then it clears `SharedSession`.
+- The timeout duration is stored in local config (not SQLCipher — must be readable before authentication) at `dirs::config_dir()/arx-runa/config.json` with schema `{ "schema_version": 1, "session_timeout_secs": u64 }`, default `900`, clamp range `[60, 86400]`.
 
 **Timeout UX:**
 - 60 seconds before timeout: frontend shows a warning
@@ -287,6 +289,9 @@ pub enum AuthenticationError {
     #[error("vault header is missing or corrupt")]
     VaultHeaderInvalid,
 
+    #[error("session is already active; call lock() before re-authenticating")]
+    SessionAlreadyActive,
+
     #[error("recovery phrase checksum is invalid")]
     InvalidRecoveryPhrase,
 
@@ -295,7 +300,7 @@ pub enum AuthenticationError {
 }
 ```
 
-`InvalidCredentials` is returned for wrong password, wrong key file, or wrong password + wrong key file — the caller cannot distinguish the cases. `KeyFileNotFound` is only returned when no 32-byte file matches the vault header's BLAKE3 hash — this does not reveal the password status. `InvalidRecoveryPhrase` is returned when BIP-39 checksum validation fails before any Argon2id derivation runs — this is a fast, cheap check that catches transcription errors immediately. `NoRecoverySlot` is returned when the user attempts recovery but `recovery_slots` in the vault header is empty.
+`InvalidCredentials` is returned for wrong password, wrong key file, or wrong password + wrong key file — the caller cannot distinguish the cases. `KeyFileNotFound` is only returned when no 32-byte file matches the vault header's BLAKE3 hash — this does not reveal the password status. `SessionAlreadyActive` is returned when `authenticate()` is called while lifecycle state is already `Active`; caller must `lock()` before re-authentication. `InvalidRecoveryPhrase` is returned when BIP-39 checksum validation fails before any Argon2id derivation runs — this is a fast, cheap check that catches transcription errors immediately. `NoRecoverySlot` is returned when the user attempts recovery but `recovery_slots` in the vault header is empty.
 
 **Timing note:** checksum-invalid recovery phrases fail faster than valid-checksum phrases that proceed into Argon2id and AEAD checks. Arx Runa accepts this timing difference because the threat model excludes remote timing attackers (desktop local app, no recovery API exposed over network). If local malware timing resistance becomes in-scope, add a fixed-cost dummy Argon2id run on checksum failure.
 

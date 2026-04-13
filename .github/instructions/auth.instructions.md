@@ -30,11 +30,17 @@ applyTo: "src-tauri/src/auth/**"
 - Timeout: zeroize all keys, then drop
 - Never persist session keys to disk
 - Session keys live in SessionKeys (src-tauri/src/auth/session.rs) with fields backed by SecureBytes<32>; drop order runs zeroize -> munlock/VirtualUnlock -> free.
+- `SessionManager` (src-tauri/src/auth/session.rs) owns the `NoSession → Active → Expired` state machine; check `state().await` before any session-scoped work.
+- `SessionManager::authenticate(password, key_source, salt, params)` is the only entry to `Active`; re-auth while `Active` returns `SessionAlreadyActive` — call `lock()` first.
+- `reset_timer()` must be called by the IPC dispatcher on every Tauri command invocation while the session is `Active` (Phase 6.1 wires this).
+- Long-running operations must bracket their work with `let _guard = session_manager.begin_operation();` — `lock()` and the timeout task wait for the counter to reach zero before zeroizing.
+- The session timeout is loaded from `dirs::config_dir() / "arx-runa/config.json"` (schema `{ "schema_version": 1, "session_timeout_secs": u64 }`); default 900 s; clamp to `[60, 86400]`.
+- Session events are broadcast on an internal `tokio::sync::broadcast::Sender<SessionEvent>` (`TimeoutWarning { seconds_remaining }` 60 s before expiry, `Locked` after zeroize). Never add secret material to this enum.
 
 ## Errors
 - `InvalidCredentials` for wrong password, wrong key file, or both — caller cannot distinguish the cases
 - `KeyFileNotFound` when no 32-byte file matches the vault header BLAKE3 hash — does not reveal password status
-- Other variants: `MemoryLockFailed`, `VaultHeaderInvalid`, `InvalidRecoveryPhrase`, `NoRecoverySlot`
+- Other variants: `MemoryLockFailed`, `VaultHeaderInvalid`, `InvalidRecoveryPhrase`, `NoRecoverySlot`, `SessionAlreadyActive`
 - Never log key file contents or derived keys
 
 ## Traits

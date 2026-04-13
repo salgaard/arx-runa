@@ -4,13 +4,12 @@
 //! lifecycle, memory locking.
 
 pub mod autodetect;
+pub mod config;
 pub mod device_monitor;
 pub mod error;
-#[allow(dead_code)]
 pub mod kdf;
 pub mod key_source;
 pub mod path_hint;
-#[allow(dead_code)]
 pub mod session;
 pub mod types;
 
@@ -20,8 +19,7 @@ pub use error::{AuthenticationError, KeySourceError};
 pub use kdf::Argon2Params;
 pub use key_source::{FileKeySource, KeySource};
 pub use path_hint::{KeyHintStore, VaultHint};
-#[allow(unused_imports)]
-pub(crate) use session::SessionKeys;
+pub use session::{LifecycleState, OperationGuard, SessionEvent, SessionManager};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use device_monitor::MockDeviceMonitor;

@@ -28,6 +28,10 @@ pub enum AuthenticationError {
     #[error("vault header is missing or corrupt")]
     VaultHeaderInvalid,
 
+    /// `authenticate()` was called while a session was already active.
+    #[error("session is already active; call lock() before re-authenticating")]
+    SessionAlreadyActive,
+
     /// A key-source operation failed.
     #[error(transparent)]
     KeySource(#[from] KeySourceError),
@@ -107,6 +111,14 @@ mod tests {
         assert_eq!(
             AuthenticationError::VaultHeaderInvalid.to_string(),
             "vault header is missing or corrupt",
+        );
+    }
+
+    #[test]
+    fn test_authentication_error_session_already_active_display_matches_design() {
+        assert_eq!(
+            AuthenticationError::SessionAlreadyActive.to_string(),
+            "session is already active; call lock() before re-authenticating",
         );
     }
 
