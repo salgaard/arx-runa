@@ -25,9 +25,9 @@ pub enum KeySourceError {
     #[error("key file has invalid size: {actual} bytes (expected 32)")]
     InvalidSize { actual: usize },
 
-    /// An unrecoverable I/O error occurred while reading the key file.
-    #[error("failed to read key file")]
-    ReadFailed(#[source] io::Error),
+    /// An unrecoverable I/O error occurred while accessing key material or hints.
+    #[error("I/O operation failed")]
+    IoFailed(#[source] io::Error),
 }
 
 #[cfg(test)]

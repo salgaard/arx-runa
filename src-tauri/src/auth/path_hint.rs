@@ -57,7 +57,7 @@ impl KeyHintStore {
         let contents = match fs::read_to_string(&self.file_path) {
             Ok(contents) => contents,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(KeySourceError::ReadFailed(error)),
+            Err(error) => return Err(KeySourceError::IoFailed(error)),
         };
 
         let parsed: HintFile = match serde_json::from_str(&contents) {
@@ -73,27 +73,26 @@ impl KeyHintStore {
         let mut parsed = match fs::read_to_string(&self.file_path) {
             Ok(contents) => serde_json::from_str::<HintFile>(&contents).unwrap_or_default(),
             Err(error) if error.kind() == ErrorKind::NotFound => HintFile::default(),
-            Err(error) => return Err(KeySourceError::ReadFailed(error)),
+            Err(error) => return Err(KeySourceError::IoFailed(error)),
         };
 
         parsed.schema_version = SCHEMA_VERSION;
         parsed.hints.insert(vault_id.to_owned(), hint);
 
         if let Some(parent_directory) = self.file_path.parent() {
-            fs::create_dir_all(parent_directory).map_err(KeySourceError::ReadFailed)?;
+            fs::create_dir_all(parent_directory).map_err(KeySourceError::IoFailed)?;
         }
 
         let temporary_path = self.file_path.with_extension("json.tmp");
         let encoded = serde_json::to_vec_pretty(&parsed)
-            .map_err(|error| KeySourceError::ReadFailed(std::io::Error::other(error)))?;
+            .map_err(|error| KeySourceError::IoFailed(std::io::Error::other(error)))?;
         {
-            let mut file = fs::File::create(&temporary_path).map_err(KeySourceError::ReadFailed)?;
-            file.write_all(&encoded)
-                .map_err(KeySourceError::ReadFailed)?;
-            file.sync_all().map_err(KeySourceError::ReadFailed)?;
+            let mut file = fs::File::create(&temporary_path).map_err(KeySourceError::IoFailed)?;
+            file.write_all(&encoded).map_err(KeySourceError::IoFailed)?;
+            file.sync_all().map_err(KeySourceError::IoFailed)?;
         }
 
-        fs::rename(&temporary_path, &self.file_path).map_err(KeySourceError::ReadFailed)?;
+        fs::rename(&temporary_path, &self.file_path).map_err(KeySourceError::IoFailed)?;
         Ok(())
     }
 }

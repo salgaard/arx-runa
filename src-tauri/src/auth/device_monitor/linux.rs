@@ -1,13 +1,18 @@
 //! Linux `DeviceMonitor` implementation using `udev`.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tokio_stream::Stream;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::auth::device_monitor::{DeviceEvent, DeviceMonitor};
+
+const MOUNT_PATH_RETRY_ATTEMPTS: usize = 20;
+const MOUNT_PATH_RETRY_DELAY: Duration = Duration::from_millis(100);
 
 /// Monitors removable Linux block-device mount events.
 pub struct LinuxDeviceMonitor;
@@ -42,6 +47,7 @@ fn run_udev_loop(sender: mpsc::Sender<DeviceEvent>) -> std::io::Result<()> {
     let socket = udev::MonitorBuilder::new()?
         .match_subsystem_devtype("block", "partition")?
         .listen()?;
+    let mut mounted_paths_by_device: HashMap<PathBuf, PathBuf> = HashMap::new();
 
     for event in socket.iter() {
         if !is_usb_partition(&event) {
@@ -49,16 +55,32 @@ fn run_udev_loop(sender: mpsc::Sender<DeviceEvent>) -> std::io::Result<()> {
         }
 
         let event_type = event.event_type();
-        let Some(device_node) = event.devnode() else {
-            continue;
-        };
-        let Some(mount_path) = resolve_mount_path(device_node) else {
+        let Some(device_node) = event.devnode().map(Path::to_path_buf) else {
             continue;
         };
 
         let device_event = match event_type {
-            udev::EventType::Add => DeviceEvent::Mounted { mount_path },
-            udev::EventType::Remove => DeviceEvent::Unmounted { mount_path },
+            udev::EventType::Add => {
+                let Some(mount_path) = resolve_mount_path_with_retry(
+                    &device_node,
+                    MOUNT_PATH_RETRY_ATTEMPTS,
+                    MOUNT_PATH_RETRY_DELAY,
+                    resolve_mount_path,
+                ) else {
+                    continue;
+                };
+                mounted_paths_by_device.insert(device_node, mount_path.clone());
+                DeviceEvent::Mounted { mount_path }
+            }
+            udev::EventType::Remove => {
+                let Some(mount_path) = mounted_paths_by_device
+                    .remove(&device_node)
+                    .or_else(|| resolve_mount_path(&device_node))
+                else {
+                    continue;
+                };
+                DeviceEvent::Unmounted { mount_path }
+            }
             _ => continue,
         };
 
@@ -68,6 +90,32 @@ fn run_udev_loop(sender: mpsc::Sender<DeviceEvent>) -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_mount_path_with_retry<F>(
+    device_node: &Path,
+    max_attempts: usize,
+    retry_delay: Duration,
+    mut resolver: F,
+) -> Option<PathBuf>
+where
+    F: FnMut(&Path) -> Option<PathBuf>,
+{
+    if max_attempts == 0 {
+        return None;
+    }
+
+    for attempt_index in 0..max_attempts {
+        if let Some(mount_path) = resolver(device_node) {
+            return Some(mount_path);
+        }
+
+        if attempt_index + 1 < max_attempts {
+            std::thread::sleep(retry_delay);
+        }
+    }
+
+    None
 }
 
 /// Returns whether a udev event represents a removable USB partition.
@@ -125,7 +173,11 @@ fn parse_mountinfo_line(line: &str) -> Option<(PathBuf, PathBuf)> {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_mount_path_from_mountinfo;
+    use std::cell::Cell;
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    use super::{resolve_mount_path_from_mountinfo, resolve_mount_path_with_retry};
 
     #[test]
     fn test_resolve_mount_path_parses_sample_mountinfo() {
@@ -137,5 +189,39 @@ mod tests {
             resolve_mount_path_from_mountinfo(mountinfo, std::path::Path::new("/dev/sdb1"));
 
         assert_eq!(mount_path, Some(std::path::PathBuf::from("/media/usb")));
+    }
+
+    #[test]
+    fn test_resolve_mount_path_with_retry_retries_until_match_then_returns_path() {
+        let expected = PathBuf::from("/media/usb");
+        let attempts = Cell::new(0usize);
+
+        let mount_path =
+            resolve_mount_path_with_retry(Path::new("/dev/sdb1"), 3, Duration::ZERO, |_| {
+                let next_attempt = attempts.get() + 1;
+                attempts.set(next_attempt);
+                if next_attempt == 3 {
+                    Some(expected.clone())
+                } else {
+                    None
+                }
+            });
+
+        assert_eq!(mount_path, Some(expected));
+        assert_eq!(attempts.get(), 3);
+    }
+
+    #[test]
+    fn test_resolve_mount_path_with_retry_returns_none_when_attempts_are_zero() {
+        let attempts = Cell::new(0usize);
+
+        let mount_path =
+            resolve_mount_path_with_retry(Path::new("/dev/sdb1"), 0, Duration::ZERO, |_| {
+                attempts.set(attempts.get() + 1);
+                Some(PathBuf::from("/media/usb"))
+            });
+
+        assert_eq!(mount_path, None);
+        assert_eq!(attempts.get(), 0);
     }
 }

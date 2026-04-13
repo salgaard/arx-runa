@@ -39,7 +39,7 @@ jobs:
             libudev-dev
 
       - name: Run Clippy (warnings as errors)
-        run: cargo clippy --workspace --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Run tests
         run: cargo test --workspace --all-targets --all-features

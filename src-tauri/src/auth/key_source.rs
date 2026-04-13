@@ -39,10 +39,10 @@ impl KeySource for FileKeySource {
             Err(error) if error.kind() == ErrorKind::NotFound => {
                 return Err(KeySourceError::NotFound);
             }
-            Err(error) => return Err(KeySourceError::ReadFailed(error)),
+            Err(error) => return Err(KeySourceError::IoFailed(error)),
         };
 
-        let metadata = file.metadata().map_err(KeySourceError::ReadFailed)?;
+        let metadata = file.metadata().map_err(KeySourceError::IoFailed)?;
         if metadata.len() != 32 {
             return Err(KeySourceError::InvalidSize {
                 actual: metadata.len() as usize,
@@ -51,7 +51,7 @@ impl KeySource for FileKeySource {
 
         let mut buffer = Zeroizing::new([0u8; 32]);
         file.read_exact(buffer.as_mut())
-            .map_err(KeySourceError::ReadFailed)?;
+            .map_err(KeySourceError::IoFailed)?;
         Ok(buffer)
     }
 }
@@ -159,16 +159,16 @@ mod tests {
     }
 
     #[test]
-    fn test_file_key_source_returns_read_failed_for_directory_path() {
+    fn test_file_key_source_returns_io_failed_for_directory_path() {
         let directory = tempfile::tempdir().expect("temp directory should be created");
         let key_source = FileKeySource::new(directory.path().to_path_buf());
 
         let error = key_source
             .read_key()
-            .expect_err("directory path must produce read-failed");
+            .expect_err("directory path must produce io-failed");
 
-        let KeySourceError::ReadFailed(_) = error else {
-            panic!("expected read-failed error");
+        let KeySourceError::IoFailed(_) = error else {
+            panic!("expected io-failed error");
         };
     }
 

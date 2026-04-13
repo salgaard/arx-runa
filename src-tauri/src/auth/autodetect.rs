@@ -4,6 +4,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
+use zeroize::Zeroizing;
 
 use crate::auth::error::KeySourceError;
 use crate::crypto::Blake3Hash;
@@ -21,7 +22,7 @@ pub async fn find_key_file(
 
     tokio::task::spawn_blocking(move || scan_blocking(&mount_path, &reference_hash))
         .await
-        .map_err(|join_error| KeySourceError::ReadFailed(std::io::Error::other(join_error)))?
+        .map_err(|join_error| KeySourceError::IoFailed(std::io::Error::other(join_error)))?
 }
 
 /// Performs the blocking scan.
@@ -30,7 +31,7 @@ fn scan_blocking(
     reference_hash: &Blake3Hash,
 ) -> Result<Option<PathBuf>, KeySourceError> {
     if !mount_path.exists() {
-        return Err(KeySourceError::ReadFailed(std::io::Error::new(
+        return Err(KeySourceError::IoFailed(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("mount path does not exist: {}", mount_path.display()),
         )));
@@ -63,12 +64,12 @@ fn scan_blocking(
             Ok(file) => file,
             Err(_) => continue,
         };
-        let mut buffer = [0u8; 32];
-        if file.read_exact(&mut buffer).is_err() {
+        let mut buffer = Zeroizing::new([0u8; 32]);
+        if file.read_exact(buffer.as_mut()).is_err() {
             continue;
         }
 
-        let hash = blake3::hash(&buffer);
+        let hash = blake3::hash(buffer.as_ref());
         if hash.as_bytes() == &reference_hash.0 {
             return Ok(Some(entry.into_path()));
         }
@@ -177,7 +178,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_key_file_returns_read_failed_when_mount_path_does_not_exist() {
+    async fn test_find_key_file_returns_io_failed_when_mount_path_does_not_exist() {
         let missing_mount_path =
             std::env::temp_dir().join(format!("missing-mount-{}", uuid::Uuid::new_v4()));
         let (_, reference_hash) = key_material(0x66);
@@ -186,8 +187,8 @@ mod tests {
             .await
             .expect_err("missing mount path should fail");
 
-        let KeySourceError::ReadFailed(source) = error else {
-            panic!("expected read-failed error");
+        let KeySourceError::IoFailed(source) = error else {
+            panic!("expected io-failed error");
         };
         assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
     }
