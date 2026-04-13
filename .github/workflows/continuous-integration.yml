@@ -31,11 +31,12 @@ jobs:
       - name: Install Tauri system dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            libudev-dev
 
       - name: Run Clippy (warnings as errors)
         run: cargo clippy --workspace --all-features -- -D warnings
