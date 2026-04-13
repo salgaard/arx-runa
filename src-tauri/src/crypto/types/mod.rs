@@ -233,4 +233,16 @@ mod tests {
         let after_zeroize = unsafe { std::slice::from_raw_parts(pointer, 32) };
         assert_eq!(after_zeroize, &[0u8; 32]);
     }
+
+    #[test]
+    fn test_sqlcipher_key_from_bytes_preserves_input() {
+        let sqlcipher_key = SqlcipherKey::from_bytes([0x33u8; 32]);
+        assert_eq!(sqlcipher_key.expose(), &[0x33u8; 32]);
+    }
+
+    #[test]
+    fn test_manifest_key_from_bytes_preserves_input() {
+        let manifest_key = ManifestKey::from_bytes([0x44u8; 32]);
+        assert_eq!(manifest_key.expose(), &[0x44u8; 32]);
+    }
 }

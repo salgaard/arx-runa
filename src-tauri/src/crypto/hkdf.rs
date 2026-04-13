@@ -5,7 +5,6 @@ use crate::crypto::types::{KeyEncryptionKey, ManifestKey, SqlcipherKey};
 use hkdf::Hkdf;
 use secrecy::SecretBox;
 use sha2::Sha256;
-use zeroize::Zeroizing;
 
 /// Fixed HKDF-SHA256 salt used for all vault-level derivations.
 pub(crate) const HKDF_SALT: &[u8] = b"arx-runa-v1";
@@ -69,9 +68,11 @@ fn expand_into_secret_box(
     master_key_bytes: &[u8; 32],
     info: &[u8],
 ) -> Result<SecretBox<[u8; 32]>, CryptoError> {
-    let mut scratch: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-    expand_vault_key_into(master_key_bytes, info, &mut scratch)?;
-    Ok(SecretBox::new(Box::new(*scratch)))
+    let mut expand_result = Ok(());
+    let secret_box = SecretBox::<[u8; 32]>::init_with_mut(|buffer| {
+        expand_result = expand_vault_key_into(master_key_bytes, info, buffer);
+    });
+    expand_result.map(|()| secret_box)
 }
 
 #[cfg(test)]

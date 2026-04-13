@@ -38,8 +38,8 @@ jobs:
             patchelf \
             libudev-dev
 
-      - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --all-features
+      - name: Run Clippy (warnings as errors)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Run tests
         run: cargo test --workspace --all-targets --all-features

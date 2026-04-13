@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use tokio::sync::{RwLock, broadcast, oneshot, watch};
+use tokio::sync::{RwLock, Semaphore, broadcast, oneshot, watch};
 use tokio::task::JoinHandle;
 use zeroize::Zeroizing;
 
@@ -123,6 +123,7 @@ pub struct SessionManager {
     lifecycle: Arc<RwLock<LifecycleState>>,
     timeout: Duration,
     pre_warning_duration: Duration,
+    authenticate_gate: Arc<Semaphore>,
     timer: Arc<tokio::sync::Mutex<Option<TimerHandle>>>,
     operation_counter_sender: watch::Sender<u32>,
     operation_counter_receiver: watch::Receiver<u32>,
@@ -162,6 +163,7 @@ impl SessionManager {
             lifecycle: Arc::new(RwLock::new(LifecycleState::NoSession)),
             timeout,
             pre_warning_duration: Duration::from_secs(PRE_WARNING_SECONDS),
+            authenticate_gate: Arc::new(Semaphore::new(1)),
             timer: Arc::new(tokio::sync::Mutex::new(None)),
             operation_counter_sender,
             operation_counter_receiver,
@@ -180,6 +182,7 @@ impl SessionManager {
             lifecycle: Arc::new(RwLock::new(LifecycleState::NoSession)),
             timeout,
             pre_warning_duration,
+            authenticate_gate: Arc::new(Semaphore::new(1)),
             timer: Arc::new(tokio::sync::Mutex::new(None)),
             operation_counter_sender,
             operation_counter_receiver,
@@ -206,6 +209,16 @@ impl SessionManager {
         salt: &[u8; 32],
         params: &Argon2Params,
     ) -> Result<(), AuthenticationError> {
+        let _authenticate_permit = self
+            .authenticate_gate
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|error| {
+                tracing::error!(?error, "authenticate gate unexpectedly closed");
+                AuthenticationError::InvalidCredentials
+            })?;
+
         if self.state().await == LifecycleState::Active {
             return Err(AuthenticationError::SessionAlreadyActive);
         }
@@ -705,6 +718,24 @@ mod session_manager_tests {
             .expect_err("re-authentication while active must fail");
 
         assert!(matches!(error, AuthenticationError::SessionAlreadyActive));
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_concurrent_calls_allow_only_one_active_transition() {
+        let manager = SessionManager::with_timeout(Duration::from_secs(5));
+
+        let (first, second) = tokio::join!(
+            manager.authenticate(b"password", None, &TEST_SALT, &TEST_PARAMS),
+            manager.authenticate(b"password", None, &TEST_SALT, &TEST_PARAMS),
+        );
+
+        let success_count = usize::from(first.is_ok()) + usize::from(second.is_ok());
+        assert_eq!(success_count, 1);
+        assert!(
+            matches!(first, Err(AuthenticationError::SessionAlreadyActive))
+                || matches!(second, Err(AuthenticationError::SessionAlreadyActive))
+        );
+        assert_eq!(manager.state().await, LifecycleState::Active);
     }
 
     #[tokio::test]
