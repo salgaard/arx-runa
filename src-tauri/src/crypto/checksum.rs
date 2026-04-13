@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn test_verify_checksum_rejects_wrong_expected_hash() {
         let blob = vec![0xFFu8; 32];
-        let wrong_expected = compute_checksum(&vec![0x00u8; 32]);
+        let wrong_expected = compute_checksum(&[0x00u8; 32]);
 
         let result = verify_checksum(blob, &wrong_expected);
         assert_matches!(result, Err(CryptoError::ChecksumMismatch));
