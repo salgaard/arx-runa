@@ -55,7 +55,7 @@ This sub-phase roadmap decomposes Phase 0 (Project Scaffolding) into 3 independe
    - **Estimated**: ~100 lines created, no test code (empty skeleton)
 
 3. **[Phase 0.3: Frontend Build Pipeline and Verification](0.3-frontend-build-pipeline.md)**
-   - Write `Trunk.toml` with Tailwind v4 pre-build hook (`@tailwindcss/cli`)
+   - Write/update `Trunk.toml` with Tailwind v4 pre-build hook (`node ./node_modules/@tailwindcss/cli/dist/index.mjs ...`)
    - Create `input.css` with `@import "tailwindcss"` and `@theme {}` brand token block (iron/stone/steel/rune/bone from `docs/arx-runa-brand.css`)
    - Update `index.html` as Trunk entry point
    - Verify `cargo tauri dev` launches a window and `cargo build --release` succeeds
@@ -93,9 +93,9 @@ cargo build --release
 
 ### Manual Testing Checklist
 
-- Phase 0.1: `cargo metadata` shows `src-tauri` as a workspace member; no top-level `[[bin]]` target
+- Phase 0.1: `cargo metadata` shows `src-tauri` as a workspace member; root `Cargo.toml` frontend target declaration matches template output (currently `[[bin]]`)
 - Phase 0.2: All six module paths exist; `cargo check` reports no errors or unresolved modules
-- Phase 0.3: Tauri window appears with default Leptos content; Tailwind brand token classes (`bg-iron`, `text-bone`, `text-rune`) compile without warnings
+- Phase 0.3: Tauri window appears with default Leptos content; generated `dist/output-*.css` contains brand token custom properties (`--color-iron`, `--color-bone`, `--color-rune`)
 
 ---
 
@@ -105,19 +105,13 @@ cargo build --release
 
 ---
 
-## Documentation Impact
-
-- **Phase 0.1**: No documentation updates
-- **Phase 0.2**: No documentation updates
-- **Phase 0.3**: Update `docs/guides/development.md` with Tauri build and run instructions; update `docs/roadmap.md` to mark Phase 0 complete
-
----
-
 ## Notes
 
 - **`gen` keyword**: Edition 2024 reserves `gen`. `rand = "0.10"` satisfies the `>= 0.9` requirement and is the current stable. This is declared in 0.2 but validated once the project compiles.
 - **Leptos template version**: `cargo create-tauri-app` generates Leptos 0.6 code. During 0.1, update the generated `Cargo.toml` deps to `leptos = "0.8"` and add `leptos_meta`, `leptos_router`, `console_log`, `log`, `serde-wasm-bindgen` before first compilation.
 - **Tailwind v4 — no config file**: Delete any `tailwind.config.js` the template generates. Tailwind v4 uses CSS `@theme {}` in `input.css` and auto-detects source files. No `content` paths required.
+- **Tailwind build output naming**: Trunk fingerprints CSS output files in `dist/` (for example `output-<hash>.css`). Validate token presence against the generated `output-*.css` asset rather than expecting a literal `dist/output.css`.
+- **Windows Trunk hook reliability**: Prefer `node ./node_modules/@tailwindcss/cli/dist/index.mjs ...` over `npx @tailwindcss/cli ...` in `Trunk.toml` hooks.
 - **Trunk dev port**: Default Trunk dev server is `:1420`. Confirm `tauri.conf.json`'s `devUrl` matches.
 - **Windows CI**: The CI workflow runs on `ubuntu-latest`. The `bundled-sqlcipher-vendored-openssl` feature compiles OpenSSL from source — confirm the Tauri system dep install step (already in the workflow) includes all required headers.
 

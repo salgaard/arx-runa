@@ -1,7 +1,7 @@
 # Arx Runa — Cryptographic Primitives Design
 
 > Status: Design complete. Implementation target: Phase 1.
-> Last updated: 2026-04-12 (reviewed)
+> Last updated: 2026-04-13 (reviewed)
 
 ---
 
@@ -12,7 +12,7 @@
 - XChaCha20-Poly1305 AEAD encryption with mandatory AAD binding
 - Per-file random key generation, wrapping, and unwrapping
 - BLAKE3 checksums over encrypted blobs
-- All keys secured with `ZeroizeOnDrop` + `Secret<T>`
+- All keys secured with `ZeroizeOnDrop` + `SecretBox<[u8; 32]>`
 
 ## Contract Surface
 
@@ -82,11 +82,11 @@ RFC 5869 HKDF is used to derive three purpose-specific keys from `master_key`. E
 ### Rust Signature
 
 ```rust
-/// Derives vault-level keys from the master key.
+/// Derives vault-level keys from the master key bytes.
 ///
 /// # Panics
 /// Panics if HKDF expansion fails (should never happen with valid inputs).
-pub fn derive_vault_keys(master_key: &MasterKey) -> VaultKeys;
+pub fn derive_vault_keys(master_key_bytes: &[u8; 32]) -> VaultKeys;
 
 pub struct VaultKeys {
     pub key_encryption_key: KeyEncryptionKey,
@@ -367,27 +367,27 @@ pub fn decrypt_chunk(
 
 ## Type Definitions
 
-### Key Types (all `ZeroizeOnDrop` + `Secret<T>`)
+### Key Types (all `ZeroizeOnDrop` + `SecretBox<[u8; 32]>`)
 
 ```rust
-use secrecy::Secret;
+use secrecy::SecretBox;
 use zeroize::ZeroizeOnDrop;
 
 /// 256-bit file encryption key.
 #[derive(ZeroizeOnDrop)]
-pub struct FileKey(Secret<[u8; 32]>);
+pub struct FileKey(SecretBox<[u8; 32]>);
 
 /// 256-bit key encryption key (wraps file keys).
 #[derive(ZeroizeOnDrop)]
-pub struct KeyEncryptionKey(Secret<[u8; 32]>);
+pub struct KeyEncryptionKey(SecretBox<[u8; 32]>);
 
 /// 256-bit SQLCipher key.
 #[derive(ZeroizeOnDrop)]
-pub struct SqlcipherKey(Secret<[u8; 32]>);
+pub struct SqlcipherKey(SecretBox<[u8; 32]>);
 
 /// 256-bit manifest backup key.
 #[derive(ZeroizeOnDrop)]
-pub struct ManifestKey(Secret<[u8; 32]>);
+pub struct ManifestKey(SecretBox<[u8; 32]>);
 
 /// Wrapped file key (72 bytes: nonce + encrypted key + tag).
 pub struct WrappedFileKey([u8; 72]);
@@ -442,6 +442,9 @@ pub enum CryptoError {
 }
 ```
 
+`KeyUnwrapFailed` is reserved for key-wrapping call sites. Authentication
+failures in decrypt and unwrap flows still map to `DecryptionFailed`.
+
 ---
 
 ## Module Structure
@@ -451,16 +454,8 @@ src-tauri/src/crypto/
 ├── mod.rs                  # Re-exports public API
 ├── error.rs                # CryptoError enum
 ├── types/
-│   ├── mod.rs              # Re-exports types
-│   ├── file_key.rs         # FileKey
-│   ├── key_encryption_key.rs
-│   ├── sqlcipher_key.rs
-│   ├── manifest_key.rs
-│   ├── wrapped_file_key.rs
-│   ├── file_id.rs          # FileId newtype
-│   ├── chunk_index.rs      # ChunkIndex newtype
-│   └── blake3_hash.rs      # Blake3Hash
-├── hkdf.rs                 # derive_vault_keys()
+│   └── mod.rs              # Key/domain newtypes (Phase 1.1 baseline)
+├── hkdf.rs                 # derive_vault_keys(), VaultKeys
 ├── nonce.rs                # generate_nonce()
 ├── encrypt_chunk.rs        # encrypt_chunk()
 ├── decrypt_chunk.rs        # decrypt_chunk()
@@ -468,6 +463,8 @@ src-tauri/src/crypto/
 ├── checksum.rs             # compute_checksum()
 └── generate_file_key.rs    # generate_file_key()
 ```
+
+Phase 1.1 keeps key/domain newtypes in `types/mod.rs`. Split-per-type files are optional follow-up refactors if the file grows beyond maintainable size.
 
 ---
 
@@ -497,8 +494,8 @@ src-tauri/src/crypto/
 | `test_derive_vault_keys_deterministic` | Same `master_key` produces same derived keys |
 | `test_derive_vault_keys_different_inputs` | Different `master_key` produces different derived keys |
 | `test_checksum_detects_corruption` | Flipping a byte changes the checksum |
-| `test_zeroize_file_key_on_drop` | After drop, memory contains zeros (unsafe inspection) |
-| `test_zeroize_kek_on_drop` | After drop, memory contains zeros (unsafe inspection) |
+| `test_file_key_zeroize_trait_clears_memory` | Unsafe pointer inspection confirms `FileKey` bytes are zeroized before drop while allocation is still alive |
+| `test_key_encryption_key_zeroize_trait_clears_memory` | Unsafe pointer inspection confirms `KeyEncryptionKey` bytes are zeroized before drop while allocation is still alive |
 
 ### Property-Based Tests (proptest)
 
@@ -526,7 +523,7 @@ Both attacks are prevented by mandatory AAD.
 
 ### Zeroization
 
-All key types implement `ZeroizeOnDrop` to ensure sensitive key material is overwritten before memory is released. Tests verify this behavior using unsafe pointer inspection.
+All key types implement `ZeroizeOnDrop` to ensure sensitive key material is overwritten before memory is released. Tests verify this behavior using unsafe pointer inspection while the backing allocation is still alive (no post-drop reads).
 
 ### Key Non-Commitment
 
@@ -549,7 +546,7 @@ blake3 = "1"               # BLAKE3 checksum
 rand = "0.10"              # CSPRNG — must be >= 0.9 for Rust edition 2024 (`gen` keyword reserved); 0.10 is current stable
 uuid = { version = "1", features = ["v4"] }
 zeroize = { version = "1", features = ["derive"] }
-secrecy = "0.10"           # Secret<T> wrapper
+secrecy = "0.10"           # SecretBox<[u8; 32]> wrapper
 thiserror = "2"            # Error handling
 ```
 

@@ -130,15 +130,6 @@ cargo test sharing::revocation
 
 ---
 
-## Documentation Impact
-
-**Files to create/update after sub-phase completion**:
-- Phase 5.1: No doc updates required
-- Phase 5.2: No doc updates required
-- Phase 5.3: Update `docs/threat-model/` with MITM-on-key-exchange and ciphertext-exposure-via-public-blobs threat model additions; update `docs/roadmap.md` to mark Phase 5 complete
-
----
-
 ## Notes
 
 ### Design Clarifications

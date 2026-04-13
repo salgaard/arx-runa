@@ -150,16 +150,6 @@ cargo test ui::security
 
 ---
 
-## Documentation Impact
-
-**Files to create/update after sub-phase completion**:
-- Phase 6.1: Create `docs/architecture-decisions/011-ipc-error-sanitisation.md`
-- Phase 6.2: No documentation updates required
-- Phase 6.3: No documentation updates required
-- Phase 6.4: Add threat model entries for compromised WebView, clipboard attacks, and brute-force authentication; update `docs/roadmap.md` Phase 6 to mark complete; create architecture diagram for IPC command surface
-
----
-
 ## Notes
 
 - **`withGlobalTauri: true`**: Required in `tauri.conf.json` for the Leptos WASM IPC wrapper to access `window.__TAURI__.core.invoke`. Treat this as a Phase 6.1/6.2 precondition; Phase 6.4 verifies and hardens the surrounding CSP/capabilities.

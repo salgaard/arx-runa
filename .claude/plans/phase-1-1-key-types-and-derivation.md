@@ -1,7 +1,7 @@
 ---
 title: "Phase 1.1 — Key Types, HKDF Derivation, and Nonce Generation"
 created: "2026-04-13T00:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 1
 sub-phase: "1.1"
 design-document: "docs/architecture/designs/cryptographic-primitives/design.md"

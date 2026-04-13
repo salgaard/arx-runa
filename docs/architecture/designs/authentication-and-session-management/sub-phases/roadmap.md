@@ -111,17 +111,6 @@ cargo clippy -- -D warnings  # No new warnings
 
 ---
 
-## Documentation Impact
-
-**Files to create/update after sub-phase completion**:
-- Phase 2.1: No doc updates
-- Phase 2.2: No doc updates
-- Phase 2.3: No doc updates
-- Phase 2.4: Create `docs/threat-model/session-boundaries.md` — what `mlock` protects against and the scope of memory protection guarantees
-- Final: Update `docs/roadmap.md` to mark Phase 2 complete
-
----
-
 ## Notes
 
 ### Design Clarifications

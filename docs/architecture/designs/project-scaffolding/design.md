@@ -1,7 +1,7 @@
 # Arx Runa — Project Scaffolding Design
 
 > Status: Design complete. Implementation target: Phase 0.
-> Last updated: 2026-04-12
+> Last updated: 2026-04-13
 > **Sub-phase roadmap**: [`sub-phases/roadmap.md`](sub-phases/roadmap.md)
 
 ---
@@ -160,7 +160,7 @@ All dependencies use semver ranges. `Cargo.lock` pins exact versions.
 | `blake3` | `"1"` | BLAKE3 checksums |
 | `rand` | `"0.10"` | CSPRNG (`>= 0.9` required for edition 2024 — `gen` keyword; 0.10 is current stable) |
 | `zeroize` | `"1"` | Memory zeroisation (with `derive` feature) |
-| `secrecy` | `"0.10"` | `Secret<T>` wrappers |
+| `secrecy` | `"0.10"` | `SecretBox<T>` wrappers |
 | `x25519-dalek` | `"2"` | X25519 identity-key operations (Phase 5); keep aligned with HPKE transitive version to avoid duplicate X25519 stacks |
 
 #### Storage (Phase 3+)
@@ -280,8 +280,8 @@ target = "index.html"
 
 [[hooks]]
 stage = "pre_build"
-command = "npx"
-command_arguments = ["@tailwindcss/cli", "-i", "input.css", "-o", "output.css"]
+command = "node"
+command_arguments = ["./node_modules/@tailwindcss/cli/dist/index.mjs", "-i", "input.css", "-o", "output.css"]
 ```
 
 **Note**: Tailwind v4 separates the CLI from the main `tailwindcss` package. Install both:
@@ -289,6 +289,8 @@ command_arguments = ["@tailwindcss/cli", "-i", "input.css", "-o", "output.css"]
 ```json
 { "devDependencies": { "tailwindcss": "^4", "@tailwindcss/cli": "^4" } }
 ```
+
+**Windows compatibility note**: Trunk hooks can fail to spawn `npx` reliably on Windows environments. Calling the CLI entrypoint through `node` is the portable default for this project.
 
 ### Tailwind Integration
 
@@ -329,7 +331,7 @@ Tailwind v4 uses a CSS-first configuration. There is no `tailwind.config.js`. Th
 }
 ```
 
-Generated utility classes: `bg-iron`, `bg-stone`, `text-bone`, `text-rune`, `border-steel`, `font-mono`, etc. Tailwind v4 auto-detects class usage in `*.html` and `./src/**/*.rs` — no `content` path configuration required.
+`@theme` variables are always emitted to generated CSS (`--color-iron`, `--color-stone`, etc.). Utility classes such as `bg-iron` or `text-rune` are emitted on demand when those classes are referenced in source. Tailwind v4 auto-detects usage in `*.html` and `./src/**/*.rs` — no `content` path configuration required.
 
 ---
 

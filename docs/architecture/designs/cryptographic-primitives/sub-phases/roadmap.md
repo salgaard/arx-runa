@@ -17,7 +17,7 @@ This sub-phase roadmap decomposes the cryptographic primitives design (484 lines
 **Rationale for decomposition**:
 -  **Size**: Exceeds ~100-150 lines (474 lines total)
 -  **Trait boundaries**: Key types, HKDF derivation, and nonce generation are logically separable from AEAD operations and from key-wrapping concerns
--  **Error surface**: Defines 3 distinct `CryptoError` variants (`DecryptionFailed`, `InvalidBlobFormat`, `KeyUnwrapFailed`) each requiring independent test coverage
+-  **Error surface**: Defines 4 distinct `CryptoError` variants (`DecryptionFailed`, `InvalidBlobFormat`, `KeyUnwrapFailed`, `ChecksumMismatch`) each requiring independent test coverage
 -  **Multi-step flows**: Key derivation → chunk encryption → key wrapping forms a strict dependency chain; each step is independently testable
 
 **Implementation strategy**: Establish key types and derivation primitives first (1.1), then build AEAD encrypt/decrypt on top of those types (1.2), then add key-wrapping and BLAKE3 checksums as the final layer (1.3).
@@ -42,7 +42,7 @@ This sub-phase roadmap decomposes the cryptographic primitives design (484 lines
 ## Sub-Phases
 
 1. **[Phase 1.1: Key Types, HKDF Derivation, and Nonce Generation](1.1-key-types-and-derivation.md)**
-   - All key and domain newtypes with `ZeroizeOnDrop` + `Secret<T>`
+   - All key and domain newtypes with `ZeroizeOnDrop` + `SecretBox<[u8; 32]>`
    - `CryptoError` enum
    - `derive_vault_keys` via HKDF-SHA256
    - `generate_nonce` via CSPRNG
@@ -89,15 +89,6 @@ This ensures new code does not break earlier sub-phases.
 - **Phase 1.1**: Requires `security-reviewer` agent review (HKDF key separation, info-string uniqueness, zeroization of derived keys)
 - **Phase 1.2**: Requires `security-reviewer` agent review (AAD binding correctness, nonce handling, wire format parsing)
 - **Phase 1.3**: Requires `security-reviewer` agent review (key-wrapping correctness, zeroize verification on unwrapped key)
-
----
-
-## Documentation Impact
-
-**Files to create/update after sub-phase completion**:
-- Phase 1.1: No doc updates needed
-- Phase 1.2: No doc updates needed
-- Phase 1.3: Update `docs/architecture/designs/cryptographic-primitives/diagrams/key-derivation-tree.md` if implementation diverges from design; update `docs/roadmap.md` to mark Phase 1 complete
 
 ---
 

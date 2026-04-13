@@ -127,15 +127,6 @@ This ensures new code doesn't break earlier sub-phases.
 
 ---
 
-## Documentation Impact
-
-**Files to create/update after sub-phase completion**:
-- Phase [X.1]: [doc file updates]
-- Phase [X.2]: [doc file updates]
-- Final: Update `docs/roadmap.md` to mark phase complete
-
----
-
 ## Notes and Considerations
 
 ### Design Clarifications

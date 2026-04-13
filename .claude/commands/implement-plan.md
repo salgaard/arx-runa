@@ -2,6 +2,8 @@ Implement the saved plan: $ARGUMENTS
 
 **Implementer-agnostic**: this command is designed to be run by any CLI agent that can read `.claude/` resources (Claude Code, Copilot CLI with alternate models, etc.). It assumes no specific model and no human in the loop beyond the hard gates below. Interactive confirmation is reserved for destructive or ambiguous actions — routine checks pass or fail, they do not prompt.
 
+**Execution contract (hard)**: for Arx Runa plans, code implementation must be performed through the `rust-implementer` agent when `implementation-agent: rust-implementer` is declared in plan frontmatter. If that requirement cannot be satisfied, halt and block the plan; do not silently fall back to manual implementation.
+
 ## Step 1 — Resolve the plan file
 
 Locate the plan file from $ARGUMENTS:
@@ -45,22 +47,31 @@ Before touching the plan, verify the working environment is sane. Any failure he
    - Extract the specific sub-phase section (e.g., "Phase 4.1: ...").
    - Note the dependencies (e.g., "Depends on: Phase 4.1").
    - Check if prerequisite sub-phases are complete: look for plan files matching the prerequisite pattern (e.g., `phase-4-1-*.md`) with `status: implemented`. If prerequisite is missing or not implemented, halt with the list of missing prerequisites.
-8. Update `status` to `in-progress` in the plan file's frontmatter.
+8. **Execution-agent gate** (hard):
+   - Require frontmatter field `implementation-agent`. If missing, halt with: "Plan missing `implementation-agent`. Re-run `/plan` or add the field before `/implement-plan`."
+   - Require `implementation-agent: rust-implementer`. If set to any other value, halt with: "Plan requires unsupported implementation agent `<value>`. This command only permits `rust-implementer`."
+   - Require frontmatter field `test-agent-required` (`true`/`false`). If missing, halt with: "Plan missing `test-agent-required`. Re-run `/plan` or add the field before `/implement-plan`."
+   - Parse the Testing Strategy for an explicit "Invoke test-writer agent? YES/NO" decision.
+   - If the Testing Strategy decision is missing or ambiguous, halt.
+   - If Testing Strategy says YES but `test-agent-required` is not `true`, halt.
+   - If Testing Strategy says NO but `test-agent-required` is not `false`, halt.
+9. Update `status` to `in-progress` in the plan file's frontmatter.
 
 ## Step 4 — Implement
 
 Follow the **Approach** section of the plan step by step, in order.
 
-1. Use the `rust-implementer` agent to implement each step following Arx Runa coding standards, referencing `.claude/reference/rust-patterns.md` and `docs/architecture/design-invariants.md`.
-2. After each Approach step, run `cargo check --workspace` as a fast fail-check. If it breaks, fix it before moving to the next step — don't let compile errors accumulate.
-3. **Security review** is driven by the plan's **Security implications** section, not by an automatic path trigger. Read that section and act:
+1. **Mandatory implementation agent**: execute every Approach step via the `rust-implementer` agent, referencing `.claude/reference/rust-patterns.md` and `docs/architecture/design-invariants.md`.
+2. **No manual fallback**: direct code edits by the invoking agent are prohibited, except plan-file status/log/deviation updates. If `rust-implementer` is unavailable or fails repeatedly on a step, follow the Plan-deviation protocol and halt.
+3. After each Approach step, run `cargo check --workspace` as a fast fail-check. If it breaks, fix it before moving to the next step — don't let compile errors accumulate.
+4. **Security review** is driven by the plan's **Security implications** section, not by an automatic path trigger. Read that section and act:
    - **If `Invoke security-reviewer agent?` is YES** → after implementation is complete (or at a sensible midpoint for long runs), invoke `security-reviewer` on the touched files under `src-tauri/src/crypto/`, `src-tauri/src/auth/`, or `src-tauri/src/storage/`. Pass the plan's "What the reviewer should check" list as focus. Fix any **CRITICAL** findings before continuing. Record **WARNING** and **NOTE** findings in the Implementation Log but do not block on them.
    - **If `Invoke security-reviewer agent?` is NO** → skip the review. The plan's rationale stands. Record the rationale in the Implementation Log.
    - **Drift check (always runs, regardless of YES/NO)**: compare the set of files actually modified under `src-tauri/src/{crypto,auth,storage}/` against the plan's **Expected sensitive path set**. If the implementation touched any sensitive file that the plan did not anticipate, this is a **Plan Deviation** — the plan under-scoped the security surface. Halt via the Plan-deviation protocol below: stash the unanticipated change, append a `## Plan Deviation` section naming the file(s), set `status: blocked`, and report. Do not silently auto-invoke `security-reviewer` to paper over the scope drift; surfacing the under-scope is the point. The user revises the plan (or the sub-phase) and re-runs.
 
 ### Plan-deviation protocol
 
-If any Approach step cannot be executed as written — signature won't compile, file state is unexpected, a cited dependency is missing, the inlined DDL doesn't match the current schema, a trait signature from the plan turns out to be infeasible — **stop implementing and do not guess**. Instead:
+If any Approach step cannot be executed as written — signature won't compile, file state is unexpected, a cited dependency is missing, the inlined DDL doesn't match the current schema, a trait signature from the plan turns out to be infeasible, or the required `rust-implementer`/`test-writer` agent cannot be used as mandated — **stop implementing and do not guess**. Instead:
 
 1. Revert or stash any partial work for that step so the repo is in a consistent state.
 2. Append a `## Plan Deviation` section to the plan file with:
@@ -78,15 +89,17 @@ A plan deviation is not a failure — it means the plan was wrong, and the corre
 Read the plan's **Testing Strategy** section:
 - If "Invoke test-writer agent?" is checked **YES**:
   1. Parse the reason field to understand test focus (adversarial, property-based, coverage).
-  2. Invoke the `test-writer` agent with the specific focus:
-     - For adversarial tests: `/test adversarial` or direct `test-writer` invocation with the relevant module paths.
-     - For property-based tests: `test-writer` with the proptest requirement.
-     - For coverage gaps: `/test coverage` first, then `test-writer` if below target.
+  2. Invoke the `test-writer` agent with the specific focus (mandatory; no substitution):
+      - For adversarial tests: `/test adversarial` or direct `test-writer` invocation with the relevant module paths.
+      - For property-based tests: `test-writer` with the proptest requirement.
+      - For coverage gaps: `/test coverage` first, then `test-writer` if below target.
   3. Run `cargo test` after `test-writer` completes.
   4. Report test results and any new failures.
-- If "Invoke test-writer agent?" is checked **NO** or unchecked:
+- If "Invoke test-writer agent?" is checked **NO**:
+  - Do not invoke `test-writer`.
   - Rely on the implementer's inline tests.
   - Proceed to `cargo test` and `cargo clippy -- -D warnings` verification.
+- If the decision is unchecked or ambiguous, halt at Step 3's execution-agent gate.
 
 ### Validation checkpoint
 
@@ -107,14 +120,15 @@ Read the plan's **Testing Strategy** section:
 1. Update `status:` to `implemented` in the plan file's frontmatter.
 
 2. Append an **Implementation Log** section to the plan file with:
-   - **Date** — ISO 8601 datetime
-   - **Branch** — the branch recorded in Step 2
-   - **Files changed** — list of modified / created files
-   - **Test results** — `cargo test` summary (pass count, any skipped or failing)
-   - **Clippy results** — clean / warnings introduced / pre-existing noted
-   - **Security review** — agent findings if run, or "N/A" if no sensitive modules touched
-   - **Deviations from plan** — any small adjustments made (large deviations should have halted at Step 4's deviation protocol)
-   - **Documentation flagged** — verbatim list from the plan's **Documentation impact** section (do **not** cross-reference roadmap docs, diagrams, or ADRs here — that's the job of a separate documentation pass)
+    - **Date** — ISO 8601 datetime
+    - **Branch** — the branch recorded in Step 2
+    - **Agent evidence** — table with `Approach step | Agent | Agent ID | Outcome`; include one `rust-implementer` record per implemented step, plus `test-writer` / `security-reviewer` entries when used
+    - **Files changed** — list of modified / created files
+    - **Test results** — `cargo test` summary (pass count, any skipped or failing)
+    - **Clippy results** — clean / warnings introduced / pre-existing noted
+    - **Security review** — agent findings if run, or "N/A" if no sensitive modules touched
+    - **Deviations from plan** — any small adjustments made (large deviations should have halted at Step 4's deviation protocol)
+    - **Documentation flagged** — verbatim list from the plan's **Documentation impact** section (do **not** cross-reference roadmap docs, diagrams, or ADRs here — that's the job of a separate documentation pass)
 
 3. **Do not commit, push, or open a pull request.** Leave the working tree dirty. The user inspects the diff and decides what to commit. If the implementer's CLI has autonomous commit behaviour, it must be suppressed here.
 
@@ -124,6 +138,7 @@ Read the plan's **Testing Strategy** section:
 ```
 ✓ Phase [X.Y] implementation complete — status: implemented
 ✓ Branch: [branch]
+✓ Agent evidence: [summary]
 ✓ Tests: [summary]
 ✓ Clippy: [clean / N warnings]
 → Validation checkpoint (manual): [checkpoint description from sub-roadmap]
@@ -134,4 +149,4 @@ Read the plan's **Testing Strategy** section:
 ```
 
 **If this is a full-phase or ad-hoc plan**:
-Report what was implemented, branch, test results, clippy results, files changed, and the verbatim Documentation impact list. Do not cross-reference or audit the doc state.
+Report what was implemented, branch, agent evidence summary, test results, clippy results, files changed, and the verbatim Documentation impact list. Do not cross-reference or audit the doc state.

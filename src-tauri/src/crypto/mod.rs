@@ -4,4 +4,14 @@
 //! management, BLAKE3 checksums.
 
 pub mod error;
+pub mod hkdf;
+pub mod nonce;
 pub mod types;
+
+pub use error::CryptoError;
+pub use hkdf::{VaultKeys, derive_vault_keys};
+pub use nonce::generate_nonce;
+pub use types::{
+    Blake3Hash, ChunkIndex, FileId, FileKey, KeyEncryptionKey, ManifestKey, SqlcipherKey,
+    WrappedFileKey,
+};

@@ -99,16 +99,6 @@ cargo clippy -- -D warnings  # No new warnings
 
 ---
 
-## Documentation Impact
-
-**Files to create/update after sub-phase completion**:
-- Phase 3.1: No documentation updates
-- Phase 3.2: No documentation updates
-- Phase 3.3: Create architecture diagram for chunk pipeline data flow in `docs/architecture/diagrams/`
-- Final: Update `docs/roadmap.md` to mark Phase 3 complete
-
----
-
 ## Notes
 
 - **SQLCipher keying**: The `sqlcipher_key` must be applied via `PRAGMA key` immediately after opening the connection, before any schema or data access. Failure to do so opens the database unencrypted.

@@ -2,6 +2,8 @@ Plan the implementation of: $ARGUMENTS
 
 **Implementer context**: plans produced by this command are typically handed off to Copilot Codex (or another agent with no conversation context) for implementation. Write the plan as a self-contained artefact: inline trait signatures, error enums, and DDL verbatim rather than pointing to them; use absolute file paths; do not assume the reader can infer intent from prior discussion.
 
+**Execution contract (hard)**: plans produced here must be executable through the `rust-implementer` agent for code changes. Do not leave agent choice implicit. Emit explicit agent metadata so `/implement-plan` can fail closed when required fields are missing or inconsistent.
+
 ## Step 1 — Detect roadmap phase and sub-phase
 
 Check whether $ARGUMENTS references a roadmap phase or sub-phase. Match patterns like:
@@ -21,7 +23,7 @@ Check whether $ARGUMENTS references a roadmap phase or sub-phase. Match patterns
 **If a full phase is matched**:
 1. Read `docs/roadmap.md`
 2. Extract the matching phase block: Objective, Depends on, Deliverables,
-   Documentation, and Parallelisable with sections
+   and Parallelisable with sections
 3. Check for a sub-phase roadmap at `docs/architecture/designs/<design-name>/sub-phases/roadmap.md`:
    - If found: notify the user that a sub-phase roadmap exists and suggest using `/plan <N>.<subphase>` for focused planning, or proceed with full-phase plan
    - If not found: proceed with full-phase planning
@@ -91,12 +93,13 @@ Structure the plan as follows:
      roadmap
    - **If sub-phase**: include dependencies from the sub-roadmap (e.g., "Depends on Phase 4.1"), estimated scope, and any implementation notes
 3. **Design Concerns / Open Questions** — findings from Step 1.75. Each entry:
-   - **Concern** — one-line summary of the issue
-   - **Source** — where in the sub-phase / design it appears (line numbers or section)
-   - **Impact** — what breaks or gets guessed if left unresolved
-   - **Classification** — Blocking or Non-blocking
-   - **Resolution** — for blocking: what needs to change in the sub-phase. For non-blocking: the explicit assumption the plan will make (also recorded below).
-   If no concerns were found, state "None — sub-phase reviewed, no gaps identified." Do not leave this section out.
+    - **Concern** — one-line summary of the issue
+    - **Source** — where in the sub-phase / design it appears (line numbers or section)
+    - **Impact** — what breaks or gets guessed if left unresolved
+    - **Classification** — Blocking or Non-blocking
+    - **Resolution** — for blocking: what needs to change in the sub-phase. For non-blocking: the explicit assumption the plan will make (also recorded below).
+    - **Documentation sync required on implementation** — if the resolution deviates from canonical docs, list exact `docs/architecture/designs/**` files/sections that must be updated once implemented.
+    If no concerns were found, state "None — sub-phase reviewed, no gaps identified." Do not leave this section out.
 4. **Assumptions** — every non-obvious fact the plan takes for granted but which is not stated in the sub-phase (defaults, file locations, config keys, error wording, ordering). If the assumption is wrong, the implementation is wrong — so list them explicitly so the user can correct them before handoff.
 5. **Approach** — step-by-step implementation plan with absolute file paths.
    - Each step should inline the relevant trait signatures, error enum variants, struct fields, and DDL **verbatim** from the sub-phase / design. Do not write "implement the `KeySource` trait as defined in the sub-phase" — write the signature out. This forces the planner to notice errors and gives Codex a self-contained spec.
@@ -110,13 +113,22 @@ Structure the plan as follows:
    b. **Invoke security-reviewer agent? YES / NO** with rationale — mirrors the test-writer decision in item 7. YES means `/implement-plan` will invoke `security-reviewer` on the touched files regardless of path. NO means the plan takes responsibility for the decision — `/implement-plan` will skip the review, **but** the drift check in (a) still fires if sensitive paths get touched anyway.
    c. **What the reviewer should check** — if YES, list the specific concerns (trait boundaries, zeroization, nonce generation, AAD scope, etc.). If NO, list the specific reasons the review is unnecessary (e.g., "module performs no cryptographic operations; BLAKE3 is used only as a preimage-resistant fingerprint comparator").
    - **If sub-phase**: check the sub-roadmap's Security Review Checkpoints section. If the sub-phase self-asserts "Security Review: Not required", verify independently in Step 1.75 and either confirm (set YES/NO explicitly with rationale) or flag as a Design Concern — do not mirror the self-assessment blindly. Opus's independent decision, recorded here, overrides the sub-phase's self-assessment.
-7. **Testing strategy** — what tests are needed, what boundary cases matter
+7. **Execution and testing strategy** — what agent executes implementation, what tests are needed, and what boundary cases matter
+   - **Explicitly require**: `Implementation agent: rust-implementer (Required)` with rationale.
+   - **Explicitly state fallback**: if `rust-implementer` is unavailable or fails repeatedly, mark the plan blocked; no manual fallback implementation.
    - Use the template's structured format with checkboxes for test types
    - **Explicitly decide**: check "Invoke test-writer agent? YES/NO" with rationale
+   - Mirror these decisions in frontmatter as:
+     - `implementation-agent: rust-implementer`
+     - `test-agent-required: true|false`
+     Values must match the prose in this section.
    - **If sub-phase**: include the Validation checkpoint from the sub-roadmap (automated tests, manual verification, acceptance criteria)
    - Include any additional edge-case tests surfaced by the Step 1.75 review
 8. **Documentation impact** — which `docs/` files need creating or updating
-   after implementation
+   after implementation.
+   - This section must include documentation updates required by any planned deviations from current canonical design/sub-phase docs.
+   - Treat any sub-phase-roadmap `## Documentation Impact` text as advisory only. Never suppress required doc sync updates just because a roadmap says "No documentation updates."
+   - If no docs need updates, state why no deviation or new contract surface was introduced.
 9. **Handoff Notes for Implementer** — one short paragraph framed for an agent with zero conversation context (typically Copilot Codex). State the working directory, the order of operations, whether the plan is self-contained or requires re-reading the sub-phase, and any traps (platform-specific code paths, feature flags, gated tests). If the plan status is `blocked`, instead write "Do not implement — resolve Design Concerns first."
 
 ## Step 3 — Save the plan to disk
@@ -141,6 +153,8 @@ roadmap-phase: <number or null>
 sub-phase: <"N.S" or null>
 design-document: <relative path or null>
 sub-phase-roadmap: <relative path or null>
+implementation-agent: rust-implementer
+test-agent-required: <true|false>
 tags: [<relevant tags>]
 ---
 ```
