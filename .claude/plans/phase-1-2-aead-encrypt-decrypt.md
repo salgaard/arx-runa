@@ -1,7 +1,7 @@
 ---
 title: "Phase 1.2 — AEAD Encrypt/Decrypt with Wire Format"
 created: "2026-04-13T00:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 1
 sub-phase: "1.2"
 design-document: "docs/architecture/designs/cryptographic-primitives/design.md"
