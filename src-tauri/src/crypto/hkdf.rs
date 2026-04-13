@@ -1,5 +1,6 @@
 //! HKDF-SHA256 vault key derivation.
 
+use crate::crypto::error::CryptoError;
 use crate::crypto::types::{KeyEncryptionKey, ManifestKey, SqlcipherKey};
 use hkdf::Hkdf;
 use secrecy::SecretBox;
@@ -22,32 +23,44 @@ pub struct VaultKeys {
 
 /// Derives vault keys from 32 bytes of master key material.
 ///
-/// # Panics
-/// Panics only if HKDF expansion fails, which cannot occur for 32-byte output
-/// with SHA-256.
-pub fn derive_vault_keys(master_key_bytes: &[u8; 32]) -> VaultKeys {
+/// # Errors
+/// Returns `CryptoError::KeyDerivationFailed` if HKDF expansion fails. For
+/// a 32-byte output with SHA-256 this is unreachable in practice, but the
+/// fallible surface lets callers propagate unexpected failures instead of
+/// panicking.
+pub fn derive_vault_keys(master_key_bytes: &[u8; 32]) -> Result<VaultKeys, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(Some(HKDF_SALT), master_key_bytes);
 
-    let key_encryption_key_secret_box = SecretBox::<[u8; 32]>::init_with_mut(|derived_key| {
-        hkdf.expand(HKDF_INFO_KEY_ENCRYPTION, derived_key)
-            .expect("HKDF expand must not fail for 32-byte output");
-    });
+    Ok(VaultKeys {
+        key_encryption_key: KeyEncryptionKey::from_secret_box(expand_into_secret_box(
+            &hkdf,
+            HKDF_INFO_KEY_ENCRYPTION,
+        )?),
+        sqlcipher_key: SqlcipherKey::from_secret_box(expand_into_secret_box(
+            &hkdf,
+            HKDF_INFO_SQLCIPHER,
+        )?),
+        manifest_key: ManifestKey::from_secret_box(expand_into_secret_box(
+            &hkdf,
+            HKDF_INFO_MANIFEST_BACKUP,
+        )?),
+    })
+}
 
-    let sqlcipher_key_secret_box = SecretBox::<[u8; 32]>::init_with_mut(|derived_key| {
-        hkdf.expand(HKDF_INFO_SQLCIPHER, derived_key)
-            .expect("HKDF expand must not fail for 32-byte output");
+/// Runs HKDF-SHA256 expand into a fresh `SecretBox` heap buffer.
+///
+/// Captures the expansion result out of `init_with_mut`'s closure and maps
+/// any failure to `CryptoError::KeyDerivationFailed`.
+fn expand_into_secret_box(
+    hkdf: &Hkdf<Sha256>,
+    info: &[u8],
+) -> Result<SecretBox<[u8; 32]>, CryptoError> {
+    let mut expand_result: Result<(), hkdf::InvalidLength> = Ok(());
+    let secret_box = SecretBox::<[u8; 32]>::init_with_mut(|derived_key| {
+        expand_result = hkdf.expand(info, derived_key);
     });
-
-    let manifest_key_secret_box = SecretBox::<[u8; 32]>::init_with_mut(|derived_key| {
-        hkdf.expand(HKDF_INFO_MANIFEST_BACKUP, derived_key)
-            .expect("HKDF expand must not fail for 32-byte output");
-    });
-
-    VaultKeys {
-        key_encryption_key: KeyEncryptionKey::from_secret_box(key_encryption_key_secret_box),
-        sqlcipher_key: SqlcipherKey::from_secret_box(sqlcipher_key_secret_box),
-        manifest_key: ManifestKey::from_secret_box(manifest_key_secret_box),
-    }
+    expand_result.map_err(|_| CryptoError::KeyDerivationFailed)?;
+    Ok(secret_box)
 }
 
 #[cfg(test)]
@@ -57,8 +70,8 @@ mod tests {
     #[test]
     fn test_derive_vault_keys_same_input_produces_same_output() {
         let master_key_bytes = [0x42u8; 32];
-        let first = derive_vault_keys(&master_key_bytes);
-        let second = derive_vault_keys(&master_key_bytes);
+        let first = derive_vault_keys(&master_key_bytes).expect("derive must succeed");
+        let second = derive_vault_keys(&master_key_bytes).expect("derive must succeed");
 
         assert_eq!(
             first.key_encryption_key.expose(),
@@ -72,8 +85,8 @@ mod tests {
     fn test_derive_vault_keys_different_inputs_produce_different_outputs() {
         let first_master_key_bytes = [0x01u8; 32];
         let second_master_key_bytes = [0x02u8; 32];
-        let first = derive_vault_keys(&first_master_key_bytes);
-        let second = derive_vault_keys(&second_master_key_bytes);
+        let first = derive_vault_keys(&first_master_key_bytes).expect("derive must succeed");
+        let second = derive_vault_keys(&second_master_key_bytes).expect("derive must succeed");
 
         assert_ne!(
             first.key_encryption_key.expose(),
@@ -86,7 +99,7 @@ mod tests {
     #[test]
     fn test_derive_vault_keys_single_input_produces_distinct_keys() {
         let master_key_bytes = [0xA5u8; 32];
-        let keys = derive_vault_keys(&master_key_bytes);
+        let keys = derive_vault_keys(&master_key_bytes).expect("derive must succeed");
 
         assert_ne!(
             keys.key_encryption_key.expose(),
@@ -99,7 +112,7 @@ mod tests {
     #[test]
     fn test_derive_vault_keys_all_zero_master_key_succeeds() {
         let master_key_bytes = [0u8; 32];
-        let keys = derive_vault_keys(&master_key_bytes);
+        let keys = derive_vault_keys(&master_key_bytes).expect("derive must succeed");
 
         assert_ne!(
             keys.key_encryption_key.expose(),

@@ -114,7 +114,7 @@ Structure the plan as follows:
    c. **What the reviewer should check** — if YES, list the specific concerns (trait boundaries, zeroization, nonce generation, AAD scope, etc.). If NO, list the specific reasons the review is unnecessary (e.g., "module performs no cryptographic operations; BLAKE3 is used only as a preimage-resistant fingerprint comparator").
    - **If sub-phase**: check the sub-roadmap's Security Review Checkpoints section. If the sub-phase self-asserts "Security Review: Not required", verify independently in Step 1.75 and either confirm (set YES/NO explicitly with rationale) or flag as a Design Concern — do not mirror the self-assessment blindly. Opus's independent decision, recorded here, overrides the sub-phase's self-assessment.
 7. **Execution and testing strategy** — what agent executes implementation, what tests are needed, and what boundary cases matter
-   - **Explicitly require**: `Implementation agent: rust-implementer (Required)` with rationale.
+   - **Explicitly require**: `Implementation agent: Invoke rust-implementer (Required)` with rationale.
    - **Explicitly state fallback**: if `rust-implementer` is unavailable or fails repeatedly, mark the plan blocked; no manual fallback implementation.
    - Use the template's structured format with checkboxes for test types
    - **Explicitly decide**: check "Invoke test-writer agent? YES/NO" with rationale

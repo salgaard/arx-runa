@@ -1,16 +1,19 @@
 //! CSPRNG generation of per-file encryption keys.
 
 use crate::crypto::types::FileKey;
-use rand::RngExt;
+use rand::Rng;
 use secrecy::SecretBox;
 
 /// Generates a cryptographically random 256-bit file key.
 ///
-/// The key is produced by `rand::rng().random::<[u8; 32]>()` and immediately
-/// moved into a `SecretBox` so the raw bytes never outlive this function.
+/// The CSPRNG fills the `SecretBox` heap buffer directly via
+/// `RngCore::fill_bytes`, so the raw key bytes never exist in a stack
+/// local. `SecretBox`'s `Drop` zeroizes the buffer if the key is dropped.
 pub fn generate_file_key() -> FileKey {
-    let random_bytes: [u8; 32] = rand::rng().random::<[u8; 32]>();
-    FileKey::from_secret_box(SecretBox::new(Box::new(random_bytes)))
+    let secret_box = SecretBox::<[u8; 32]>::init_with_mut(|buffer| {
+        rand::rng().fill_bytes(buffer.as_mut_slice());
+    });
+    FileKey::from_secret_box(secret_box)
 }
 
 #[cfg(test)]

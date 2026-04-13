@@ -95,6 +95,7 @@ mod tests {
         chunk_index: ChunkIndex,
     ) -> Vec<u8> {
         encrypt_chunk(plaintext.to_vec(), key, file_id, chunk_index)
+            .expect("encrypt must succeed")
     }
 
     fn verified(blob: Vec<u8>) -> VerifiedBlob {

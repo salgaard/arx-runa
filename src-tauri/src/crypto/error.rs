@@ -21,6 +21,18 @@ pub enum CryptoError {
     #[error("key unwrap failed")]
     KeyUnwrapFailed,
 
+    /// File-key wrapping failed (AEAD encryption error).
+    #[error("key wrap failed")]
+    KeyWrapFailed,
+
+    /// Chunk AEAD encryption failed.
+    #[error("chunk encryption failed")]
+    EncryptionFailed,
+
+    /// HKDF-SHA256 key derivation failed.
+    #[error("key derivation failed")]
+    KeyDerivationFailed,
+
     /// BLAKE3 checksum verification failed for the encrypted blob.
     #[error("checksum mismatch: blob has been tampered with or corrupted")]
     ChecksumMismatch,
@@ -38,6 +50,9 @@ mod tests {
             actual: 10,
         };
         let _key_unwrap_failed = CryptoError::KeyUnwrapFailed;
+        let _key_wrap_failed = CryptoError::KeyWrapFailed;
+        let _encryption_failed = CryptoError::EncryptionFailed;
+        let _key_derivation_failed = CryptoError::KeyDerivationFailed;
         let _checksum_mismatch = CryptoError::ChecksumMismatch;
     }
 

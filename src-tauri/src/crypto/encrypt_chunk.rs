@@ -1,5 +1,6 @@
 //! XChaCha20-Poly1305 chunk encryption with mandatory AAD binding.
 
+use crate::crypto::error::CryptoError;
 use crate::crypto::nonce::generate_nonce;
 use crate::crypto::types::{ChunkIndex, FileId, FileKey};
 use chacha20poly1305::{
@@ -18,17 +19,19 @@ use chacha20poly1305::{
 /// * `file_id` - The file identifier (16 bytes).
 /// * `chunk_index` - Zero-based position of the chunk within the file.
 ///
-/// # Panics
-/// Panics only if the underlying `encrypt_in_place_detached` call fails,
-/// which for XChaCha20-Poly1305 with a valid key and nonce length is
-/// unreachable — the RustCrypto contract only errors on plaintext length
-/// overflow (≈ 2^38 bytes), far beyond any Arx Runa chunk size.
+/// # Errors
+/// Returns `CryptoError::EncryptionFailed` if the underlying
+/// `encrypt_in_place_detached` call fails. For XChaCha20-Poly1305 with a
+/// valid key and nonce length this is unreachable in practice — the
+/// RustCrypto contract only errors on plaintext length overflow (≈ 2^38
+/// bytes), far beyond any Arx Runa chunk size — but the fallible surface
+/// lets callers propagate unexpected failures instead of panicking.
 pub fn encrypt_chunk(
     mut plaintext: Vec<u8>,
     file_key: &FileKey,
     file_id: &FileId,
     chunk_index: ChunkIndex,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, CryptoError> {
     let nonce_bytes = generate_nonce();
     let aad = build_aad(file_id, chunk_index);
 
@@ -37,13 +40,13 @@ pub fn encrypt_chunk(
 
     let tag = cipher
         .encrypt_in_place_detached(nonce, &aad, plaintext.as_mut_slice())
-        .expect("XChaCha20-Poly1305 encryption is infallible for Arx Runa chunk sizes");
+        .map_err(|_| CryptoError::EncryptionFailed)?;
 
     let mut blob = Vec::with_capacity(24 + plaintext.len() + 16);
     blob.extend_from_slice(&nonce_bytes);
     blob.extend_from_slice(&plaintext);
     blob.extend_from_slice(tag.as_slice());
-    blob
+    Ok(blob)
 }
 
 fn build_aad(file_id: &FileId, chunk_index: ChunkIndex) -> [u8; 20] {
@@ -81,7 +84,8 @@ mod tests {
             &make_file_key(0xAA),
             &make_file_id(0x01),
             ChunkIndex::new(0),
-        );
+        )
+        .expect("encrypt must succeed");
 
         assert_eq!(blob.len(), plaintext.len() + 40);
     }
@@ -93,7 +97,8 @@ mod tests {
             &make_file_key(0x42),
             &make_file_id(0x01),
             ChunkIndex::new(0),
-        );
+        )
+        .expect("encrypt must succeed");
 
         assert_eq!(blob.len(), 40);
     }
@@ -104,8 +109,10 @@ mod tests {
         let key = make_file_key(0x11);
         let file_id = make_file_id(0x22);
 
-        let first = encrypt_chunk(plaintext.clone(), &key, &file_id, ChunkIndex::new(3));
-        let second = encrypt_chunk(plaintext, &key, &file_id, ChunkIndex::new(3));
+        let first = encrypt_chunk(plaintext.clone(), &key, &file_id, ChunkIndex::new(3))
+            .expect("encrypt must succeed");
+        let second = encrypt_chunk(plaintext, &key, &file_id, ChunkIndex::new(3))
+            .expect("encrypt must succeed");
 
         assert_ne!(first, second, "different nonces must yield different blobs");
         assert_ne!(first[..24], second[..24], "nonce prefix must differ");
@@ -118,7 +125,8 @@ mod tests {
         let file_id = make_file_id(0x44);
         let chunk_index = ChunkIndex::new(7);
 
-        let blob = encrypt_chunk(plaintext.clone(), &key, &file_id, chunk_index);
+        let blob = encrypt_chunk(plaintext.clone(), &key, &file_id, chunk_index)
+            .expect("encrypt must succeed");
         let recovered = decrypt_chunk(verified(blob), &key, &file_id, chunk_index)
             .expect("round trip must succeed");
 
@@ -151,7 +159,8 @@ mod proptests {
             let file_id = FileId::new(file_id_seed);
             let idx = ChunkIndex::new(chunk_index);
 
-            let blob = encrypt_chunk(plaintext.clone(), &key, &file_id, idx);
+            let blob = encrypt_chunk(plaintext.clone(), &key, &file_id, idx)
+                .expect("encrypt must succeed");
             let recovered = decrypt_chunk(verified(blob), &key, &file_id, idx)
                 .expect("round trip must succeed");
             prop_assert_eq!(recovered, plaintext);
@@ -165,8 +174,10 @@ mod proptests {
             let file_id = FileId::new([0xABu8; 16]);
             let idx = ChunkIndex::new(0);
 
-            let first = encrypt_chunk(plaintext.clone(), &key, &file_id, idx);
-            let second = encrypt_chunk(plaintext, &key, &file_id, idx);
+            let first = encrypt_chunk(plaintext.clone(), &key, &file_id, idx)
+                .expect("encrypt must succeed");
+            let second = encrypt_chunk(plaintext, &key, &file_id, idx)
+                .expect("encrypt must succeed");
 
             prop_assert_ne!(&first[..24], &second[..24]);
             prop_assert_ne!(first, second);

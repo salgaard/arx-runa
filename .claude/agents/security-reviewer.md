@@ -47,6 +47,17 @@ When reviewing, check for:
 - No key material in heap `String` or `Vec` without zeroize protection
 - Encryption/decryption performed in-place on mutable buffers — flag any
   code path that copies plaintext into a second buffer without zeroing
+- **Stack copies of plaintext key material** — flag any pattern that
+  materialises key bytes into an un-zeroized stack local, including:
+  - `let x = *secret.expose();` (dereference copy into `[u8; N]` stack array)
+  - `let x: [u8; N] = some_rng.random::<[u8; N]>();` then later moved into
+    `SecretBox::new(Box::new(x))` (stack temporary is not guaranteed to be
+    zeroed, even after the move)
+  - Any local `[u8; N]` that transits plaintext keys without
+    `zeroize::Zeroizing`, `SecretBox::init_with_mut`, or explicit
+    `Zeroize::zeroize` before going out of scope
+- Prefer filling `SecretBox::<[u8; N]>::init_with_mut(|buffer| rng.fill_bytes(buffer))`
+  or `Zeroizing::new([0u8; N])` + `copy_from_slice` over stack dereference
 - File I/O uses `BufReader`/`BufWriter` streaming — flag any code that
   reads an entire file into a single `Vec<u8>`
 - Session keys must be zeroed on timeout — verify timeout handler calls
@@ -75,6 +86,15 @@ When reviewing, check for:
 - Errors returned via Tauri IPC must be sanitised — no partial keys, no
   plaintext file paths, no memory addresses in user-facing error messages
 - Library modules use `thiserror`; Tauri commands use `anyhow`
+- **No `.unwrap()` or `.expect(...)` in production crypto paths** — even if
+  the failure is described as "infallible" or "unreachable", a panic in a
+  security-critical path is a denial-of-service surface and drops the
+  process before any auditable cleanup. Flag every `.unwrap()` / `.expect()`
+  outside `#[cfg(test)]`. Convert the fallible operation (AEAD encrypt,
+  HKDF expand, etc.) to a `Result<_, CryptoError>` and propagate with `?`.
+  This is also enforced by `.claude/rules/rust.md` — treat a violation as
+  at minimum a WARNING, and CRITICAL if the panic path is reachable from
+  attacker-controlled input.
 
 ## Auth flow
 

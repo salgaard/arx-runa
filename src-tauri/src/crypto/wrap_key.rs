@@ -14,6 +14,7 @@ use chacha20poly1305::{
     AeadInPlace, KeyInit, XChaCha20Poly1305, aead::generic_array::GenericArray,
 };
 use secrecy::SecretBox;
+use zeroize::Zeroizing;
 
 const NONCE_LEN: usize = 24;
 const KEY_LEN: usize = 32;
@@ -26,26 +27,36 @@ const WRAPPED_LEN: usize = NONCE_LEN + KEY_LEN + TAG_LEN;
 /// 72-byte output embeds the nonce, the encrypted key, and the Poly1305 tag
 /// so the wrapped blob is self-contained.
 ///
-/// # Panics
-/// Panics only if the underlying AEAD call fails, which cannot happen for a
-/// 32-byte plaintext with XChaCha20-Poly1305.
-pub fn wrap_file_key(file_key: &FileKey, key_encryption_key: &KeyEncryptionKey) -> WrappedFileKey {
+/// The plaintext file key is copied into a `Zeroizing` buffer so the
+/// in-place encryption target is zeroed on drop even if the function
+/// returns early via `?`.
+///
+/// # Errors
+/// Returns `CryptoError::KeyWrapFailed` if the underlying AEAD call fails.
+/// For a 32-byte plaintext with XChaCha20-Poly1305 this is unreachable in
+/// practice, but the fallible surface lets callers propagate unexpected
+/// failures instead of panicking.
+pub fn wrap_file_key(
+    file_key: &FileKey,
+    key_encryption_key: &KeyEncryptionKey,
+) -> Result<WrappedFileKey, CryptoError> {
     let nonce_bytes = generate_nonce();
-    let mut ciphertext: [u8; KEY_LEN] = *file_key.expose();
+    let mut ciphertext: Zeroizing<[u8; KEY_LEN]> = Zeroizing::new([0u8; KEY_LEN]);
+    ciphertext.copy_from_slice(file_key.expose());
 
     let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(key_encryption_key.expose()));
     let nonce = GenericArray::from_slice(&nonce_bytes);
 
     let tag = cipher
         .encrypt_in_place_detached(nonce, &[], ciphertext.as_mut_slice())
-        .expect("XChaCha20-Poly1305 wrap is infallible for a 32-byte key");
+        .map_err(|_| CryptoError::KeyWrapFailed)?;
 
     let mut wire = [0u8; WRAPPED_LEN];
     wire[..NONCE_LEN].copy_from_slice(&nonce_bytes);
-    wire[NONCE_LEN..NONCE_LEN + KEY_LEN].copy_from_slice(&ciphertext);
+    wire[NONCE_LEN..NONCE_LEN + KEY_LEN].copy_from_slice(ciphertext.as_slice());
     wire[NONCE_LEN + KEY_LEN..].copy_from_slice(tag.as_slice());
 
-    WrappedFileKey(wire)
+    Ok(WrappedFileKey(wire))
 }
 
 /// Unwraps a `WrappedFileKey`, returning a fresh `FileKey`.
@@ -106,7 +117,7 @@ mod tests {
         let kek = make_kek(0x22);
         let original_bytes = *original.expose();
 
-        let wrapped = wrap_file_key(&original, &kek);
+        let wrapped = wrap_file_key(&original, &kek).expect("wrap must succeed");
         let recovered = unwrap_file_key(&wrapped, &kek).expect("round trip must succeed");
 
         assert_eq!(*recovered.expose(), original_bytes);
@@ -114,7 +125,8 @@ mod tests {
 
     #[test]
     fn test_wrap_file_key_wire_format_is_seventy_two_bytes() {
-        let wrapped = wrap_file_key(&make_file_key(0xAA), &make_kek(0xBB));
+        let wrapped = wrap_file_key(&make_file_key(0xAA), &make_kek(0xBB))
+            .expect("wrap must succeed");
         assert_eq!(wrapped.0.len(), WRAPPED_LEN);
         assert_eq!(WRAPPED_LEN, 72);
     }
@@ -124,8 +136,8 @@ mod tests {
         let file_key = make_file_key(0xCD);
         let kek = make_kek(0xEF);
 
-        let first = wrap_file_key(&file_key, &kek);
-        let second = wrap_file_key(&file_key, &kek);
+        let first = wrap_file_key(&file_key, &kek).expect("wrap must succeed");
+        let second = wrap_file_key(&file_key, &kek).expect("wrap must succeed");
 
         assert_ne!(
             first.0, second.0,
@@ -137,7 +149,8 @@ mod tests {
     #[test]
     fn test_unwrap_file_key_wrong_kek_fails_with_decryption_failed() {
         let file_key = make_file_key(0x11);
-        let wrapped = wrap_file_key(&file_key, &make_kek(0x22));
+        let wrapped =
+            wrap_file_key(&file_key, &make_kek(0x22)).expect("wrap must succeed");
 
         let result = unwrap_file_key(&wrapped, &make_kek(0x33));
 
@@ -148,7 +161,7 @@ mod tests {
     fn test_unwrap_file_key_corrupted_nonce_fails_with_decryption_failed() {
         let file_key = make_file_key(0x11);
         let kek = make_kek(0x22);
-        let mut wrapped = wrap_file_key(&file_key, &kek);
+        let mut wrapped = wrap_file_key(&file_key, &kek).expect("wrap must succeed");
 
         wrapped.0[0] ^= 0x01;
 
@@ -161,7 +174,7 @@ mod tests {
     fn test_unwrap_file_key_corrupted_ciphertext_fails_with_decryption_failed() {
         let file_key = make_file_key(0x11);
         let kek = make_kek(0x22);
-        let mut wrapped = wrap_file_key(&file_key, &kek);
+        let mut wrapped = wrap_file_key(&file_key, &kek).expect("wrap must succeed");
 
         // Offset 24..56 is the 32-byte ciphertext region.
         wrapped.0[24 + 5] ^= 0x01;
@@ -175,7 +188,7 @@ mod tests {
     fn test_unwrap_file_key_corrupted_tag_fails_with_decryption_failed() {
         let file_key = make_file_key(0x11);
         let kek = make_kek(0x22);
-        let mut wrapped = wrap_file_key(&file_key, &kek);
+        let mut wrapped = wrap_file_key(&file_key, &kek).expect("wrap must succeed");
 
         let tag_index = wrapped.0.len() - 1;
         wrapped.0[tag_index] ^= 0x01;
