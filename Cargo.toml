@@ -6,6 +6,7 @@ resolver = "3"
 name = "arx-runa"
 version = "0.1.0"
 edition = "2024"
+authors = ["Chrizzio AKA Christian Salgård Svinding"]
 
 [[bin]]
 name = "arx-runa"
