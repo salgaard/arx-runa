@@ -719,7 +719,7 @@ The architecture being built today is ahead of the curve. What's "paranoid" in 2
 | **CISA** | Post-Quantum Cryptography Initiative | [cisa.gov/quantum](https://www.cisa.gov/quantum) |
 | **FIDO Alliance** | Passkeys Overview & Adoption | [fidoalliance.org/passkeys](https://fidoalliance.org/passkeys/) |
 | **Pew Research Center** | How Americans View Data Privacy (May 2023) | [pewresearch.org/internet/2023/10/18/how-americans-view-data-privacy](https://www.pewresearch.org/internet/2023/10/18/how-americans-view-data-privacy/) |
-| **The Verge** | Apple Intelligence & Private Cloud Compute | [theverge.com/2024/6/10/24175405/wwdc-apple-ai-privacy-cloud-compute](https://www.theverge.com/2024/6/10/24175405/wwdc-apple-ai-privacy-cloud-compute) |
+| **Apple Security Blog** | Private Cloud Compute architecture and privacy model | [security.apple.com/blog/private-cloud-compute](https://security.apple.com/blog/private-cloud-compute/) |
 | **Apple** | Privacy Philosophy | [apple.com/privacy](https://www.apple.com/privacy/) |
 | **Tresorit** | Security Features | [tresorit.com/security](https://tresorit.com/security) |
 | **Internxt** | Privacy Philosophy | [internxt.com/privacy](https://internxt.com/privacy) |

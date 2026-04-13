@@ -410,9 +410,9 @@ The padding overhead for small files is real but affordable in absolute terms (<
 | **CMU PDL** | Improving small file performance in object-based storage | [pdl.cmu.edu/PDL-FTP/Storage/CMU-PDL-06-104.pdf](https://www.pdl.cmu.edu/PDL-FTP/Storage/CMU-PDL-06-104.pdf) |
 | **AWS Blog** | Optimizing storage costs and query performance by compacting small objects | [aws.amazon.com/blogs/storage/optimizing-storage-costs-and-query-performance-by-compacting-small-objects](https://aws.amazon.com/blogs/storage/optimizing-storage-costs-and-query-performance-by-compacting-small-objects/) |
 | **ScienceDirect** | An optimized approach for storing and accessing small files on cloud storage | [sciencedirect.com/science/article/abs/pii/S1084804512001610](https://www.sciencedirect.com/science/article/abs/pii/S1084804512001610) |
-| **Wikipedia** | Bin packing problem — complexity, algorithms, approximation ratios | [en.wikipedia.org/wiki/Bin_packing_problem](https://en.wikipedia.org/wiki/Bin_packing_problem) |
-| **Wikipedia** | Write amplification — definition and storage system impact | [en.wikipedia.org/wiki/Write_amplification](https://en.wikipedia.org/wiki/Write_amplification) |
-| **Small Datum blog** | Read, write, and space amplification — pick 2 (RWS trilemma) | [smalldatum.blogspot.com/2015/11/read-write-space-amplification-pick-2](http://smalldatum.blogspot.com/2015/11/read-write-space-amplification-pick-2_23.html) |
+| **Rothvoss (arXiv 2013)** | Bin packing approximation guarantees and complexity context (OPT + O(log OPT · log log OPT)) | https://arxiv.org/abs/1301.4010 |
+| **Monkey (SIGMOD 2017)** | Formal read/write/memory trade-offs in LSM-backed key-value stores (amplification trade-off framing) | https://stratos.seas.harvard.edu/publications/monkey-optimal-navigable-key-value-store |
+| **O'Neil et al. (LSM-tree, Acta Informatica 1996)** | Foundational LSM-tree architecture behind modern write/read amplification trade-offs | https://www.cs.umb.edu/~poneil/lsmtree.pdf |
 | **Cloudera** | Small Files, Big Foils — HDFS small file problem and solutions | [cloudera.com/blog/technical/small-files-big-foils](https://www.cloudera.com/blog/technical/small-files-big-foils-addressing-the-associated-metadata-and-application-challenges.html) |
 
 

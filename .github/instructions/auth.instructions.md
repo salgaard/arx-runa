@@ -2,6 +2,7 @@
 applyTo: "src-tauri/src/auth/**"
 ---
 
+
 # Auth module — rules
 
 **Design specification**: `docs/architecture/designs/authentication-and-session-management/design.md` — last verified against design dated 2026-04-12

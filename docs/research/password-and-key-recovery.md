@@ -270,11 +270,11 @@ All questions resolved. See Decisions table for rationale.
 | SLIP-39 specification (Satoshi Labs) | SSS-based mnemonic shares with error correction | https://github.com/satoshilabs/slips/blob/master/slip-0039.md |
 | LUKS on-disk format v2 | Multi-keyslot design for volume encryption | https://gitlab.com/cryptsetup/cryptsetup/-/wikis/LUKS-standard/on-disk-format.pdf |
 | 1Password White Paper | Emergency Kit and Secret Key design | https://1passwordstatic.com/files/security/1password-white-paper.pdf |
-| Bitwarden Security White Paper | Emergency Access via asymmetric key wrapping | https://bitwarden.com/images/resources/security-white-paper-download.pdf |
+| Bitwarden Help Center — Emergency Access | Emergency access workflow and trusted-contact model | https://bitwarden.com/help/emergency-access/ |
 | RFC 9380 — OPAQUE (IRTF CFRG) | OPAQUE asymmetric PAKE | https://www.rfc-editor.org/rfc/rfc9380 |
-| `sharks` Rust crate | Shamir's Secret Sharing in Rust | https://crates.io/crates/sharks |
-| `vsss-rs` Rust crate | Verifiable Secret Sharing in Rust | https://crates.io/crates/vsss-rs |
-| `slip39` Rust crate | SLIP-39 mnemonic shares in Rust (community crate) | https://crates.io/crates/slip39 |
+| `sharks` Rust crate | Shamir's Secret Sharing in Rust | https://docs.rs/sharks/latest/sharks/ |
+| `vsss-rs` Rust crate | Verifiable Secret Sharing in Rust | https://docs.rs/vsss-rs/latest/vsss_rs/ |
+| `slip39` Rust crate | SLIP-39 mnemonic shares in Rust (community crate) | https://docs.rs/slip39/latest/slip39/ |
 | Microsoft BitLocker documentation | BitLocker recovery key design | https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/recovery-overview |
-| `bip39` Rust crate | BIP-39 mnemonic generation and validation | https://crates.io/crates/bip39 |
+| `bip39` Rust crate | BIP-39 mnemonic generation and validation | https://docs.rs/bip39/latest/bip39/ |
 | age encryption format specification v1 | X25519 recipient stanza and file key wrapping | https://age-encryption.org/v1 |

@@ -246,5 +246,5 @@ MitID is a national federated identity system built for client-server applicatio
 | RFC 4226 — HOTP: An HMAC-Based One-Time Password Algorithm | HOTP foundational algorithm; both prover and verifier must possess the shared secret | https://datatracker.ietf.org/doc/html/rfc4226 |
 | OWASP Multifactor Authentication Cheat Sheet | TOTP recommended for server-validated MFA; does not address local-only or offline application scenarios | https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html |
 | Digitaliseringsstyrelsen — MitID portal | MitID operated by the Danish Agency for Digitisation; 24/7 server infrastructure required | https://www.digitaliser.dk/mitid |
-| MitID developer documentation | OIDC/OAuth2 relying-party requirements; server registration required | https://developers.mitid.dk/ |
-| NIST SP 800-63B §5.1.4 — TOTP authenticators | TOTP secret "SHALL be stored securely by the verifier"; verifier must independently compute expected OTP | https://pages.nist.gov/800-63-3/sp800-63b.html |
+| OpenID Connect Core 1.0 (Final, Dec 2023) | OIDC relying-party flow and client registration model that presumes a server-side identity provider integration | https://openid.net/specs/openid-connect-core-1_0.html |
+| NIST SP 800-63B §5.1.4 — TOTP authenticators | TOTP secret "SHALL be stored securely by the verifier"; verifier must independently compute expected OTP | https://pages.nist.gov/800-63-4/sp800-63b.html |

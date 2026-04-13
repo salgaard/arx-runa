@@ -4,6 +4,8 @@ Exploratory research documents which include future directions, and ideas that m
 
 These are not specifications — they are living documents for brainstorming and strategic thinking.
 
+For long-form narrative drafts and alternative writeups that do not follow the strict research template, see [`docs/research-alternatives/`](../research-alternatives/README.md).
+
 ## Documents
 
 - **[Market & Future Directions](market-and-future-directions.md)** — How Arx Runa compares to existing solutions (Cryptomator, Tresorit, Proton Drive), strategies for mainstream adoption, and longer-term ideas such as biometric authentication, NFC hardware keys, and post-quantum cryptography.
@@ -17,3 +19,4 @@ These are not specifications — they are living documents for brainstorming and
 - **[Cryptographic Primitive Rationale](cryptographic-primitive-rationale.md)** — Justification and alternative analysis for every cryptographic primitive in the Arx Runa design: XChaCha20-Poly1305, HKDF-SHA256, Argon2id, per-file key wrapping, BLAKE3 checksums, and `ZeroizeOnDrop` + `Secret<T>` memory protection.
 - **[Authentication and Session Management](authentication-and-session-management.md)** — Cryptographic decisions for Phase 2 auth/session: BIP-39 phrase encoding (encoding layer only, not PBKDF2), recovery slot Argon2id construction (separate salt, slot indistinguishability via shared parameters), mlock/VirtualLock scope and guarantees, BLAKE3 key file fingerprinting, Tier 2 input concatenation, and non-oracular error semantics.
 - **[File-Sharing Cryptography](file-sharing-cryptography.md)** — Cryptographic decisions for Phase 5 file sharing: HPKE (RFC 9180) over ad-hoc ECIES, X25519 curve confirmation, CTX-ChaCha20-Poly1305 as the committing AEAD, and simplification of the share package envelope.
+- **[Rust for security-critical systems programming](rust-programming-language.md)** — Feasibility and governance note on using Rust for memory-safe, security-critical Arx Runa components with standards-backed sources.

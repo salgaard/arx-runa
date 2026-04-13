@@ -434,8 +434,8 @@ All other decisions are sound. Three implementation notes for the Phase 2.2 impl
 |---|---|---|
 | BIP-39 specification (Palatinus, Rusnak, Voisine, Bowe; 2013) | BIP-39 wordlist, entropy/checksum table, PBKDF2 derivation layer | https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki |
 | RFC 9106 — Argon2 Memory-Hard Function (Biryukov, Dinu, Khovratovich, Josefsson; 2021) | Argon2id specification; Section 4 recommended parameters | https://www.rfc-editor.org/rfc/rfc9106 |
-| NIST SP 800-132 — Recommendation for Password-Based Key Derivation (2010) | Salt requirements (§5.1: randomly generated, ≥128 bits); per-slot salt independence | https://csrc.nist.gov/pubs/sp/800/132/final |
-| OWASP Authentication Cheat Sheet (2024) | Non-oracular error messages (§2.3): "incorrect username or password" | https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html |
+| NIST SP 800-132 — Recommendation for Password-Based Key Derivation (2010) | Salt requirements (§5.1: randomly generated, ≥128 bits); per-slot salt independence | https://csrc.nist.gov/publications/detail/sp/800-132/final |
+| OWASP Authentication Cheat Sheet (2024) | Non-oracular error messages (§2.3): "incorrect username or password" | https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Authentication_Cheat_Sheet.md |
 | POSIX.1-2008 — mlock(2) | POSIX specification of mlock; page-level granularity; RLIMIT_MEMLOCK | https://pubs.opengroup.org/onlinepubs/9699919799/functions/mlock.html |
 | Linux man page mlock(2) | RLIMIT_MEMLOCK default (65536 bytes for unprivileged processes on Linux 4.6+) | https://man7.org/linux/man-pages/man2/mlock.2.html |
 | Microsoft — VirtualLock function | Windows VirtualLock specification; failure condition is working set quota (ERROR_WORKING_SET_QUOTA), not a privilege check; no SeLockMemoryPrivilege required | https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtuallock |
@@ -443,8 +443,8 @@ All other decisions are sound. Three implementation notes for the Phase 2.2 impl
 | Microsoft — Working Set | Default process minimum working set (~200 KiB); VirtualLock claims pages from the minimum working set | https://learn.microsoft.com/en-us/windows/win32/memory/working-set |
 | Halderman et al. — "Lest We Remember: Cold Boot Attacks on Encryption Keys" (USENIX Security 2008) | Cold boot attack against DRAM after power-off; scope of mlock protection | https://www.usenix.org/legacy/event/sec08/tech/full_papers/halderman/halderman.pdf |
 | O'Connor, Aumasson, Neves, Wilcox-O'Hearn — "BLAKE3: One Function, Fast Everywhere" (2020) | BLAKE3 design and security properties (256-bit preimage resistance) | https://github.com/BLAKE3-team/BLAKE3-specs/blob/master/blake3.pdf |
-| `bip39` Rust crate (v2.2.2) | BIP-39 mnemonic generation and validation; `to_string()` Display impl returns space-joined words without NFKD normalization; `to_seed()` applies normalization for the PBKDF2 layer | https://crates.io/crates/bip39 |
-| `unicode-normalization` Rust crate | NFKD and other Unicode normal forms; `nfkd()` function; recommended if non-English BIP-39 wordlists are ever added | https://crates.io/crates/unicode-normalization |
+| `bip39` Rust crate (v2.2.2) | BIP-39 mnemonic generation and validation; `to_string()` Display impl returns space-joined words without NFKD normalization; `to_seed()` applies normalization for the PBKDF2 layer | https://docs.rs/bip39/latest/bip39/ |
+| `unicode-normalization` Rust crate | NFKD and other Unicode normal forms; `nfkd()` function; recommended if non-English BIP-39 wordlists are ever added | https://docs.rs/unicode-normalization/latest/unicode_normalization/ |
 | `secrecy` crate documentation | Secret\<T\> wrapper with ExposeSecret trait; Debug redaction; heap allocation | https://docs.rs/secrecy |
 | `zeroize` crate documentation | ZeroizeOnDrop; volatile write zeroing | https://docs.rs/zeroize |
 | SLIP-39 specification (Satoshi Labs) | Mnemonic encoding for multi-share SSS; PBKDF2 passphrase derivation (alternative to BIP-39 derivation layer) | https://github.com/satoshilabs/slips/blob/master/slip-0039.md |

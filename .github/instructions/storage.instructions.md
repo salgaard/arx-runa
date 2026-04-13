@@ -2,6 +2,7 @@
 applyTo: "src-tauri/src/storage/**"
 ---
 
+
 # Storage module — rules
 
 **Design specification**: `docs/architecture/designs/chunking-and-manifest/design.md` — last verified against design dated 2026-04-08

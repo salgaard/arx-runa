@@ -2,6 +2,7 @@
 applyTo: "docs/research/**"
 ---
 
+
 # Research documents — rules
 
 ## Required sections
@@ -44,6 +45,12 @@ Every document must open with this block immediately after the H1 title:
 - Every non-trivial claim must have a source entry
 - Security and cryptographic claims must reference standards: NIST FIPS/SP, RFC, IACR ePrint, USENIX, IEEE, ACM
 - URLs must be included — no bare author/title citations
+
+## Source-quality rubric
+- Normative technical claims (security, cryptography, architecture, performance, protocol semantics) must cite standards bodies, peer-reviewed venues, or official specification/vendor documentation
+- Tertiary/news/blog sources are acceptable only for market sentiment, ecosystem context, or anecdotal background
+- A tertiary source must not be the sole citation for normative technical claims; pair with a primary source or replace it
+- If no higher-quality source is available, keep the claim explicitly marked unresolved and record it in `Open Questions`
 
 ## Cross-references
 - Link related research docs and design docs instead of duplicating content

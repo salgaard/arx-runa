@@ -98,3 +98,10 @@
   - [Cryptographic Primitive Rationale](research/cryptographic-primitive-rationale.md)
   - [File Sharing Cryptography](research/file-sharing-cryptography.md)
 
+---
+
+# Alternative Research
+
+- [Overview](research-alternatives/README.md)
+  - [Rust Programming Language (Long-form Draft)](research-alternatives/rust-programming-language-long-form.md)
+

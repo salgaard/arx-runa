@@ -356,7 +356,7 @@ No changes to the design are recommended based on this research. The one open co
 | Böck, Zauner, Devlin, Somorovsky, Jovanovic — "Nonce-Disrespecting Adversaries: Practical Forgery Attacks on GCM in TLS" (USENIX WOOT 2016) | AES-GCM nonce reuse catastrophe demonstrated against real TLS implementations | https://eprint.iacr.org/2016/475 |
 | Chan & Rogaway — "On Committing Authenticated Encryption" (IACR 2022) | AEAD key non-commitment; committing AE (cAE) framework and CTX construction | https://eprint.iacr.org/2022/1260 |
 | RFC 5869 — HMAC-based Key Derivation Function (HKDF) (2010) | HKDF specification | https://www.rfc-editor.org/rfc/rfc5869 |
-| NIST SP 800-56C Rev 2 — Two-Step Key Derivation (2020) | HKDF as NIST-approved KDF | https://csrc.nist.gov/pubs/sp/800/56/c/r2/final |
+| NIST SP 800-56C Rev 2 — Two-Step Key Derivation (2020) | HKDF as NIST-approved KDF | https://csrc.nist.gov/publications/detail/sp/800-56c/rev-2/final |
 | RFC 8446 — TLS 1.3 (2018) | HKDF-SHA256 use in production protocol | https://www.rfc-editor.org/rfc/rfc8446 |
 | NIST FIPS 180-4 — Secure Hash Standard (SHA-2) (2015) | SHA-256 specification | https://csrc.nist.gov/pubs/fips/180-4/upd1/final |
 | RFC 9106 — Argon2 Memory-Hard Function (Biryukov, Dinu, Khovratovich, Josefsson; 2021) | Argon2id specification; Section 4 verbatim recommends 64 MiB / t=3 / p=4 | https://www.rfc-editor.org/rfc/rfc9106 |

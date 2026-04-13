@@ -433,22 +433,20 @@ For text-heavy developer vaults, an **opt-in vault-level compression flag** is a
 
 | Source | Topic | URL |
 |---|---|---|
-| **kmcd.dev** | Encryption vs Compression — ordering and entropy | [kmcd.dev/posts/encryption-vs-compression](https://kmcd.dev/posts/encryption-vs-compression/) |
-| **Appcanary** | Should you encrypt or compress first? | [blog.appcanary.com/2016/encrypt-or-compress](https://blog.appcanary.com/2016/encrypt-or-compress.html) |
-| **Help Net Security** | CRIME, TIME, BREACH and HEIST — history of compression oracle attacks | [helpnetsecurity.com — compression oracle attacks](https://www.helpnetsecurity.com/2016/08/11/crime-time-breach-and-heist-a-brief-history-of-compression-oracle-attacks-on-https/) |
+| **Kelsey (FSE 2002)** | Compression and Information Leakage of Plaintext — foundational analysis of compression side-channel leakage | [IACR archive (FSE 2002)](https://www.iacr.org/archive/fse2002/23650264/23650264.pdf) |
+| **RFC 9325 — Recommendations for Secure Use of TLS/DTLS** | Current best-practice guidance for TLS, including historical attack classes and conservative configuration guidance | https://www.rfc-editor.org/rfc/rfc9325 |
+| **BREACH Attack Site (Rizzo & Duong)** | Primary timeline and technical summaries for CRIME and BREACH compression side-channel attacks | [breachattack.com](https://breachattack.com/) |
 | **PETs 2019 — Reducing Metadata Leakage with PURBs** | Formal treatment of size/count metadata leakage from encrypted files | [petsymposium.org/popets/2019/popets-2019-0056.pdf](https://petsymposium.org/popets/2019/popets-2019-0056.pdf) |
 | **Cornell — MiniCrypt** | Reconciling encryption and compression for big data stores | [cs.cornell.edu/~ragarwal/pubs/minicrypt.pdf](https://www.cs.cornell.edu/~ragarwal/pubs/minicrypt.pdf) |
 | **Cryptomator — GitHub Discussion #2295** | Community request for compression; not implemented | [github.com/cryptomator/cryptomator/discussions/2295](https://github.com/cryptomator/cryptomator/discussions/2295) |
-| **Zstandard — Wikipedia** | zstd algorithm, compression levels, ratios | [en.wikipedia.org/wiki/Zstd](https://en.wikipedia.org/wiki/Zstd) |
-| **HEIF — Wikipedia** | HEIC/HEIF format, HEVC codec, CABAC entropy coding | [en.wikipedia.org/wiki/High_Efficiency_Image_File_Format](https://en.wikipedia.org/wiki/High_Efficiency_Image_File_Format) |
+| **RFC 8878 — Zstandard Compression and the `application/zstd` Media Type** | Normative zstd format definition and framing details | https://www.rfc-editor.org/rfc/rfc8878 |
 | **Nokia Tech — HEIF Technical** | HEIF format specification and compression internals | [nokiatech.github.io/heif/technical.html](https://nokiatech.github.io/heif/technical.html) |
-| **JPEG — Wikipedia** | DCT, quantization, Huffman entropy coding | [en.wikipedia.org/wiki/JPEG](https://en.wikipedia.org/wiki/JPEG) |
-| **Stanford CS — Lossy Compression: JPEG** | DCT-based compression explained | [cs.stanford.edu/people/eroberts/courses/soco/projects/data-compression/lossy/jpeg/dct.htm](https://cs.stanford.edu/people/eroberts/courses/soco/projects/data-compression/lossy/jpeg/dct.htm) |
-| **HEIF Codec Technology: HEVC and AV1** | HEVC intra-frame encoding pipeline | [upliftorch.com/tools/heic-to-jpg/en/blog/heif-codec-technology.html](https://upliftorch.com/tools/heic-to-jpg/en/blog/heif-codec-technology.html) |
+| **ITU-T T.81 (JPEG standard text mirror)** | JPEG baseline coding process (DCT, quantization, entropy coding) | https://www.w3.org/Graphics/JPEG/itu-t81.pdf |
+| **ITU-T H.265 / HEVC** | HEVC coding tools and standard evolution used by HEIF ecosystems | https://www.itu.int/rec/T-REC-H.265 |
 | **Backblaze** | B2 storage pricing vs AWS S3, GCP, Azure | [backblaze.com/cloud-storage/pricing](https://www.backblaze.com/cloud-storage/pricing) |
-| **ThemeDev** | Cloudflare R2 vs Backblaze B2 — 2026 comparison | [themedev.net/blog/cloudflare-r2-vs-backblaze-b2](https://themedev.net/blog/cloudflare-r2-vs-backblaze-b2/) |
-| **Cloudwards** | Dropbox vs Google Drive vs OneDrive — 2026 pricing | [cloudwards.net/dropbox-vs-google-drive-vs-onedrive](https://www.cloudwards.net/dropbox-vs-google-drive-vs-onedrive/) |
-| **NaviShark** | Google Drive pricing 2025 — plans and costs | [navishark.com/en/blog/google-drive-pricing-2025-plans-costs](https://www.navishark.com/en/blog/google-drive-pricing-2025-plans-costs) |
-| **Rotational Labs** | Compression vs cryptography — what comes first? | [rotational.io/blog/compression-vs-cryptography](https://rotational.io/blog/compression-vs-cryptography/) |
+| **Cloudflare R2 documentation** | Official Cloudflare R2 storage and operation pricing | https://developers.cloudflare.com/r2/pricing/ |
+| **Dropbox plans** | Official Dropbox storage plan pricing | https://www.dropbox.com/plans |
+| **Google One plans** | Official Google Drive consumer storage plan pricing | https://one.google.com/about/plans |
+| **Microsoft OneDrive plans** | Official OneDrive storage plan pricing | https://www.microsoft.com/en-us/microsoft-365/onedrive/compare-onedrive-plans |
 
 

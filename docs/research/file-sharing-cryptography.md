@@ -92,7 +92,7 @@ Designed by Bernstein (2006), standardized in **RFC 7748** (2016). Key propertie
 
 ### P-256 (prime256v1 / secp256r1)
 
-NIST FIPS 186-4 standard. Key issues relative to X25519:
+NIST FIPS 186-5 standard. Key issues relative to X25519:
 
 - **Implementation pitfalls**: historically vulnerable to timing side-channels due to incomplete addition formulas in Weierstrass form; constant-time P-256 requires explicit engineering
 - **SafeCurves**: P-256 fails several SafeCurves criteria (twist security, completeness)
@@ -110,7 +110,7 @@ For Arx Runa (zero-knowledge personal vault, no FIPS requirement), X25519 is the
 | Constant-time by construction | Yes | No — requires explicit effort |
 | Cofactor handling | Automatic via clamping (RFC 7748) | h=1, no issue |
 | Patent status | Public domain | NIST (no known patents, but NIST origins) |
-| FIPS compliance | No (RFC 7748 only) | Yes (FIPS 186-4) |
+| FIPS compliance | No (RFC 7748 only) | Yes (FIPS 186-5) |
 | Rust ecosystem | `x25519-dalek` (audited by NCC Group) | `p256` (RustCrypto) |
 | Used by | TLS 1.3, WireGuard, Signal, age, SSH | TLS, ECDSA certificates, FIDO2 |
 
@@ -319,7 +319,7 @@ No change. X25519 is SafeCurves-compliant, constant-time by construction, patent
 | Chan & Rogaway — "On Committing Authenticated Encryption" (IACR 2022) | CTX construction; CMT-1/CMT-4 security notions; key commitment for ECIES | https://eprint.iacr.org/2022/1260 |
 | Bellare & Hoang — "Efficient Schemes for Committing Authenticated Encryption" (EUROCRYPT 2022) | UtC, RtC, HtE transforms for adding key commitment | https://eprint.iacr.org/2022/268.pdf |
 | Cloudflare Blog — "HPKE: Standardizing public-key encryption (finally!)" | HPKE vs ECIES comparison; problems HPKE fixes; adoption in TLS ECH | https://blog.cloudflare.com/hybrid-public-key-encryption/ |
-| `hpke` crate — rust-hpke (rozbb) | RFC 9180 Rust implementation; v0.13.0; ~4M downloads | https://crates.io/crates/hpke |
+| `hpke` crate — rust-hpke (rozbb) | RFC 9180 Rust implementation; v0.13.0; ~4M downloads | https://docs.rs/hpke/latest/hpke/ |
 | `age` X25519 recipient (Filippo Valsorda) — x25519.go | age ECIES construction: HKDF salt = ephemeral_pk \|\| recipient_pk; ChaCha20-Poly1305 | https://github.com/FiloSottile/age/blob/main/x25519.go |
-| `aes-gcm-siv` crate — RustCrypto (Tony Arcieri) | AES-GCM-SIV Rust implementation; audit status: no direct audit | https://crates.io/crates/aes-gcm-siv |
-| NIST FIPS 186-4 — Digital Signature Standard (2013) | P-256 / secp256r1 curve specification | https://csrc.nist.gov/publications/detail/fips/186/4/final |
+| `aes-gcm-siv` crate — RustCrypto (Tony Arcieri) | AES-GCM-SIV Rust implementation; audit status: no direct audit | https://docs.rs/aes-gcm-siv/latest/aes_gcm_siv/ |
+| NIST FIPS 186-5 — Digital Signature Standard (2023) | P-256 / secp256r1 curve specification | https://csrc.nist.gov/pubs/fips/186-5/final |

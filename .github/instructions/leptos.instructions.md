@@ -2,6 +2,7 @@
 applyTo: "src/**/*.rs"
 ---
 
+
 # Leptos Frontend — rules
 
 **Design specification**: `docs/architecture/designs/tauri-ipc-and-frontend/design.md` — last verified against design dated 2026-04-11

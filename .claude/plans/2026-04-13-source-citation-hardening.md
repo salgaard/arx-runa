@@ -1,7 +1,7 @@
 ---
 title: "Research source hardening and standards freshness"
 created: "2026-04-13T16:18:49Z"
-status: approved
+status: implemented
 roadmap-phase: null
 sub-phase: null
 design-document: null
@@ -216,4 +216,83 @@ Primary files likely to change:
 ## 10. Handoff Notes for Implementer
 
 Work from `C:\Users\chris\source\repos\arx-runa`. Execute in this order: inventory -> broken-link replacement -> weak-source hardening -> standards freshness (research + design) -> decision packets for design conflicts -> wait for explicit decision -> approved canonical propagation -> final verification report. Treat this plan as self-contained; no external conversation context is required.
+
+## 11. Implementation Log
+
+- **Date**: 2026-04-13T17:08:43Z
+- **Branch**: development
+
+### Agent evidence
+
+| Approach step | Agent | Agent ID | Outcome |
+|---|---|---|---|
+| GOV-1 | invoking-agent | N/A | Added explicit source-quality rubric to `.claude/rules/research.md`. |
+| GOV-2 | invoking-agent (`/copilot-sync`) | N/A | Synced `.github/instructions/*.instructions.md` from `.claude/rules/*.md`; verification reported all in sync. |
+| 5.1 — citation inventory and claim map | invoking-agent | N/A | Produced inventory artifact: `C:\Users\chris\.copilot\session-state\9c3543ac-fc0a-497d-af4a-b885318a8158\files\citation-inventory-2026-04-13.json`. |
+| 5.2 — broken-source repair | invoking-agent | N/A | Replaced hard-failure URLs (MitID dev link, Bitwarden PDF, HelpNetSecurity entry, and unstable crates.io citations). |
+| 5.3 — weak-source hardening | invoking-agent | N/A | Replaced tertiary technical citations in hotspot docs; post-audit hotspot weak counts reduced to zero. |
+| 5.4 — standards freshness audit | invoking-agent | N/A | Updated superseded references to current revisions and generated standards audit artifact with zero superseded refs remaining. |
+| 5.5 — design conflict reconciliation | invoking-agent | N/A | No canonical design conflicts detected; no decision packet required. |
+| 5.6 — structural compliance | invoking-agent | N/A | Normalized `rust-programming-language.md` to required research structure and added `docs/research/README.md` entry. |
+| 5.7 — final verification and reporting | invoking-agent | N/A | Final link audit: `broken=0`; unresolved-items artifact created with `None`. |
+
+### Files changed
+
+- `.claude/plans/2026-04-13-source-citation-hardening.md`
+- `.claude/rules/research.md`
+- `.github/instructions/auth.instructions.md`
+- `.github/instructions/crypto.instructions.md`
+- `.github/instructions/leptos.instructions.md`
+- `.github/instructions/memory-protection.instructions.md`
+- `.github/instructions/mermaid.instructions.md`
+- `.github/instructions/research.instructions.md`
+- `.github/instructions/rust.instructions.md`
+- `.github/instructions/storage.instructions.md`
+- `.github/instructions/tauri.instructions.md`
+- `docs/research/README.md`
+- `docs/research/authentication-and-session-management.md`
+- `docs/research/bin-packing.md`
+- `docs/research/compression-and-cloud-cost.md`
+- `docs/research/cryptographic-primitive-rationale.md`
+- `docs/research/file-sharing-cryptography.md`
+- `docs/research/market-and-future-directions.md`
+- `docs/research/mfa-for-vault-authentication.md`
+- `docs/research/mobile-photo-backup.md`
+- `docs/research/padding-overhead-reduction.md`
+- `docs/research/password-and-key-recovery.md`
+- `docs/research/rust-programming-language.md`
+
+### Test results
+
+- `cargo test --workspace`: passed (`72 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` in `arx_runa_tauri_lib`; remaining crates had `0` tests and passed).
+
+### Clippy results
+
+- `cargo clippy --workspace -- -D warnings`: clean.
+
+### Security review
+
+- N/A. Plan specified `Invoke security-reviewer agent? NO`, and no files under `src-tauri/src/{crypto,auth,storage}/` were modified.
+
+### Governance sync
+
+- Actions executed: 2 (`GOV-1`, `GOV-2`).
+- Files updated: `.claude/rules/research.md` and mirrored `.github/instructions/*.instructions.md` set.
+- `/copilot-sync` outcome: completed and verified in-sync state after regeneration.
+
+### Sub-phase decisions sync
+
+- N/A (non-sub-phase plan).
+
+### Deviations from plan
+
+- No blocking deviations.
+- Non-blocking adjustment: `docs/research/rust-programming-language.md` was fully normalized into a concise, standards-backed compliant structure instead of incrementally patching the prior non-compliant draft.
+
+### Documentation flagged
+
+- `C:\Users\chris\source\repos\arx-runa\docs\research\*.md` (source rows and in-text claim support)
+- `C:\Users\chris\source\repos\arx-runa\docs\research\README.md`
+- `C:\Users\chris\source\repos\arx-runa\docs\architecture\designs\**\design.md` (if standards conflict requires decision updates)
+- `C:\Users\chris\source\repos\arx-runa\docs\architecture\designs\**\sub-phases\*.md` and `**\diagrams\*.md` where canonical decisions propagate.
 
