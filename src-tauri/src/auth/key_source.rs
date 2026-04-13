@@ -1,7 +1,7 @@
 //! `KeySource` trait and its production and test implementations.
 
 use std::fs::File;
-use std::io::{ErrorKind, Read};
+use std::io::{Error, ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
 use zeroize::Zeroizing;
@@ -43,6 +43,12 @@ impl KeySource for FileKeySource {
         };
 
         let metadata = file.metadata().map_err(KeySourceError::IoFailed)?;
+        if !metadata.is_file() {
+            return Err(KeySourceError::IoFailed(Error::new(
+                ErrorKind::InvalidInput,
+                "key path is not a regular file",
+            )));
+        }
         if metadata.len() != 32 {
             return Err(KeySourceError::InvalidSize {
                 actual: metadata.len() as usize,
