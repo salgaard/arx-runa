@@ -56,6 +56,7 @@ fn build_aad(file_id: &FileId, chunk_index: ChunkIndex) -> [u8; 20] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::checksum::{VerifiedBlob, compute_checksum, verify_checksum};
     use crate::crypto::decrypt_chunk::decrypt_chunk;
     use crate::crypto::types::FileKey;
 
@@ -65,6 +66,11 @@ mod tests {
 
     fn make_file_id(byte: u8) -> FileId {
         FileId::new([byte; 16])
+    }
+
+    fn verified(blob: Vec<u8>) -> VerifiedBlob {
+        let checksum = compute_checksum(&blob);
+        verify_checksum(blob, &checksum).expect("self-consistent checksum must verify")
     }
 
     #[test]
@@ -113,8 +119,8 @@ mod tests {
         let chunk_index = ChunkIndex::new(7);
 
         let blob = encrypt_chunk(plaintext.clone(), &key, &file_id, chunk_index);
-        let recovered =
-            decrypt_chunk(&blob, &key, &file_id, chunk_index).expect("round trip must succeed");
+        let recovered = decrypt_chunk(verified(blob), &key, &file_id, chunk_index)
+            .expect("round trip must succeed");
 
         assert_eq!(recovered, plaintext);
     }
@@ -123,9 +129,15 @@ mod tests {
 #[cfg(test)]
 mod proptests {
     use super::*;
+    use crate::crypto::checksum::{VerifiedBlob, compute_checksum, verify_checksum};
     use crate::crypto::decrypt_chunk::decrypt_chunk;
     use crate::crypto::types::FileKey;
     use proptest::prelude::*;
+
+    fn verified(blob: Vec<u8>) -> VerifiedBlob {
+        let checksum = compute_checksum(&blob);
+        verify_checksum(blob, &checksum).expect("self-consistent checksum must verify")
+    }
 
     proptest! {
         #[test]
@@ -140,7 +152,7 @@ mod proptests {
             let idx = ChunkIndex::new(chunk_index);
 
             let blob = encrypt_chunk(plaintext.clone(), &key, &file_id, idx);
-            let recovered = decrypt_chunk(&blob, &key, &file_id, idx)
+            let recovered = decrypt_chunk(verified(blob), &key, &file_id, idx)
                 .expect("round trip must succeed");
             prop_assert_eq!(recovered, plaintext);
         }

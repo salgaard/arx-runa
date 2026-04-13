@@ -1,7 +1,7 @@
 ---
 title: "Phase 1.3 — Key Wrapping, BLAKE3 Checksums, and File Key Generation"
 created: "2026-04-13T00:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 1
 sub-phase: "1.3"
 design-document: "docs/architecture/designs/cryptographic-primitives/design.md"
@@ -900,6 +900,78 @@ All must pass, plus `cargo test crypto` (full-module regression) and `cargo clip
 
 4. **No new contract surface is introduced** beyond what the parent design already specifies. `generate_file_key`, `wrap_file_key`, `unwrap_file_key`, `compute_checksum`, `verify_checksum`, and `VerifiedBlob` are all already listed as canonical in `design.md` Contract Surface (lines 21, 28). No new `## Contract Surface` entries are added; no new rows are added to `docs/architecture/design-invariants.md`.
 
+### Documentation updates applied
+
+- Updated `docs/architecture/designs/cryptographic-primitives/sub-phases/1.3-key-wrapping-and-checksums.md` Completion section to explicitly defer recovery-slot wrapping APIs to Phase 2 because they depend on `MasterKey`.
+- Updated `docs/roadmap.md` to mark **Phase 1 — Cryptographic Primitives** as `Complete`.
+- Added a Phase 1 note in `docs/roadmap.md` clarifying `wrap_master_key_for_recovery` / `unwrap_master_key_from_recovery` are Phase 2 work.
+- Reviewed `docs/architecture/designs/cryptographic-primitives/diagrams/key-derivation-tree.md`; no divergence found, so no diagram edit was required.
+
 ## 9. Handoff notes for implementer
 
 You are working in `C:\Users\chris\source\repos\arx-runa`, Rust edition 2024, inside the `src-tauri/` crate. **Do not re-read the sub-phase** — this plan is self-contained and quotes every trait signature, error variant, and wire-format byte offset you need. Execute Steps 5.1 → 5.9 in order; each step targets exactly the files listed. The most error-prone step is 5.6 (migrating `decrypt_chunk`'s signature to `VerifiedBlob`), because every existing Phase 1.2 test callsite must switch from `decrypt_chunk(&blob, ...)` to `decrypt_chunk(verified(blob), ...)` — do not leave a single stale callsite or the crate will not compile. Step 5.7 is the same migration inside `encrypt_chunk.rs`, which has *two* separate `mod` blocks (`mod tests` and `mod proptests`) each with its own imports and its own `verified` helper. Platform note: this crate targets Windows, macOS, and Linux; nothing in Phase 1.3 is platform-specific, so there are no `#[cfg(target_os = ...)]` branches to worry about and no path-separator hazards. After Step 5.9 passes, hand the touched files off to the `security-reviewer` agent per Section 6.c's eleven-item checklist before marking the plan implemented.
+
+## Implementation Log
+
+- **Date**: 2026-04-13T03:20:43Z
+- **Branch**: development
+
+### Agent evidence
+
+| Approach step | Agent | Agent ID | Outcome |
+| --- | --- | --- | --- |
+| 5.1 | rust-implementer | `phase-1-3-impl` | Confirmed required dependency pins already present; no dependency edits. |
+| 5.2 | rust-implementer | `phase-1-3-impl` | Added `FileKey::from_secret_box` in `src-tauri/src/crypto/types/mod.rs`. |
+| 5.3 | rust-implementer | `phase-1-3-impl` | Created `src-tauri/src/crypto/generate_file_key.rs` with generation API and tests. |
+| 5.4 | rust-implementer | `phase-1-3-impl` | Created `src-tauri/src/crypto/checksum.rs` with `compute_checksum`, `verify_checksum`, `VerifiedBlob`, tests, and proptest. |
+| 5.5 | rust-implementer | `phase-1-3-impl` | Created `src-tauri/src/crypto/wrap_key.rs` with wrap/unwrap APIs and adversarial tests. |
+| 5.5 (follow-up fix) | rust-implementer | `phase-1-3-wrapkey-fix` | Replaced `assert_matches!` usages on `Result<FileKey, _>` with `matches!` assertions to avoid requiring `Debug` on `FileKey`. |
+| 5.6 | rust-implementer | `phase-1-3-impl` | Migrated `decrypt_chunk` to consume `VerifiedBlob`; updated docs/imports/tests and added verified-blob end-to-end test. |
+| 5.7 | rust-implementer | `phase-1-3-impl` | Updated `encrypt_chunk.rs` test/proptest callsites to verify checksum before decrypt. |
+| 5.8 | rust-implementer | `phase-1-3-impl` | Registered/re-exported `checksum`, `generate_file_key`, and `wrap_key` in `src-tauri/src/crypto/mod.rs`. |
+| Security review (Section 6.c) | security-reviewer | `phase-1-3-security` | No CRITICAL or WARNING findings; verdict: safe to proceed. |
+
+### Files changed
+
+- `src-tauri/src/crypto/types/mod.rs` (modified)
+- `src-tauri/src/crypto/generate_file_key.rs` (created)
+- `src-tauri/src/crypto/checksum.rs` (created)
+- `src-tauri/src/crypto/wrap_key.rs` (created)
+- `src-tauri/src/crypto/decrypt_chunk.rs` (modified)
+- `src-tauri/src/crypto/encrypt_chunk.rs` (modified)
+- `src-tauri/src/crypto/mod.rs` (modified)
+
+### Test results
+
+- `cargo test crypto::wrap_key`: passed (`8 passed; 0 failed`).
+- `cargo test crypto::checksum`: passed (`8 passed; 0 failed`).
+- `cargo test crypto::generate_file_key`: passed (`2 passed; 0 failed`).
+- `cargo test crypto`: passed (`48 passed; 0 failed`).
+
+### Clippy results
+
+- `cargo clippy --workspace -- -D warnings`: clean (no warnings).
+
+### Security review
+
+- `security-reviewer` run completed on the expected sensitive file set.
+- Findings: CRITICAL `0`, WARNING `0`, NOTE-only confirmations.
+
+### Deviations from plan
+
+- The initial `wrap_key` tests used `assert_matches!` for `Result<FileKey, CryptoError>` error assertions, which required `Debug` on `FileKey`. This was adjusted to `assert!(matches!(...))` to preserve secret-key type semantics without adding `Debug` to key newtypes.
+- `rust-implementer` agent runs in this environment could not execute `cargo` commands directly, so compile/lint/test validation was executed immediately afterward by the invoking agent with all required commands passing.
+
+### Documentation flagged
+
+1. **Required on implementation** (Design Concern #1 resolution):
+   - `docs/architecture/designs/cryptographic-primitives/sub-phases/1.3-key-wrapping-and-checksums.md`, "Completion" section (lines 75–82): amend to state that Phase 1.3 closes out Phase 1's vault-key, chunk-AEAD, per-file-key, and integrity-checksum deliverables, while recovery-slot wrapping (`wrap_master_key_for_recovery`, `unwrap_master_key_from_recovery`, `RecoveryKey`, `WrappedMasterKey`) is owned by Phase 2 because it depends on the `MasterKey` type introduced by the authentication design.
+   - `docs/roadmap.md` Phase 1 summary (lines 43–49): add a one-line note that recovery-slot wrapping is Phase 2 work, so that a reader comparing the Contract Surface in `cryptographic-primitives/design.md` to the Phase 1 deliverables understands the phase boundary.
+
+2. **Roadmap checkbox update** (standard Phase 1 completion):
+   - After Step 5.9 passes and the `security-reviewer` signs off, update `docs/roadmap.md` to mark Phase 1 complete (sub-phase 1.3 line 80 instructs this).
+
+3. **Diagram freshness check**:
+   - `docs/architecture/designs/cryptographic-primitives/diagrams/key-derivation-tree.md` — sub-phase 1.3 line 81 instructs to update only if implementation diverged from the design. This plan does not diverge; no edit expected. The implementer should visually confirm the diagram still matches after Step 5.9 and note in the PR if anything looks stale.
+
+4. **No new contract surface is introduced** beyond what the parent design already specifies. `generate_file_key`, `wrap_file_key`, `unwrap_file_key`, `compute_checksum`, `verify_checksum`, and `VerifiedBlob` are all already listed as canonical in `design.md` Contract Surface (lines 21, 28). No new `## Contract Surface` entries are added; no new rows are added to `docs/architecture/design-invariants.md`.

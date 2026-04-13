@@ -14,6 +14,14 @@ impl FileKey {
         Self(SecretBox::new(Box::new(bytes)))
     }
 
+    /// Constructs a file key from protected heap storage.
+    ///
+    /// Used by `unwrap_file_key` so the decrypted key bytes never exist in a
+    /// plain local variable outside the `SecretBox`.
+    pub(crate) fn from_secret_box(secret_box: SecretBox<[u8; 32]>) -> Self {
+        Self(secret_box)
+    }
+
     /// Exposes the key bytes for cryptographic operations.
     #[allow(dead_code)]
     pub(crate) fn expose(&self) -> &[u8; 32] {

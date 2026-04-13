@@ -5,7 +5,7 @@ Arx Runa is built in ten sequential phases, each delivering a distinct, self-con
 | Phase | What gets built | Status |
 |-------|----------------|--------|
 | 0 — Scaffolding | Project structure, build pipeline, CI | Complete |
-| 1 — Cryptographic Primitives | Encryption, key derivation, chunk encryption/decryption | Planned |
+| 1 — Cryptographic Primitives | Encryption, key derivation, chunk encryption/decryption | Complete |
 | 2 — Authentication & Session | Login flow, USB key file, session lifecycle and timeout | Planned |
 | 3 — Storage & Chunking | File splitting, local encrypted database, blob staging | Planned |
 | 4 — Cloud Synchronisation | Rclone integration, upload/download, new-device recovery | Planned |
@@ -47,6 +47,8 @@ Establish the compilable project skeleton — directory structure, Tauri workspa
 **Design document**: [`cryptographic-primitives/design.md`](architecture/designs/cryptographic-primitives/design.md)
 
 Implement the foundational cryptographic operations: HKDF key derivation, per-file key management, chunk encryption/decryption with AAD binding, BLAKE3 checksums, and memory-safe key handling.
+
+Recovery-slot wrapping (`wrap_master_key_for_recovery` / `unwrap_master_key_from_recovery`) is Phase 2 work because it depends on the `MasterKey` type introduced by the authentication design.
 
 ---
 
