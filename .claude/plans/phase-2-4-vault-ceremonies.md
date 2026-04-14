@@ -1,7 +1,7 @@
 ---
 title: "Phase 2.4 — Vault Ceremonies"
 created: "2026-04-14T00:00:00Z"
-status: draft
+status: approved
 roadmap-phase: 2
 sub-phase: "2.4"
 design-document: "docs/architecture/designs/authentication-and-session-management/design.md"
