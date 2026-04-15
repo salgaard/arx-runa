@@ -306,8 +306,10 @@ mod tests {
 
         // SAFETY: `pointer` comes from `file_key.expose()` and `file_key` remains
         // alive and allocated for the duration of this read.
-        let before_zeroize = unsafe { std::slice::from_raw_parts(pointer, 32) };
-        assert_eq!(before_zeroize, &[0xAAu8; 32]);
+        {
+            let before_zeroize = unsafe { std::slice::from_raw_parts(pointer, 32) };
+            assert_eq!(before_zeroize, &[0xAAu8; 32]);
+        }
 
         Zeroize::zeroize(&mut file_key.0);
 
@@ -324,8 +326,10 @@ mod tests {
 
         // SAFETY: `pointer` comes from `key_encryption_key.expose()` and the key
         // remains alive and allocated for this read.
-        let before_zeroize = unsafe { std::slice::from_raw_parts(pointer, 32) };
-        assert_eq!(before_zeroize, &[0x5Au8; 32]);
+        {
+            let before_zeroize = unsafe { std::slice::from_raw_parts(pointer, 32) };
+            assert_eq!(before_zeroize, &[0x5Au8; 32]);
+        }
 
         Zeroize::zeroize(&mut key_encryption_key.0);
 
@@ -354,8 +358,10 @@ mod tests {
 
         // SAFETY: `pointer` comes from `master_key.expose()` and the key remains
         // alive and allocated for this read.
-        let before_zeroize = unsafe { std::slice::from_raw_parts(pointer, 32) };
-        assert_eq!(before_zeroize, &[0x7Cu8; 32]);
+        {
+            let before_zeroize = unsafe { std::slice::from_raw_parts(pointer, 32) };
+            assert_eq!(before_zeroize, &[0x7Cu8; 32]);
+        }
 
         Zeroize::zeroize(&mut master_key.0);
 
@@ -378,8 +384,10 @@ mod tests {
 
         // SAFETY: `pointer` comes from `recovery_key.expose()` and the key
         // remains alive and allocated for this read.
-        let before_zeroize = unsafe { std::slice::from_raw_parts(pointer, 32) };
-        assert_eq!(before_zeroize, &[0x55u8; 32]);
+        {
+            let before_zeroize = unsafe { std::slice::from_raw_parts(pointer, 32) };
+            assert_eq!(before_zeroize, &[0x55u8; 32]);
+        }
 
         Zeroize::zeroize(&mut recovery_key.0);
 
