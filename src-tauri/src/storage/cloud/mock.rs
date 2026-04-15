@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use tokio::sync::Mutex;
 
 use super::{CloudTransport, CloudTransportError};
+use crate::storage::types::BlobName;
 
 /// In-memory cloud transport backed by a `HashMap<String, Vec<u8>>` under
 /// a `tokio::sync::Mutex`.
@@ -41,19 +42,19 @@ impl MockCloudTransport {
 
 #[async_trait]
 impl CloudTransport for MockCloudTransport {
-    async fn upload_blob(&self, name: &str, bytes: &[u8]) -> Result<(), CloudTransportError> {
+    async fn upload_blob(&self, name: &BlobName, bytes: &[u8]) -> Result<(), CloudTransportError> {
         self.store
             .lock()
             .await
-            .insert(name.to_string(), bytes.to_vec());
+            .insert(name.as_str().to_owned(), bytes.to_vec());
         Ok(())
     }
 
-    async fn download_blob(&self, name: &str) -> Result<Vec<u8>, CloudTransportError> {
+    async fn download_blob(&self, name: &BlobName) -> Result<Vec<u8>, CloudTransportError> {
         self.store
             .lock()
             .await
-            .get(name)
+            .get(name.as_str())
             .cloned()
             .ok_or(CloudTransportError::NotFound)
     }
@@ -67,13 +68,14 @@ mod tests {
     async fn test_mock_cloud_transport_upload_then_download_returns_bytes() {
         let transport = MockCloudTransport::new();
         let payload = b"vault header bytes".to_vec();
+        let blob_name = BlobName::from("vault.json");
 
         transport
-            .upload_blob("vault.json", &payload)
+            .upload_blob(&blob_name, &payload)
             .await
             .expect("upload must succeed");
         let recovered = transport
-            .download_blob("vault.json")
+            .download_blob(&blob_name)
             .await
             .expect("download must succeed");
 
@@ -83,8 +85,9 @@ mod tests {
     #[tokio::test]
     async fn test_mock_cloud_transport_download_missing_returns_not_found() {
         let transport = MockCloudTransport::new();
+        let blob_name = BlobName::from("missing.json");
 
-        let result = transport.download_blob("missing.json").await;
+        let result = transport.download_blob(&blob_name).await;
 
         assert!(matches!(result, Err(CloudTransportError::NotFound)));
     }
@@ -92,18 +95,19 @@ mod tests {
     #[tokio::test]
     async fn test_mock_cloud_transport_upload_overwrites_existing_blob() {
         let transport = MockCloudTransport::new();
+        let blob_name = BlobName::from("vault.json");
 
         transport
-            .upload_blob("vault.json", b"first")
+            .upload_blob(&blob_name, b"first")
             .await
             .expect("upload must succeed");
         transport
-            .upload_blob("vault.json", b"second")
+            .upload_blob(&blob_name, b"second")
             .await
             .expect("upload must succeed");
 
         let recovered = transport
-            .download_blob("vault.json")
+            .download_blob(&blob_name)
             .await
             .expect("download must succeed");
         assert_eq!(recovered, b"second");
@@ -112,11 +116,13 @@ mod tests {
     #[tokio::test]
     async fn test_mock_cloud_transport_len_tracks_distinct_blob_names() {
         let transport = MockCloudTransport::new();
+        let blob_a = BlobName::from("a");
+        let blob_b = BlobName::from("b");
 
         assert!(transport.is_empty().await);
-        transport.upload_blob("a", b"1").await.unwrap();
-        transport.upload_blob("b", b"2").await.unwrap();
-        transport.upload_blob("a", b"3").await.unwrap();
+        transport.upload_blob(&blob_a, b"1").await.unwrap();
+        transport.upload_blob(&blob_b, b"2").await.unwrap();
+        transport.upload_blob(&blob_a, b"3").await.unwrap();
 
         assert_eq!(transport.len().await, 2);
     }

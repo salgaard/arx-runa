@@ -29,8 +29,8 @@ applyTo: "src-tauri/src/auth/**"
 - Read key file once at start — hold derived keys in mlocked memory
 - Timeout: zeroize all keys, then drop
 - Never persist session keys to disk
-- Session keys live in SessionKeys (src-tauri/src/auth/session.rs) with fields backed by SecureBytes<32>; drop order runs zeroize -> munlock/VirtualUnlock -> free.
-- `SessionManager` (src-tauri/src/auth/session.rs) owns the `NoSession → Active → Expired` state machine; check `state().await` before any session-scoped work.
+- Session keys live in `SessionKeys` (`src-tauri/src/auth/session/keys.rs`) with fields backed by `SecureBytes<32>`; drop order runs zeroize -> munlock/VirtualUnlock -> free.
+- `SessionManager` (`src-tauri/src/auth/session/manager.rs`) owns the `NoSession → Active → Expired` state machine; check `state().await` before any session-scoped work.
 - `SessionManager::authenticate(password, key_source, salt, params)` is the only entry to `Active`; re-auth while `Active` returns `SessionAlreadyActive` — call `lock()` first.
 - `reset_timer()` must be called by the IPC dispatcher on every Tauri command invocation while the session is `Active` (Phase 6.1 wires this).
 - Long-running operations must bracket their work with `let _guard = session_manager.begin_operation();` — `lock()` and the timeout task wait for the counter to reach zero before zeroizing.
@@ -48,7 +48,9 @@ applyTo: "src-tauri/src/auth/**"
 - `DeviceMonitor` trait — `watch() -> Pin<Box<dyn Stream<Item = DeviceEvent> + Send>>`; implementations: `WindowsDeviceMonitor`, `LinuxDeviceMonitor`, `MacOsDeviceMonitor`, `MockDeviceMonitor` (test)
 
 ## Ceremonies
-- Six ceremony functions live in `src-tauri/src/auth/ceremonies.rs`: `create_vault`, `change_password`, `rotate_key_file`, `recover_vault`, `setup_recovery`, `recover_with_phrase`.
+- `src-tauri/src/auth/ceremonies/mod.rs` is the entry-point re-export layer for all ceremony APIs.
+- Six ceremony entry-point functions are split by flow under `src-tauri/src/auth/ceremonies/`: `create.rs` (`create_vault`), `change_password.rs` (`change_password`), `rotate_key_file.rs` (`rotate_key_file`), `recover_vault.rs` (`recover_vault`), `setup_recovery.rs` (`setup_recovery`), `recover_with_phrase.rs` (`recover_with_phrase`).
+- Ceremony module structure keeps request/enum types in `src-tauri/src/auth/ceremonies/types.rs`, shared internals in `src-tauri/src/auth/ceremonies/helpers.rs`, shared test fixtures in `src-tauri/src/auth/ceremonies/test_support.rs`, and tests colocated in each ceremony flow file.
 - `master_key` is bound as `Zeroizing<[u8; 32]>` inside ceremony-local scope and must not escape the function body. No struct may hold a `master_key` or `MasterKey` field.
 - `SessionKeys::from_master_key_bytes` is the ceremony entry point for HKDF expansion; `SessionKeys::derive` is preserved for direct `SessionManager::authenticate` callers.
 - `SessionManager::install_session` transitions `NoSession | Expired → Active` with pre-derived keys; `SessionManager::swap_active_session` rotates keys while staying `Active` (used by password change and key file rotation). Neither method re-runs KDF.

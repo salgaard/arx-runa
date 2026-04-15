@@ -119,4 +119,4 @@ All timers configurable via `SessionConfig` (Phase 2.3 implementation).
 - Design document: [../design.md](../design.md)
 - Authentication flow: [../../authentication-and-session-management/diagrams/authentication-flow.md](../../authentication-and-session-management/diagrams/authentication-flow.md)
 - Sub-phase: [../../authentication-and-session-management/sub-phases/2.3-session-lifecycle-and-timeout.md](../../authentication-and-session-management/sub-phases/2.3-session-lifecycle-and-timeout.md)
-- Source: `src-tauri/src/auth/session.rs`
+- Source: `src-tauri/src/auth/session/manager.rs`

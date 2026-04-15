@@ -1,7 +1,7 @@
 # Arx Runa — Authentication and Session Management Design
 
 > Status: Design complete. Implementation target: Phase 2.
-> Last updated: 2026-04-12 (reviewed)
+> Last updated: 2026-04-15 (reviewed)
 
 ---
 
@@ -23,6 +23,7 @@
 ### Interface contract
 
 - Authentication surface includes vault creation, login, password change, USB key file rotation, and recovery authentication ceremonies.
+- Ceremony implementation is split by concern: `src-tauri/src/auth/ceremonies/mod.rs` is the entry-point re-export layer, each ceremony flow lives in its own file under `src-tauri/src/auth/ceremonies/`, request/enum types live in `types.rs`, and shared internal helpers live in `helpers.rs`.
 - Session access boundary is `SharedSession = Arc<RwLock<Option<SessionKeys>>>` with lock/unlock transitions defined by session lifecycle rules.
 - External interfaces are `KeySource::read_key` and `DeviceMonitor::watch` (production plus mock implementations).
 

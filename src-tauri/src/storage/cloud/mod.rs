@@ -10,14 +10,13 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
+use crate::storage::types::BlobName;
+
 pub mod manifest_backup;
 pub mod vault_header;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
-
-/// Opaque cloud-side blob name.
-pub type BlobName = String;
 
 /// Errors produced by [`CloudTransport`] implementations.
 #[non_exhaustive]
@@ -44,8 +43,8 @@ pub enum CloudTransportError {
 #[async_trait]
 pub trait CloudTransport: Send + Sync {
     /// Upload `bytes` under `name`, overwriting any prior content.
-    async fn upload_blob(&self, name: &str, bytes: &[u8]) -> Result<(), CloudTransportError>;
+    async fn upload_blob(&self, name: &BlobName, bytes: &[u8]) -> Result<(), CloudTransportError>;
 
     /// Download the blob stored under `name`.
-    async fn download_blob(&self, name: &str) -> Result<Vec<u8>, CloudTransportError>;
+    async fn download_blob(&self, name: &BlobName) -> Result<Vec<u8>, CloudTransportError>;
 }
