@@ -24,13 +24,14 @@ const KEY_LEN: usize = 32;
 const TAG_LEN: usize = 16;
 const WRAPPED_LEN: usize = NONCE_LEN + KEY_LEN + TAG_LEN;
 const AAD_PREFIX: &[u8] = b"arx-runa recovery v1";
-const AAD_LEN: usize = 20 + 16;
+const AAD_LEN: usize = AAD_PREFIX.len() + 16;
 
 /// Builds the recovery-slot AAD `b"arx-runa recovery v1" || vault_id_bytes`.
 fn build_aad(vault_id: &VaultId) -> [u8; AAD_LEN] {
     let mut aad = [0u8; AAD_LEN];
-    aad[..20].copy_from_slice(AAD_PREFIX);
-    aad[20..].copy_from_slice(vault_id.as_bytes());
+    let prefix_len = AAD_PREFIX.len();
+    aad[..prefix_len].copy_from_slice(AAD_PREFIX);
+    aad[prefix_len..].copy_from_slice(vault_id.as_bytes());
     aad
 }
 

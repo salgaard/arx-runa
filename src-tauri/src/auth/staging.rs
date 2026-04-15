@@ -26,10 +26,12 @@ use crate::auth::error::AuthenticationError;
 /// The directory is `dirs::config_dir() / "arx-runa/"`. The directory is
 /// created if missing. Returns `VaultHeaderInvalid` if `config_dir()` is
 /// unavailable or the directory cannot be created.
-pub(crate) fn staging_directory() -> Result<PathBuf, AuthenticationError> {
+pub(crate) async fn staging_directory() -> Result<PathBuf, AuthenticationError> {
     let base = dirs::config_dir().ok_or(AuthenticationError::VaultHeaderInvalid)?;
     let staging_dir = base.join("arx-runa");
-    std::fs::create_dir_all(&staging_dir).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+    tokio::fs::create_dir_all(&staging_dir)
+        .await
+        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     Ok(staging_dir)
 }
 
@@ -38,30 +40,36 @@ pub(crate) fn staging_directory() -> Result<PathBuf, AuthenticationError> {
 /// On Unix the file is created with mode `0o600`. On Windows the file is
 /// created with a default DACL (see module-level note). The file is fully
 /// written and closed before this function returns.
-pub(crate) fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), AuthenticationError> {
-    let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+pub(crate) async fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), AuthenticationError> {
+    let path = path.to_path_buf();
+    let bytes = bytes.to_vec();
+    tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
+        let mut options = OpenOptions::new();
+        options.write(true).create(true).truncate(true);
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
 
-    let mut file = options
-        .open(path)
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    file.write_all(bytes)
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    file.sync_all()
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    Ok(())
+        let mut file = options
+            .open(path)
+            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+        file.write_all(&bytes)
+            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+        file.sync_all()
+            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+        Ok(())
+    })
+    .await
+    .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
 }
 
 /// Best-effort removal of a staging file. Ignores `NotFound`; surfaces
 /// other errors as `VaultHeaderInvalid`.
-pub(crate) fn remove_if_exists(path: &Path) -> Result<(), AuthenticationError> {
-    match std::fs::remove_file(path) {
+pub(crate) async fn remove_if_exists(path: &Path) -> Result<(), AuthenticationError> {
+    match tokio::fs::remove_file(path).await {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(_) => Err(AuthenticationError::VaultHeaderInvalid),
@@ -73,58 +81,70 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[test]
-    fn test_write_owner_only_writes_exact_bytes() {
+    #[tokio::test]
+    async fn test_write_owner_only_writes_exact_bytes() {
         let directory = tempdir().expect("tempdir must succeed");
         let path = directory.path().join("header.json");
         let payload = b"{\"schema_version\":1}";
 
-        write_owner_only(&path, payload).expect("write must succeed");
+        write_owner_only(&path, payload)
+            .await
+            .expect("write must succeed");
 
         let recovered = std::fs::read(&path).expect("read must succeed");
         assert_eq!(recovered, payload);
     }
 
     #[cfg(unix)]
-    #[test]
-    fn test_write_owner_only_sets_mode_0o600_on_unix() {
+    #[tokio::test]
+    async fn test_write_owner_only_sets_mode_0o600_on_unix() {
         use std::os::unix::fs::PermissionsExt;
         let directory = tempdir().expect("tempdir must succeed");
         let path = directory.path().join("header.json");
 
-        write_owner_only(&path, b"payload").expect("write must succeed");
+        write_owner_only(&path, b"payload")
+            .await
+            .expect("write must succeed");
 
         let metadata = std::fs::metadata(&path).expect("metadata must succeed");
         assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
     }
 
-    #[test]
-    fn test_write_owner_only_truncates_existing_content() {
+    #[tokio::test]
+    async fn test_write_owner_only_truncates_existing_content() {
         let directory = tempdir().expect("tempdir must succeed");
         let path = directory.path().join("header.json");
 
-        write_owner_only(&path, b"longer initial content").expect("first write must succeed");
-        write_owner_only(&path, b"short").expect("second write must succeed");
+        write_owner_only(&path, b"longer initial content")
+            .await
+            .expect("first write must succeed");
+        write_owner_only(&path, b"short")
+            .await
+            .expect("second write must succeed");
 
         let recovered = std::fs::read(&path).expect("read must succeed");
         assert_eq!(recovered, b"short");
     }
 
-    #[test]
-    fn test_remove_if_exists_returns_ok_on_missing_file() {
+    #[tokio::test]
+    async fn test_remove_if_exists_returns_ok_on_missing_file() {
         let directory = tempdir().expect("tempdir must succeed");
         let path = directory.path().join("missing.json");
 
-        remove_if_exists(&path).expect("missing file must not error");
+        remove_if_exists(&path)
+            .await
+            .expect("missing file must not error");
     }
 
-    #[test]
-    fn test_remove_if_exists_deletes_existing_file() {
+    #[tokio::test]
+    async fn test_remove_if_exists_deletes_existing_file() {
         let directory = tempdir().expect("tempdir must succeed");
         let path = directory.path().join("delete-me.json");
-        write_owner_only(&path, b"content").expect("write must succeed");
+        write_owner_only(&path, b"content")
+            .await
+            .expect("write must succeed");
 
-        remove_if_exists(&path).expect("remove must succeed");
+        remove_if_exists(&path).await.expect("remove must succeed");
 
         assert!(!path.exists());
     }

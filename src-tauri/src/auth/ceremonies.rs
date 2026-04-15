@@ -68,6 +68,7 @@ pub enum Tier {
 }
 
 impl Tier {
+    /// Returns the serialized tier value used in vault headers.
     fn as_u8(self) -> u8 {
         match self {
             Tier::One => 1,
@@ -153,6 +154,7 @@ pub struct RecoverWithPhraseRequest<'a> {
     pub vault_db_path: PathBuf,
 }
 
+/// Converts runtime Argon2 parameters into vault-header JSON shape.
 fn argon2_params_to_json(params: &Argon2Params) -> Argon2ParamsJson {
     Argon2ParamsJson {
         memory_cost: params.memory_cost_kib,
@@ -161,6 +163,7 @@ fn argon2_params_to_json(params: &Argon2Params) -> Argon2ParamsJson {
     }
 }
 
+/// Converts vault-header Argon2 JSON fields into runtime parameters.
 fn argon2_params_from_json(json: &Argon2ParamsJson) -> Argon2Params {
     Argon2Params {
         memory_cost_kib: json.memory_cost,
@@ -219,17 +222,42 @@ fn recovery_key_from_array(bytes: &[u8; 32]) -> RecoveryKey {
     RecoveryKey::from_secret_box(secret_box_from_array(bytes))
 }
 
+/// Ensures the parent directory for `path` exists.
+async fn ensure_parent_directory_exists(path: &Path) -> Result<(), AuthenticationError> {
+    if let Some(parent) = path.parent()
+        && !tokio::fs::try_exists(parent)
+            .await
+            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
+    {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+    }
+    Ok(())
+}
+
+/// Removes `path` if it exists, logging unexpected cleanup failures.
+async fn remove_file_if_exists(path: &Path) {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(cleanup_error) => tracing::warn!(?cleanup_error, "file cleanup failed"),
+    }
+}
+
 /// Logs and ignores staging cleanup failures so primary upload outcome wins.
-fn best_effort_cleanup_staging(staging_path: &Path) {
-    if let Err(cleanup_error) = staging::remove_if_exists(staging_path) {
+async fn best_effort_cleanup_staging(staging_path: &Path) {
+    if let Err(cleanup_error) = staging::remove_if_exists(staging_path).await {
         tracing::warn!(?cleanup_error, "staging cleanup failed");
     }
 }
 
+/// Encodes raw bytes with standard base64.
 fn encode_base64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
+/// Decodes standard base64 into a fixed 32-byte array.
 fn decode_base64_32(input: &str) -> Result<[u8; 32], AuthenticationError> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(input)
@@ -240,6 +268,7 @@ fn decode_base64_32(input: &str) -> Result<[u8; 32], AuthenticationError> {
     Ok(array)
 }
 
+/// Decodes standard base64 into a fixed 72-byte array.
 fn decode_base64_72(input: &str) -> Result<[u8; 72], AuthenticationError> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(input)
@@ -376,15 +405,18 @@ fn unwrap_with_kek_bytes(
         .map_err(|_| AuthenticationError::InvalidCredentials)
 }
 
+/// Parses an English BIP-39 phrase and maps failures to auth errors.
 fn parse_mnemonic(phrase: &str) -> Result<Mnemonic, AuthenticationError> {
     Mnemonic::parse_in(Language::English, phrase)
         .map_err(|_| AuthenticationError::InvalidRecoveryPhrase)
 }
 
+/// Canonicalizes a mnemonic into the required space-delimited word form.
 fn canonicalize_phrase(mnemonic: &Mnemonic) -> Zeroizing<String> {
     Zeroizing::new(mnemonic.words().collect::<Vec<_>>().join(" "))
 }
 
+/// Derives a recovery key from phrase bytes and slot-local Argon2 parameters.
 fn derive_recovery_key_into(
     phrase_canonical_bytes: &[u8],
     salt: &[u8; 32],
@@ -449,15 +481,14 @@ pub async fn create_vault(
         _ => {}
     }
 
-    if request.vault_db_path.exists() {
+    if tokio::fs::try_exists(&request.vault_db_path)
+        .await
+        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
+    {
         return Err(AuthenticationError::VaultHeaderInvalid);
     }
 
-    if let Some(parent) = request.vault_db_path.parent()
-        && !parent.exists()
-    {
-        std::fs::create_dir_all(parent).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    }
+    ensure_parent_directory_exists(&request.vault_db_path).await?;
 
     if request.tier == Tier::Two {
         let key_file_path = request
@@ -467,7 +498,10 @@ pub async fn create_vault(
         let parent = key_file_path
             .parent()
             .ok_or(AuthenticationError::VaultHeaderInvalid)?;
-        if !parent.exists() {
+        if !tokio::fs::try_exists(parent)
+            .await
+            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
+        {
             return Err(AuthenticationError::VaultHeaderInvalid);
         }
     }
@@ -483,7 +517,7 @@ pub async fn create_vault(
             .ok_or(AuthenticationError::VaultHeaderInvalid)?;
         let mut buffer: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         rand::rng().fill_bytes(buffer.as_mut_slice());
-        staging::write_owner_only(key_file_path, buffer.as_slice())?;
+        staging::write_owner_only(key_file_path, buffer.as_slice()).await?;
         let digest = blake3::hash(buffer.as_slice());
         key_file_blake3_hex = Some(hex::encode(digest.as_bytes()));
         key_file_bytes = Some(buffer);
@@ -502,7 +536,7 @@ pub async fn create_vault(
     );
     if let Err(error) = derive_result {
         if let Some(key_file_path) = request.target_key_file_path.as_ref() {
-            let _ = std::fs::remove_file(key_file_path);
+            remove_file_if_exists(key_file_path).await;
         }
         return Err(error);
     }
@@ -511,7 +545,7 @@ pub async fn create_vault(
         Ok(keys) => keys,
         Err(error) => {
             if let Some(key_file_path) = request.target_key_file_path.as_ref() {
-                let _ = std::fs::remove_file(key_file_path);
+                remove_file_if_exists(key_file_path).await;
             }
             return Err(error);
         }
@@ -545,9 +579,9 @@ pub async fn create_vault(
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     if let Err(error) = db_result {
         if let Some(key_file_path) = request.target_key_file_path.as_ref() {
-            let _ = std::fs::remove_file(key_file_path);
+            remove_file_if_exists(key_file_path).await;
         }
-        let _ = std::fs::remove_file(&request.vault_db_path);
+        remove_file_if_exists(&request.vault_db_path).await;
         return Err(error);
     }
 
@@ -563,13 +597,13 @@ pub async fn create_vault(
 
     let json_bytes =
         serde_json::to_vec_pretty(&header).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    let staging_dir = staging::staging_directory()?;
+    let staging_dir = staging::staging_directory().await?;
     let staging_path = staging_dir.join(STAGING_FILE_NAME);
-    staging::write_owner_only(&staging_path, &json_bytes)?;
+    staging::write_owner_only(&staging_path, &json_bytes).await?;
     let upload_result = cloud_transport
         .upload_blob(VAULT_HEADER_BLOB_NAME, &json_bytes)
         .await;
-    let cleanup_result = staging::remove_if_exists(&staging_path);
+    let cleanup_result = staging::remove_if_exists(&staging_path).await;
     if upload_result.is_err() {
         if let Err(cleanup_error) = cleanup_result {
             tracing::warn!(
@@ -578,9 +612,9 @@ pub async fn create_vault(
             );
         }
         if let Some(key_file_path) = request.target_key_file_path.as_ref() {
-            let _ = std::fs::remove_file(key_file_path);
+            remove_file_if_exists(key_file_path).await;
         }
-        let _ = std::fs::remove_file(&request.vault_db_path);
+        remove_file_if_exists(&request.vault_db_path).await;
         return Err(AuthenticationError::VaultHeaderInvalid);
     }
     if let Err(cleanup_error) = cleanup_result {
@@ -803,16 +837,16 @@ pub async fn change_password(
 
     let json_bytes = serde_json::to_vec_pretty(&vault_header)
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    let staging_dir = staging::staging_directory()?;
+    let staging_dir = staging::staging_directory().await?;
     let staging_path = staging_dir.join(STAGING_FILE_NAME);
-    staging::write_owner_only(&staging_path, &json_bytes)?;
+    staging::write_owner_only(&staging_path, &json_bytes).await?;
     let upload_result = cloud_transport
         .upload_blob(VAULT_HEADER_BLOB_NAME, &json_bytes)
         .await;
     if upload_result.is_err() {
         return Err(AuthenticationError::VaultHeaderInvalid);
     }
-    best_effort_cleanup_staging(&staging_path);
+    best_effort_cleanup_staging(&staging_path).await;
 
     session_manager
         .swap_active_session(new_session_keys)
@@ -881,7 +915,7 @@ pub async fn rotate_key_file(
     }
     let mut new_key_file: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
     rand::rng().fill_bytes(new_key_file.as_mut_slice());
-    staging::write_owner_only(&request.target_new_key_file_path, new_key_file.as_slice())?;
+    staging::write_owner_only(&request.target_new_key_file_path, new_key_file.as_slice()).await?;
     let mut new_key_file_cleanup = ScopedFileCleanup::new(request.target_new_key_file_path.clone());
     let new_key_file_blake3 = hex::encode(blake3::hash(new_key_file.as_slice()).as_bytes());
 
@@ -1035,16 +1069,16 @@ pub async fn rotate_key_file(
 
     let json_bytes = serde_json::to_vec_pretty(&vault_header)
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    let staging_dir = staging::staging_directory()?;
+    let staging_dir = staging::staging_directory().await?;
     let staging_path = staging_dir.join(STAGING_FILE_NAME);
-    staging::write_owner_only(&staging_path, &json_bytes)?;
+    staging::write_owner_only(&staging_path, &json_bytes).await?;
     let upload_result = cloud_transport
         .upload_blob(VAULT_HEADER_BLOB_NAME, &json_bytes)
         .await;
     if upload_result.is_err() {
         return Err(AuthenticationError::VaultHeaderInvalid);
     }
-    best_effort_cleanup_staging(&staging_path);
+    best_effort_cleanup_staging(&staging_path).await;
 
     session_manager
         .swap_active_session(new_session_keys)
@@ -1125,14 +1159,13 @@ pub async fn recover_vault(
     let plaintext = decrypt_manifest_backup(&backup_wire, session_keys.manifest_key.expose())
         .map_err(|_| AuthenticationError::InvalidCredentials)?;
 
-    if request.vault_db_path.exists() {
+    if tokio::fs::try_exists(&request.vault_db_path)
+        .await
+        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
+    {
         return Err(AuthenticationError::VaultHeaderInvalid);
     }
-    if let Some(parent) = request.vault_db_path.parent()
-        && !parent.exists()
-    {
-        std::fs::create_dir_all(parent).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    }
+    ensure_parent_directory_exists(&request.vault_db_path).await?;
 
     let vault_db_path = request.vault_db_path.clone();
     let db_result: Result<(), AuthenticationError> =
@@ -1247,16 +1280,16 @@ pub async fn setup_recovery(
             return Err(AuthenticationError::VaultHeaderInvalid);
         }
     };
-    let staging_dir = staging::staging_directory()?;
+    let staging_dir = staging::staging_directory().await?;
     let staging_path = staging_dir.join(STAGING_FILE_NAME);
-    if let Err(error) = staging::write_owner_only(&staging_path, &json_bytes) {
+    if let Err(error) = staging::write_owner_only(&staging_path, &json_bytes).await {
         vault_header.recovery_slots.pop();
         return Err(error);
     }
     let upload_result = cloud_transport
         .upload_blob(VAULT_HEADER_BLOB_NAME, &json_bytes)
         .await;
-    let cleanup_result = staging::remove_if_exists(&staging_path);
+    let cleanup_result = staging::remove_if_exists(&staging_path).await;
     if upload_result.is_err() {
         vault_header.recovery_slots.pop();
         if let Err(cleanup_error) = cleanup_result {
@@ -1353,14 +1386,13 @@ pub async fn recover_with_phrase(
     let plaintext = decrypt_manifest_backup(&backup_wire, session_keys.manifest_key.expose())
         .map_err(|_| AuthenticationError::InvalidCredentials)?;
 
-    if request.vault_db_path.exists() {
+    if tokio::fs::try_exists(&request.vault_db_path)
+        .await
+        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
+    {
         return Err(AuthenticationError::VaultHeaderInvalid);
     }
-    if let Some(parent) = request.vault_db_path.parent()
-        && !parent.exists()
-    {
-        std::fs::create_dir_all(parent).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    }
+    ensure_parent_directory_exists(&request.vault_db_path).await?;
 
     let vault_db_path = request.vault_db_path.clone();
     let db_result: Result<(), AuthenticationError> =

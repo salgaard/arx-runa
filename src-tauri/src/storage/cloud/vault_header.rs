@@ -77,7 +77,9 @@ impl VaultHeader {
                     .key_file_blake3
                     .as_ref()
                     .ok_or(VaultHeaderError::Tier2MissingKeyFileBlake3)?;
-                if hex_digest.len() != 64 {
+                let digest = hex::decode(hex_digest)
+                    .map_err(|_| VaultHeaderError::KeyFileBlake3DecodeFailed)?;
+                if digest.len() != 32 {
                     return Err(VaultHeaderError::KeyFileBlake3WrongLength);
                 }
             }
@@ -123,8 +125,11 @@ pub enum VaultHeaderError {
     /// A tier 2 header is missing its mandatory `key_file_blake3` value.
     #[error("tier 2 vault missing key_file_blake3 field")]
     Tier2MissingKeyFileBlake3,
-    /// The `key_file_blake3` field is not a 64-character hex string.
-    #[error("key_file_blake3 must be 64 hex characters")]
+    /// The `key_file_blake3` field is not valid hex.
+    #[error("key_file_blake3 failed hex decode")]
+    KeyFileBlake3DecodeFailed,
+    /// The `key_file_blake3` field did not decode to 32 bytes.
+    #[error("key_file_blake3 must decode to 32 bytes")]
     KeyFileBlake3WrongLength,
     /// The primary `argon2_salt` field failed base64 decoding.
     #[error("argon2_salt failed base64 decode")]
@@ -146,6 +151,7 @@ pub enum VaultHeaderError {
     RecoverySlotBlobWrongLength,
 }
 
+/// Decodes a standard base64 string into raw bytes.
 fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD
@@ -252,13 +258,26 @@ mod tests {
     #[test]
     fn test_vault_header_validate_rejects_key_file_blake3_wrong_length() {
         let mut header = valid_tier2_header();
-        header.key_file_blake3 = Some("abc".into());
+        header.key_file_blake3 = Some("ab".repeat(31));
 
         let result = header.validate();
 
         assert!(matches!(
             result,
             Err(VaultHeaderError::KeyFileBlake3WrongLength)
+        ));
+    }
+
+    #[test]
+    fn test_vault_header_validate_rejects_key_file_blake3_non_hex() {
+        let mut header = valid_tier2_header();
+        header.key_file_blake3 = Some("g".repeat(64));
+
+        let result = header.validate();
+
+        assert!(matches!(
+            result,
+            Err(VaultHeaderError::KeyFileBlake3DecodeFailed)
         ));
     }
 
