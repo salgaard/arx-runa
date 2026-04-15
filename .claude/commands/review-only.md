@@ -10,9 +10,20 @@ Use this command to orchestrate:
 1. If `$ARGUMENTS` is empty (or `all`), set scope to all Rust implementation code under:
    - `src-tauri/src/**/*.rs`
 2. If `$ARGUMENTS` is provided:
-   - Treat it as the review scope (path, module hint, or file set expression).
+   - Treat it as the review scope (path, module hint, or file set expression), after extracting any cycle-count tokens.
    - Resolve it to concrete Rust files before review starts.
 3. If no files are resolved, halt and report the unresolved scope.
+
+## Review cycle configuration
+
+1. Run multiple independent review cycles to improve issue discovery stability.
+2. Default cycle count is `3`.
+3. Allow an optional override via `$ARGUMENTS` tokens:
+   - `cycles=<N>`
+   - `--cycles <N>`
+4. Validate `N` as an integer in `[1, 10]`; if invalid, halt and report invalid cycle configuration.
+5. Use stable cycle identifiers: `cycle-1`, `cycle-2`, ..., `cycle-N`.
+6. Keep file scope and `CONTEXT_DIGEST` identical across all cycles unless scope resolution itself changes.
 
 ## Authority order (hard)
 
@@ -67,19 +78,22 @@ Before baseline or reviewer calls, build a plan-aware context from `.claude/plan
 1. Run `cargo check --workspace`.
 2. If baseline fails, write a report file that captures baseline blockers and stop.
 
-## Phase 2 — Review pass (sharded)
+## Phase 2 — Review pass (multi-cycle, sharded)
 
-1. Split resolved files into path shards (at minimum):
-   - `src-tauri/src/auth/**`
-   - `src-tauri/src/crypto/**`
-   - `src-tauri/src/storage/**`
-   - `src-tauri/src/**` (remaining Rust files)
-2. Invoke `rust-reviewer` per shard in parallel with the same `CONTEXT_DIGEST`.
-3. Invoke `security-reviewer` per shard when either is true:
-   - shard includes `auth/`, `crypto/`, or `storage/`
-   - corresponding `rust-reviewer` shard output indicates security-sensitive risk
-4. Require compact structured output per finding from each reviewer shard:
+1. For each cycle `cycle-1..cycle-N`:
+   - split resolved files into path shards (at minimum):
+     - `src-tauri/src/auth/**`
+     - `src-tauri/src/crypto/**`
+     - `src-tauri/src/storage/**`
+     - `src-tauri/src/**` (remaining Rust files)
+   - invoke `rust-reviewer` per shard in parallel with the same `CONTEXT_DIGEST`
+   - invoke `security-reviewer` per shard when either is true:
+     - shard includes `auth/`, `crypto/`, or `storage/`
+     - corresponding `rust-reviewer` shard output indicates security-sensitive risk
+2. Require compact structured output per finding from each reviewer shard:
    - `id`
+   - `cycle_id`
+   - `reviewer`
    - `severity`
    - `location`
    - `problem`
@@ -88,24 +102,27 @@ Before baseline or reviewer calls, build a plan-aware context from `.claude/plan
    - `recommended_fix`
    - `proposed_solution`
    - `risk_if_unchanged`
-5. Per-shard output limits:
+3. Per-shard output limits (applies per cycle):
    - keep all CRITICAL/HIGH findings
    - include up to 20 MEDIUM findings (highest impact first)
    - include up to 10 LOW findings (deduplicated summaries)
-6. Consolidate shard outputs into one prioritized list:
-   - CRITICAL / HIGH first
-   - MEDIUM next
-   - LOW last
+4. Consolidate all cycles into one prioritized canonical finding list:
+   - normalize severities as `CRITICAL/HIGH`, `MEDIUM`, `LOW`
    - map `security-reviewer` severities as `WARNING -> MEDIUM` and `NOTE -> LOW`
-7. Deduplicate before synthesis:
-   - same root cause across files -> one primary finding + affected locations list
-   - same finding from multiple reviewers -> keep highest severity and merge evidence
+   - deduplicate same root cause across files/reviewers/cycles into one canonical finding
+   - keep highest observed severity per canonical finding
+5. Track recurrence metadata per canonical finding:
+   - `occurrence_count` = total number of raw finding events across all cycles
+   - `cycle_hits` = set of cycle IDs where the finding appeared
+   - `reviewer_hits` = reviewers that reported it
+   - `affected_locations` = merged deduplicated location list
+6. Mark findings that appeared in more than one cycle as repeated findings for confidence reporting.
 
 ## Phase 3 — Solution synthesis (no code changes)
 
 1. If there are no actionable findings, skip to Phase 4.
 2. Invoke `problem-solver` with:
-   - consolidated reviewer findings
+   - consolidated canonical findings including `occurrence_count`, `cycle_hits`, and merged evidence
    - exact file scope
    - instruction to produce recommendations only (no edits)
 3. Require `problem-solver` to return one of:
@@ -143,7 +160,10 @@ Before baseline or reviewer calls, build a plan-aware context from `.claude/plan
 
 ## Executive Summary
 
-- Total findings: <N>
+- Review cycles run: <N>
+- Raw finding events (all cycles): <N>
+- Unique canonical findings: <N>
+- Repeated findings (seen in >1 cycle): <N>
 - Critical/High: <N>
 - Medium: <N>
 - Low: <N>
@@ -157,11 +177,20 @@ Before baseline or reviewer calls, build a plan-aware context from `.claude/plan
 | MEDIUM | <N> |
 | LOW | <N> |
 
+## Repeated Findings Frequency
+
+| Finding | Occurrences | Cycles Seen |
+|---|---:|---|
+| <short finding title> | <N> | <cycle-1, cycle-3> |
+
 ## Detailed Findings and Recommended Fixes
 
 ### <Finding title>
 - **Severity**: <CRITICAL/HIGH/MEDIUM/LOW>
-- **Location**: `<file>:<line>` (or module path)
+- **Occurrences**: <N> (out of <total cycles> cycles)
+- **Cycles Seen**: <cycle list>
+- **Reviewers Seen**: <rust-reviewer/security-reviewer>
+- **Location**: `<file>:<line>` (or module path; include affected locations when multiple)
 - **Problem**: <what is wrong and why it matters>
 - **Evidence**: <reviewer observation or rule/design mismatch>
 - **Plan Context**: <implemented-phase context and rationale from `.claude/plans/*`>
@@ -189,7 +218,9 @@ Before baseline or reviewer calls, build a plan-aware context from `.claude/plan
 ## Appendix
 
 - Files reviewed
+- Cycle summary (per cycle: shards reviewed, raw finding count, severity breakdown)
 - Shards reviewed and per-shard finding counts
+- Deduplication criteria used for canonical findings
 - Reviewer agents used
 - Rule/design references consulted
 - Plan files and handoff files cited
