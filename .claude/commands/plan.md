@@ -68,13 +68,14 @@ Check whether a design document exists for this topic:
 
 Before structuring the plan, read the sub-phase (or design document) **adversarially**. Do not treat it as ground truth. Check for:
 
-1. **Invariant conflicts** — does anything in the sub-phase contradict `docs/architecture/design-invariants.md`?
-2. **Contract conflicts** — does it contradict the parent design's `## Contract Surface` section? If a trait signature, error type, or data shape differs, the sub-phase is wrong by default (the Contract Surface is canonical per `CLAUDE.md`).
-3. **Under-specified failure modes** — for every trait method, can you answer: what cancels it, what happens on partial failure, what happens under concurrent access, what happens at shutdown? If not, that is a gap.
-4. **Missing edge cases in the test list** — do the enumerated tests cover the deliverables' implied failure modes, or only the happy path?
-5. **Infeasible or handwaved APIs** — signatures that can't be implemented as stated (e.g. non-dyn-safe traits claimed as dyn, lifetimes that won't compose, async in a sync trait).
-6. **Security review self-assessments** — if the sub-phase claims "Security Review: Not required", verify independently. Touching `src-tauri/src/crypto/`, `src-tauri/src/auth/`, or `src-tauri/src/storage/` usually warrants review even for "just plumbing" changes.
-7. **Gaps the implementer will hit** — anything Codex would have to guess at (default values, file locations, config keys, error message wording) that isn't stated.
+1. **SRP and boundary conflicts (first)** — does any deliverable violate one-concern-per-file or one-reason-to-change? Flag mixed actors in the same file/module before any other check.
+2. **Invariant conflicts** — does anything in the sub-phase contradict `docs/architecture/design-invariants.md`?
+3. **Contract conflicts** — does it contradict the parent design's `## Contract Surface` section? If a trait signature, error type, or data shape differs, the sub-phase is wrong by default (the Contract Surface is canonical per `CLAUDE.md`).
+4. **Under-specified failure modes** — for every trait method, can you answer: what cancels it, what happens on partial failure, what happens under concurrent access, what happens at shutdown? If not, that is a gap.
+5. **Missing edge cases in the test list** — do the enumerated tests cover the deliverables' implied failure modes, or only the happy path?
+6. **Infeasible or handwaved APIs** — signatures that can't be implemented as stated (e.g. non-dyn-safe traits claimed as dyn, lifetimes that won't compose, async in a sync trait).
+7. **Security review self-assessments** — if the sub-phase claims "Security Review: Not required", verify independently. Touching `src-tauri/src/crypto/`, `src-tauri/src/auth/`, or `src-tauri/src/storage/` usually warrants review even for "just plumbing" changes.
+8. **Gaps the implementer will hit** — anything Codex would have to guess at (default values, file locations, config keys, error message wording) that isn't stated.
 
 Record every finding. These become the plan's **Design Concerns / Open Questions** section. Classify each as:
 - **Blocking** — the sub-phase must be updated before implementation can proceed.
@@ -106,6 +107,14 @@ Handling requirements:
 - When a finding touches `.claude/rules/*.md`, treat the rule file as source-of-truth and note that `/implement-plan` will run `/copilot-sync` before coding to regenerate `.github/instructions/*.instructions.md`.
 - If any blocking governance finding remains unresolved, set plan status to `blocked`.
 
+## Step 1.9 — Compactness and token budget controls (hard)
+
+Apply these limits when generating the plan:
+
+1. Keep the plan concise but self-contained; avoid repeated restatement of the same contract.
+2. Use a single `CONTRACT_SNIPPETS` block in **Approach** and assign IDs (`CS-001`, `CS-002`, ...). Inline each unique signature/enum/DDL verbatim once, then reference by ID in steps.
+3. Include only implementation-relevant evidence; do not quote long design prose when a short citation is enough.
+
 ## Step 2 — Generate the plan
 
 Structure the plan as follows:
@@ -126,12 +135,13 @@ Structure the plan as follows:
     If no concerns were found, state "None — sub-phase reviewed, no gaps identified." Do not leave this section out.
 4. **Assumptions** — every non-obvious fact the plan takes for granted but which is not stated in the sub-phase (defaults, file locations, config keys, error wording, ordering). If the assumption is wrong, the implementation is wrong — so list them explicitly so the user can correct them before handoff.
 5. **Approach** — step-by-step implementation plan with absolute file paths.
-   - Each step should inline the relevant trait signatures, error enum variants, struct fields, and DDL **verbatim** from the sub-phase / design. Do not write "implement the `KeySource` trait as defined in the sub-phase" — write the signature out. This forces the planner to notice errors and gives Codex a self-contained spec.
+   - Include a `CONTRACT_SNIPPETS` subsection and inline relevant trait signatures, error enum variants, struct fields, and DDL **verbatim** from the sub-phase / design once each, with snippet IDs for reuse.
+   - Do not write "implement the `KeySource` trait as defined in the sub-phase" — include the signature in `CONTRACT_SNIPPETS` and reference its snippet ID in each relevant step.
    - If a design document was found in Step 1.5: each step should map to a specific
-     section of the design (trait definitions, schema, flows). The design's Contract Surface is ground truth — if the sub-phase diverges, flag it in Design Concerns and use the Contract Surface.
+      section of the design (trait definitions, schema, flows). The design's Contract Surface is ground truth — if the sub-phase diverges, flag it in Design Concerns and use the Contract Surface.
    - **If sub-phase**: use the Deliverables list from the sub-roadmap as the primary structure; each deliverable becomes an implementation step
    - If no design document exists: derive steps from the roadmap deliverables and
-     CLAUDE.md architectural constraints
+      CLAUDE.md architectural constraints
 6. **Rust quality review implications** — structured decision, three parts:
    a. **Expected Rust change surface** — list the files or directories under `src-tauri/**/*.rs` that this plan anticipates touching. If none are anticipated, state "None anticipated."
    b. **Invoke rust-reviewer agent? YES / NO** with rationale — YES means `/implement-plan` will invoke `rust-reviewer` after implementation on touched Rust files and require remediation of HIGH findings before completion. NO means the plan takes responsibility for skipping the review.
@@ -139,12 +149,17 @@ Structure the plan as follows:
    - Reviewer authority order must be explicit: `.claude/rules/*.md` first, canonical design docs second, `.claude/reference/*.md` only for pattern clarification.
 7. **Security implications** — structured decision, three parts:
    a. **Expected sensitive path set** — list the files or directories under `src-tauri/src/crypto/`, `src-tauri/src/auth/`, or `src-tauri/src/storage/` that this plan anticipates touching. If the plan does not anticipate touching any, state "None anticipated." This is an audit anchor: `/implement-plan` will cross-check actual touched files against this list at verify time, and anything *unanticipated* under a sensitive path triggers a Plan Deviation.
-   b. **Invoke security-reviewer agent? YES / NO** with rationale — mirrors the rust-reviewer and testing decisions in items 6 and 9. YES means `/implement-plan` will invoke `security-reviewer` on the touched files regardless of path. NO means the plan takes responsibility for the decision — `/implement-plan` will skip the review, **but** the drift check in (a) still fires if sensitive paths get touched anyway.
+   b. **Invoke security-reviewer agent? YES / NO** with rationale — mirrors the rust-reviewer and testing decisions in items 6 and 10. YES means `/implement-plan` will invoke `security-reviewer` on the touched files regardless of path. NO means the plan takes responsibility for the decision — `/implement-plan` will skip the review, **but** the drift check in (a) still fires if sensitive paths get touched anyway.
    c. **What the reviewer should check** — if YES, list the specific concerns (trait boundaries, zeroization, nonce generation, AAD scope, etc.). If NO, list the specific reasons the review is unnecessary (e.g., "module performs no cryptographic operations; BLAKE3 is used only as a preimage-resistant fingerprint comparator").
    - **If sub-phase**: check the sub-roadmap's Security Review Checkpoints section. If the sub-phase self-asserts "Security Review: Not required", verify independently in Step 1.75 and either confirm (set YES/NO explicitly with rationale) or flag as a Design Concern — do not mirror the self-assessment blindly.
-8. **Findings-to-fix synthesis implications** — structured decision, three parts:
+8. **Architecture review implications** — structured decision, three parts:
+   a. **Expected architecture risk surface** — list files or directories where SRP, boundary, or dependency-flow risks are most likely.
+   b. **Invoke architecture-reviewer agent? YES / NO** with rationale — for Rust-touching plans this should be YES by default. If NO, provide explicit risk rationale.
+   c. **What the reviewer should check** — if YES, list specific checks (one concern per file, one reason to change, module visibility discipline, dependency flow, abstraction debt, and explicit `design_challenge` handling). If NO, list explicit reasons.
+   - Architecture reviewer authority must be explicit: rules/design are baseline; challenges are allowed only via explicit `design_challenge` entries (no silent overrides).
+9. **Findings-to-fix synthesis implications** — structured decision, three parts:
    a. **Invoke problem-solver agent? YES / NO** with rationale — YES means `/implement-plan` invokes `problem-solver` whenever reviewer findings need remediation and consumes its output before any fix work.
-   - **Hard coupling rule**: if item 6 or item 7 is YES, item 8 must be YES unless Section 8 contains a non-empty `Solver override justification:` entry explaining why direct reviewer-to-implementer handoff is safer for this specific plan.
+   - **Hard coupling rule**: if item 6, item 7, or item 8 is YES, item 9 must be YES unless Section 9 contains a non-empty `Solver override justification:` entry explaining why direct reviewer-to-implementer handoff is safer for this specific plan.
    b. **When the solver runs** — define trigger points explicitly (e.g., "after reviewer findings in each remediation round").
    c. **Handoff contract to implementer** — choose one explicit mode:
       - **Solver mode (default)**: require `problem-solver` output contract:
@@ -153,7 +168,7 @@ Structure the plan as follows:
         - `BLOCKED_SOLUTIONS` when safe remediation cannot be produced
         and state how `rust-implementer` consumes `ITEM PS-xxx` entries.
       - **Direct mode (override only)**: state that reviewer findings are passed directly to `rust-implementer` with explicit severity mapping and ordering.
-9. **Execution and testing strategy** — what tests are needed and what boundary cases matter
+10. **Execution and testing strategy** — what tests are needed and what boundary cases matter
    - Use the template's structured format with checkboxes for test types
    - **Explicitly decide**: check "Invoke test-writer agent? YES/NO" with rationale
    - Mirror this decision in frontmatter as:
@@ -161,12 +176,12 @@ Structure the plan as follows:
      Value must match the prose in this section.
    - **If sub-phase**: include the Validation checkpoint from the sub-roadmap (automated tests, manual verification, acceptance criteria)
    - Include any additional edge-case tests surfaced by the Step 1.75 review
-10. **Documentation impact** — which `docs/` files need creating or updating
+11. **Documentation impact** — which `docs/` files need creating or updating
     after implementation.
     - This section must include documentation updates required by any planned deviations from current canonical design/sub-phase docs.
     - Treat any sub-phase-roadmap `## Documentation Impact` text as advisory only. Never suppress required doc sync updates just because a roadmap says "No documentation updates."
     - If no docs need updates, state why no deviation or new contract surface was introduced.
-11. **Governance sync actions (pre-implementation)** — ordered, machine-actionable actions that `/implement-plan` must execute before Step 4 coding.
+12. **Governance sync actions (pre-implementation)** — ordered, machine-actionable actions that `/implement-plan` must execute before Step 4 coding.
     - For each action include:
       - **Action ID**
       - **Reason / linked concern**
@@ -175,12 +190,23 @@ Structure the plan as follows:
       - **Verification** (what to re-read/check after editing)
     - If any action touches `.claude/rules/*.md`, include "Run `/copilot-sync` after rule edits."
     - If no governance sync is required, state "None."
-12. **Implementation execution mode** — select one and justify:
+13. **Design challenge approvals (pre-implementation)** — explicit approval artifact for any allowed rule/design deviations.
+    - Use deterministic IDs: `DC-001`, `DC-002`, ...
+    - For each approved item include:
+      - **Challenge ID**
+      - **Linked finding IDs** (from architecture/rust/security findings or plan concerns)
+      - **Challenged constraint** (rule/design anchor)
+      - **Approval status** (`Approved` only; anything else is not executable)
+      - **Allowed implementation scope** (exact file/module scope)
+      - **Guardrails** (what must not change as part of the deviation)
+      - **Required post-implementation sync** (rules/design docs to update)
+    - If no approved deviations exist, state "None."
+14. **Implementation execution mode** — select one and justify:
     - `direct` — invoking `/implement-plan` agent performs coding steps itself.
     - `delegated` — invoking `/implement-plan` agent delegates coding steps to `rust-implementer` and focuses on orchestration/verification.
     - List delegation boundaries (which Approach steps can be delegated and which must stay with the orchestrator).
     - Even when `delegated` is chosen, the plan must remain valid for direct execution as fallback.
-13. **Handoff Notes for Implementer** — one short paragraph framed for an agent with zero conversation context (typically Copilot Codex). State the working directory, the order of operations, whether the plan is self-contained or requires re-reading the sub-phase, and any traps (platform-specific code paths, feature flags, gated tests). If the plan status is `blocked`, instead write "Do not implement — resolve Design Concerns first."
+15. **Handoff Notes for Implementer** — one short paragraph framed for an agent with zero conversation context (typically Copilot Codex). State the working directory, the order of operations, whether the plan is self-contained or requires re-reading the sub-phase, and any traps (platform-specific code paths, feature flags, gated tests). If the plan status is `blocked`, instead write "Do not implement — resolve Design Concerns first."
 
 ## Step 3 — Save the plan to disk
 
@@ -207,16 +233,19 @@ sub-phase-roadmap: <relative path or null>
 implementation-delegation: <"direct"|"delegated">
 rust-review-agent-required: <true|false>
 security-agent-required: <true|false>
+architecture-review-agent-required: <true|false>
 solution-agent-required: <true|false>
 test-agent-required: <true|false>
 governance-sync-required: <true|false>
+design-challenge-approvals-required: <true|false>
+approved-design-challenges: [<DC-001, ...>]
 tags: [<relevant tags>]
 ---
 ```
 
-`implementation-delegation` must match Section 12:
-- `direct` when Section 12 selects direct execution
-- `delegated` when Section 12 selects delegated execution.
+`implementation-delegation` must match Section 14:
+- `direct` when Section 14 selects direct execution
+- `delegated` when Section 14 selects delegated execution.
 
 `rust-review-agent-required` must match Section 6:
 - `true` when Section 6 sets "Invoke rust-reviewer agent?" to YES
@@ -226,22 +255,39 @@ tags: [<relevant tags>]
 - `true` when Section 7 sets "Invoke security-reviewer agent?" to YES
 - `false` when Section 7 sets it to NO.
 
-`solution-agent-required` must match Section 8:
-- `true` when Section 8 sets "Invoke problem-solver agent?" to YES
+`architecture-review-agent-required` must match Section 8:
+- `true` when Section 8 sets "Invoke architecture-reviewer agent?" to YES
 - `false` when Section 8 sets it to NO.
 
+`solution-agent-required` must match Section 9:
+- `true` when Section 9 sets "Invoke problem-solver agent?" to YES
+- `false` when Section 9 sets it to NO.
+
+Rust-touching default (hard):
+- If `rust-review-agent-required` is `true`, then `architecture-review-agent-required` must also be `true`.
+- If this condition is violated, the plan is invalid for `/implement-plan`.
+
 `Solver override justification` rule (hard):
-- If either `rust-review-agent-required` or `security-agent-required` is `true` while `solution-agent-required` is `false`, Section 8 must include:
+- If any of `rust-review-agent-required`, `security-agent-required`, or `architecture-review-agent-required` is `true` while `solution-agent-required` is `false`, Section 9 must include:
   - a non-empty `Solver override justification:` line, and
   - an explicit handoff statement that reviewer findings are passed directly to `rust-implementer`.
 
-`test-agent-required` must match Section 9:
-- `true` when Section 9 sets "Invoke test-writer agent?" to YES
-- `false` when Section 9 sets it to NO.
+`test-agent-required` must match Section 10:
+- `true` when Section 10 sets "Invoke test-writer agent?" to YES
+- `false` when Section 10 sets it to NO.
 
-`governance-sync-required` must match Section 11:
+`governance-sync-required` must match Section 12:
 - `true` when one or more governance sync actions are listed
-- `false` when Section 11 is explicitly "None."
+- `false` when Section 12 is explicitly "None."
+
+`design-challenge-approvals-required` must match Section 13:
+- `true` when one or more approved `DC-xxx` entries are listed
+- `false` when Section 13 is explicitly "None."
+
+`approved-design-challenges` rules:
+- Must list only `DC-xxx` entries with **Approval status: Approved** in Section 13.
+- If `design-challenge-approvals-required` is `true`, this list must be non-empty.
+- If `design-challenge-approvals-required` is `false`, this list must be empty.
 
 Valid `status` values: `draft` (ready for review / implementation), `blocked` (blocking Design Concerns must be resolved first), `approved` (user-approved, ready for `/implement-plan`), `implemented`.
 

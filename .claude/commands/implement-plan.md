@@ -51,7 +51,7 @@ Before touching the plan, verify the working environment is sane. Any failure he
    - Read frontmatter field `implementation-delegation`.
    - If missing (legacy plan), default to `direct` and record a migration note in the Implementation Log.
    - Allowed values: `direct`, `delegated`. Any other value is a hard failure.
-   - If `delegated`, verify the plan includes Section 12 (**Implementation execution mode**) with explicit delegation boundaries.
+   - If `delegated`, verify the plan includes Section 14 (**Implementation execution mode**) with explicit delegation boundaries.
 9. **Rust-review gate** (hard):
    - Prefer frontmatter field `rust-review-agent-required` (`true`/`false`).
    - If the field is missing (legacy plan), infer from Section 6 (**Rust quality review implications**) and emit a migration warning in the Implementation Log.
@@ -66,25 +66,37 @@ Before touching the plan, verify the working environment is sane. Any failure he
    - If the Section 7 decision is missing or ambiguous, halt.
    - If Section 7 says YES but `security-agent-required` is not `true`, halt.
    - If Section 7 says NO but `security-agent-required` is not `false`, halt.
-11. **Solution-synthesis gate** (hard):
+11. **Architecture-review gate** (hard):
+   - Prefer frontmatter field `architecture-review-agent-required` (`true`/`false`).
+   - If the field is missing:
+     - if Section 8 (**Architecture review implications**) exists, infer from its explicit YES/NO decision and emit a migration warning in the Implementation Log;
+     - otherwise (legacy plan), infer from `rust-review-agent-required` and emit a migration warning in the Implementation Log.
+   - If Section 8 exists, parse it for an explicit "Invoke architecture-reviewer agent? YES/NO" decision.
+   - If Section 8 exists and the decision is missing or ambiguous, halt.
+   - If Section 8 says YES but `architecture-review-agent-required` is not `true`, halt.
+   - If Section 8 says NO but `architecture-review-agent-required` is not `false`, halt.
+   - Rust-touching enforcement:
+     - if `rust-review-agent-required` is `true`, `architecture-review-agent-required` must be `true`;
+     - if Section 6 **Expected Rust change surface** is not "None anticipated", `architecture-review-agent-required` must be `true`.
+12. **Solution-synthesis gate** (hard):
    - Prefer frontmatter field `solution-agent-required` (`true`/`false`).
-   - If the field is missing (legacy plan), infer from Section 8 (**Findings-to-fix synthesis implications**) and emit a migration warning in the Implementation Log.
-   - Parse Section 8 for an explicit "Invoke problem-solver agent? YES/NO" decision.
-   - If the Section 8 decision is missing or ambiguous, halt.
-   - If Section 8 says YES but `solution-agent-required` is not `true`, halt.
-   - If Section 8 says NO but `solution-agent-required` is not `false`, halt.
+   - If the field is missing (legacy plan), infer from Section 9 (**Findings-to-fix synthesis implications**) and emit a migration warning in the Implementation Log.
+   - Parse Section 9 for an explicit "Invoke problem-solver agent? YES/NO" decision.
+   - If the Section 9 decision is missing or ambiguous, halt.
+   - If Section 9 says YES but `solution-agent-required` is not `true`, halt.
+   - If Section 9 says NO but `solution-agent-required` is not `false`, halt.
    - Coupling enforcement:
-     - If `rust-review-agent-required` is `true` or `security-agent-required` is `true`, then `solution-agent-required` must be `true` **unless** Section 8 includes:
+     - If `rust-review-agent-required`, `security-agent-required`, or `architecture-review-agent-required` is `true`, then `solution-agent-required` must be `true` **unless** Section 9 includes:
        1. a non-empty `Solver override justification:` line, and
        2. an explicit handoff statement that reviewer findings are passed directly to `rust-implementer`.
-     - If these override requirements are missing, halt with: "Reviewer-enabled plans must enable `problem-solver`, or include an explicit Section 8 solver override justification plus direct handoff statement."
-12. **Testing-agent gate** (hard):
+     - If these override requirements are missing, halt with: "Reviewer-enabled plans must enable `problem-solver`, or include an explicit Section 9 solver override justification plus direct handoff statement."
+13. **Testing-agent gate** (hard):
    - Require frontmatter field `test-agent-required` (`true`/`false`). If missing, halt with: "Plan missing `test-agent-required`. Re-run `/plan` or add the field before `/implement-plan`."
-   - Parse Section 9 (**Execution and testing strategy**) for an explicit "Invoke test-writer agent? YES/NO" decision.
+   - Parse Section 10 (**Execution and testing strategy**) for an explicit "Invoke test-writer agent? YES/NO" decision.
    - If the testing decision is missing or ambiguous, halt.
    - If testing says YES but `test-agent-required` is not `true`, halt.
    - If testing says NO but `test-agent-required` is not `false`, halt.
-13. **Governance-sync gate** (hard, pre-implementation):
+14. **Governance-sync gate** (hard, pre-implementation):
    - Require frontmatter field `governance-sync-required` (`true`/`false`). If missing, halt with: "Plan missing `governance-sync-required`. Re-run `/plan` or add the field before `/implement-plan`."
    - Parse the plan's **Governance sync actions (pre-implementation)** section.
    - Consistency checks:
@@ -96,8 +108,22 @@ Before touching the plan, verify the working environment is sane. Any failure he
      3. If any action touches `.claude/rules/*.md`, run `/copilot-sync` once after rule edits so `.github/instructions/*.instructions.md` is regenerated from the updated rules.
      4. Do not manually edit mirrored `.github/instructions/*.instructions.md` files when a corresponding `.claude/rules/*.md` source exists, unless the plan explicitly marks an exception and rationale.
      5. Re-read each target file and confirm the declared update is present.
-   - If any governance sync action cannot be completed or verified, invoke the Plan-deviation protocol and halt before Step 4.
-14. Update `status` to `in-progress` in the plan file's frontmatter.
+    - If any governance sync action cannot be completed or verified, invoke the Plan-deviation protocol and halt before Step 4.
+15. **Design-challenge approvals gate** (hard):
+   - Prefer frontmatter fields:
+     - `design-challenge-approvals-required` (`true`/`false`)
+     - `approved-design-challenges` (list of `DC-xxx` IDs)
+   - If fields are missing (legacy plan), default to:
+     - `design-challenge-approvals-required: false`
+     - `approved-design-challenges: []`
+     and emit a migration warning in the Implementation Log.
+   - Parse Section 13 (**Design challenge approvals (pre-implementation)**).
+   - Consistency checks:
+     - If `design-challenge-approvals-required: true` but Section 13 is missing or "None", halt.
+     - If `design-challenge-approvals-required: false` but Section 13 lists approvals, halt.
+     - If `design-challenge-approvals-required: true` and `approved-design-challenges` is empty, halt.
+     - Every ID in `approved-design-challenges` must exist in Section 13 with `Approval status: Approved`; otherwise halt.
+16. Update `status` to `in-progress` in the plan file's frontmatter.
 
 ## Step 4 — Implement
 
@@ -114,30 +140,48 @@ Follow the **Approach** section of the plan step by step, in order.
 7. **Security review** is driven by Section 7 (**Security implications**) and `security-agent-required`, not by an automatic path trigger. Read that section and act:
    - **If `Invoke security-reviewer agent?` is YES** → after implementation is complete (or at a sensible midpoint for long runs), invoke `security-reviewer` on the touched files under `src-tauri/src/crypto/`, `src-tauri/src/auth/`, or `src-tauri/src/storage/`. Pass the plan's "What the reviewer should check" list as focus.
    - **If `Invoke security-reviewer agent?` is NO** → skip the review. The plan's rationale stands. Record the rationale in the Implementation Log.
-8. **Findings remediation loop** is driven by Section 8 (**Findings-to-fix synthesis implications**) and `solution-agent-required`.
-   - Consolidate actionable findings from any enabled review agents (rust/security).
-   - If no actionable findings exist, continue to Testing.
-   - If `solution-agent-required` is `true`, invoke `problem-solver` with consolidated findings, touched files, and current remediation round (`round-1`, `round-2`, ...). Require one of:
-     - `IMPLEMENTATION_PACK`
-     - `NO_ACTIONABLE_FIXES`
-     - `BLOCKED_SOLUTIONS`
+8. **Architecture review** is driven by Section 8 (**Architecture review implications**) and `architecture-review-agent-required`.
+   - **If `Invoke architecture-reviewer agent?` is YES** → after implementation is complete (or at a sensible midpoint for long runs), invoke `architecture-reviewer` on touched Rust files and pass the section's "What the reviewer should check" list as focus.
+   - **If `Invoke architecture-reviewer agent?` is NO** → skip the review and record the rationale from Section 8 in the Implementation Log.
+9. **Findings remediation loop** is driven by Section 9 (**Findings-to-fix synthesis implications**) and `solution-agent-required`.
+   - Consolidate findings from enabled review agents (rust/architecture/security).
+   - Run a lightweight findings quality gate before remediation:
+     1. **Evidence check** — every finding needs location anchors + rule/design citation.
+     2. **False-positive check** — remove findings already explained by intentional or deferred plan context.
+     3. **Actionability check** — keep only findings with a concrete in-scope fix path.
+     4. **Confidence check** — label each finding `HIGH|MEDIUM|LOW` confidence based on evidence quality and recurrence.
+   - Tag each finding disposition as `ACTIONABLE_NOW|INTENTIONAL_DECISION|DEFERRED_BY_PLAN|INSUFFICIENT_EVIDENCE`.
+   - Build `ACTIONABLE_FINDINGS` from `ACTIONABLE_NOW` only.
+   - If no `ACTIONABLE_FINDINGS` exist, continue to Testing.
+   - Build `APPROVED_DESIGN_CHALLENGES` from frontmatter `approved-design-challenges` and Section 13 approval entries (ID + allowed scope + guardrails).
+   - If `solution-agent-required` is `true`, invoke `problem-solver` with `ACTIONABLE_FINDINGS`, touched files, and current remediation round (`round-1`, `round-2`, ...). Require one of:
+       - `IMPLEMENTATION_PACK`
+       - `NO_ACTIONABLE_FIXES`
+       - `BLOCKED_SOLUTIONS`
+       - Pass `APPROVED_DESIGN_CHALLENGES` to `problem-solver` and require explicit challenge metadata per item.
    - If `BLOCKED_SOLUTIONS` is returned, invoke the Plan-deviation protocol and halt.
    - If `NO_ACTIONABLE_FIXES` is returned, continue.
+   - If any `IMPLEMENTATION_PACK` item carries `Design challenge.status=PROPOSED`, or `status=APPROVED` with a `challenge_id` not present in `APPROVED_DESIGN_CHALLENGES`, invoke the Plan-deviation protocol and halt.
+   - If `solution-agent-required` is `false` and direct `ACTIONABLE_FINDINGS` include unresolved/unapproved `design_challenge` entries, invoke the Plan-deviation protocol and halt.
    - If remediation is needed:
-     - In `delegated` execution mode, invoke `rust-implementer` with the `IMPLEMENTATION_PACK` (or direct findings when `solution-agent-required` is `false`) and require an implementation result mapping.
-     - In `direct` execution mode, implement fixes directly or delegate selectively to `rust-implementer`; if delegating, pass through the same solver output contract.
+      - In `delegated` execution mode, invoke `rust-implementer` with the `IMPLEMENTATION_PACK` (or direct findings when `solution-agent-required` is `false`) and require an implementation result mapping.
+      - In `direct` execution mode, implement fixes directly or delegate selectively to `rust-implementer`; if delegating, pass through the same solver output contract.
+      - Always pass `APPROVED_DESIGN_CHALLENGES` to `rust-implementer`.
+      - If `rust-implementer` returns any `ITEM ... — BLOCKED`, invoke the Plan-deviation protocol and halt.
    - Re-run enabled reviewers on changed files after each remediation round.
    - Acceptance thresholds:
-     - All Rust `HIGH` findings must be remediated before completion.
-     - All Security `CRITICAL` findings must be remediated before completion.
-     - Security `WARNING` and `NOTE` findings are recorded in the Implementation Log with rationale when deferred.
-   - Max remediation rounds: 5. If required `HIGH`/`CRITICAL` findings remain after round 5, invoke the Plan-deviation protocol and halt.
+      - All Rust `HIGH` findings must be remediated before completion.
+      - All Architecture `HIGH` findings must be remediated before completion.
+      - All Security `CRITICAL` findings must be remediated before completion.
+      - Architecture `MEDIUM`/`LOW` findings are recorded in the Implementation Log with rationale when deferred.
+      - Security `WARNING` and `NOTE` findings are recorded in the Implementation Log with rationale when deferred.
+   - Max remediation rounds: 5. If required Rust/Architecture `HIGH` or Security `CRITICAL` findings remain after round 5, invoke the Plan-deviation protocol and halt.
    - If `solution-agent-required` is `true`, reviewer-only loops are forbidden: every actionable remediation round must invoke both `problem-solver` and a remediation step.
-9. **Drift check (always runs, regardless of YES/NO reviews)**: compare the set of files actually modified under `src-tauri/src/{crypto,auth,storage}/` against the plan's **Expected sensitive path set**. If the implementation touched any sensitive file that the plan did not anticipate, this is a **Plan Deviation** — the plan under-scoped the security surface. Halt via the Plan-deviation protocol below: stash the unanticipated change, append a `## Plan Deviation` section naming the file(s), set `status: blocked`, and report. Do not silently auto-invoke `security-reviewer` to paper over the scope drift; surfacing the under-scope is the point. The user revises the plan (or the sub-phase) and re-runs.
+10. **Drift check (always runs, regardless of YES/NO reviews)**: compare the set of files actually modified under `src-tauri/src/{crypto,auth,storage}/` against the plan's **Expected sensitive path set**. If the implementation touched any sensitive file that the plan did not anticipate, this is a **Plan Deviation** — the plan under-scoped the security surface. Halt via the Plan-deviation protocol below: stash the unanticipated change, append a `## Plan Deviation` section naming the file(s), set `status: blocked`, and report. Do not silently auto-invoke `security-reviewer` to paper over the scope drift; surfacing the under-scope is the point. The user revises the plan (or the sub-phase) and re-runs.
 
 ### Plan-deviation protocol
 
-If any Approach step cannot be executed as written — or a required governance sync action from Step 3.13 cannot be completed exactly as specified — **stop implementing and do not guess**. Signature won't compile, file state is unexpected, a cited dependency is missing, the inlined DDL doesn't match the current schema, a trait signature from the plan turns out to be infeasible, or a required test/review/solution agent cannot be used as mandated are all Plan Deviations. Instead:
+If any Approach step cannot be executed as written — or a required governance sync action from Step 3.14 cannot be completed exactly as specified — **stop implementing and do not guess**. Signature won't compile, file state is unexpected, a cited dependency is missing, the inlined DDL doesn't match the current schema, a trait signature from the plan turns out to be infeasible, or a required test/review/solution agent cannot be used as mandated are all Plan Deviations. Instead:
 
 1. Revert or stash any partial work for that step so the repo is in a consistent state.
 2. Append a `## Plan Deviation` section to the plan file with:
@@ -152,7 +196,7 @@ A plan deviation is not a failure — it means the plan was wrong, and the corre
 
 ### Testing
 
-Read the plan's Section 9 (**Execution and testing strategy**) and follow its testing decision:
+Read the plan's Section 10 (**Execution and testing strategy**) and follow its testing decision:
 - If "Invoke test-writer agent?" is checked **YES**:
   1. Parse the reason field to understand test focus (adversarial, property-based, coverage).
   2. Invoke the `test-writer` agent with the specific focus (mandatory; no substitution):
@@ -206,12 +250,15 @@ If `sub-phase` is present in frontmatter, `/implement-plan` must update the corr
     - **Date** — ISO 8601 datetime
     - **Branch** — the branch recorded in Step 2
     - **Execution mode** — `direct` or `delegated` (plus brief delegation summary)
-    - **Agent evidence** — table with `Approach step | Agent | Agent ID | Outcome`; include one record per implemented step, plus `rust-reviewer` / `security-reviewer` / `problem-solver` / `rust-implementer` / `test-writer` entries when used
+    - **Agent evidence** — table with `Approach step | Agent | Agent ID | Outcome`; include one record per implemented step, plus `rust-reviewer` / `architecture-reviewer` / `security-reviewer` / `problem-solver` / `rust-implementer` / `test-writer` entries when used
     - **Files changed** — list of modified / created files
     - **Test results** — `cargo test` summary (pass count, any skipped or failing)
     - **Clippy results** — clean / warnings introduced / pre-existing noted
     - **Rust review** — `rust-reviewer` findings if run, or "N/A" if skipped
+    - **Architecture review** — `architecture-reviewer` findings if run, or "N/A" if skipped
     - **Security review** — `security-reviewer` findings if run, or "N/A" if no sensitive modules touched
+    - **Findings quality gate** — counts by disposition (`ACTIONABLE_NOW`, `INTENTIONAL_DECISION`, `DEFERRED_BY_PLAN`, `INSUFFICIENT_EVIDENCE`)
+    - **Design challenge approvals used** — list `DC-xxx` IDs used in implemented items, or "None"
     - **Governance sync** — action count, files updated, `/copilot-sync` outcome when applicable
     - **Sub-phase decisions sync** — target doc path + count of Implementation Decisions added/updated (or "N/A" for non-sub-phase plans)
     - **Deviations from plan** — any small adjustments made (large deviations should have halted at Step 4's deviation protocol)
@@ -228,7 +275,10 @@ If `sub-phase` is present in frontmatter, `/implement-plan` must update the corr
 ✓ Execution mode: [direct|delegated]
 ✓ Agent evidence: [summary]
 ✓ Rust review: [N/A or findings summary]
+✓ Architecture review: [N/A or findings summary]
 ✓ Security review: [N/A or findings summary]
+✓ Findings quality gate: [counts by disposition]
+✓ Design challenge approvals used: [DC list or None]
 ✓ Solution synthesis: [N/A or problem-solver summary]
 ✓ Tests: [summary]
 ✓ Clippy: [clean / N warnings]
@@ -242,4 +292,4 @@ If `sub-phase` is present in frontmatter, `/implement-plan` must update the corr
 ```
 
 **If this is a full-phase or ad-hoc plan**:
-Report what was implemented, branch, agent evidence summary, rust-review summary, security-review summary, problem-solver summary, test results, clippy results, governance-sync summary, files changed, and the verbatim Documentation impact list. Do not cross-reference or audit the doc state.
+Report what was implemented, branch, agent evidence summary, rust-review summary, architecture-review summary, security-review summary, findings-quality-gate summary, design-challenge approvals used summary, problem-solver summary, test results, clippy results, governance-sync summary, files changed, and the verbatim Documentation impact list. Do not cross-reference or audit the doc state.

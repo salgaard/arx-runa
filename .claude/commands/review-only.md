@@ -2,8 +2,9 @@ Run a full Rust review-only flow for: $ARGUMENTS
 
 Use this command to orchestrate:
 1. `rust-reviewer`
-2. `security-reviewer` (when needed)
-3. `problem-solver` (recommendations only; no implementation)
+2. `architecture-reviewer` (required)
+3. `security-reviewer` (when needed)
+4. `problem-solver` (recommendations only; no implementation)
 
 ## Scope resolution
 
@@ -30,6 +31,7 @@ Use this command to orchestrate:
 1. `.claude/rules/*.md` (primary, normative)
 2. Canonical design docs in `docs/architecture/designs/**/design.md` and `docs/architecture/design-invariants.md`
 3. `.claude/reference/*.md` (secondary pattern guidance only; never overrides rules/design)
+4. Exception path: `architecture-reviewer` may challenge rules/designs only via explicit `design_challenge` entries; no silent override is allowed.
 
 ## Phase 0 — Implementation context discovery (required)
 
@@ -87,14 +89,16 @@ Before baseline or reviewer calls, build a plan-aware context from `.claude/plan
      - `src-tauri/src/storage/**`
      - `src-tauri/src/**` (remaining Rust files)
    - invoke `rust-reviewer` per shard in parallel with the same `CONTEXT_DIGEST`
+   - invoke `architecture-reviewer` per shard in parallel with the same `CONTEXT_DIGEST` (required)
    - invoke `security-reviewer` per shard when either is true:
      - shard includes `auth/`, `crypto/`, or `storage/`
-     - corresponding `rust-reviewer` shard output indicates security-sensitive risk
+     - corresponding `rust-reviewer` or `architecture-reviewer` shard output indicates security-sensitive risk
 2. Require compact structured output per finding from each reviewer shard:
    - `id`
    - `cycle_id`
    - `reviewer`
    - `severity`
+   - `category`
    - `location`
    - `problem`
    - `evidence`
@@ -102,6 +106,7 @@ Before baseline or reviewer calls, build a plan-aware context from `.claude/plan
    - `recommended_fix`
    - `proposed_solution`
    - `risk_if_unchanged`
+   - `design_challenge` (optional; required when reviewer challenges rule/design constraints)
 3. Per-shard output limits (applies per cycle):
    - keep all CRITICAL/HIGH findings
    - include up to 20 MEDIUM findings (highest impact first)
@@ -117,16 +122,38 @@ Before baseline or reviewer calls, build a plan-aware context from `.claude/plan
    - `reviewer_hits` = reviewers that reported it
    - `affected_locations` = merged deduplicated location list
 6. Mark findings that appeared in more than one cycle as repeated findings for confidence reporting.
+7. Build a `DESIGN_CHALLENGE_LEDGER` from all reviewer `design_challenge` entries:
+   - challenged constraint
+   - rationale
+   - proposed rule/design update
+   - affected findings and scope
+
+## Phase 2.5 — Critical findings quality gate (required)
+
+Before synthesis, challenge the canonical finding list itself:
+
+1. **Evidence check** — each finding must have concrete location anchors and rule/design citations.
+2. **False-positive check** — exclude findings already explained as intentional or deferred by plan context.
+3. **Actionability check** — confirm a concrete fix path exists in current scope.
+4. **Confidence check** — assign `HIGH|MEDIUM|LOW` confidence based on evidence quality + recurrence.
+5. **Disposition tagging** — mark each finding as:
+   - `ACTIONABLE_NOW`
+   - `INTENTIONAL_DECISION`
+   - `DEFERRED_BY_PLAN`
+   - `INSUFFICIENT_EVIDENCE`
+6. Build `ACTIONABLE_FINDINGS` from `ACTIONABLE_NOW` only.
+7. Do not pass `INSUFFICIENT_EVIDENCE` findings to `problem-solver`; report them separately in the final report appendix.
 
 ## Phase 3 — Solution synthesis (no code changes)
 
 1. If there are no actionable findings, skip to Phase 4.
 2. Invoke `problem-solver` with:
-   - consolidated canonical findings including `occurrence_count`, `cycle_hits`, and merged evidence
+   - `ACTIONABLE_FINDINGS` only, including `occurrence_count`, `cycle_hits`, merged evidence, and confidence labels
    - exact file scope
+   - `DESIGN_CHALLENGE_LEDGER`
    - instruction to produce recommendations only (no edits)
 3. Require `problem-solver` to return one of:
-   - `REMEDIATION_REPORT`
+   - `IMPLEMENTATION_PACK` (recommendation-only payload; no execution in this command)
    - `NO_ACTIONABLE_FIXES`
    - `BLOCKED_SOLUTIONS`
 4. If `BLOCKED_SOLUTIONS`, include blockers explicitly in the report.
@@ -167,6 +194,7 @@ Before baseline or reviewer calls, build a plan-aware context from `.claude/plan
 - Critical/High: <N>
 - Medium: <N>
 - Low: <N>
+- Filtered as insufficient evidence: <N>
 - Status: <No actionable findings | Action required>
 
 ## Findings by Severity
@@ -177,19 +205,41 @@ Before baseline or reviewer calls, build a plan-aware context from `.claude/plan
 | MEDIUM | <N> |
 | LOW | <N> |
 
+## Architectural Risk Overview
+
+| Category | Count |
+|---|---:|
+| SRP / boundary integrity | <N> |
+| Dependency flow | <N> |
+| Abstraction/design debt | <N> |
+| Rule/design tension | <N> |
+
 ## Repeated Findings Frequency
 
 | Finding | Occurrences | Cycles Seen |
 |---|---:|---|
 | <short finding title> | <N> | <cycle-1, cycle-3> |
 
+## Finding Quality Gate Results
+
+| Disposition | Count |
+|---|---:|
+| ACTIONABLE_NOW | <N> |
+| INTENTIONAL_DECISION | <N> |
+| DEFERRED_BY_PLAN | <N> |
+| INSUFFICIENT_EVIDENCE | <N> |
+
 ## Detailed Findings and Recommended Fixes
 
 ### <Finding title>
+- **Finding ID**: <canonical id, e.g., CF-001>
 - **Severity**: <CRITICAL/HIGH/MEDIUM/LOW>
 - **Occurrences**: <N> (out of <total cycles> cycles)
 - **Cycles Seen**: <cycle list>
-- **Reviewers Seen**: <rust-reviewer/security-reviewer>
+- **Reviewers Seen**: <rust-reviewer/architecture-reviewer/security-reviewer>
+- **Category**: <finding category>
+- **Confidence**: <HIGH|MEDIUM|LOW>
+- **Disposition**: <ACTIONABLE_NOW|INTENTIONAL_DECISION|DEFERRED_BY_PLAN|INSUFFICIENT_EVIDENCE>
 - **Location**: `<file>:<line>` (or module path; include affected locations when multiple)
 - **Problem**: <what is wrong and why it matters>
 - **Evidence**: <reviewer observation or rule/design mismatch>
@@ -197,6 +247,15 @@ Before baseline or reviewer calls, build a plan-aware context from `.claude/plan
 - **Recommended Fix**: <clear recommendation>
 - **Proposed Solution**: <concrete implementation approach, constraints, trade-offs>
 - **Risk if Unchanged**: <impact>
+
+## Design Challenge Ledger
+
+### <Challenge item>
+- **Challenged constraint**: <rule/design anchor>
+- **Rationale**: <why current rule/design is suboptimal>
+- **Proposed update**: <draft update direction>
+- **Related findings**: <IDs>
+- **Status**: <Requires decision | Deferred | Accepted for future update>
 
 ### Finding classification rules (must apply)
 
@@ -221,6 +280,7 @@ Before baseline or reviewer calls, build a plan-aware context from `.claude/plan
 - Cycle summary (per cycle: shards reviewed, raw finding count, severity breakdown)
 - Shards reviewed and per-shard finding counts
 - Deduplication criteria used for canonical findings
+- Findings excluded as insufficient evidence (with rationale)
 - Reviewer agents used
 - Rule/design references consulted
 - Plan files and handoff files cited
