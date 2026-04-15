@@ -31,6 +31,7 @@ pub struct CreateVaultRequest<'a> {
     /// UTF-8 password bytes entered by the user.
     pub password_bytes: &'a [u8],
     /// Destination path for the generated key file; `Some` iff [`Tier::Two`].
+    /// The file must not already exist.
     pub target_key_file_path: Option<PathBuf>,
     /// Destination path for the SQLCipher vault database file.
     pub vault_db_path: PathBuf,
@@ -62,6 +63,7 @@ pub struct RotateKeyFileRequest<'a> {
     /// Current key source for the vault's existing key file.
     pub current_key_source: &'a (dyn KeySource + Send + Sync),
     /// Destination path for the freshly generated key file.
+    /// The file must not already exist.
     pub target_new_key_file_path: PathBuf,
     /// Optional recovery phrase to re-wrap the recovery slot.
     pub recovery_phrase: Option<&'a str>,

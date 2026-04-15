@@ -75,7 +75,8 @@ pub async fn rotate_key_file(
     }
     let mut new_key_file: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
     rand::rng().fill_bytes(new_key_file.as_mut_slice());
-    staging::write_owner_only(&request.target_new_key_file_path, new_key_file.as_slice()).await?;
+    staging::write_owner_only_new(&request.target_new_key_file_path, new_key_file.as_slice())
+        .await?;
     let new_key_file_blake3 = hex::encode(blake3::hash(new_key_file.as_slice()).as_bytes());
 
     let mut will_remove_slots = false;
@@ -503,5 +504,44 @@ mod tests {
             result,
             Err(AuthenticationError::VaultHeaderInvalid)
         ));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_rotate_key_file_rejects_existing_target_path_without_overwrite() {
+        let _lock = ceremony_lock().await;
+        let mut vault = create_tier_two_vault().await;
+        let old_source = MockKeySource::new(
+            std::fs::read(&vault.key_file_path)
+                .expect("key file must exist")
+                .try_into()
+                .expect("key file must be 32 bytes"),
+        );
+        let existing_target = vault._temp.path().join("existing-target.bin");
+        let existing_content = b"preserve-existing-target";
+        std::fs::write(&existing_target, existing_content)
+            .expect("seed target file must be written");
+
+        let request = RotateKeyFileRequest {
+            password_bytes: TEST_PASSWORD,
+            current_key_source: &old_source,
+            target_new_key_file_path: existing_target.clone(),
+            recovery_phrase: None,
+            argon2_params: test_params(),
+            vault_db_path: vault.vault_db_path.clone(),
+        };
+        let result = rotate_key_file(
+            request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::VaultHeaderInvalid)
+        ));
+        let preserved = std::fs::read(&existing_target).expect("target file must remain readable");
+        assert_eq!(preserved, existing_content);
     }
 }

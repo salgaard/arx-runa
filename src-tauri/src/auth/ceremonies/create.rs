@@ -79,7 +79,7 @@ pub async fn create_vault(
             .ok_or(AuthenticationError::VaultHeaderInvalid)?;
         let mut buffer: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         rand::rng().fill_bytes(buffer.as_mut_slice());
-        staging::write_owner_only(key_file_path, buffer.as_slice()).await?;
+        staging::write_owner_only_new(key_file_path, buffer.as_slice()).await?;
         let digest = blake3::hash(buffer.as_slice());
         key_file_blake3_hex = Some(hex::encode(digest.as_bytes()));
         key_file_bytes = Some(buffer);
@@ -300,5 +300,33 @@ mod tests {
             result,
             Err(AuthenticationError::VaultHeaderInvalid)
         ));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_vault_rejects_existing_tier_two_key_file_path_without_overwrite() {
+        let _lock = ceremony_lock().await;
+        let temp = temp_dir();
+        let vault_db_path = temp.path().join("vault.db");
+        let key_file_path = temp.path().join("existing-key.bin");
+        let existing_content = b"keep-existing-content";
+        std::fs::write(&key_file_path, existing_content).expect("seed key file must be written");
+
+        let cloud = MockCloudTransport::new();
+        let session = test_session_manager();
+        let request = CreateVaultRequest {
+            tier: Tier::Two,
+            password_bytes: TEST_PASSWORD,
+            target_key_file_path: Some(key_file_path.clone()),
+            vault_db_path,
+            argon2_params: test_params(),
+        };
+
+        let result = create_vault(request, &session, &cloud).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::VaultHeaderInvalid)
+        ));
+        let preserved = std::fs::read(&key_file_path).expect("key file must remain readable");
+        assert_eq!(preserved, existing_content);
     }
 }

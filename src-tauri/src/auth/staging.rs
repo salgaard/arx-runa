@@ -41,11 +41,36 @@ pub(crate) async fn staging_directory() -> Result<PathBuf, AuthenticationError> 
 /// created with a default DACL (see module-level note). The file is fully
 /// written and closed before this function returns.
 pub(crate) async fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), AuthenticationError> {
+    write_owner_only_inner(path, bytes, false).await
+}
+
+/// Writes `bytes` to a newly created `path` with owner-only permissions.
+///
+/// Returns `VaultHeaderInvalid` when `path` already exists. This is used for
+/// key-file outputs where silent overwrite is not allowed.
+pub(crate) async fn write_owner_only_new(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), AuthenticationError> {
+    write_owner_only_inner(path, bytes, true).await
+}
+
+/// Writes bytes with owner-only permissions, optionally requiring a new file.
+async fn write_owner_only_inner(
+    path: &Path,
+    bytes: &[u8],
+    require_new_file: bool,
+) -> Result<(), AuthenticationError> {
     let path = path.to_path_buf();
     let bytes = bytes.to_vec();
     tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
         let mut options = OpenOptions::new();
-        options.write(true).create(true).truncate(true);
+        options.write(true);
+        if require_new_file {
+            options.create_new(true);
+        } else {
+            options.create(true).truncate(true);
+        }
 
         #[cfg(unix)]
         {
@@ -154,6 +179,22 @@ mod tests {
 
         let recovered = std::fs::read(&path).expect("read must succeed");
         assert_eq!(recovered, b"short");
+    }
+
+    #[tokio::test]
+    async fn test_write_owner_only_new_rejects_existing_file_and_keeps_original_content() {
+        let directory = tempdir().expect("tempdir must succeed");
+        let path = directory.path().join("header.json");
+        std::fs::write(&path, b"existing").expect("seed write must succeed");
+
+        let result = write_owner_only_new(&path, b"replacement").await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::VaultHeaderInvalid)
+        ));
+
+        let recovered = std::fs::read(&path).expect("read must succeed");
+        assert_eq!(recovered, b"existing");
     }
 
     #[tokio::test]
