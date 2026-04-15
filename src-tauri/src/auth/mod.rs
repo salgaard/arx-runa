@@ -4,6 +4,7 @@
 //! lifecycle, memory locking.
 
 pub mod autodetect;
+pub mod ceremonies;
 pub mod config;
 pub mod device_monitor;
 pub mod error;
@@ -11,9 +12,15 @@ pub mod kdf;
 pub mod key_source;
 pub mod path_hint;
 pub mod session;
+pub mod staging;
 pub mod types;
 
 pub use autodetect::find_key_file;
+pub use ceremonies::{
+    ChangePasswordRequest, CreateVaultRequest, RecoverVaultRequest, RecoverWithPhraseRequest,
+    RotateKeyFileRequest, SetupRecoveryRequest, Tier, change_password, create_vault, recover_vault,
+    recover_with_phrase, rotate_key_file, setup_recovery,
+};
 pub use device_monitor::{DeviceEvent, DeviceMonitor};
 pub use error::{AuthenticationError, KeySourceError};
 pub use kdf::Argon2Params;

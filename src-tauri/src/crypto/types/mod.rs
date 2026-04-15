@@ -8,11 +8,11 @@ use zeroize::ZeroizeOnDrop;
 pub struct FileKey(SecretBox<[u8; 32]>);
 
 impl FileKey {
-    /// Constructs a file key from raw key bytes for deterministic tests.
+    /// Constructs a file key from raw key bytes.
     ///
-    /// Test-only helper to avoid exposing a production constructor that accepts
-    /// plain key bytes by value.
-    #[cfg(test)]
+    /// Used by ceremonies to build a temporary `FileKey` before wrapping it
+    /// with a key-encryption key, and by tests to pin deterministic inputs.
+    #[allow(dead_code)]
     pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(SecretBox::new(Box::new(bytes)))
     }
@@ -42,11 +42,12 @@ impl KeyEncryptionKey {
         Self(secret_box)
     }
 
-    /// Constructs a key-encryption key from raw key bytes for deterministic tests.
+    /// Constructs a key-encryption key from raw key bytes.
     ///
-    /// Test-only helper to avoid exposing a production constructor that accepts
-    /// plain key bytes by value.
-    #[cfg(test)]
+    /// Used by ceremonies that need to build a temporary `KeyEncryptionKey`
+    /// from the active session's `SessionKeys::key_encryption_key` bytes, and
+    /// by tests to pin deterministic inputs.
+    #[allow(dead_code)]
     pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
         Self::from_secret_box(SecretBox::new(Box::new(bytes)))
     }
@@ -107,6 +108,95 @@ impl ManifestKey {
     #[allow(dead_code)]
     pub(crate) fn expose(&self) -> &[u8; 32] {
         self.0.expose_secret()
+    }
+}
+
+/// 256-bit vault master key produced by Argon2id.
+///
+/// Held in protected heap storage and zeroed on drop. **Invariant**:
+/// `MasterKey` must not be assigned to a struct field outside ceremony-local
+/// scope in `src-tauri/src/auth/ceremonies.rs`. Phase 2.4 enforces this by
+/// holding the raw bytes as `Zeroizing<[u8; 32]>` inside ceremony function
+/// bodies and constructing the `MasterKey` newtype only at the boundary of
+/// the recovery-wrap primitives.
+#[derive(ZeroizeOnDrop)]
+pub struct MasterKey(SecretBox<[u8; 32]>);
+
+impl MasterKey {
+    /// Constructs a master key from raw key bytes.
+    #[allow(dead_code)]
+    pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(SecretBox::new(Box::new(bytes)))
+    }
+
+    /// Constructs a master key from protected heap storage.
+    #[allow(dead_code)]
+    pub(crate) fn from_secret_box(secret_box: SecretBox<[u8; 32]>) -> Self {
+        Self(secret_box)
+    }
+
+    /// Exposes the key bytes for cryptographic operations.
+    #[allow(dead_code)]
+    pub(crate) fn expose(&self) -> &[u8; 32] {
+        self.0.expose_secret()
+    }
+}
+
+/// 256-bit recovery key derived from a BIP-39 phrase via Argon2id.
+///
+/// Never persisted; derived on demand from the user's recovery phrase and
+/// zeroized on drop. The recovery key is the AEAD key used to wrap / unwrap
+/// `MasterKey` inside vault-header recovery slots.
+#[derive(ZeroizeOnDrop)]
+pub struct RecoveryKey(SecretBox<[u8; 32]>);
+
+impl RecoveryKey {
+    /// Constructs a recovery key from raw key bytes.
+    #[allow(dead_code)]
+    pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(SecretBox::new(Box::new(bytes)))
+    }
+
+    /// Exposes the key bytes for cryptographic operations.
+    #[allow(dead_code)]
+    pub(crate) fn expose(&self) -> &[u8; 32] {
+        self.0.expose_secret()
+    }
+}
+
+/// Wrapped master key in recovery-slot wire format
+/// `[24-byte nonce | 32-byte ciphertext | 16-byte tag]`.
+///
+/// Stored inside the vault header alongside the recovery slot's Argon2
+/// parameters. Unlike `WrappedFileKey`, the recovery-slot wrap uses a
+/// non-empty AAD (`b"arx-runa recovery v1" || vault_id_bytes`) to bind the
+/// ciphertext to vault identity and recovery purpose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WrappedMasterKey(pub [u8; 72]);
+
+/// Vault identifier — raw 128-bit UUID bytes (not the hyphenated text form).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VaultId([u8; 16]);
+
+impl VaultId {
+    /// Creates a vault identifier from raw UUID bytes.
+    pub fn new(bytes: [u8; 16]) -> Self {
+        Self(bytes)
+    }
+
+    /// Returns the raw UUID bytes.
+    pub fn as_bytes(&self) -> &[u8; 16] {
+        &self.0
+    }
+
+    /// Converts from a `Uuid`.
+    pub fn from_uuid(uuid: uuid::Uuid) -> Self {
+        Self(*uuid.as_bytes())
+    }
+
+    /// Converts to a `Uuid`.
+    pub fn to_uuid(&self) -> uuid::Uuid {
+        uuid::Uuid::from_bytes(self.0)
     }
 }
 
@@ -244,5 +334,64 @@ mod tests {
     fn test_manifest_key_from_bytes_preserves_input() {
         let manifest_key = ManifestKey::from_bytes([0x44u8; 32]);
         assert_eq!(manifest_key.expose(), &[0x44u8; 32]);
+    }
+
+    #[test]
+    fn test_master_key_zeroize_trait_clears_memory() {
+        let mut master_key = MasterKey::from_bytes([0x7Cu8; 32]);
+        let pointer = master_key.expose().as_ptr();
+
+        // SAFETY: `pointer` comes from `master_key.expose()` and the key remains
+        // alive and allocated for this read.
+        let before_zeroize = unsafe { std::slice::from_raw_parts(pointer, 32) };
+        assert_eq!(before_zeroize, &[0x7Cu8; 32]);
+
+        Zeroize::zeroize(&mut master_key.0);
+
+        // SAFETY: `master_key` is still alive; the pointer remains valid for 32
+        // bytes and now points at the zeroized buffer.
+        let after_zeroize = unsafe { std::slice::from_raw_parts(pointer, 32) };
+        assert_eq!(after_zeroize, &[0u8; 32]);
+    }
+
+    #[test]
+    fn test_recovery_key_from_bytes_preserves_input() {
+        let recovery_key = RecoveryKey::from_bytes([0x9Eu8; 32]);
+        assert_eq!(recovery_key.expose(), &[0x9Eu8; 32]);
+    }
+
+    #[test]
+    fn test_recovery_key_zeroize_trait_clears_memory() {
+        let mut recovery_key = RecoveryKey::from_bytes([0x55u8; 32]);
+        let pointer = recovery_key.expose().as_ptr();
+
+        // SAFETY: `pointer` comes from `recovery_key.expose()` and the key
+        // remains alive and allocated for this read.
+        let before_zeroize = unsafe { std::slice::from_raw_parts(pointer, 32) };
+        assert_eq!(before_zeroize, &[0x55u8; 32]);
+
+        Zeroize::zeroize(&mut recovery_key.0);
+
+        // SAFETY: `recovery_key` is still alive; the pointer remains valid for
+        // 32 bytes and now points at the zeroized buffer.
+        let after_zeroize = unsafe { std::slice::from_raw_parts(pointer, 32) };
+        assert_eq!(after_zeroize, &[0u8; 32]);
+    }
+
+    #[test]
+    fn test_vault_id_uuid_roundtrip_preserves_value() {
+        let uuid = uuid::Uuid::new_v4();
+        let vault_id = VaultId::from_uuid(uuid);
+
+        assert_eq!(vault_id.to_uuid(), uuid);
+        assert_eq!(vault_id.as_bytes(), uuid.as_bytes());
+    }
+
+    #[test]
+    fn test_vault_id_new_preserves_bytes() {
+        let bytes = [0x13u8; 16];
+        let vault_id = VaultId::new(bytes);
+
+        assert_eq!(*vault_id.as_bytes(), bytes);
     }
 }

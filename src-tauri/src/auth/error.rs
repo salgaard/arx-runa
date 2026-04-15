@@ -32,6 +32,21 @@ pub enum AuthenticationError {
     #[error("session is already active; call lock() before re-authenticating")]
     SessionAlreadyActive,
 
+    /// A ceremony requiring an active session was called while no session
+    /// was active.
+    #[error("session is not active; authenticate first")]
+    SessionNotActive,
+
+    /// BIP-39 recovery phrase failed checksum or wordlist validation. This
+    /// is returned before any Argon2id derivation runs so the error path is
+    /// not timing-distinguishable from `InvalidCredentials`.
+    #[error("recovery phrase checksum is invalid")]
+    InvalidRecoveryPhrase,
+
+    /// The vault header has no recovery slot configured.
+    #[error("no recovery slot is configured for this vault")]
+    NoRecoverySlot,
+
     /// A key-source operation failed.
     #[error(transparent)]
     KeySource(#[from] KeySourceError),
@@ -128,5 +143,29 @@ mod tests {
             "Cannot lock memory. Ensure sufficient physical RAM is available and try again.",
         ));
         assert_eq!(error.to_string(), "cannot lock memory for session keys");
+    }
+
+    #[test]
+    fn test_authentication_error_session_not_active_display_matches_design() {
+        assert_eq!(
+            AuthenticationError::SessionNotActive.to_string(),
+            "session is not active; authenticate first",
+        );
+    }
+
+    #[test]
+    fn test_authentication_error_invalid_recovery_phrase_display_matches_design() {
+        assert_eq!(
+            AuthenticationError::InvalidRecoveryPhrase.to_string(),
+            "recovery phrase checksum is invalid",
+        );
+    }
+
+    #[test]
+    fn test_authentication_error_no_recovery_slot_display_matches_design() {
+        assert_eq!(
+            AuthenticationError::NoRecoverySlot.to_string(),
+            "no recovery slot is configured for this vault",
+        );
     }
 }

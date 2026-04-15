@@ -46,3 +46,20 @@ paths:
 ## Traits
 - `KeySource` trait — `read_key() -> Result<Zeroizing<[u8; 32]>, KeySourceError>`; implementations: `FileKeySource` (prod), `MockKeySource` (test)
 - `DeviceMonitor` trait — `watch() -> Pin<Box<dyn Stream<Item = DeviceEvent> + Send>>`; implementations: `WindowsDeviceMonitor`, `LinuxDeviceMonitor`, `MacOsDeviceMonitor`, `MockDeviceMonitor` (test)
+
+## Ceremonies
+- Six ceremony functions live in `src-tauri/src/auth/ceremonies.rs`: `create_vault`, `change_password`, `rotate_key_file`, `recover_vault`, `setup_recovery`, `recover_with_phrase`.
+- `master_key` is bound as `Zeroizing<[u8; 32]>` inside ceremony-local scope and must not escape the function body. No struct may hold a `master_key` or `MasterKey` field.
+- `SessionKeys::from_master_key_bytes` is the ceremony entry point for HKDF expansion; `SessionKeys::derive` is preserved for direct `SessionManager::authenticate` callers.
+- `SessionManager::install_session` transitions `NoSession | Expired → Active` with pre-derived keys; `SessionManager::swap_active_session` rotates keys while staying `Active` (used by password change and key file rotation). Neither method re-runs KDF.
+- The `pending-vault-header.json` staging file is written under `dirs::config_dir() / "arx-runa/"` with owner-only permissions during password change and key rotation. The startup retry loop is Phase 4.3 territory.
+- Forward declarations: `CloudTransport` (`src-tauri/src/storage/cloud/mod.rs`) and `VaultHeader` (`src-tauri/src/storage/cloud/vault_header.rs`) originate in Phase 2.4 and are extended by Phase 4.1 / 4.3.
+
+## Recovery slots
+- Recovery is opt-in and post-creation via `setup_recovery`; users who do not configure a slot cannot recover from lost credentials.
+- BIP-39 (English wordlist) is the only Phase 2.4 recovery method. `Mnemonic::parse_in(Language::English, phrase)` validates the phrase before any Argon2id derivation.
+- The canonical Argon2id input for both `setup_recovery` and `recover_with_phrase` is `mnemonic.words().collect::<Vec<_>>().join(" ")`. Do not use `to_string()` or other separators.
+- Recovery slot AEAD uses the dedicated `wrap_master_key_for_recovery` / `unwrap_master_key_from_recovery` functions with AAD = `b"arx-runa recovery v1" || vault_id_bytes`. Never use `wrap_file_key` for recovery slot material.
+- Recovery slot Argon2 parameters are stored per-slot (independent of the primary slot) but default to the same values at `setup_recovery` time.
+- `recover_with_phrase` returns `InvalidRecoveryPhrase` (no Argon2id) on checksum failure, `NoRecoverySlot` on empty `recovery_slots`, and `InvalidCredentials` when all slots fail AEAD decrypt.
+- The 24-word phrase is returned from `setup_recovery` exactly once, wrapped in `Zeroizing<String>`. The caller must display, require acknowledgement, and drop. Never log the phrase, never write it to disk, never include it in error messages.

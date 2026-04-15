@@ -1,7 +1,7 @@
 ---
 title: "Phase 2.4 — Vault Ceremonies"
 created: "2026-04-14T00:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 2
 sub-phase: "2.4"
 design-document: "docs/architecture/designs/authentication-and-session-management/design.md"
@@ -1282,3 +1282,113 @@ Working directory: `C:\Users\chris\source\repos\arx-runa`. The plan is self-cont
 - Timing of `InvalidRecoveryPhrase`: the early-return must happen before any `derive_master_key_into` call. Verify by asserting wall-clock < 10 ms for the adversarial test.
 
 Plan status: `draft`. No blocking concerns. Proceed with `/implement-plan phase-2-4-vault-ceremonies.md` after user approval.
+
+## Implementation Log
+
+- **Date**: 2026-04-14T23:48:54.9171982Z
+- **Branch**: `development`
+- **Execution mode**: `direct` (legacy-plan migration note: frontmatter has no `implementation-delegation`, so direct mode was applied)
+
+### Agent evidence
+
+| Approach step | Agent | Agent ID | Outcome |
+| --- | --- | --- | --- |
+| 1 | (direct) | N/A | Completed |
+| 2 | (direct) | N/A | Completed |
+| 3 | (direct) | N/A | Completed |
+| 4 | (direct) | N/A | Completed |
+| 5 | (direct) | N/A | Completed |
+| 6 | (direct) | N/A | Completed |
+| 7 | (direct) | N/A | Completed |
+| 8 | (direct) | N/A | Completed |
+| 9 | (direct) | N/A | Completed |
+| 10 | (direct) | N/A | Completed |
+| 11 | (direct) | N/A | Completed |
+| 12 | (direct) | N/A | Completed |
+| rust-reviewer | rust-reviewer | N/A | Skipped (legacy plan format: no rust-review section/field; user directive 2026-04-15 to avoid extra agent runs) |
+| security-reviewer | security-reviewer | N/A | Skipped per user directive 2026-04-15 (credit budget) |
+| problem-solver | problem-solver | N/A | Skipped (legacy plan format: no solution-synthesis section/field; no actionable reviewer findings round executed) |
+| test-writer | test-writer | N/A | Skipped per user directive 2026-04-15 (credit budget) |
+
+### Files changed
+
+- `.claude/rules/auth.md`
+- `.github/instructions/auth.instructions.md`
+- `docs/architecture/designs/authentication-and-session-management/sub-phases/2.4-vault-ceremonies.md`
+- `src-tauri/Cargo.toml`
+- `src-tauri/src/auth/mod.rs`
+- `src-tauri/src/auth/ceremonies.rs`
+- `src-tauri/src/auth/staging.rs`
+- `src-tauri/src/auth/error.rs`
+- `src-tauri/src/auth/session.rs`
+- `src-tauri/src/crypto/recovery_wrap.rs`
+- `src-tauri/src/crypto/types/mod.rs`
+- `src-tauri/src/crypto/mod.rs`
+- `src-tauri/src/storage/mod.rs`
+- `src-tauri/src/storage/cloud/mod.rs`
+- `src-tauri/src/storage/cloud/vault_header.rs`
+- `src-tauri/src/storage/cloud/manifest_backup.rs`
+- `src-tauri/src/storage/cloud/mock.rs`
+- `Cargo.lock`
+
+### Test results
+
+- `cargo test --workspace --all-targets --all-features`: **220 passed, 0 failed, 1 ignored, 0 measured, 0 filtered out**.
+
+### Clippy results
+
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: **clean**.
+- Fixes applied in this finalization pass:
+  - Collapsed three nested `if` blocks in `src-tauri/src/auth/ceremonies.rs`.
+  - Removed one `let-and-return` pattern in ceremony tests.
+
+### Rust review
+
+- **N/A (skipped)**. Legacy-plan migration note: plan lacks explicit rust-review decision/field; additionally skipped per user directive 2026-04-15 to avoid extra agent runs.
+
+### Security review
+
+- **Skipped per user directive 2026-04-15** (credit budget).
+- Manual spot-check evidence against Section 6.c checklist:
+  1. `master_key` lifetime invariant — **manual code review pending**.
+  2. `MasterKey` type containment — **manual code review pending**.
+  3. Zeroisation correctness — **partially covered** by existing error-path tests; full manual review pending.
+  4. Recovery-slot AEAD nonce/AAD correctness — **covered** (`test_recovery_slot_cross_vault_transplant_fails`, recovery-wrap tests).
+  5. Re-key transaction atomicity — **covered** by ceremony transaction/failure-path tests.
+  6. Vault header contains no derived keys — **covered** by vault-header validation/serde tests.
+  7. Recovery phrase handling (no persistence/logging) — **covered** (`test_recovery_phrase_never_appears_in_any_persistent_writer_output`).
+  8. Staging-file permissions — **manual platform review pending**.
+  9. Wrapped master-key wire format (72 bytes) — **covered** (`test_setup_recovery_wrapped_master_key_decodes_to_seventy_two_bytes`).
+  10. Non-oracular error mapping — **covered** (`test_recover_with_phrase_invalid_checksum_returns_invalid_recovery_phrase_without_running_argon2id`, `test_recover_with_phrase_wrong_phrase_returns_invalid_credentials`).
+
+### Governance sync
+
+- Actions completed: **2**.
+- Files updated: `.claude/rules/auth.md` and `.github/instructions/auth.instructions.md`.
+- `/copilot-sync` outcome: mirror regeneration completed; auth instruction mirror now reflects ceremony/recovery-slot rule updates.
+
+### Sub-phase decisions sync
+
+- Target: `docs/architecture/designs/authentication-and-session-management/sub-phases/2.4-vault-ceremonies.md`
+- `## Implementation Decisions` added with **6** concrete decisions.
+
+### Deviations from plan
+
+- Added ceremony test serialisation via static `tokio::sync::Mutex<()>` around the singleton staging path to prevent cross-test races/deadlocks.
+- Fixed a duplicate test-lock acquisition in `test_change_password_old_kek_cannot_unwrap_file_keys_after_change` to avoid self-deadlock.
+- Enabled `x25519-dalek` feature `static_secrets` in `src-tauri/Cargo.toml` to support deterministic secret reconstruction.
+- Added `src-tauri/src/storage/cloud/mock.rs` as test-only support for ceremony/cloud-path tests (not listed in the expected sensitive path set).
+- Skipped `security-reviewer` and `test-writer` despite plan YES decisions, per explicit user directive 2026-04-15 (credit budget).
+- Legacy-plan migration observations: missing `implementation-delegation`, `rust-review-agent-required`, `security-agent-required`, and `solution-agent-required` frontmatter fields.
+
+### Documentation flagged
+
+1. **`docs/architecture/designs/authentication-and-session-management/sub-phases/2.4-vault-ceremonies.md`** — append Implementation Notes paragraphs for DC-1 (stub schema), DC-2 (forward-declared `CloudTransport` / `VaultHeader`), and DC-12 (credential verification via `vault_identity` unwrap). Do not suppress doc updates even though the sub-phase's `## Documentation Impact` section is absent — these edits reflect implementation deviations.
+2. **`docs/roadmap.md`** — update line 51 (Phase 1 note) to read "Recovery-slot wrapping is implemented in Phase 2.4." Mark Phase 2 status as "Complete" once all sub-phases including 2.4 land (deferred to the final commit).
+3. **`docs/architecture/designs/cloud-synchronisation/sub-phases/4.1-cloud-transport.md`** — append note at the top of Deliverables: "Trait forward-declared by Phase 2.4 in `src-tauri/src/storage/cloud/mod.rs`. Phase 4.1 extends it with `delete_blob`, `list_blobs`, and the full `CloudTransportError` variant set."
+4. **`docs/architecture/designs/cloud-synchronisation/sub-phases/4.3-vault-header.md`** — similar note: "`VaultHeader` / `RecoverySlot` / `Argon2ParamsJson` structs forward-declared by Phase 2.4 in `src-tauri/src/storage/cloud/vault_header.rs`. Phase 4.3 adds richer validation and the upload/download helper functions."
+5. **`docs/architecture/designs/cloud-synchronisation/sub-phases/4.4-manifest-backup.md`** — add note that Phase 2.4 forward-declares a minimal `manifest_backup::decrypt` helper used by `recover_vault`. Phase 4.4 will replace it with the full encrypt/decrypt pair and define the wire format canonically.
+6. **`docs/threat-model/session-boundaries.md`** (per sub-phase completion task) — add section "What `mlock` protects against and the scope of memory protection guarantees" covering: (a) `master_key` lifetime boundedness in ceremonies, (b) `SessionKeys` zeroisation on lock/timeout, (c) Zero-Trace persistence compliance. If this file does not exist yet, create it.
+7. **`.claude/rules/auth.md`** — governance action G-1 (Section 9).
+8. **`.github/instructions/auth.instructions.md`** — regenerated via `/copilot-sync` after G-1.
+9. **`docs/report-log/`** — optional: log a report note summarising Phase 2.4 implementation and security review outcome.

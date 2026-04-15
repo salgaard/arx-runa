@@ -10,6 +10,7 @@ pub mod error;
 pub mod generate_file_key;
 pub mod hkdf;
 pub mod nonce;
+pub mod recovery_wrap;
 pub mod types;
 pub mod wrap_key;
 
@@ -20,8 +21,9 @@ pub use error::CryptoError;
 pub use generate_file_key::generate_file_key;
 pub use hkdf::{VaultKeys, derive_vault_keys};
 pub use nonce::generate_nonce;
+pub use recovery_wrap::{unwrap_master_key_from_recovery, wrap_master_key_for_recovery};
 pub use types::{
-    Blake3Hash, ChunkIndex, FileId, FileKey, KeyEncryptionKey, ManifestKey, SqlcipherKey,
-    WrappedFileKey,
+    Blake3Hash, ChunkIndex, FileId, FileKey, KeyEncryptionKey, ManifestKey, MasterKey, RecoveryKey,
+    SqlcipherKey, VaultId, WrappedFileKey, WrappedMasterKey,
 };
 pub use wrap_key::{unwrap_file_key, wrap_file_key};

@@ -39,10 +39,6 @@ impl SessionKeys {
         salt: &[u8; 32],
         params: &Argon2Params,
     ) -> Result<Self, AuthenticationError> {
-        let mut key_encryption_key = SecureBytes::<32>::new()?;
-        let mut sqlcipher_key = SecureBytes::<32>::new()?;
-        let mut manifest_key = SecureBytes::<32>::new()?;
-
         let mut master_key: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             password_utf8_bytes,
@@ -51,23 +47,35 @@ impl SessionKeys {
             params,
             &mut master_key,
         )?;
+        Self::from_master_key_bytes(&master_key)
+    }
+
+    /// Expands a caller-owned `master_key` into the three vault-level keys
+    /// via HKDF-SHA256. Used by ceremony flows where the raw master-key
+    /// bytes are held in a `Zeroizing<[u8; 32]>` binding in the outer
+    /// function scope (so they can also be passed to recovery-slot wrap
+    /// primitives) and must not run Argon2id a second time.
+    pub(crate) fn from_master_key_bytes(
+        master_key_bytes: &[u8; 32],
+    ) -> Result<Self, AuthenticationError> {
+        let mut key_encryption_key = SecureBytes::<32>::new()?;
+        let mut sqlcipher_key = SecureBytes::<32>::new()?;
+        let mut manifest_key = SecureBytes::<32>::new()?;
 
         expand_vault_key_into(
-            &master_key,
+            master_key_bytes,
             HKDF_INFO_KEY_ENCRYPTION,
             key_encryption_key.as_mut(),
         )
         .map_err(|_| AuthenticationError::InvalidCredentials)?;
-        expand_vault_key_into(&master_key, HKDF_INFO_SQLCIPHER, sqlcipher_key.as_mut())
+        expand_vault_key_into(master_key_bytes, HKDF_INFO_SQLCIPHER, sqlcipher_key.as_mut())
             .map_err(|_| AuthenticationError::InvalidCredentials)?;
         expand_vault_key_into(
-            &master_key,
+            master_key_bytes,
             HKDF_INFO_MANIFEST_BACKUP,
             manifest_key.as_mut(),
         )
         .map_err(|_| AuthenticationError::InvalidCredentials)?;
-
-        drop(master_key);
 
         Ok(Self {
             key_encryption_key,
@@ -334,6 +342,119 @@ impl SessionManager {
         }
     }
 
+    /// Installs pre-derived session keys and transitions `NoSession | Expired → Active`.
+    ///
+    /// Used by ceremony flows (`create_vault`, `recover_vault`,
+    /// `recover_with_phrase`) where the master-key bytes have already been
+    /// derived in ceremony-local scope and expanded into `SessionKeys` via
+    /// `SessionKeys::from_master_key_bytes`. Unlike `authenticate`, this
+    /// method does not run Argon2id and does not consume the
+    /// authenticate-gate semaphore — the ceremony is already the sole
+    /// lifecycle owner at this point.
+    ///
+    /// # Errors
+    /// Returns `AuthenticationError::SessionAlreadyActive` if a session is
+    /// already active; the ceremony must call `lock()` first.
+    #[allow(dead_code)]
+    pub(crate) async fn install_session(
+        &self,
+        keys: SessionKeys,
+    ) -> Result<(), AuthenticationError> {
+        if !Self::derived_keys_are_initialized(&keys) {
+            tracing::error!("install_session received an all-zero session key buffer");
+            return Err(AuthenticationError::InvalidCredentials);
+        }
+        if self.state().await == LifecycleState::Active {
+            return Err(AuthenticationError::SessionAlreadyActive);
+        }
+        {
+            let mut session_guard = self.session.write().await;
+            *session_guard = Some(keys);
+        }
+        {
+            let mut lifecycle_guard = self.lifecycle.write().await;
+            *lifecycle_guard = LifecycleState::Active;
+        }
+        self.operation_gate_closed.store(false, Ordering::SeqCst);
+        self.restart_timer().await;
+        Ok(())
+    }
+
+    /// Replaces the active `SessionKeys` without disturbing lifecycle state.
+    ///
+    /// Used by `change_password` and `rotate_key_file` to swap in freshly
+    /// HKDF-expanded keys after a successful re-wrap transaction. The old
+    /// `SessionKeys` value is dropped inside the write lock so the
+    /// `SecureBytes` destructors run zeroize + munlock before the next
+    /// access. The timeout is restarted to reset the inactivity window.
+    ///
+    /// # Errors
+    /// Returns `AuthenticationError::SessionNotActive` if the session is
+    /// not currently `Active`.
+    #[allow(dead_code)]
+    pub(crate) async fn swap_active_session(
+        &self,
+        new_keys: SessionKeys,
+    ) -> Result<(), AuthenticationError> {
+        if !Self::derived_keys_are_initialized(&new_keys) {
+            tracing::error!("swap_active_session received an all-zero session key buffer");
+            return Err(AuthenticationError::InvalidCredentials);
+        }
+        if self.state().await != LifecycleState::Active {
+            return Err(AuthenticationError::SessionNotActive);
+        }
+        {
+            let mut session_guard = self.session.write().await;
+            *session_guard = Some(new_keys);
+        }
+        self.restart_timer().await;
+        Ok(())
+    }
+
+    /// Invokes `callback` with the active key-encryption key under the
+    /// session read lock. Used by ceremonies that need to wrap / unwrap
+    /// file-key blobs during the re-wrap transaction.
+    ///
+    /// # Errors
+    /// Returns `AuthenticationError::SessionNotActive` if no session is
+    /// currently installed.
+    #[allow(dead_code)]
+    pub(crate) async fn with_key_encryption_key<F, R>(
+        &self,
+        callback: F,
+    ) -> Result<R, AuthenticationError>
+    where
+        F: FnOnce(&[u8; 32]) -> R,
+    {
+        let session_guard = self.session.read().await;
+        let keys = session_guard
+            .as_ref()
+            .ok_or(AuthenticationError::SessionNotActive)?;
+        Ok(callback(keys.key_encryption_key.expose()))
+    }
+
+    /// Invokes `callback` with the active SQLCipher key under the session
+    /// read lock. Used by ceremonies that open the vault database for the
+    /// re-wrap / rekey loop.
+    ///
+    /// # Errors
+    /// Returns `AuthenticationError::SessionNotActive` if no session is
+    /// currently installed.
+    #[allow(dead_code)]
+    pub(crate) async fn with_sqlcipher_key<F, R>(
+        &self,
+        callback: F,
+    ) -> Result<R, AuthenticationError>
+    where
+        F: FnOnce(&[u8; 32]) -> R,
+    {
+        let session_guard = self.session.read().await;
+        let keys = session_guard
+            .as_ref()
+            .ok_or(AuthenticationError::SessionNotActive)?;
+        Ok(callback(keys.sqlcipher_key.expose()))
+    }
+
     /// Returns `true` when all derived key buffers contain at least one non-zero byte.
     fn derived_keys_are_initialized(derived: &SessionKeys) -> bool {
         [
@@ -580,6 +701,35 @@ mod tests {
         assert_ne!(
             tier_one.key_encryption_key.expose(),
             tier_two.key_encryption_key.expose()
+        );
+    }
+
+    #[test]
+    fn test_session_keys_from_master_key_bytes_matches_derive_result() {
+        use zeroize::Zeroizing;
+
+        use crate::auth::kdf::derive_master_key_into;
+
+        let mut master_key_bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+        derive_master_key_into(b"password", None, &TEST_SALT, &TEST_PARAMS, &mut master_key_bytes)
+            .expect("master key derive must succeed");
+
+        let from_master = SessionKeys::from_master_key_bytes(&master_key_bytes)
+            .expect("from_master_key_bytes must succeed");
+        let from_derive = SessionKeys::derive(b"password", None, &TEST_SALT, &TEST_PARAMS)
+            .expect("derive must succeed");
+
+        assert_eq!(
+            from_master.key_encryption_key.expose(),
+            from_derive.key_encryption_key.expose(),
+        );
+        assert_eq!(
+            from_master.sqlcipher_key.expose(),
+            from_derive.sqlcipher_key.expose(),
+        );
+        assert_eq!(
+            from_master.manifest_key.expose(),
+            from_derive.manifest_key.expose(),
         );
     }
 
@@ -1079,5 +1229,137 @@ mod session_manager_tests {
                 .is_err(),
             "no warning event should be emitted when timeout is shorter than pre-warning window"
         );
+    }
+
+    async fn derive_test_session_keys() -> super::SessionKeys {
+        let mut master_key: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+        crate::auth::kdf::derive_master_key_into(
+            b"ceremony-test",
+            None,
+            &TEST_SALT,
+            &TEST_PARAMS,
+            &mut master_key,
+        )
+        .expect("master key derive must succeed");
+        super::SessionKeys::from_master_key_bytes(&master_key)
+            .expect("from_master_key_bytes must succeed")
+    }
+
+    #[tokio::test]
+    async fn test_install_session_transitions_no_session_to_active_without_running_argon2id() {
+        let manager = SessionManager::with_timeout(Duration::from_secs(5));
+        let keys = derive_test_session_keys().await;
+
+        manager
+            .install_session(keys)
+            .await
+            .expect("install_session must succeed from NoSession");
+
+        assert_eq!(manager.state().await, LifecycleState::Active);
+    }
+
+    #[tokio::test]
+    async fn test_install_session_rejects_when_state_is_active() {
+        let manager = SessionManager::with_timeout(Duration::from_secs(5));
+        let first = derive_test_session_keys().await;
+        let second = derive_test_session_keys().await;
+
+        manager
+            .install_session(first)
+            .await
+            .expect("first install must succeed");
+        let error = manager
+            .install_session(second)
+            .await
+            .expect_err("second install must be rejected");
+
+        assert!(matches!(error, AuthenticationError::SessionAlreadyActive));
+    }
+
+    #[tokio::test]
+    async fn test_install_session_allowed_after_expired_transition() {
+        let manager = SessionManager::with_timeout(Duration::from_secs(5));
+        let keys = derive_test_session_keys().await;
+
+        manager
+            .install_session(keys)
+            .await
+            .expect("first install must succeed");
+        manager.lock().await;
+        assert_eq!(manager.state().await, LifecycleState::Expired);
+
+        let fresh_keys = derive_test_session_keys().await;
+        manager
+            .install_session(fresh_keys)
+            .await
+            .expect("install must succeed from Expired state");
+
+        assert_eq!(manager.state().await, LifecycleState::Active);
+    }
+
+    #[tokio::test]
+    async fn test_swap_active_session_replaces_keys_while_remaining_active() {
+        let manager = SessionManager::with_timeout(Duration::from_secs(5));
+        let first = derive_test_session_keys().await;
+        manager
+            .install_session(first)
+            .await
+            .expect("install must succeed");
+
+        let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+        crate::auth::kdf::derive_master_key_into(
+            b"different",
+            None,
+            &TEST_SALT,
+            &TEST_PARAMS,
+            &mut new_master,
+        )
+        .expect("master key derive must succeed");
+        let new_keys = super::SessionKeys::from_master_key_bytes(&new_master)
+            .expect("from_master_key_bytes must succeed");
+        let new_kek_copy = *new_keys.key_encryption_key.expose();
+
+        manager
+            .swap_active_session(new_keys)
+            .await
+            .expect("swap must succeed while Active");
+
+        assert_eq!(manager.state().await, LifecycleState::Active);
+        let observed_kek = manager
+            .with_key_encryption_key(|key| *key)
+            .await
+            .expect("active session must expose KEK");
+        assert_eq!(observed_kek, new_kek_copy);
+    }
+
+    #[tokio::test]
+    async fn test_swap_active_session_rejects_when_state_is_no_session() {
+        let manager = SessionManager::with_timeout(Duration::from_secs(5));
+        let keys = derive_test_session_keys().await;
+
+        let error = manager
+            .swap_active_session(keys)
+            .await
+            .expect_err("swap from NoSession must fail");
+
+        assert!(matches!(error, AuthenticationError::SessionNotActive));
+    }
+
+    #[tokio::test]
+    async fn test_with_key_encryption_key_returns_session_not_active_when_not_active() {
+        let manager = SessionManager::with_timeout(Duration::from_secs(5));
+
+        let result = manager.with_key_encryption_key(|_| ()).await;
+
+        assert!(matches!(result, Err(AuthenticationError::SessionNotActive)));
+    }
+
+    #[tokio::test]
+    async fn test_with_sqlcipher_key_returns_session_not_active_when_not_active() {
+        let manager = SessionManager::with_timeout(Duration::from_secs(5));
+
+        let result = manager.with_sqlcipher_key(|_| ()).await;
+
+        assert!(matches!(result, Err(AuthenticationError::SessionNotActive)));
     }
 }
