@@ -56,6 +56,14 @@ pub(crate) async fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), Au
         let mut file = options
             .open(path)
             .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+        }
+
         file.write_all(&bytes)
             .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
         file.sync_all()
@@ -103,6 +111,28 @@ mod tests {
         let path = directory.path().join("header.json");
 
         write_owner_only(&path, b"payload")
+            .await
+            .expect("write must succeed");
+
+        let metadata = std::fs::metadata(&path).expect("metadata must succeed");
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_write_owner_only_tightens_existing_permissions_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempdir().expect("tempdir must succeed");
+        let path = directory.path().join("header.json");
+
+        std::fs::write(&path, b"existing payload").expect("seed write must succeed");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("seed mode set must succeed");
+
+        let initial = std::fs::metadata(&path).expect("metadata must succeed");
+        assert_eq!(initial.permissions().mode() & 0o777, 0o644);
+
+        write_owner_only(&path, b"updated payload")
             .await
             .expect("write must succeed");
 

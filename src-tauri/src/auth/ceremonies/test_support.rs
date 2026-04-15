@@ -151,7 +151,7 @@ pub(super) async fn upload_manifest_backup_for(vault: &TierOneVault) {
     let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
     let manifest_key: [u8; 32] = *keys.manifest_key.expose();
     let stub_sql = b"CREATE TABLE IF NOT EXISTS imported_stub (id INTEGER);";
-    let wire = encrypt_manifest_backup(stub_sql, &manifest_key).unwrap();
+    let wire = encrypt_manifest_backup(stub_sql.to_vec(), &manifest_key).unwrap();
     vault
         .cloud
         .upload_blob(&manifest_backup_blob_name(), &wire)

@@ -21,28 +21,28 @@ use crate::crypto::nonce::generate_nonce;
 const NONCE_LEN: usize = 24;
 const TAG_LEN: usize = 16;
 
-/// Encrypts `plaintext` under `manifest_key` with XChaCha20-Poly1305 and no AAD.
+/// Encrypts caller-owned `plaintext` under `manifest_key` with XChaCha20-Poly1305 and no AAD.
 ///
 /// Returns the wire-format blob `[nonce || ciphertext || tag]`. The
-/// `plaintext` input is held in a `Zeroizing` buffer during in-place
-/// encryption so interrupted operations cannot leave plaintext on the
-/// stack.
+/// caller-owned plaintext buffer is consumed and wrapped in `Zeroizing`
+/// for in-place encryption so interrupted operations cannot leave plaintext
+/// in memory.
 #[allow(dead_code)]
 pub(crate) fn encrypt_manifest_backup(
-    plaintext: &[u8],
+    plaintext: Vec<u8>,
     manifest_key: &[u8; 32],
 ) -> Result<Vec<u8>, CryptoError> {
     let nonce_bytes = generate_nonce();
-    let mut buffer: Zeroizing<Vec<u8>> = Zeroizing::new(plaintext.to_vec());
+    let mut plaintext: Zeroizing<Vec<u8>> = Zeroizing::new(plaintext);
     let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(manifest_key));
     let nonce = GenericArray::from_slice(&nonce_bytes);
     let tag = cipher
-        .encrypt_in_place_detached(nonce, &[], buffer.as_mut_slice())
+        .encrypt_in_place_detached(nonce, &[], plaintext.as_mut_slice())
         .map_err(|_| CryptoError::EncryptionFailed)?;
 
-    let mut wire = Vec::with_capacity(NONCE_LEN + buffer.len() + TAG_LEN);
+    let mut wire = Vec::with_capacity(NONCE_LEN + plaintext.len() + TAG_LEN);
     wire.extend_from_slice(&nonce_bytes);
-    wire.extend_from_slice(&buffer);
+    wire.extend_from_slice(&plaintext);
     wire.extend_from_slice(tag.as_slice());
     Ok(wire)
 }
@@ -88,7 +88,8 @@ mod tests {
         let manifest_key = [0x11u8; 32];
         let plaintext = b"CREATE TABLE foo (id INTEGER);";
 
-        let wire = encrypt_manifest_backup(plaintext, &manifest_key).expect("encrypt must succeed");
+        let wire = encrypt_manifest_backup(plaintext.to_vec(), &manifest_key)
+            .expect("encrypt must succeed");
         let recovered =
             decrypt_manifest_backup(&wire, &manifest_key).expect("decrypt must succeed");
 
@@ -97,8 +98,8 @@ mod tests {
 
     #[test]
     fn test_manifest_backup_wrong_key_returns_decryption_failed() {
-        let wire =
-            encrypt_manifest_backup(b"payload", &[0x11u8; 32]).expect("encrypt must succeed");
+        let wire = encrypt_manifest_backup(b"payload".to_vec(), &[0x11u8; 32])
+            .expect("encrypt must succeed");
 
         let result = decrypt_manifest_backup(&wire, &[0x22u8; 32]);
 
@@ -115,8 +116,8 @@ mod tests {
     #[test]
     fn test_manifest_backup_corrupted_tag_returns_decryption_failed() {
         let manifest_key = [0x11u8; 32];
-        let mut wire =
-            encrypt_manifest_backup(b"payload", &manifest_key).expect("encrypt must succeed");
+        let mut wire = encrypt_manifest_backup(b"payload".to_vec(), &manifest_key)
+            .expect("encrypt must succeed");
         let tag_index = wire.len() - 1;
         wire[tag_index] ^= 0x01;
 

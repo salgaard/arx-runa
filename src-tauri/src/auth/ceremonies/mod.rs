@@ -74,7 +74,7 @@ mod invariant_tests {
     use crate::storage::cloud::vault_header::VaultHeader;
 
     #[test]
-    fn test_master_key_never_appears_in_session_keys_session_manager_or_vault_header_fields() {
+    fn test_master_key_token_absent_from_session_and_header_type_names() {
         let session_keys_type = type_name::<SessionKeys>();
         let session_manager_type = type_name::<SessionManager>();
         let vault_header_type = type_name::<VaultHeader>();
