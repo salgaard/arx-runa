@@ -10,7 +10,9 @@
 //! rule for manifest-backup and cross-phase consistency with the Phase 4.4
 //! design's decrypt helper).
 
-use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305, aead::generic_array::GenericArray};
+use chacha20poly1305::{
+    AeadInPlace, KeyInit, XChaCha20Poly1305, aead::generic_array::GenericArray,
+};
 use zeroize::Zeroizing;
 
 use crate::crypto::error::CryptoError;
@@ -36,7 +38,7 @@ pub(crate) fn encrypt_manifest_backup(
     let nonce = GenericArray::from_slice(&nonce_bytes);
     let tag = cipher
         .encrypt_in_place_detached(nonce, &[], buffer.as_mut_slice())
-        .map_err(|_| CryptoError::KeyWrapFailed)?;
+        .map_err(|_| CryptoError::EncryptionFailed)?;
 
     let mut wire = Vec::with_capacity(NONCE_LEN + buffer.len() + TAG_LEN);
     wire.extend_from_slice(&nonce_bytes);
@@ -113,7 +115,8 @@ mod tests {
     #[test]
     fn test_manifest_backup_corrupted_tag_returns_decryption_failed() {
         let manifest_key = [0x11u8; 32];
-        let mut wire = encrypt_manifest_backup(b"payload", &manifest_key).expect("encrypt must succeed");
+        let mut wire =
+            encrypt_manifest_backup(b"payload", &manifest_key).expect("encrypt must succeed");
         let tag_index = wire.len() - 1;
         wire[tag_index] ^= 0x01;
 

@@ -41,11 +41,7 @@ impl MockCloudTransport {
 
 #[async_trait]
 impl CloudTransport for MockCloudTransport {
-    async fn upload_blob(
-        &self,
-        name: &str,
-        bytes: &[u8],
-    ) -> Result<(), CloudTransportError> {
+    async fn upload_blob(&self, name: &str, bytes: &[u8]) -> Result<(), CloudTransportError> {
         self.store
             .lock()
             .await

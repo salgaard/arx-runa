@@ -109,9 +109,7 @@ pub fn unwrap_master_key_from_recovery(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        WRAPPED_LEN, unwrap_master_key_from_recovery, wrap_master_key_for_recovery,
-    };
+    use super::{WRAPPED_LEN, unwrap_master_key_from_recovery, wrap_master_key_for_recovery};
     use crate::crypto::error::CryptoError;
     use crate::crypto::types::{MasterKey, RecoveryKey, VaultId, WrappedMasterKey};
 
@@ -164,8 +162,9 @@ mod tests {
     fn test_unwrap_recovery_wrong_recovery_key_fails_with_decryption_failed() {
         let master_key = make_master_key(0x11);
         let vault_id = make_vault_id(0x22);
-        let wrapped = wrap_master_key_for_recovery(&master_key, &make_recovery_key(0x33), &vault_id)
-            .expect("wrap must succeed");
+        let wrapped =
+            wrap_master_key_for_recovery(&master_key, &make_recovery_key(0x33), &vault_id)
+                .expect("wrap must succeed");
 
         let result = unwrap_master_key_from_recovery(&wrapped, &make_recovery_key(0x44), &vault_id);
 
@@ -266,9 +265,8 @@ mod tests {
         let recovery_key = RecoveryKey::from_bytes([0x77u8; 32]);
         let vault_id = make_vault_id(0x88);
 
-        let wrapped_recovery =
-            wrap_master_key_for_recovery(&master_key, &recovery_key, &vault_id)
-                .expect("wrap must succeed");
+        let wrapped_recovery = wrap_master_key_for_recovery(&master_key, &recovery_key, &vault_id)
+            .expect("wrap must succeed");
 
         // A recovery-wrapped blob with vault id A and AAD must not decrypt
         // under the no-AAD file-key wrap path even with the same key bytes.

@@ -8,11 +8,11 @@ use zeroize::ZeroizeOnDrop;
 pub struct FileKey(SecretBox<[u8; 32]>);
 
 impl FileKey {
-    /// Constructs a file key from raw key bytes.
+    /// Constructs a file key from raw key bytes for deterministic tests.
     ///
-    /// Used by ceremonies to build a temporary `FileKey` before wrapping it
-    /// with a key-encryption key, and by tests to pin deterministic inputs.
-    #[allow(dead_code)]
+    /// Test-only helper to avoid exposing a production constructor that accepts
+    /// plain key bytes by value.
+    #[cfg(test)]
     pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(SecretBox::new(Box::new(bytes)))
     }
@@ -42,12 +42,11 @@ impl KeyEncryptionKey {
         Self(secret_box)
     }
 
-    /// Constructs a key-encryption key from raw key bytes.
+    /// Constructs a key-encryption key from raw key bytes for deterministic tests.
     ///
-    /// Used by ceremonies that need to build a temporary `KeyEncryptionKey`
-    /// from the active session's `SessionKeys::key_encryption_key` bytes, and
-    /// by tests to pin deterministic inputs.
-    #[allow(dead_code)]
+    /// Test-only helper to avoid exposing a production constructor that accepts
+    /// plain key bytes by value.
+    #[cfg(test)]
     pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
         Self::from_secret_box(SecretBox::new(Box::new(bytes)))
     }
@@ -123,8 +122,11 @@ impl ManifestKey {
 pub struct MasterKey(SecretBox<[u8; 32]>);
 
 impl MasterKey {
-    /// Constructs a master key from raw key bytes.
-    #[allow(dead_code)]
+    /// Constructs a master key from raw key bytes for deterministic tests.
+    ///
+    /// Test-only helper to avoid exposing a production constructor that accepts
+    /// plain key bytes by value.
+    #[cfg(test)]
     pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(SecretBox::new(Box::new(bytes)))
     }
@@ -151,10 +153,19 @@ impl MasterKey {
 pub struct RecoveryKey(SecretBox<[u8; 32]>);
 
 impl RecoveryKey {
-    /// Constructs a recovery key from raw key bytes.
+    /// Constructs a recovery key from protected heap storage.
     #[allow(dead_code)]
+    pub(crate) fn from_secret_box(secret_box: SecretBox<[u8; 32]>) -> Self {
+        Self(secret_box)
+    }
+
+    /// Constructs a recovery key from raw key bytes for deterministic tests.
+    ///
+    /// Test-only helper to avoid exposing a production constructor that accepts
+    /// plain key bytes by value.
+    #[cfg(test)]
     pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(SecretBox::new(Box::new(bytes)))
+        Self::from_secret_box(SecretBox::new(Box::new(bytes)))
     }
 
     /// Exposes the key bytes for cryptographic operations.

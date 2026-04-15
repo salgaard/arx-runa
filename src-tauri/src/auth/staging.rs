@@ -29,8 +29,7 @@ use crate::auth::error::AuthenticationError;
 pub(crate) fn staging_directory() -> Result<PathBuf, AuthenticationError> {
     let base = dirs::config_dir().ok_or(AuthenticationError::VaultHeaderInvalid)?;
     let staging_dir = base.join("arx-runa");
-    std::fs::create_dir_all(&staging_dir)
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+    std::fs::create_dir_all(&staging_dir).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     Ok(staging_dir)
 }
 
@@ -39,10 +38,7 @@ pub(crate) fn staging_directory() -> Result<PathBuf, AuthenticationError> {
 /// On Unix the file is created with mode `0o600`. On Windows the file is
 /// created with a default DACL (see module-level note). The file is fully
 /// written and closed before this function returns.
-pub(crate) fn write_owner_only(
-    path: &Path,
-    bytes: &[u8],
-) -> Result<(), AuthenticationError> {
+pub(crate) fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), AuthenticationError> {
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
 

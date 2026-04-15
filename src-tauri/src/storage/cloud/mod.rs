@@ -44,11 +44,7 @@ pub enum CloudTransportError {
 #[async_trait]
 pub trait CloudTransport: Send + Sync {
     /// Upload `bytes` under `name`, overwriting any prior content.
-    async fn upload_blob(
-        &self,
-        name: &str,
-        bytes: &[u8],
-    ) -> Result<(), CloudTransportError>;
+    async fn upload_blob(&self, name: &str, bytes: &[u8]) -> Result<(), CloudTransportError>;
 
     /// Download the blob stored under `name`.
     async fn download_blob(&self, name: &str) -> Result<Vec<u8>, CloudTransportError>;

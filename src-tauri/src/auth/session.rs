@@ -68,8 +68,12 @@ impl SessionKeys {
             key_encryption_key.as_mut(),
         )
         .map_err(|_| AuthenticationError::InvalidCredentials)?;
-        expand_vault_key_into(master_key_bytes, HKDF_INFO_SQLCIPHER, sqlcipher_key.as_mut())
-            .map_err(|_| AuthenticationError::InvalidCredentials)?;
+        expand_vault_key_into(
+            master_key_bytes,
+            HKDF_INFO_SQLCIPHER,
+            sqlcipher_key.as_mut(),
+        )
+        .map_err(|_| AuthenticationError::InvalidCredentials)?;
         expand_vault_key_into(
             master_key_bytes,
             HKDF_INFO_MANIFEST_BACKUP,
@@ -711,8 +715,14 @@ mod tests {
         use crate::auth::kdf::derive_master_key_into;
 
         let mut master_key_bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-        derive_master_key_into(b"password", None, &TEST_SALT, &TEST_PARAMS, &mut master_key_bytes)
-            .expect("master key derive must succeed");
+        derive_master_key_into(
+            b"password",
+            None,
+            &TEST_SALT,
+            &TEST_PARAMS,
+            &mut master_key_bytes,
+        )
+        .expect("master key derive must succeed");
 
         let from_master = SessionKeys::from_master_key_bytes(&master_key_bytes)
             .expect("from_master_key_bytes must succeed");

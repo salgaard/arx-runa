@@ -230,7 +230,10 @@ mod tests {
 
         let result = header.validate();
 
-        assert!(matches!(result, Err(VaultHeaderError::Tier1WithKeyFileBlake3)));
+        assert!(matches!(
+            result,
+            Err(VaultHeaderError::Tier1WithKeyFileBlake3)
+        ));
     }
 
     #[test]
@@ -375,8 +378,7 @@ mod tests {
         header.recovery_slots.push(valid_recovery_slot());
 
         let json = serde_json::to_string(&header).expect("serialize must succeed");
-        let decoded: VaultHeader =
-            serde_json::from_str(&json).expect("deserialize must succeed");
+        let decoded: VaultHeader = serde_json::from_str(&json).expect("deserialize must succeed");
 
         assert_eq!(decoded, header);
     }

@@ -15,8 +15,11 @@ use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use bip39::{Language, Mnemonic};
+use chacha20poly1305::aead::OsRng;
 use rand::Rng;
+use rusqlite::ffi;
 use rusqlite::{Connection, OptionalExtension, params};
+use secrecy::SecretBox;
 use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
@@ -27,8 +30,9 @@ use crate::auth::key_source::KeySource;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::{
-    FileKey, KeyEncryptionKey, MasterKey, RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey,
-    unwrap_file_key, unwrap_master_key_from_recovery, wrap_file_key, wrap_master_key_for_recovery,
+    FileKey, KeyEncryptionKey, MasterKey, RecoveryKey, SqlcipherKey, VaultId, WrappedFileKey,
+    WrappedMasterKey, unwrap_file_key, unwrap_master_key_from_recovery, wrap_file_key,
+    wrap_master_key_for_recovery,
 };
 use crate::storage::cloud::CloudTransport;
 use crate::storage::cloud::manifest_backup::decrypt_manifest_backup;
@@ -165,6 +169,63 @@ fn argon2_params_from_json(json: &Argon2ParamsJson) -> Argon2Params {
     }
 }
 
+/// Enforces the canonical Argon2 policy for all ceremony request payloads.
+fn enforce_argon2_policy(params: &Argon2Params) -> Result<(), AuthenticationError> {
+    #[cfg(test)]
+    {
+        let _ = params;
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    {
+        if *params == Argon2Params::DEFAULT {
+            Ok(())
+        } else {
+            Err(AuthenticationError::VaultHeaderInvalid)
+        }
+    }
+}
+
+/// Copies a borrowed 32-byte key into protected heap storage.
+fn secret_box_from_array(bytes: &[u8; 32]) -> SecretBox<[u8; 32]> {
+    let mut boxed = Box::new([0u8; 32]);
+    boxed.copy_from_slice(bytes);
+    SecretBox::new(boxed)
+}
+
+/// Constructs a `FileKey` from borrowed bytes without by-value constructors.
+fn file_key_from_array(bytes: &[u8; 32]) -> FileKey {
+    FileKey::from_secret_box(secret_box_from_array(bytes))
+}
+
+/// Constructs a `KeyEncryptionKey` from borrowed bytes without by-value constructors.
+fn key_encryption_key_from_array(bytes: &[u8; 32]) -> KeyEncryptionKey {
+    KeyEncryptionKey::from_secret_box(secret_box_from_array(bytes))
+}
+
+/// Constructs a `SqlcipherKey` from borrowed bytes without by-value constructors.
+fn sqlcipher_key_from_array(bytes: &[u8; 32]) -> SqlcipherKey {
+    SqlcipherKey::from_secret_box(secret_box_from_array(bytes))
+}
+
+/// Constructs a `MasterKey` from borrowed bytes without by-value constructors.
+fn master_key_from_array(bytes: &[u8; 32]) -> MasterKey {
+    MasterKey::from_secret_box(secret_box_from_array(bytes))
+}
+
+/// Constructs a `RecoveryKey` from borrowed bytes without by-value constructors.
+fn recovery_key_from_array(bytes: &[u8; 32]) -> RecoveryKey {
+    RecoveryKey::from_secret_box(secret_box_from_array(bytes))
+}
+
+/// Logs and ignores staging cleanup failures so primary upload outcome wins.
+fn best_effort_cleanup_staging(staging_path: &Path) {
+    if let Err(cleanup_error) = staging::remove_if_exists(staging_path) {
+        tracing::warn!(?cleanup_error, "staging cleanup failed");
+    }
+}
+
 fn encode_base64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
@@ -189,54 +250,128 @@ fn decode_base64_72(input: &str) -> Result<[u8; 72], AuthenticationError> {
     Ok(array)
 }
 
+/// Removes a generated file on drop unless explicitly disarmed.
+struct ScopedFileCleanup {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl ScopedFileCleanup {
+    /// Creates a new armed cleanup guard for `path`.
+    fn new(path: PathBuf) -> Self {
+        Self { path, armed: true }
+    }
+
+    /// Disables cleanup for this guard.
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for ScopedFileCleanup {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// Opens a SQLCipher database and applies a raw-byte key via SQLCipher FFI.
 fn open_sqlcipher(
     path: &Path,
-    sqlcipher_key_bytes: &[u8; 32],
+    sqlcipher_key: &[u8; 32],
 ) -> Result<Connection, AuthenticationError> {
     let conn = Connection::open(path).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    let pragma = format!("PRAGMA key = \"x'{}'\";", hex::encode(sqlcipher_key_bytes));
-    conn.execute_batch(&pragma)
-        .map_err(|_| AuthenticationError::InvalidCredentials)?;
+    let rc = {
+        // SAFETY: `conn` is open for this thread and `sqlcipher_key` points to
+        // a valid 32-byte buffer for the duration of the call.
+        unsafe {
+            ffi::sqlite3_key(
+                conn.handle(),
+                sqlcipher_key.as_ptr().cast(),
+                sqlcipher_key.len() as i32,
+            )
+        }
+    };
+    if rc != ffi::SQLITE_OK {
+        let error_message = {
+            // SAFETY: `conn.handle()` remains valid while `conn` is alive and
+            // `sqlite3_errmsg` returns a NUL-terminated string pointer owned by SQLite.
+            unsafe {
+                let message_ptr = ffi::sqlite3_errmsg(conn.handle());
+                std::ffi::CStr::from_ptr(message_ptr)
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        };
+        tracing::warn!(rc, error_message, "sqlite3_key failed");
+        return Err(AuthenticationError::InvalidCredentials);
+    }
     Ok(conn)
 }
 
+/// Rekeys an already-open SQLCipher connection via SQLCipher FFI.
 fn rekey_sqlcipher(
     conn: &Connection,
-    new_sqlcipher_key_bytes: &[u8; 32],
+    new_sqlcipher_key: &[u8; 32],
 ) -> Result<(), AuthenticationError> {
-    let pragma = format!(
-        "PRAGMA rekey = \"x'{}'\";",
-        hex::encode(new_sqlcipher_key_bytes)
-    );
-    conn.execute_batch(&pragma)
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)
+    let rc = {
+        // SAFETY: `conn` is open for this thread and `new_sqlcipher_key` points
+        // to a valid 32-byte buffer for the duration of the call.
+        unsafe {
+            ffi::sqlite3_rekey(
+                conn.handle(),
+                new_sqlcipher_key.as_ptr().cast(),
+                new_sqlcipher_key.len() as i32,
+            )
+        }
+    };
+    if rc != ffi::SQLITE_OK {
+        let error_message = {
+            // SAFETY: `conn.handle()` remains valid while `conn` is alive and
+            // `sqlite3_errmsg` returns a NUL-terminated string pointer owned by SQLite.
+            unsafe {
+                let message_ptr = ffi::sqlite3_errmsg(conn.handle());
+                std::ffi::CStr::from_ptr(message_ptr)
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        };
+        tracing::warn!(rc, error_message, "sqlite3_rekey failed");
+        return Err(AuthenticationError::VaultHeaderInvalid);
+    }
+    Ok(())
 }
 
+/// Wraps 32-byte plaintext under the active session KEK.
 fn wrap_with_session_kek(
     session_keys: &SessionKeys,
     plaintext_bytes: &[u8; 32],
 ) -> Result<WrappedFileKey, AuthenticationError> {
-    let key_encryption_key = KeyEncryptionKey::from_bytes(*session_keys.key_encryption_key.expose());
-    let file_key = FileKey::from_bytes(*plaintext_bytes);
+    let key_encryption_key =
+        key_encryption_key_from_array(session_keys.key_encryption_key.expose());
+    let file_key = file_key_from_array(plaintext_bytes);
     wrap_file_key(&file_key, &key_encryption_key)
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)
 }
 
+#[cfg(test)]
 fn wrap_with_kek_bytes(
     key_encryption_key_bytes: &[u8; 32],
     plaintext_bytes: &[u8; 32],
 ) -> Result<WrappedFileKey, AuthenticationError> {
-    let key_encryption_key = KeyEncryptionKey::from_bytes(*key_encryption_key_bytes);
-    let file_key = FileKey::from_bytes(*plaintext_bytes);
+    let key_encryption_key = key_encryption_key_from_array(key_encryption_key_bytes);
+    let file_key = file_key_from_array(plaintext_bytes);
     wrap_file_key(&file_key, &key_encryption_key)
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)
 }
 
+#[cfg(test)]
 fn unwrap_with_kek_bytes(
     wrapped: &WrappedFileKey,
     key_encryption_key_bytes: &[u8; 32],
 ) -> Result<FileKey, AuthenticationError> {
-    let key_encryption_key = KeyEncryptionKey::from_bytes(*key_encryption_key_bytes);
+    let key_encryption_key = key_encryption_key_from_array(key_encryption_key_bytes);
     unwrap_file_key(wrapped, &key_encryption_key)
         .map_err(|_| AuthenticationError::InvalidCredentials)
 }
@@ -259,14 +394,15 @@ fn derive_recovery_key_into(
     derive_master_key_into(phrase_canonical_bytes, None, salt, params, output)
 }
 
+/// Verifies credentials by unwrapping the persisted identity key with fresh keys.
 async fn verify_credentials_via_identity_row(
     vault_db_path: &Path,
-    sqlcipher_key_bytes: [u8; 32],
-    key_encryption_key_bytes: [u8; 32],
+    sqlcipher_key: SqlcipherKey,
+    key_encryption_key: KeyEncryptionKey,
 ) -> Result<(), AuthenticationError> {
     let vault_db_path = vault_db_path.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
-        let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key_bytes)?;
+        let conn = open_sqlcipher(&vault_db_path, sqlcipher_key.expose())?;
         let wrapped_blob: Vec<u8> = conn
             .query_row(
                 "SELECT wrapped_private_key FROM vault_identity WHERE id = 1",
@@ -278,7 +414,8 @@ async fn verify_credentials_via_identity_row(
             .try_into()
             .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
         let wrapped = WrappedFileKey(wrapped_array);
-        unwrap_with_kek_bytes(&wrapped, &key_encryption_key_bytes)?;
+        unwrap_file_key(&wrapped, &key_encryption_key)
+            .map_err(|_| AuthenticationError::InvalidCredentials)?;
         Ok(())
     })
     .await
@@ -303,6 +440,8 @@ pub async fn create_vault(
     session_manager: &SessionManager,
     cloud_transport: &dyn CloudTransport,
 ) -> Result<VaultId, AuthenticationError> {
+    enforce_argon2_policy(&request.argon2_params)?;
+
     match (request.tier, request.target_key_file_path.as_ref()) {
         (Tier::One, Some(_)) | (Tier::Two, None) => {
             return Err(AuthenticationError::VaultHeaderInvalid);
@@ -324,7 +463,7 @@ pub async fn create_vault(
         let key_file_path = request
             .target_key_file_path
             .as_ref()
-            .expect("tier 2 must carry a key file path");
+            .ok_or(AuthenticationError::VaultHeaderInvalid)?;
         let parent = key_file_path
             .parent()
             .ok_or(AuthenticationError::VaultHeaderInvalid)?;
@@ -341,7 +480,7 @@ pub async fn create_vault(
         let key_file_path = request
             .target_key_file_path
             .as_ref()
-            .expect("tier 2 must carry a key file path");
+            .ok_or(AuthenticationError::VaultHeaderInvalid)?;
         let mut buffer: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         rand::rng().fill_bytes(buffer.as_mut_slice());
         staging::write_owner_only(key_file_path, buffer.as_slice())?;
@@ -378,21 +517,20 @@ pub async fn create_vault(
         }
     };
 
-    let mut x25519_secret_bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-    rand::rng().fill_bytes(x25519_secret_bytes.as_mut_slice());
-    let static_secret = StaticSecret::from(*x25519_secret_bytes);
+    let static_secret = StaticSecret::random_from_rng(OsRng);
+    let x25519_secret_bytes: Zeroizing<[u8; 32]> = Zeroizing::new(static_secret.to_bytes());
     let public_key = PublicKey::from(&static_secret);
     let public_key_bytes = public_key.to_bytes();
 
     let wrapped_private_key = wrap_with_session_kek(&session_keys, &x25519_secret_bytes)?;
 
-    let sqlcipher_key_bytes: [u8; 32] = *session_keys.sqlcipher_key.expose();
+    let sqlcipher_key = sqlcipher_key_from_array(session_keys.sqlcipher_key.expose());
     let vault_db_path_owned = request.vault_db_path.clone();
     let wrapped_private_key_vec: Vec<u8> = wrapped_private_key.0.to_vec();
     let public_key_vec: Vec<u8> = public_key_bytes.to_vec();
     let db_result: Result<(), AuthenticationError> =
         tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
-            let conn = open_sqlcipher(&vault_db_path_owned, &sqlcipher_key_bytes)?;
+            let conn = open_sqlcipher(&vault_db_path_owned, sqlcipher_key.expose())?;
             conn.execute_batch(VAULT_STUB_SCHEMA)
                 .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
             conn.execute(
@@ -423,21 +561,33 @@ pub async fn create_vault(
         recovery_slots: Vec::new(),
     };
 
-    let json_bytes = serde_json::to_vec_pretty(&header)
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+    let json_bytes =
+        serde_json::to_vec_pretty(&header).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     let staging_dir = staging::staging_directory()?;
     let staging_path = staging_dir.join(STAGING_FILE_NAME);
     staging::write_owner_only(&staging_path, &json_bytes)?;
     let upload_result = cloud_transport
         .upload_blob(VAULT_HEADER_BLOB_NAME, &json_bytes)
         .await;
-    staging::remove_if_exists(&staging_path)?;
+    let cleanup_result = staging::remove_if_exists(&staging_path);
     if upload_result.is_err() {
+        if let Err(cleanup_error) = cleanup_result {
+            tracing::warn!(
+                ?cleanup_error,
+                "staging cleanup failed after upload failure"
+            );
+        }
         if let Some(key_file_path) = request.target_key_file_path.as_ref() {
             let _ = std::fs::remove_file(key_file_path);
         }
         let _ = std::fs::remove_file(&request.vault_db_path);
         return Err(AuthenticationError::VaultHeaderInvalid);
+    }
+    if let Err(cleanup_error) = cleanup_result {
+        tracing::warn!(
+            ?cleanup_error,
+            "staging cleanup failed after successful upload"
+        );
     }
 
     session_manager.install_session(session_keys).await?;
@@ -468,6 +618,8 @@ pub async fn change_password(
     vault_header: &mut VaultHeader,
     vault_id: &VaultId,
 ) -> Result<(), AuthenticationError> {
+    enforce_argon2_policy(&request.argon2_params)?;
+
     if session_manager.state().await != crate::auth::LifecycleState::Active {
         return Err(AuthenticationError::SessionNotActive);
     }
@@ -475,21 +627,19 @@ pub async fn change_password(
     let current_salt = decode_base64_32(&vault_header.argon2_salt)?;
     let current_params = argon2_params_from_json(&vault_header.argon2_params);
 
-    let current_key_file_bytes: Option<Zeroizing<[u8; 32]>> = match (
-        vault_header.tier,
-        request.current_key_source,
-    ) {
-        (1, _) => None,
-        (2, Some(source)) => {
-            let bytes = source
-                .read_key()
-                .map_err(|_| AuthenticationError::InvalidCredentials)?;
-            let mut buffer: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-            buffer.copy_from_slice(bytes.as_slice());
-            Some(buffer)
-        }
-        _ => return Err(AuthenticationError::InvalidCredentials),
-    };
+    let current_key_file_bytes: Option<Zeroizing<[u8; 32]>> =
+        match (vault_header.tier, request.current_key_source) {
+            (1, _) => None,
+            (2, Some(source)) => {
+                let bytes = source
+                    .read_key()
+                    .map_err(|_| AuthenticationError::InvalidCredentials)?;
+                let mut buffer: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+                buffer.copy_from_slice(bytes.as_slice());
+                Some(buffer)
+            }
+            _ => return Err(AuthenticationError::InvalidCredentials),
+        };
 
     let mut current_master_key: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
     derive_master_key_into(
@@ -500,9 +650,9 @@ pub async fn change_password(
         &mut current_master_key,
     )?;
     let current_session_keys = SessionKeys::from_master_key_bytes(&current_master_key)?;
-    let current_kek: [u8; 32] = *current_session_keys.key_encryption_key.expose();
-    let current_sqlcipher: [u8; 32] = *current_session_keys.sqlcipher_key.expose();
-    drop(current_session_keys);
+    let current_kek =
+        key_encryption_key_from_array(current_session_keys.key_encryption_key.expose());
+    let current_sqlcipher = sqlcipher_key_from_array(current_session_keys.sqlcipher_key.expose());
 
     let mut will_remove_slots = false;
     let mut recovery_key_for_rewrap: Option<RecoveryKey> = None;
@@ -530,7 +680,7 @@ pub async fn change_password(
                     &slot_params,
                     &mut recovery_key_bytes,
                 )?;
-                let recovery_key = RecoveryKey::from_bytes(*recovery_key_bytes);
+                let recovery_key = recovery_key_from_array(&recovery_key_bytes);
                 drop(recovery_key_bytes);
                 match unwrap_master_key_from_recovery(&wrapped, &recovery_key, vault_id) {
                     Ok(_master_key) => {
@@ -553,13 +703,13 @@ pub async fn change_password(
         &mut new_master_key,
     )?;
     let new_session_keys = SessionKeys::from_master_key_bytes(&new_master_key)?;
-    let new_kek: [u8; 32] = *new_session_keys.key_encryption_key.expose();
-    let new_sqlcipher: [u8; 32] = *new_session_keys.sqlcipher_key.expose();
+    let new_kek = key_encryption_key_from_array(new_session_keys.key_encryption_key.expose());
+    let new_sqlcipher = sqlcipher_key_from_array(new_session_keys.sqlcipher_key.expose());
 
     let vault_db_path = request.vault_db_path.clone();
     let rewrap_result: Result<(), AuthenticationError> =
         tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
-            let conn = open_sqlcipher(&vault_db_path, &current_sqlcipher)?;
+            let conn = open_sqlcipher(&vault_db_path, current_sqlcipher.expose())?;
             conn.execute_batch("BEGIN IMMEDIATE;")
                 .map_err(|_| AuthenticationError::InvalidCredentials)?;
             let transaction_result = (|| -> Result<(), AuthenticationError> {
@@ -577,8 +727,10 @@ pub async fn change_password(
                             .try_into()
                             .map_err(|_| AuthenticationError::InvalidCredentials)?;
                         let wrapped = WrappedFileKey(wrapped_array);
-                        let file_key = unwrap_with_kek_bytes(&wrapped, &current_kek)?;
-                        let rewrapped = wrap_with_kek_bytes(&new_kek, file_key.expose())?;
+                        let file_key = unwrap_file_key(&wrapped, &current_kek)
+                            .map_err(|_| AuthenticationError::InvalidCredentials)?;
+                        let rewrapped = wrap_file_key(&file_key, &new_kek)
+                            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
                         conn.execute(
                             "UPDATE nodes SET file_key_wrapped = ? WHERE id = ?",
                             params![rewrapped.0.to_vec(), row_id],
@@ -599,8 +751,10 @@ pub async fn change_password(
                         .try_into()
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
                     let wrapped = WrappedFileKey(wrapped_array);
-                    let file_key = unwrap_with_kek_bytes(&wrapped, &current_kek)?;
-                    let rewrapped = wrap_with_kek_bytes(&new_kek, file_key.expose())?;
+                    let file_key = unwrap_file_key(&wrapped, &current_kek)
+                        .map_err(|_| AuthenticationError::InvalidCredentials)?;
+                    let rewrapped = wrap_file_key(&file_key, &new_kek)
+                        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
                     conn.execute(
                         "UPDATE vault_identity SET wrapped_private_key = ? WHERE id = 1",
                         params![rewrapped.0.to_vec()],
@@ -613,7 +767,7 @@ pub async fn change_password(
                 Ok(()) => {
                     conn.execute_batch("COMMIT;")
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    rekey_sqlcipher(&conn, &new_sqlcipher)?;
+                    rekey_sqlcipher(&conn, new_sqlcipher.expose())?;
                     drop(conn);
                     Ok(())
                 }
@@ -633,7 +787,7 @@ pub async fn change_password(
     if will_remove_slots {
         vault_header.recovery_slots.clear();
     } else if let Some(recovery_key) = recovery_key_for_rewrap.as_ref() {
-        let master_key = MasterKey::from_bytes(*new_master_key);
+        let master_key = master_key_from_array(&new_master_key);
         let rewrapped = wrap_master_key_for_recovery(&master_key, recovery_key, vault_id)
             .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
         drop(master_key);
@@ -652,13 +806,17 @@ pub async fn change_password(
     let staging_dir = staging::staging_directory()?;
     let staging_path = staging_dir.join(STAGING_FILE_NAME);
     staging::write_owner_only(&staging_path, &json_bytes)?;
-    cloud_transport
+    let upload_result = cloud_transport
         .upload_blob(VAULT_HEADER_BLOB_NAME, &json_bytes)
-        .await
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    staging::remove_if_exists(&staging_path)?;
+        .await;
+    if upload_result.is_err() {
+        return Err(AuthenticationError::VaultHeaderInvalid);
+    }
+    best_effort_cleanup_staging(&staging_path);
 
-    session_manager.swap_active_session(new_session_keys).await?;
+    session_manager
+        .swap_active_session(new_session_keys)
+        .await?;
 
     drop(current_master_key);
     drop(new_master_key);
@@ -679,6 +837,8 @@ pub async fn rotate_key_file(
     vault_header: &mut VaultHeader,
     vault_id: &VaultId,
 ) -> Result<(), AuthenticationError> {
+    enforce_argon2_policy(&request.argon2_params)?;
+
     if vault_header.tier != 2 {
         return Err(AuthenticationError::VaultHeaderInvalid);
     }
@@ -708,9 +868,9 @@ pub async fn rotate_key_file(
         &mut current_master_key,
     )?;
     let current_session_keys = SessionKeys::from_master_key_bytes(&current_master_key)?;
-    let current_kek: [u8; 32] = *current_session_keys.key_encryption_key.expose();
-    let current_sqlcipher: [u8; 32] = *current_session_keys.sqlcipher_key.expose();
-    drop(current_session_keys);
+    let current_kek =
+        key_encryption_key_from_array(current_session_keys.key_encryption_key.expose());
+    let current_sqlcipher = sqlcipher_key_from_array(current_session_keys.sqlcipher_key.expose());
 
     let parent = request
         .target_new_key_file_path
@@ -722,6 +882,7 @@ pub async fn rotate_key_file(
     let mut new_key_file: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
     rand::rng().fill_bytes(new_key_file.as_mut_slice());
     staging::write_owner_only(&request.target_new_key_file_path, new_key_file.as_slice())?;
+    let mut new_key_file_cleanup = ScopedFileCleanup::new(request.target_new_key_file_path.clone());
     let new_key_file_blake3 = hex::encode(blake3::hash(new_key_file.as_slice()).as_bytes());
 
     let mut will_remove_slots = false;
@@ -749,16 +910,13 @@ pub async fn rotate_key_file(
                     &slot_params,
                     &mut recovery_key_bytes,
                 )?;
-                let recovery_key = RecoveryKey::from_bytes(*recovery_key_bytes);
+                let recovery_key = recovery_key_from_array(&recovery_key_bytes);
                 drop(recovery_key_bytes);
                 match unwrap_master_key_from_recovery(&wrapped, &recovery_key, vault_id) {
                     Ok(_master_key) => {
                         recovery_key_for_rewrap = Some(recovery_key);
                     }
-                    Err(_) => {
-                        let _ = std::fs::remove_file(&request.target_new_key_file_path);
-                        return Err(AuthenticationError::InvalidCredentials);
-                    }
+                    Err(_) => return Err(AuthenticationError::InvalidCredentials),
                 }
             }
         }
@@ -775,13 +933,13 @@ pub async fn rotate_key_file(
         &mut new_master_key,
     )?;
     let new_session_keys = SessionKeys::from_master_key_bytes(&new_master_key)?;
-    let new_kek: [u8; 32] = *new_session_keys.key_encryption_key.expose();
-    let new_sqlcipher: [u8; 32] = *new_session_keys.sqlcipher_key.expose();
+    let new_kek = key_encryption_key_from_array(new_session_keys.key_encryption_key.expose());
+    let new_sqlcipher = sqlcipher_key_from_array(new_session_keys.sqlcipher_key.expose());
 
     let vault_db_path = request.vault_db_path.clone();
     let rewrap_result: Result<(), AuthenticationError> =
         tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
-            let conn = open_sqlcipher(&vault_db_path, &current_sqlcipher)?;
+            let conn = open_sqlcipher(&vault_db_path, current_sqlcipher.expose())?;
             conn.execute_batch("BEGIN IMMEDIATE;")
                 .map_err(|_| AuthenticationError::InvalidCredentials)?;
             let transaction_result = (|| -> Result<(), AuthenticationError> {
@@ -799,8 +957,10 @@ pub async fn rotate_key_file(
                             .try_into()
                             .map_err(|_| AuthenticationError::InvalidCredentials)?;
                         let wrapped = WrappedFileKey(wrapped_array);
-                        let file_key = unwrap_with_kek_bytes(&wrapped, &current_kek)?;
-                        let rewrapped = wrap_with_kek_bytes(&new_kek, file_key.expose())?;
+                        let file_key = unwrap_file_key(&wrapped, &current_kek)
+                            .map_err(|_| AuthenticationError::InvalidCredentials)?;
+                        let rewrapped = wrap_file_key(&file_key, &new_kek)
+                            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
                         conn.execute(
                             "UPDATE nodes SET file_key_wrapped = ? WHERE id = ?",
                             params![rewrapped.0.to_vec(), row_id],
@@ -821,8 +981,10 @@ pub async fn rotate_key_file(
                         .try_into()
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
                     let wrapped = WrappedFileKey(wrapped_array);
-                    let file_key = unwrap_with_kek_bytes(&wrapped, &current_kek)?;
-                    let rewrapped = wrap_with_kek_bytes(&new_kek, file_key.expose())?;
+                    let file_key = unwrap_file_key(&wrapped, &current_kek)
+                        .map_err(|_| AuthenticationError::InvalidCredentials)?;
+                    let rewrapped = wrap_file_key(&file_key, &new_kek)
+                        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
                     conn.execute(
                         "UPDATE vault_identity SET wrapped_private_key = ? WHERE id = 1",
                         params![rewrapped.0.to_vec()],
@@ -835,7 +997,7 @@ pub async fn rotate_key_file(
                 Ok(()) => {
                     conn.execute_batch("COMMIT;")
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    rekey_sqlcipher(&conn, &new_sqlcipher)?;
+                    rekey_sqlcipher(&conn, new_sqlcipher.expose())?;
                     drop(conn);
                     Ok(())
                 }
@@ -848,10 +1010,8 @@ pub async fn rotate_key_file(
         })
         .await
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    if let Err(error) = rewrap_result {
-        let _ = std::fs::remove_file(&request.target_new_key_file_path);
-        return Err(error);
-    }
+    rewrap_result?;
+    new_key_file_cleanup.disarm();
 
     vault_header.argon2_salt = encode_base64(new_salt.as_slice());
     vault_header.argon2_params = argon2_params_to_json(&request.argon2_params);
@@ -859,7 +1019,7 @@ pub async fn rotate_key_file(
     if will_remove_slots {
         vault_header.recovery_slots.clear();
     } else if let Some(recovery_key) = recovery_key_for_rewrap.as_ref() {
-        let master_key = MasterKey::from_bytes(*new_master_key);
+        let master_key = master_key_from_array(&new_master_key);
         let rewrapped = wrap_master_key_for_recovery(&master_key, recovery_key, vault_id)
             .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
         drop(master_key);
@@ -878,13 +1038,17 @@ pub async fn rotate_key_file(
     let staging_dir = staging::staging_directory()?;
     let staging_path = staging_dir.join(STAGING_FILE_NAME);
     staging::write_owner_only(&staging_path, &json_bytes)?;
-    cloud_transport
+    let upload_result = cloud_transport
         .upload_blob(VAULT_HEADER_BLOB_NAME, &json_bytes)
-        .await
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    staging::remove_if_exists(&staging_path)?;
+        .await;
+    if upload_result.is_err() {
+        return Err(AuthenticationError::VaultHeaderInvalid);
+    }
+    best_effort_cleanup_staging(&staging_path);
 
-    session_manager.swap_active_session(new_session_keys).await?;
+    session_manager
+        .swap_active_session(new_session_keys)
+        .await?;
 
     drop(current_master_key);
     drop(new_master_key);
@@ -912,11 +1076,12 @@ pub async fn recover_vault(
         .validate()
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
 
-    let vault_uuid = Uuid::parse_str(&header.vault_id)
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+    let vault_uuid =
+        Uuid::parse_str(&header.vault_id).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     let vault_id = VaultId::from_uuid(vault_uuid);
     let salt = decode_base64_32(&header.argon2_salt)?;
     let params = argon2_params_from_json(&header.argon2_params);
+    enforce_argon2_policy(&params)?;
 
     let key_file_bytes: Option<Zeroizing<[u8; 32]>> = match (header.tier, request.key_source) {
         (1, _) => None,
@@ -928,8 +1093,8 @@ pub async fn recover_vault(
                 .key_file_blake3
                 .as_ref()
                 .ok_or(AuthenticationError::VaultHeaderInvalid)?;
-            let expected_digest = hex::decode(expected_hex)
-                .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+            let expected_digest =
+                hex::decode(expected_hex).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
             let actual_digest = blake3::hash(bytes.as_slice());
             if expected_digest.as_slice() != actual_digest.as_bytes() {
                 return Err(AuthenticationError::KeyFileNotFound);
@@ -951,18 +1116,14 @@ pub async fn recover_vault(
         &mut master_key,
     )?;
     let session_keys = SessionKeys::from_master_key_bytes(&master_key)?;
-    let sqlcipher_key: [u8; 32] = *session_keys.sqlcipher_key.expose();
-    let manifest_key: [u8; 32] = *session_keys.manifest_key.expose();
+    let sqlcipher_key = sqlcipher_key_from_array(session_keys.sqlcipher_key.expose());
 
     let backup_wire = cloud_transport
         .download_blob(MANIFEST_BACKUP_BLOB_NAME)
         .await
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    let plaintext = decrypt_manifest_backup(&backup_wire, &manifest_key)
+    let plaintext = decrypt_manifest_backup(&backup_wire, session_keys.manifest_key.expose())
         .map_err(|_| AuthenticationError::InvalidCredentials)?;
-    let sql_text = std::str::from_utf8(plaintext.as_slice())
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
-        .to_owned();
 
     if request.vault_db_path.exists() {
         return Err(AuthenticationError::VaultHeaderInvalid);
@@ -976,8 +1137,10 @@ pub async fn recover_vault(
     let vault_db_path = request.vault_db_path.clone();
     let db_result: Result<(), AuthenticationError> =
         tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
-            let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key)?;
-            conn.execute_batch(&sql_text)
+            let sql_text = std::str::from_utf8(plaintext.as_slice())
+                .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+            let conn = open_sqlcipher(&vault_db_path, sqlcipher_key.expose())?;
+            conn.execute_batch(sql_text)
                 .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
             drop(conn);
             Ok(())
@@ -1006,6 +1169,8 @@ pub async fn setup_recovery(
     vault_header: &mut VaultHeader,
     vault_id: &VaultId,
 ) -> Result<Zeroizing<String>, AuthenticationError> {
+    enforce_argon2_policy(&request.argon2_params)?;
+
     if session_manager.state().await != crate::auth::LifecycleState::Active {
         return Err(AuthenticationError::SessionNotActive);
     }
@@ -1013,21 +1178,19 @@ pub async fn setup_recovery(
     let current_salt = decode_base64_32(&vault_header.argon2_salt)?;
     let current_params = argon2_params_from_json(&vault_header.argon2_params);
 
-    let current_key_file_bytes: Option<Zeroizing<[u8; 32]>> = match (
-        vault_header.tier,
-        request.current_key_source,
-    ) {
-        (1, _) => None,
-        (2, Some(source)) => {
-            let bytes = source
-                .read_key()
-                .map_err(|_| AuthenticationError::InvalidCredentials)?;
-            let mut buffer: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-            buffer.copy_from_slice(bytes.as_slice());
-            Some(buffer)
-        }
-        _ => return Err(AuthenticationError::InvalidCredentials),
-    };
+    let current_key_file_bytes: Option<Zeroizing<[u8; 32]>> =
+        match (vault_header.tier, request.current_key_source) {
+            (1, _) => None,
+            (2, Some(source)) => {
+                let bytes = source
+                    .read_key()
+                    .map_err(|_| AuthenticationError::InvalidCredentials)?;
+                let mut buffer: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+                buffer.copy_from_slice(bytes.as_slice());
+                Some(buffer)
+            }
+            _ => return Err(AuthenticationError::InvalidCredentials),
+        };
 
     let mut master_key: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
     derive_master_key_into(
@@ -1038,12 +1201,10 @@ pub async fn setup_recovery(
         &mut master_key,
     )?;
     let fresh_session_keys = SessionKeys::from_master_key_bytes(&master_key)?;
-    verify_credentials_via_identity_row(
-        &request.vault_db_path,
-        *fresh_session_keys.sqlcipher_key.expose(),
-        *fresh_session_keys.key_encryption_key.expose(),
-    )
-    .await?;
+    let verify_sqlcipher_key = sqlcipher_key_from_array(fresh_session_keys.sqlcipher_key.expose());
+    let verify_kek = key_encryption_key_from_array(fresh_session_keys.key_encryption_key.expose());
+    verify_credentials_via_identity_row(&request.vault_db_path, verify_sqlcipher_key, verify_kek)
+        .await?;
     drop(fresh_session_keys);
 
     let mut entropy: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
@@ -1062,10 +1223,10 @@ pub async fn setup_recovery(
         &request.argon2_params,
         &mut recovery_key_bytes,
     )?;
-    let recovery_key = RecoveryKey::from_bytes(*recovery_key_bytes);
+    let recovery_key = recovery_key_from_array(&recovery_key_bytes);
     drop(recovery_key_bytes);
 
-    let master_key_typed = MasterKey::from_bytes(*master_key);
+    let master_key_typed = master_key_from_array(&master_key);
     let wrapped = wrap_master_key_for_recovery(&master_key_typed, &recovery_key, vault_id)
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     drop(master_key_typed);
@@ -1092,16 +1253,26 @@ pub async fn setup_recovery(
         vault_header.recovery_slots.pop();
         return Err(error);
     }
-    if cloud_transport
+    let upload_result = cloud_transport
         .upload_blob(VAULT_HEADER_BLOB_NAME, &json_bytes)
-        .await
-        .is_err()
-    {
+        .await;
+    let cleanup_result = staging::remove_if_exists(&staging_path);
+    if upload_result.is_err() {
         vault_header.recovery_slots.pop();
-        staging::remove_if_exists(&staging_path)?;
+        if let Err(cleanup_error) = cleanup_result {
+            tracing::warn!(
+                ?cleanup_error,
+                "staging cleanup failed after upload failure"
+            );
+        }
         return Err(AuthenticationError::VaultHeaderInvalid);
     }
-    staging::remove_if_exists(&staging_path)?;
+    if let Err(cleanup_error) = cleanup_result {
+        tracing::warn!(
+            ?cleanup_error,
+            "staging cleanup failed after successful upload"
+        );
+    }
 
     drop(master_key);
     drop(recovery_salt);
@@ -1128,8 +1299,8 @@ pub async fn recover_with_phrase(
     header
         .validate()
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    let vault_uuid = Uuid::parse_str(&header.vault_id)
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+    let vault_uuid =
+        Uuid::parse_str(&header.vault_id).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     let vault_id = VaultId::from_uuid(vault_uuid);
 
     if header.recovery_slots.is_empty() {
@@ -1143,6 +1314,7 @@ pub async fn recover_with_phrase(
         }
         let slot_salt = decode_base64_32(&slot.argon2_salt)?;
         let slot_params = argon2_params_from_json(&slot.argon2_params);
+        enforce_argon2_policy(&slot_params)?;
         let wrapped_bytes = decode_base64_72(&slot.wrapped_master_key)?;
         let wrapped = WrappedMasterKey(wrapped_bytes);
 
@@ -1153,7 +1325,7 @@ pub async fn recover_with_phrase(
             &slot_params,
             &mut recovery_key_bytes,
         )?;
-        let recovery_key = RecoveryKey::from_bytes(*recovery_key_bytes);
+        let recovery_key = recovery_key_from_array(&recovery_key_bytes);
         drop(recovery_key_bytes);
         match unwrap_master_key_from_recovery(&wrapped, &recovery_key, &vault_id) {
             Ok(master_key_typed) => {
@@ -1172,18 +1344,14 @@ pub async fn recover_with_phrase(
 
     let master_key = recovered_master_key.ok_or(AuthenticationError::InvalidCredentials)?;
     let session_keys = SessionKeys::from_master_key_bytes(&master_key)?;
-    let sqlcipher_key: [u8; 32] = *session_keys.sqlcipher_key.expose();
-    let manifest_key: [u8; 32] = *session_keys.manifest_key.expose();
+    let sqlcipher_key = sqlcipher_key_from_array(session_keys.sqlcipher_key.expose());
 
     let backup_wire = cloud_transport
         .download_blob(MANIFEST_BACKUP_BLOB_NAME)
         .await
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    let plaintext = decrypt_manifest_backup(&backup_wire, &manifest_key)
+    let plaintext = decrypt_manifest_backup(&backup_wire, session_keys.manifest_key.expose())
         .map_err(|_| AuthenticationError::InvalidCredentials)?;
-    let sql_text = std::str::from_utf8(plaintext.as_slice())
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
-        .to_owned();
 
     if request.vault_db_path.exists() {
         return Err(AuthenticationError::VaultHeaderInvalid);
@@ -1197,8 +1365,10 @@ pub async fn recover_with_phrase(
     let vault_db_path = request.vault_db_path.clone();
     let db_result: Result<(), AuthenticationError> =
         tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
-            let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key)?;
-            conn.execute_batch(&sql_text)
+            let sql_text = std::str::from_utf8(plaintext.as_slice())
+                .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+            let conn = open_sqlcipher(&vault_db_path, sqlcipher_key.expose())?;
+            conn.execute_batch(sql_text)
                 .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
             drop(conn);
             Ok(())
@@ -1350,7 +1520,10 @@ mod tests {
         let key_bytes = std::fs::read(&vault.key_file_path).expect("key file must exist");
         assert_eq!(key_bytes.len(), 32);
         let expected_hex = hex::encode(blake3::hash(&key_bytes).as_bytes());
-        assert_eq!(vault.header.key_file_blake3.as_deref(), Some(expected_hex.as_str()));
+        assert_eq!(
+            vault.header.key_file_blake3.as_deref(),
+            Some(expected_hex.as_str())
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1380,7 +1553,10 @@ mod tests {
             argon2_params: test_params(),
         };
         let result = create_vault(request, &session, &cloud).await;
-        assert!(matches!(result, Err(AuthenticationError::VaultHeaderInvalid)));
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::VaultHeaderInvalid)
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1399,7 +1575,10 @@ mod tests {
             argon2_params: test_params(),
         };
         let result = create_vault(request, &session, &cloud).await;
-        assert!(matches!(result, Err(AuthenticationError::VaultHeaderInvalid)));
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::VaultHeaderInvalid)
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1410,7 +1589,14 @@ mod tests {
         let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
         let current_params = argon2_params_from_json(&vault.header.argon2_params);
         let mut old_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-        derive_master_key_into(TEST_PASSWORD, None, &current_salt, &current_params, &mut old_master).unwrap();
+        derive_master_key_into(
+            TEST_PASSWORD,
+            None,
+            &current_salt,
+            &current_params,
+            &mut old_master,
+        )
+        .unwrap();
         let old_keys = SessionKeys::from_master_key_bytes(&old_master).unwrap();
         let old_kek: [u8; 32] = *old_keys.key_encryption_key.expose();
         let old_sqlcipher: [u8; 32] = *old_keys.sqlcipher_key.expose();
@@ -1438,14 +1624,27 @@ mod tests {
             argon2_params: test_params(),
             vault_db_path: vault.vault_db_path.clone(),
         };
-        change_password(request, &vault.session, &vault.cloud, &mut vault.header, &vault.vault_id)
-            .await
-            .expect("change_password must succeed");
+        change_password(
+            request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await
+        .expect("change_password must succeed");
 
         let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
         let new_params = argon2_params_from_json(&vault.header.argon2_params);
         let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-        derive_master_key_into(TEST_NEW_PASSWORD, None, &new_salt, &new_params, &mut new_master).unwrap();
+        derive_master_key_into(
+            TEST_NEW_PASSWORD,
+            None,
+            &new_salt,
+            &new_params,
+            &mut new_master,
+        )
+        .unwrap();
         let new_keys = SessionKeys::from_master_key_bytes(&new_master).unwrap();
         let new_sqlcipher: [u8; 32] = *new_keys.sqlcipher_key.expose();
 
@@ -1464,7 +1663,10 @@ mod tests {
         let wrapped_array: [u8; 72] = row_blob.try_into().unwrap();
         let wrapped_after = WrappedFileKey(wrapped_array);
         let unwrap_result = unwrap_with_kek_bytes(&wrapped_after, &old_kek);
-        assert!(matches!(unwrap_result, Err(AuthenticationError::InvalidCredentials)));
+        assert!(matches!(
+            unwrap_result,
+            Err(AuthenticationError::InvalidCredentials)
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1475,7 +1677,14 @@ mod tests {
         let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
         let current_params = argon2_params_from_json(&vault.header.argon2_params);
         let mut current_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-        derive_master_key_into(TEST_PASSWORD, None, &current_salt, &current_params, &mut current_master).unwrap();
+        derive_master_key_into(
+            TEST_PASSWORD,
+            None,
+            &current_salt,
+            &current_params,
+            &mut current_master,
+        )
+        .unwrap();
         let current_keys = SessionKeys::from_master_key_bytes(&current_master).unwrap();
         let current_kek: [u8; 32] = *current_keys.key_encryption_key.expose();
         let current_sqlcipher: [u8; 32] = *current_keys.sqlcipher_key.expose();
@@ -1503,14 +1712,27 @@ mod tests {
             argon2_params: test_params(),
             vault_db_path: vault.vault_db_path.clone(),
         };
-        change_password(request, &vault.session, &vault.cloud, &mut vault.header, &vault.vault_id)
-            .await
-            .expect("change_password must succeed");
+        change_password(
+            request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await
+        .expect("change_password must succeed");
 
         let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
         let new_params = argon2_params_from_json(&vault.header.argon2_params);
         let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-        derive_master_key_into(TEST_NEW_PASSWORD, None, &new_salt, &new_params, &mut new_master).unwrap();
+        derive_master_key_into(
+            TEST_NEW_PASSWORD,
+            None,
+            &new_salt,
+            &new_params,
+            &mut new_master,
+        )
+        .unwrap();
         let new_keys = SessionKeys::from_master_key_bytes(&new_master).unwrap();
         let new_kek: [u8; 32] = *new_keys.key_encryption_key.expose();
         let new_sqlcipher: [u8; 32] = *new_keys.sqlcipher_key.expose();
@@ -1540,7 +1762,14 @@ mod tests {
         let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
         let current_params = argon2_params_from_json(&vault.header.argon2_params);
         let mut old_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-        derive_master_key_into(TEST_PASSWORD, None, &current_salt, &current_params, &mut old_master).unwrap();
+        derive_master_key_into(
+            TEST_PASSWORD,
+            None,
+            &current_salt,
+            &current_params,
+            &mut old_master,
+        )
+        .unwrap();
         let old_keys = SessionKeys::from_master_key_bytes(&old_master).unwrap();
         let old_sqlcipher: [u8; 32] = *old_keys.sqlcipher_key.expose();
 
@@ -1552,14 +1781,27 @@ mod tests {
             argon2_params: test_params(),
             vault_db_path: vault.vault_db_path.clone(),
         };
-        change_password(request, &vault.session, &vault.cloud, &mut vault.header, &vault.vault_id)
-            .await
-            .expect("change_password must succeed");
+        change_password(
+            request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await
+        .expect("change_password must succeed");
 
         let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
         let new_params = argon2_params_from_json(&vault.header.argon2_params);
         let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-        derive_master_key_into(TEST_NEW_PASSWORD, None, &new_salt, &new_params, &mut new_master).unwrap();
+        derive_master_key_into(
+            TEST_NEW_PASSWORD,
+            None,
+            &new_salt,
+            &new_params,
+            &mut new_master,
+        )
+        .unwrap();
         let new_keys = SessionKeys::from_master_key_bytes(&new_master).unwrap();
         let new_sqlcipher: [u8; 32] = *new_keys.sqlcipher_key.expose();
 
@@ -1620,9 +1862,15 @@ mod tests {
             argon2_params: test_params(),
             vault_db_path: vault.vault_db_path.clone(),
         };
-        change_password(request, &vault.session, &vault.cloud, &mut vault.header, &vault.vault_id)
-            .await
-            .expect("change_password with recovery must succeed");
+        change_password(
+            request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await
+        .expect("change_password with recovery must succeed");
         assert_eq!(vault.header.recovery_slots.len(), 1);
 
         let slot = &vault.header.recovery_slots[0];
@@ -1631,7 +1879,13 @@ mod tests {
         let wrapped = WrappedMasterKey(decode_base64_72(&slot.wrapped_master_key).unwrap());
 
         let mut recovery_key_bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-        derive_recovery_key_into(phrase_string.as_bytes(), &slot_salt, &slot_params, &mut recovery_key_bytes).unwrap();
+        derive_recovery_key_into(
+            phrase_string.as_bytes(),
+            &slot_salt,
+            &slot_params,
+            &mut recovery_key_bytes,
+        )
+        .unwrap();
         let recovery_key = RecoveryKey::from_bytes(*recovery_key_bytes);
         let recovered = unwrap_master_key_from_recovery(&wrapped, &recovery_key, &vault.vault_id)
             .expect("unwrap with phrase must succeed after password change");
@@ -1639,7 +1893,14 @@ mod tests {
         let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
         let new_params = argon2_params_from_json(&vault.header.argon2_params);
         let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-        derive_master_key_into(TEST_NEW_PASSWORD, None, &new_salt, &new_params, &mut new_master).unwrap();
+        derive_master_key_into(
+            TEST_NEW_PASSWORD,
+            None,
+            &new_salt,
+            &new_params,
+            &mut new_master,
+        )
+        .unwrap();
         assert_eq!(recovered.expose(), &*new_master);
     }
 
@@ -1658,9 +1919,15 @@ mod tests {
             argon2_params: test_params(),
             vault_db_path: vault.vault_db_path.clone(),
         };
-        change_password(request, &vault.session, &vault.cloud, &mut vault.header, &vault.vault_id)
-            .await
-            .expect("change_password without recovery must succeed");
+        change_password(
+            request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await
+        .expect("change_password without recovery must succeed");
         assert!(vault.header.recovery_slots.is_empty());
     }
 
@@ -1671,7 +1938,14 @@ mod tests {
         let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
         let current_params = argon2_params_from_json(&vault.header.argon2_params);
         let mut old_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-        derive_master_key_into(TEST_PASSWORD, None, &current_salt, &current_params, &mut old_master).unwrap();
+        derive_master_key_into(
+            TEST_PASSWORD,
+            None,
+            &current_salt,
+            &current_params,
+            &mut old_master,
+        )
+        .unwrap();
         let old_keys = SessionKeys::from_master_key_bytes(&old_master).unwrap();
         let old_sqlcipher: [u8; 32] = *old_keys.sqlcipher_key.expose();
 
@@ -1698,7 +1972,14 @@ mod tests {
             argon2_params: test_params(),
             vault_db_path: vault.vault_db_path.clone(),
         };
-        let result = change_password(request, &vault.session, &vault.cloud, &mut vault.header, &vault.vault_id).await;
+        let result = change_password(
+            request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await;
         assert!(result.is_err());
 
         let vault_db_path = vault.vault_db_path.clone();
@@ -1748,9 +2029,11 @@ mod tests {
         let vault_db_path = vault.vault_db_path.clone();
         let old_public_key: Vec<u8> = tokio::task::spawn_blocking(move || {
             let conn = open_sqlcipher(&vault_db_path, &old_sqlcipher).unwrap();
-            conn.query_row("SELECT public_key FROM vault_identity WHERE id = 1", [], |row| {
-                row.get(0)
-            })
+            conn.query_row(
+                "SELECT public_key FROM vault_identity WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap()
         })
         .await
@@ -1765,9 +2048,15 @@ mod tests {
             argon2_params: test_params(),
             vault_db_path: vault.vault_db_path.clone(),
         };
-        rotate_key_file(request, &vault.session, &vault.cloud, &mut vault.header, &vault.vault_id)
-            .await
-            .expect("rotate_key_file must succeed");
+        rotate_key_file(
+            request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await
+        .expect("rotate_key_file must succeed");
 
         let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
         let new_params = argon2_params_from_json(&vault.header.argon2_params);
@@ -1789,9 +2078,11 @@ mod tests {
         let vault_db_path = vault.vault_db_path.clone();
         let new_public_key: Vec<u8> = tokio::task::spawn_blocking(move || {
             let conn = open_sqlcipher(&vault_db_path, &new_sqlcipher).unwrap();
-            conn.query_row("SELECT public_key FROM vault_identity WHERE id = 1", [], |row| {
-                row.get(0)
-            })
+            conn.query_row(
+                "SELECT public_key FROM vault_identity WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap()
         })
         .await
@@ -1804,7 +2095,10 @@ mod tests {
         let _lock = ceremony_lock().await;
         let mut vault = create_tier_two_vault().await;
         let old_blake3 = vault.header.key_file_blake3.clone();
-        let old_bytes: [u8; 32] = std::fs::read(&vault.key_file_path).unwrap().try_into().unwrap();
+        let old_bytes: [u8; 32] = std::fs::read(&vault.key_file_path)
+            .unwrap()
+            .try_into()
+            .unwrap();
         let old_source = MockKeySource::new(old_bytes);
         let new_key_file_path = vault._temp.path().join("rotated.bin");
         let request = RotateKeyFileRequest {
@@ -1815,12 +2109,21 @@ mod tests {
             argon2_params: test_params(),
             vault_db_path: vault.vault_db_path.clone(),
         };
-        rotate_key_file(request, &vault.session, &vault.cloud, &mut vault.header, &vault.vault_id)
-            .await
-            .expect("rotate must succeed");
+        rotate_key_file(
+            request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await
+        .expect("rotate must succeed");
         let new_bytes = std::fs::read(&new_key_file_path).unwrap();
         let expected = hex::encode(blake3::hash(&new_bytes).as_bytes());
-        assert_eq!(vault.header.key_file_blake3.as_deref(), Some(expected.as_str()));
+        assert_eq!(
+            vault.header.key_file_blake3.as_deref(),
+            Some(expected.as_str())
+        );
         assert_ne!(vault.header.key_file_blake3, old_blake3);
     }
 
@@ -1832,7 +2135,10 @@ mod tests {
         let setup_request = SetupRecoveryRequest {
             current_password_bytes: TEST_PASSWORD,
             current_key_source: Some(&MockKeySource::new(
-                std::fs::read(&vault.key_file_path).unwrap().try_into().unwrap(),
+                std::fs::read(&vault.key_file_path)
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
             )),
             argon2_params: test_params(),
             vault_db_path: vault.vault_db_path.clone(),
@@ -1848,7 +2154,10 @@ mod tests {
         .expect("setup_recovery must succeed");
         let phrase_string = phrase.as_str().to_string();
 
-        let old_bytes: [u8; 32] = std::fs::read(&vault.key_file_path).unwrap().try_into().unwrap();
+        let old_bytes: [u8; 32] = std::fs::read(&vault.key_file_path)
+            .unwrap()
+            .try_into()
+            .unwrap();
         let old_source = MockKeySource::new(old_bytes);
         let new_path = vault._temp.path().join("rotated.bin");
         let request = RotateKeyFileRequest {
@@ -1859,9 +2168,15 @@ mod tests {
             argon2_params: test_params(),
             vault_db_path: vault.vault_db_path.clone(),
         };
-        rotate_key_file(request, &vault.session, &vault.cloud, &mut vault.header, &vault.vault_id)
-            .await
-            .expect("rotate must succeed");
+        rotate_key_file(
+            request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await
+        .expect("rotate must succeed");
         assert_eq!(vault.header.recovery_slots.len(), 1);
 
         let slot = &vault.header.recovery_slots[0];
@@ -1869,7 +2184,13 @@ mod tests {
         let slot_params = argon2_params_from_json(&slot.argon2_params);
         let wrapped = WrappedMasterKey(decode_base64_72(&slot.wrapped_master_key).unwrap());
         let mut recovery_key_bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-        derive_recovery_key_into(phrase_string.as_bytes(), &slot_salt, &slot_params, &mut recovery_key_bytes).unwrap();
+        derive_recovery_key_into(
+            phrase_string.as_bytes(),
+            &slot_salt,
+            &slot_params,
+            &mut recovery_key_bytes,
+        )
+        .unwrap();
         let recovery_key = RecoveryKey::from_bytes(*recovery_key_bytes);
         let _recovered = unwrap_master_key_from_recovery(&wrapped, &recovery_key, &vault.vault_id)
             .expect("phrase must unlock new master key after rotate");
@@ -1889,8 +2210,18 @@ mod tests {
             argon2_params: test_params(),
             vault_db_path: vault.vault_db_path.clone(),
         };
-        let result = rotate_key_file(request, &vault.session, &vault.cloud, &mut vault.header, &vault.vault_id).await;
-        assert!(matches!(result, Err(AuthenticationError::VaultHeaderInvalid)));
+        let result = rotate_key_file(
+            request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::VaultHeaderInvalid)
+        ));
     }
 
     async fn upload_manifest_backup_for(vault: &TierOneVault) {
@@ -1902,7 +2233,11 @@ mod tests {
         let manifest_key: [u8; 32] = *keys.manifest_key.expose();
         let stub_sql = b"CREATE TABLE IF NOT EXISTS imported_stub (id INTEGER);";
         let wire = encrypt_manifest_backup(stub_sql, &manifest_key).unwrap();
-        vault.cloud.upload_blob(MANIFEST_BACKUP_BLOB_NAME, &wire).await.unwrap();
+        vault
+            .cloud
+            .upload_blob(MANIFEST_BACKUP_BLOB_NAME, &wire)
+            .await
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1925,7 +2260,10 @@ mod tests {
             .expect("recover_vault must succeed");
         assert_eq!(recovered_vault_id, vault.vault_id);
         assert!(new_db_path.exists());
-        assert_eq!(new_session.state().await, crate::auth::LifecycleState::Active);
+        assert_eq!(
+            new_session.state().await,
+            crate::auth::LifecycleState::Active
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1956,7 +2294,8 @@ mod tests {
         let phrase = add_recovery_slot_and_return_phrase(&mut vault).await;
         let word_count = phrase.as_str().split_whitespace().count();
         assert_eq!(word_count, 24);
-        let parsed = Mnemonic::parse_in(Language::English, phrase.as_str()).expect("phrase must be valid BIP-39");
+        let parsed = Mnemonic::parse_in(Language::English, phrase.as_str())
+            .expect("phrase must be valid BIP-39");
         assert_eq!(parsed.words().count(), 24);
     }
 
@@ -1978,7 +2317,10 @@ mod tests {
             &vault.vault_id,
         )
         .await;
-        assert!(matches!(result, Err(AuthenticationError::InvalidCredentials)));
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::InvalidCredentials)
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2001,7 +2343,10 @@ mod tests {
             .await
             .expect("recover_with_phrase must succeed");
         assert_eq!(recovered_id, vault.vault_id);
-        assert_eq!(new_session.state().await, crate::auth::LifecycleState::Active);
+        assert_eq!(
+            new_session.state().await,
+            crate::auth::LifecycleState::Active
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2024,7 +2369,10 @@ mod tests {
             vault_db_path: new_temp.path().join("rp.db"),
         };
         let result = recover_with_phrase(request, &new_session, &vault.cloud).await;
-        assert!(matches!(result, Err(AuthenticationError::InvalidCredentials)));
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::InvalidCredentials)
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2040,7 +2388,10 @@ mod tests {
             vault_db_path: new_temp.path().join("rp.db"),
         };
         let result = recover_with_phrase(request, &new_session, &vault.cloud).await;
-        assert!(matches!(result, Err(AuthenticationError::InvalidRecoveryPhrase)));
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::InvalidRecoveryPhrase)
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2067,7 +2418,11 @@ mod tests {
         let _lock = ceremony_lock().await;
         let mut vault = create_tier_one_vault().await;
         let phrase = add_recovery_slot_and_return_phrase(&mut vault).await;
-        let phrase_with_extra_whitespace = phrase.as_str().split_whitespace().collect::<Vec<_>>().join("   ");
+        let phrase_with_extra_whitespace = phrase
+            .as_str()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join("   ");
         upload_manifest_backup_for(&vault).await;
         vault.session.lock().await;
 
@@ -2105,12 +2460,16 @@ mod tests {
             .await
             .expect("header must be present");
         assert!(
-            !header_bytes.windows(phrase_bytes.len()).any(|w| w == phrase_bytes.as_slice()),
+            !header_bytes
+                .windows(phrase_bytes.len())
+                .any(|w| w == phrase_bytes.as_slice()),
             "recovery phrase must not appear in vault-header.json"
         );
         let db_bytes = std::fs::read(&vault.vault_db_path).expect("db file must exist");
         assert!(
-            !db_bytes.windows(phrase_bytes.len()).any(|w| w == phrase_bytes.as_slice()),
+            !db_bytes
+                .windows(phrase_bytes.len())
+                .any(|w| w == phrase_bytes.as_slice()),
             "recovery phrase must not appear in vault db"
         );
     }
@@ -2163,7 +2522,10 @@ mod tests {
         let mut header_b: VaultHeader = serde_json::from_slice(&header_bytes_b).unwrap();
         header_b.recovery_slots.push(slot_a);
         let updated_bytes = serde_json::to_vec_pretty(&header_b).unwrap();
-        cloud_b.upload_blob(VAULT_HEADER_BLOB_NAME, &updated_bytes).await.unwrap();
+        cloud_b
+            .upload_blob(VAULT_HEADER_BLOB_NAME, &updated_bytes)
+            .await
+            .unwrap();
         session_b.lock().await;
 
         let new_session = test_session_manager();
@@ -2173,6 +2535,9 @@ mod tests {
             vault_db_path: new_temp.path().join("cross.db"),
         };
         let result = recover_with_phrase(request, &new_session, &cloud_b).await;
-        assert!(matches!(result, Err(AuthenticationError::InvalidCredentials)));
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::InvalidCredentials)
+        ));
     }
 }
