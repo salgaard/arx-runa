@@ -21,10 +21,11 @@ Run a full Rust review-only flow for: $ARGUMENTS
 | `plan-context-builder` | Parses plan + handoff files into structured digest | Plan files | `PLAN_DIGEST` |
 | `rules-extractor` | Extracts authority rules as structured anchors | Rules files | `RULES_INDEX` |
 | `design-extractor` | Extracts design invariants as structured anchors | Design docs | `DESIGN_INDEX` |
-| `shard-planner` | Resolves scope to file shards | File paths | `SHARD_MAP` |
+| `shard-planner` | Resolves scope to file shards and emits digest summaries | File paths | `SHARD_MAP` + `SHARD_DIGEST_SUMMARY[]` |
 | `rust-reviewer` | Rust code review per shard | Shard + digest slice | Raw findings |
 | `architecture-reviewer` | Architecture review per shard | Shard + digest slice | Raw findings |
 | `security-reviewer` | Security review (wave 2, conditional) | Shard + digest slice | Raw findings |
+| `cross-shard-reviewer` | Cross-shard contradiction and integration risk review | Cycle findings + shard map + digest summaries | Raw findings |
 | `finding-classifier` | Disposes and confidence-rates canonical findings | Canonical findings + digests | `CLASSIFIED_FINDINGS` |
 | `problem-solver` | Recommendation-only per finding group | Finding group + shard slice | `SOLUTION_PACK` |
 | `report-writer` | Renders final Markdown report | All structured outputs | Report file |
@@ -49,6 +50,17 @@ Run a full Rust review-only flow for: $ARGUMENTS
 
 ---
 
+## Baseline Configuration
+
+1. Default baseline mode is **strict**.
+2. Optional degraded mode token: `baseline=degraded` or `--degraded-baseline`.
+3. Optional skip token: `--skip-check`.
+4. In strict mode, any `cargo check --workspace` failure is a hard stop.
+5. In degraded mode, continue **only** when failure is classified as environment/toolchain-related (missing linker, system package, or toolchain component); source-level compile or type errors are still a hard stop.
+6. If `--skip-check` is present, baseline is marked `SKIPPED` in the report and Phase 2 proceeds with an explicit warning.
+
+---
+
 ## Authority Order (Hard)
 
 1. `.claude/rules/*.md` — primary, normative
@@ -58,9 +70,16 @@ Run a full Rust review-only flow for: $ARGUMENTS
 
 ---
 
-## Phase 0 — Parallel Context Gathering (required before all else)
+## Phase 0 — Parallel Preflight (context gathering + baseline kickoff)
 
-Spawn all three gatherer agents **in parallel**. The orchestrator does not read plan, rules, or design files directly — it consumes only their structured outputs.
+Spawn all agents and the baseline check **in parallel**. The orchestrator does not read plan, rules, or design files directly — it consumes only structured outputs.
+
+Parallel launch set:
+- `plan-context-builder`
+- `rules-extractor`
+- `design-extractor`
+- `shard-planner`
+- baseline command: `cargo check --workspace` (unless `--skip-check`)
 
 ### 0-A: `plan-context-builder`
 
@@ -70,34 +89,14 @@ Spawn all three gatherer agents **in parallel**. The orchestrator does not read 
 
 **Output — `PLAN_DIGEST`:**
 
-```
-PLAN_DIGEST {
-  highest_implemented_phase: "<phase/sub-phase>"
-  in_progress_phases: ["<phase>", ...]
-  deferred_phases: ["<phase>", ...]
-  plans: [
-    {
-      file: "<path>"
-      status: "<implemented|in-progress|draft|planned>"
-      roadmap_phase: "<value>"
-      sub_phase: "<value>"
-      title: "<value>"
-      rationale_bullets: ["<verbatim excerpt>", ...]   // max 8 per plan file
-      deferred_items: ["<verbatim excerpt>", ...]       // max 5 per plan file
-      known_constraints: ["<verbatim excerpt>", ...]    // max 5 per plan file
-    }
-  ]
-  handoffs: [
-    {
-      file: "<path>"
-      trade_offs: ["<verbatim excerpt>", ...]
-      deferrals: ["<verbatim excerpt>", ...]
-    }
-  ]
-}
-```
+Authoritative producer contract: `.claude/agents/plan-context-builder.md`.
 
-**Guardrail:** Excerpts must be verbatim (not paraphrased). Truncate long excerpts at 120 characters with `…`. Do not collapse multiple distinct rationale points into one bullet.
+Orchestrator-consumed fields (required):
+- `highest_implemented_phase`, `in_progress_phases`, `deferred_phases`
+- `plans[].{file,status,roadmap_phase,sub_phase,title,rationale_bullets,deferred_items,known_constraints}`
+- `handoffs[].{file,trade_offs,deferrals}`
+
+Halt Phase 0 if required fields are missing or malformed.
 
 ---
 
@@ -109,22 +108,12 @@ PLAN_DIGEST {
 
 **Output — `RULES_INDEX`:**
 
-```
-RULES_INDEX {
-  rules: [
-    {
-      id: "<rule-id or auto-assigned R-NNN>"
-      source_file: "<path>"
-      anchor: "<section heading or line range>"
-      verbatim: "<exact rule statement, truncated at 200 chars>"
-      scope: ["auth" | "crypto" | "storage" | "global" | ...]
-      severity_if_violated: "<CRITICAL|HIGH|MEDIUM|LOW>"
-    }
-  ]
-}
-```
+Authoritative producer contract: `.claude/agents/rules-extractor.md`.
 
-**Guardrail:** `verbatim` must be the literal rule text — not the extractor's interpretation of it.
+Orchestrator-consumed fields (required):
+- `rules[].{id,source_file,anchor,verbatim,scope,severity_if_violated}`
+
+Halt Phase 0 if required fields are missing or malformed.
 
 ---
 
@@ -136,26 +125,18 @@ RULES_INDEX {
 
 **Output — `DESIGN_INDEX`:**
 
-```
-DESIGN_INDEX {
-  invariants: [
-    {
-      id: "<auto-assigned D-NNN>"
-      source_file: "<path>"
-      anchor: "<section heading or line range>"
-      verbatim: "<exact invariant statement, truncated at 200 chars>"
-      scope: ["auth" | "crypto" | "storage" | "global" | ...]
-      challenged: false
-    }
-  ]
-}
-```
+Authoritative producer contract: `.claude/agents/design-extractor.md`.
+
+Orchestrator-consumed fields (required):
+- `invariants[].{id,source_file,anchor,verbatim,scope,challenged}`
+
+Halt Phase 0 if required fields are missing or malformed.
 
 ---
 
 ### 0-D: Orchestrator — Build Shard-Scoped Digest Slices
 
-Once `PLAN_DIGEST`, `RULES_INDEX`, and `DESIGN_INDEX` are returned, the orchestrator builds a **per-shard digest slice** for each shard (not one global digest). Each reviewer agent receives only its shard's slice.
+Once `PLAN_DIGEST`, `RULES_INDEX`, and `DESIGN_INDEX` are returned, the orchestrator builds a **per-shard digest slice** for each shard. Each reviewer agent receives only its shard's slice.
 
 **Shard-to-scope mapping (default):**
 
@@ -187,36 +168,45 @@ DIGEST_SLICE_<shard_id> {
 
 ---
 
-## Phase 0-E: `shard-planner` (parallel with 0-A/B/C)
+### 0-E: `shard-planner` (parallel with 0-A/B/C)
 
 **Input:** Resolved file list from scope resolution
 
-**Task:** Map each file to its shard based on path pattern. Flag any files that don't match a default shard pattern as `shard-default`.
+**Task:** Map each file to its shard based on path pattern. Flag any files that don't match a named shard pattern as `shard-default`. Also emit a `SHARD_DIGEST_SUMMARY` per shard for use by `cross-shard-reviewer`.
 
-**Output — `SHARD_MAP`:**
+**Output — `SHARD_MAP` + `SHARD_DIGEST_SUMMARY[]`:**
+
+Authoritative producer contract: `.claude/agents/shard-planner.md`.
+
+Orchestrator-consumed fields (required):
+- `shards[].{shard_id,files,is_security_sensitive,security_keyword_hits}`
+- `security_trigger_keywords`, `total_files`
+- `shard_digest_summaries[].{shard_id,scopes,rule_ids,design_ids,implemented_phases,deferred_phases}`
+
+**`SHARD_DIGEST_SUMMARY` structure** (used exclusively by `cross-shard-reviewer`; contains IDs only, not full verbatim text):
 
 ```
-SHARD_MAP {
-  shards: [
-    {
-      shard_id: "<shard-auth|shard-crypto|shard-storage|shard-default>"
-      files: ["<path>", ...]
-      is_security_sensitive: true|false   // true if shard-auth, shard-crypto, or shard-storage
-    }
-  ]
-  total_files: <N>
+SHARD_DIGEST_SUMMARY {
+  shard_id: "<shard-id>"
+  scopes: ["auth" | "crypto" | "storage" | "global" | ...]
+  rule_ids: ["<R-NNN>", ...]       // IDs of rules governing this shard
+  design_ids: ["<D-NNN>", ...]     // IDs of design invariants governing this shard
+  implemented_phases: ["<phase>"]
+  deferred_phases: ["<phase>"]
 }
 ```
 
-This agent runs in parallel with Phase 0-A/B/C. The orchestrator waits for all four outputs before proceeding.
+Halt Phase 0 if required fields are missing or malformed.
+
+This agent runs in parallel with Phase 0-A/B/C. The orchestrator waits for all four structured outputs before proceeding. Baseline result is resolved in Phase 1.
 
 ---
 
-## Phase 1 — Baseline
+## Phase 1 — Baseline Gate
 
-1. Run `cargo check --workspace`.
-2. If baseline **fails:** write a report file capturing baseline blockers (file, error, line) and **stop**. Do not invoke any reviewer agents.
-3. If baseline **passes:** proceed to Phase 2.
+1. If `--skip-check` is present, set baseline status to `SKIPPED`, add warning note to the final report, and continue to Phase 2.
+2. Otherwise, consume the `cargo check --workspace` result started in Phase 0 and apply the decision policy from **Baseline Configuration**.
+3. Environment/toolchain classification in degraded mode must be evidence-based (error signature and message) and reported explicitly in the final report appendix.
 
 ---
 
@@ -240,42 +230,58 @@ For each shard in `SHARD_MAP`, invoke in **parallel**:
 > "The following findings are already canonical from prior cycles. Do not re-report them unless you observe a direct contradiction or significant new evidence. Report only NEW findings or contradictions."
 > `<CANONICAL_FINDINGS list — IDs and one-line descriptions only>`
 
-This cuts redundant output in later cycles dramatically.
-
 #### Step 2-B: Wave 2 — Conditional Security Review
 
 After Wave 1 completes for a shard, invoke `security-reviewer` on that shard **only if**:
 
-- `shard.is_security_sensitive == true`, **OR**
-- any Wave 1 finding for this shard includes `security_flag: true`
+- `shard.is_security_sensitive == true` (always true for `shard-auth`, `shard-crypto`, `shard-storage`), **OR**
+- any Wave 1 finding for this shard includes `security_flag: true`, **OR**
+- `shard.security_keyword_hits` is non-empty (primary trigger for `shard-default` — catches security-sensitive code outside the named security shards)
 
 `security-reviewer` receives the same `DIGEST_SLICE_<shard_id>` plus the Wave 1 findings for its shard as additional context.
 
-**If neither condition is met, skip `security-reviewer` for this shard entirely.**
+**If no condition is met, skip `security-reviewer` for this shard entirely.**
 
-#### Step 2-C: Required Finding Structure
+#### Step 2-C: Wave 3 — Cross-Shard Consistency Review
+
+After Wave 1 and Wave 2 complete for **all shards** in a cycle, invoke `cross-shard-reviewer` **once** for that cycle.
+
+`cross-shard-reviewer` input:
+- `SHARD_MAP`
+- per-shard reviewer findings for the current cycle (Wave 1 + Wave 2, structured fields only — not full agent outputs)
+- `CANONICAL_FINDINGS` suppression list (cycles 2–N)
+- `SHARD_DIGEST_SUMMARY[]` per shard (IDs only — not full `DIGEST_SLICE` content)
+
+`cross-shard-reviewer` mission:
+- find contradictions across shard-local recommendations,
+- detect boundary contract mismatches spanning shard interfaces,
+- emit only net-new cross-shard findings or contradiction evidence.
+
+**Note:** Wave 3 is a serial dependency at cycle end — the next cycle cannot start until `cross-shard-reviewer` returns. Since it reads only structured finding data (not source files), it should be fast.
+
+#### Step 2-D: Required Finding Structure
 
 Every finding returned by any reviewer agent must conform to this schema. The orchestrator rejects and discards any finding that does not include all required fields.
 
 ```
 FINDING {
-  id: "<reviewer-shard-cycle-NNN>"           // e.g., rust-auth-cycle1-001
+  id: "<reviewer-shard-cycle-NNN>"
   cycle_id: "<cycle-1|cycle-2|...>"
-  reviewer: "<rust-reviewer|architecture-reviewer|security-reviewer>"
-  shard_id: "<shard-auth|...>"
+  reviewer: "<rust-reviewer|architecture-reviewer|security-reviewer|cross-shard-reviewer>"
+  shard_id: "<shard-auth|shard-crypto|shard-storage|shard-default>"
   severity: "<CRITICAL|HIGH|MEDIUM|LOW|WARNING|NOTE>"
   category: "<category string>"
-  location: "<file>:<line> or module path"
+  location: "<file>:<line> or module path or cross-shard>"
   problem: "<what is wrong and why it matters>"
   evidence: "<specific observation with rule/design citation>"
-  rule_refs: ["<R-NNN>", ...]                // from RULES_INDEX
-  design_refs: ["<D-NNN>", ...]              // from DESIGN_INDEX
+  rule_refs: ["<R-NNN>", ...]
+  design_refs: ["<D-NNN>", ...]
   plan_context: "<relevant phase or rationale, one line>"
   recommended_fix: "<clear recommendation>"
   proposed_solution: "<concrete approach, constraints, trade-offs>"
   risk_if_unchanged: "<impact>"
   security_flag: true|false
-  design_challenge: {                         // optional; omit if not applicable
+  design_challenge: {
     challenged_constraint: "<rule or design anchor>"
     rationale: "<why current constraint is suboptimal>"
     proposed_update: "<draft update direction>"
@@ -294,16 +300,17 @@ FINDING {
 | NOTE (security-reviewer) | LOW |
 | LOW | LOW |
 
-#### Step 2-D: Per-Cycle Deduplication and Canonical Update (Rolling)
+#### Step 2-E: Per-Cycle Deduplication and Canonical Update (Rolling)
 
-After all shards complete for a cycle:
+After all shards and Wave 3 complete for a cycle:
 
-1. Deduplicate within the cycle by root cause + location.
-2. Merge new findings into `CANONICAL_FINDINGS`:
+1. Collect all findings from Wave 1, Wave 2, and Wave 3 (cross-shard-reviewer) for this cycle.
+2. Deduplicate within the cycle by root cause + location.
+3. Merge new findings into `CANONICAL_FINDINGS`:
    - If a finding matches an existing canonical entry (same root cause + location), increment `occurrence_count` and add cycle to `cycle_hits`. Do not create a new entry.
    - If a finding contradicts an existing canonical entry, flag the canonical entry with `has_contradiction: true` and attach the new evidence.
    - If a finding is genuinely new, add it as a new canonical entry with `occurrence_count: 1`.
-3. Update `CANONICAL_FINDINGS` before the next cycle starts.
+4. Update `CANONICAL_FINDINGS` before the next cycle starts. Pass updated list (IDs + one-line descriptions only) as the suppression input for cycle N+1, including to `cross-shard-reviewer`.
 
 **Per-shard output limits (applied before deduplication, per cycle):**
 
@@ -311,7 +318,7 @@ After all shards complete for a cycle:
 - Include up to 20 MEDIUM findings (highest impact first)
 - Include up to 10 LOW findings (deduplicated summaries)
 
-#### Step 2-E: `CANONICAL_FINDINGS` Structure
+#### Step 2-F: `CANONICAL_FINDINGS` Structure
 
 ```
 CANONICAL_FINDING {
@@ -319,11 +326,11 @@ CANONICAL_FINDING {
   severity: "<normalized severity>"
   category: "<category>"
   location: "<primary location>"
-  affected_locations: ["<location>", ...]    // merged across all occurrences
+  affected_locations: ["<location>", ...]
   problem: "<canonical problem statement>"
   evidence: "<strongest evidence observed>"
-  rule_refs: ["<R-NNN>", ...]               // merged
-  design_refs: ["<D-NNN>", ...]             // merged
+  rule_refs: ["<R-NNN>", ...]
+  design_refs: ["<D-NNN>", ...]
   plan_context: "<most relevant plan context>"
   recommended_fix: "<canonical recommendation>"
   proposed_solution: "<concrete approach>"
@@ -375,25 +382,16 @@ CLASSIFICATION {
 
 **Output — `CLASSIFIED_FINDINGS`:**
 
-```
-CLASSIFIED_FINDINGS {
-  actionable_now: [<CANONICAL_FINDING + CLASSIFICATION>, ...]
-  intentional_decisions: [<CANONICAL_FINDING + CLASSIFICATION>, ...]
-  deferred_by_plan: [<CANONICAL_FINDING + CLASSIFICATION>, ...]
-  insufficient_evidence: [<CANONICAL_FINDING + CLASSIFICATION>, ...]
-  design_challenge_ledger: [
-    {
-      challenged_constraint: "<rule/design anchor>"
-      rationale: "<why suboptimal>"
-      proposed_update: "<direction>"
-      related_finding_ids: ["<CF-NNN>", ...]
-      status: "Requires decision"
-    }
-  ]
-}
-```
+Authoritative producer contract: `.claude/agents/finding-classifier.md`.
 
-**Guardrail:** `INSUFFICIENT_EVIDENCE` findings are **never** passed to `problem-solver`. They are passed directly to the report writer for the appendix.
+Orchestrator-consumed fields (required):
+- `actionable_now`, `intentional_decisions`, `deferred_by_plan`, `insufficient_evidence`
+- `design_challenge_ledger`
+- each classification record includes `canonical_id`, `disposition`, `confidence`, `confidence_rationale`, `disposition_citation`
+
+Halt Phase 2.5 if required fields are missing or malformed.
+
+**Guardrail:** `INSUFFICIENT_EVIDENCE` findings are **never** passed to `problem-solver`. They go directly to the report writer for the appendix.
 
 ---
 
@@ -411,7 +409,7 @@ The orchestrator groups `actionable_now` findings **before** spawning `problem-s
 | One agent per shard for MEDIUM findings | Group MEDIUMs by shard_id | Up to 10 per agent |
 | One agent for all LOW findings | Batch across all shards | All LOWs |
 
-This means for N CRITICAL/HIGH findings + M shards with MEDIUMs + any LOWs, you spawn `N + M + 1` agents in parallel.
+For N CRITICAL/HIGH findings + M shards with MEDIUMs + any LOWs, spawn `N + M + 1` agents in parallel.
 
 ### Per-Agent Input (scoped — do not pass global state)
 
@@ -423,31 +421,23 @@ PROBLEM_SOLVER_INPUT {
   relevant_files: [<file paths from finding locations only>]
   digest_slice: <DIGEST_SLICE for the finding's shard(s)>
   design_challenge_entries: [<only DESIGN_CHALLENGE_LEDGER entries related to these findings>]
+  approved_design_challenges: []   // review-only default; include approved entries only when explicitly provided
   instruction: "Produce recommendations only. No code edits. No file modifications."
 }
 ```
 
 ### `problem-solver` Required Output
 
-Each agent returns one of:
+Each agent returns one structured payload per the authoritative producer contract in `.claude/agents/problem-solver.md`:
+- `SOLUTION_PACK`
+- `NO_ACTIONABLE_FIXES`
+- `BLOCKED_SOLUTIONS`
 
-```
-SOLUTION_PACK {
-  finding_ids: ["<CF-NNN>", ...]
-  solutions: [
-    {
-      canonical_id: "<CF-NNN>"
-      recommendation: "<clear human-readable recommendation>"
-      implementation_approach: "<concrete steps, constraints, trade-offs>"
-      blast_radius: "<ISOLATED|MODULE|CROSS-MODULE|SYSTEM>"
-      dependencies: ["<prerequisite fixes if any>"]
-      estimated_complexity: "<LOW|MEDIUM|HIGH>"
-    }
-  ]
-}
-```
-
-or `NO_ACTIONABLE_FIXES` or `BLOCKED_SOLUTIONS { blockers: ["..."] }`.
+Orchestrator-consumed fields (required):
+- `SOLUTION_PACK.finding_ids`
+- `SOLUTION_PACK.solutions[].{canonical_id,recommendation,implementation_approach,blast_radius,dependencies,estimated_complexity}`
+- `NO_ACTIONABLE_FIXES.reason`
+- `BLOCKED_SOLUTIONS.blockers`
 
 ### Deep-Dive Rules
 
@@ -476,9 +466,11 @@ or `NO_ACTIONABLE_FIXES` or `BLOCKED_SOLUTIONS { blockers: ["..."] }`.
 
 Ensure directory `.claude/reviews/` exists before writing.
 
+Expected completion contract: `REPORT_WRITER_RESULT` (authoritative in `.claude/agents/report-writer.md`) with `status`, `path`, `summary`, and `error`.
+
 ### Report Structure
 
-```markdown
+````markdown
 # Review Report — <scope>
 
 > Generated by `/review-only`
@@ -486,8 +478,8 @@ Ensure directory `.claude/reviews/` exists before writing.
 > Scope: <resolved scope>
 > Agents used: plan-context-builder, rules-extractor, design-extractor,
 >              shard-planner, rust-reviewer, architecture-reviewer,
->              security-reviewer (conditional), finding-classifier,
->              problem-solver (×<N>), report-writer
+>              security-reviewer (conditional), cross-shard-reviewer,
+>              finding-classifier, problem-solver (×<N>), report-writer
 
 ---
 
@@ -510,6 +502,7 @@ Ensure directory `.claude/reviews/` exists before writing.
 - Critical/High: <N> | Medium: <N> | Low: <N>
 - Problem-solver agents spawned: <N>
 - Security-reviewer shards skipped (clean wave 1): <N>
+- Cross-shard review invocations: <N>
 - Filtered as insufficient evidence: <N>
 - Status: <No actionable findings | Action required>
 
@@ -582,7 +575,7 @@ Ensure directory `.claude/reviews/` exists before writing.
 - **Rationale**: <why current constraint is suboptimal>
 - **Proposed update**: <draft direction>
 - **Related findings**: <CF-NNN list>
-- **Status**: Requires decision | Deferred | Accepted for future update
+- **Status**: Requires decision | Deferred | Accepted for update
 
 ---
 
@@ -604,9 +597,9 @@ Ensure directory `.claude/reviews/` exists before writing.
 <full list by shard>
 
 ### B. Cycle Summary
-| Cycle | Shards | Raw Findings | Critical/High | Medium | Low | Security Invocations |
-|---|---:|---:|---:|---:|---:|---:|
-| cycle-1 | <N> | <N> | <N> | <N> | <N> | <N> |
+| Cycle | Shards | Raw Findings | Critical/High | Medium | Low | Security Invocations | Cross-Shard Findings |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| cycle-1 | <N> | <N> | <N> | <N> | <N> | <N> | <N> |
 ...
 
 ### C. Shard Summary
@@ -616,7 +609,7 @@ Ensure directory `.claude/reviews/` exists before writing.
 ...
 
 ### D. Deduplication Criteria
-<explain rolling deduplication criteria used — root cause + location matching, contradiction handling>
+<rolling deduplication criteria used — root cause + location matching, contradiction handling, Wave 3 CSR finding merger>
 
 ### E. Findings Excluded as Insufficient Evidence
 | CF-NNN | Reason | Single-cycle? | Missing citation? |
@@ -645,7 +638,46 @@ Ensure directory `.claude/reviews/` exists before writing.
 
 ### J. Plan Files and Handoffs Cited
 <list with status labels>
+
+### K. Machine-Readable Actionable Findings Export (bridge to `/implement-review`)
+
+Schema mirrors `/implement-review` Phase 1 normalized finding fields.
+
+```json
+{
+  "source_report": ".claude/reviews/review-<scope-slug>-<YYYYMMDD-HHMMSS>.md",
+  "scope": "<resolved scope>",
+  "actionable_findings": [
+    {
+      "id": "<CF-NNN>",
+      "severity": "<CRITICAL|HIGH|MEDIUM|LOW>",
+      "category": "<category>",
+      "confidence": "<HIGH|MEDIUM|LOW>",
+      "location": "<file>:<line>",
+      "rule_refs": ["<R-NNN>"],
+      "design_refs": ["<D-NNN>"],
+      "problem": "<summary>",
+      "evidence": "<summary>",
+      "plan_context": "<citation>",
+      "recommended_fix": "<summary>",
+      "proposed_solution": "<summary>",
+      "blast_radius": "<ISOLATED|MODULE|CROSS-MODULE|SYSTEM>",
+      "estimated_complexity": "<LOW|MEDIUM|HIGH>",
+      "design_challenge": null
+    }
+  ],
+  "design_challenge_ledger": [
+    {
+      "challenged_constraint": "<rule/design anchor>",
+      "rationale": "<why suboptimal>",
+      "proposed_update": "<direction>",
+      "related_finding_ids": ["<CF-NNN>"],
+      "status": "Requires decision"
+    }
+  ]
+}
 ```
+````
 
 ---
 
@@ -659,6 +691,7 @@ Ensure directory `.claude/reviews/` exists before writing.
 - Every `ACTIONABLE_NOW` finding must cite at least one `rule_refs` or `design_refs` entry. Findings without citations must be reclassified as `INSUFFICIENT_EVIDENCE`.
 - Agents must never receive another agent's full raw output as context — only the extracted, structured fields they need.
 - Gatherer agents (`plan-context-builder`, `rules-extractor`, `design-extractor`) must use verbatim extraction for high-authority content. Paraphrasing of rules or design invariants is not permitted.
+- `cross-shard-reviewer` must reason over structured cycle outputs and `SHARD_DIGEST_SUMMARY` entries only; do not feed full source files or full `DIGEST_SLICE` content into this pass.
 
 ---
 
@@ -668,8 +701,9 @@ Ensure directory `.claude/reviews/` exists before writing.
 |---|---|
 | Scope resolves to zero files | Halt; report unresolved scope |
 | Invalid cycle count | Halt; report invalid configuration |
-| `cargo check` fails | Write baseline-failure report; stop |
+| Baseline gate result violates Baseline Configuration policy | Write baseline-failure report or continue with degraded warning per policy |
 | Gatherer agent returns malformed output | Halt Phase 0; report which gatherer failed and why |
+| `cross-shard-reviewer` output malformed | Halt cycle; report malformed cross-shard output; do not start next cycle |
 | Reviewer agent returns finding missing required fields | Discard finding; log discard in report appendix |
 | All `problem-solver` agents return `BLOCKED_SOLUTIONS` | Include blockers in report; do not suppress |
 | Report writer fails to write output file | Orchestrator writes minimal plain-text fallback to stdout |
