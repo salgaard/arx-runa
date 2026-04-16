@@ -144,14 +144,21 @@ pub(super) async fn add_recovery_slot_and_return_phrase(
 }
 
 pub(super) async fn upload_manifest_backup_for(vault: &TierOneVault) {
+    upload_manifest_backup_payload_for(
+        vault,
+        b"CREATE TABLE IF NOT EXISTS imported_stub (id INTEGER);",
+    )
+    .await;
+}
+
+pub(super) async fn upload_manifest_backup_payload_for(vault: &TierOneVault, payload: &[u8]) {
     let salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
     let params = argon2_params_from_json(&vault.header.argon2_params);
     let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
     derive_master_key_into(TEST_PASSWORD, None, &salt, &params, &mut master).unwrap();
     let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
     let manifest_key: [u8; 32] = *keys.manifest_key.expose();
-    let stub_sql = b"CREATE TABLE IF NOT EXISTS imported_stub (id INTEGER);";
-    let wire = encrypt_manifest_backup(stub_sql.to_vec(), &manifest_key).unwrap();
+    let wire = encrypt_manifest_backup(payload.to_vec(), &manifest_key).unwrap();
     vault
         .cloud
         .upload_blob(&manifest_backup_blob_name(), &wire)

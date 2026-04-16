@@ -10,7 +10,7 @@ use crate::auth::session::{SessionKeys, SessionManager};
 use crate::crypto::VaultId;
 use crate::storage::cloud::CloudTransport;
 use crate::storage::cloud::manifest_backup::decrypt_manifest_backup;
-use crate::storage::cloud::vault_header::VaultHeader;
+use crate::storage::cloud::vault_header::{VaultHeader, VaultHeaderTrustPolicy};
 
 /// Recovers a vault onto a new device by downloading its header and
 /// manifest backup, re-deriving the session keys, and importing the
@@ -20,6 +20,9 @@ pub async fn recover_vault(
     session_manager: &SessionManager,
     cloud_transport: &dyn CloudTransport,
 ) -> Result<VaultId, AuthenticationError> {
+    let install_reservation = session_manager.reserve_session_install().await?;
+    precheck_recovery_destination(&request.vault_db_path).await?;
+
     let header_bytes = cloud_transport
         .download_blob(&vault_header_blob_name())
         .await
@@ -27,7 +30,10 @@ pub async fn recover_vault(
     let header: VaultHeader = serde_json::from_slice(&header_bytes)
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     header
-        .validate()
+        .validate_structure()
+        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+    header
+        .validate_trust_policy(VaultHeaderTrustPolicy::Bootstrap)
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
 
     let vault_uuid =
@@ -35,7 +41,6 @@ pub async fn recover_vault(
     let vault_id = VaultId::from_uuid(vault_uuid);
     let salt = decode_base64_32(&header.argon2_salt)?;
     let params = argon2_params_from_json(&header.argon2_params);
-    enforce_argon2_policy(&params)?;
 
     let key_file_bytes: Option<Zeroizing<[u8; 32]>> = match (header.tier, request.key_source) {
         (1, _) => None,
@@ -75,34 +80,20 @@ pub async fn recover_vault(
     let backup_wire = cloud_transport
         .download_blob(&manifest_backup_blob_name())
         .await
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+        .map_err(|_| AuthenticationError::InvalidCredentials)?;
     let plaintext = decrypt_manifest_backup(&backup_wire, session_keys.manifest_key.expose())
         .map_err(|_| AuthenticationError::InvalidCredentials)?;
 
-    if tokio::fs::try_exists(&request.vault_db_path)
+    import_manifest_sql_atomic(&request.vault_db_path, sqlcipher_key, plaintext)
         .await
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
-    {
-        return Err(AuthenticationError::VaultHeaderInvalid);
-    }
-    ensure_parent_directory_exists(&request.vault_db_path).await?;
+        .map_err(|error| match error {
+            AuthenticationError::VaultHeaderInvalid => AuthenticationError::InvalidCredentials,
+            other => other,
+        })?;
 
-    let vault_db_path = request.vault_db_path.clone();
-    let db_result: Result<(), AuthenticationError> =
-        tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
-            let sql_text = std::str::from_utf8(plaintext.as_slice())
-                .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-            let conn = open_sqlcipher(&vault_db_path, sqlcipher_key.expose())?;
-            conn.execute_batch(sql_text)
-                .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-            drop(conn);
-            Ok(())
-        })
-        .await
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    db_result?;
-
-    session_manager.install_session(session_keys).await?;
+    session_manager
+        .finalize_session_install(install_reservation, session_keys)
+        .await?;
 
     drop(master_key);
     drop(key_file_bytes);
@@ -126,7 +117,7 @@ mod tests {
     use crate::auth::key_source::MockKeySource;
     use crate::auth::session::{SessionKeys, SessionManager};
     use crate::auth::{
-        CreateVaultRequest, SetupRecoveryRequest, Tier, create_vault, setup_recovery,
+        Argon2Params, CreateVaultRequest, SetupRecoveryRequest, Tier, create_vault, setup_recovery,
     };
     use crate::crypto::{
         RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_master_key_from_recovery,
@@ -135,10 +126,41 @@ mod tests {
     use crate::storage::cloud::mock::MockCloudTransport;
     use crate::storage::cloud::vault_header::VaultHeader;
 
+    async fn create_tier_one_vault_with_default_params() -> TierOneVault {
+        let temp = temp_dir();
+        let vault_db_path = temp.path().join("vault-default-params.db");
+        let cloud = MockCloudTransport::new();
+        let session = test_session_manager();
+        let request = CreateVaultRequest {
+            tier: Tier::One,
+            password_bytes: TEST_PASSWORD,
+            target_key_file_path: None,
+            vault_db_path: vault_db_path.clone(),
+            argon2_params: Argon2Params::DEFAULT,
+        };
+        let vault_id = create_vault(request, &session, &cloud)
+            .await
+            .expect("create_vault with default Argon2 params must succeed");
+        let header_bytes = cloud
+            .download_blob(&vault_header_blob_name())
+            .await
+            .expect("header must be present after create_vault");
+        let header: VaultHeader =
+            serde_json::from_slice(&header_bytes).expect("header must deserialize");
+        TierOneVault {
+            _temp: temp,
+            vault_db_path,
+            cloud,
+            session,
+            vault_id,
+            header,
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_recover_vault_reconstructs_session_from_cloud_header_and_manifest_backup() {
         let _lock = ceremony_lock().await;
-        let vault = create_tier_one_vault().await;
+        let vault = create_tier_one_vault_with_default_params().await;
         upload_manifest_backup_for(&vault).await;
         vault.session.lock().await;
 
@@ -164,7 +186,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_create_vault_and_re_authenticate_round_trip_without_recovery_slot() {
         let _lock = ceremony_lock().await;
-        let vault = create_tier_one_vault().await;
+        let vault = create_tier_one_vault_with_default_params().await;
         upload_manifest_backup_for(&vault).await;
         vault.session.lock().await;
 
@@ -180,5 +202,104 @@ mod tests {
             .await
             .expect("recover_vault must succeed");
         assert_eq!(recovered_vault_id, vault.vault_id);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_recover_vault_when_session_active_returns_session_already_active_before_cloud_download()
+     {
+        let _lock = ceremony_lock().await;
+        let active_session = test_session_manager();
+        let seed_temp = temp_dir();
+        let seed_cloud = MockCloudTransport::new();
+        let seed_request = CreateVaultRequest {
+            tier: Tier::One,
+            password_bytes: TEST_PASSWORD,
+            target_key_file_path: None,
+            vault_db_path: seed_temp.path().join("seed.db"),
+            argon2_params: test_params(),
+        };
+        create_vault(seed_request, &active_session, &seed_cloud)
+            .await
+            .expect("seed create_vault must activate session");
+        let temp = temp_dir();
+        let request = RecoverVaultRequest {
+            password_bytes: TEST_PASSWORD,
+            key_source: None,
+            vault_db_path: temp.path().join("should-not-create.db"),
+        };
+        let empty_cloud = MockCloudTransport::new();
+
+        let result = recover_vault(request, &active_session, &empty_cloud).await;
+
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::SessionAlreadyActive)
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_recover_vault_downloaded_header_argon2_params_below_floor_returns_vault_header_invalid()
+     {
+        let _lock = ceremony_lock().await;
+        let vault = create_tier_one_vault_with_default_params().await;
+        let header_bytes = vault
+            .cloud
+            .download_blob(&vault_header_blob_name())
+            .await
+            .expect("header must be present");
+        let mut header: VaultHeader =
+            serde_json::from_slice(&header_bytes).expect("header must deserialize");
+        header.argon2_params.memory_cost = 19_455;
+        let updated_header = serde_json::to_vec_pretty(&header).expect("header must serialize");
+        vault
+            .cloud
+            .upload_blob(&vault_header_blob_name(), &updated_header)
+            .await
+            .expect("header upload must succeed");
+        vault.session.lock().await;
+
+        let new_session = test_session_manager();
+        let destination_root = temp_dir();
+        let request = RecoverVaultRequest {
+            password_bytes: TEST_PASSWORD,
+            key_source: None,
+            vault_db_path: destination_root.path().join("recover.db"),
+        };
+
+        let result = recover_vault(request, &new_session, &vault.cloud).await;
+
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::VaultHeaderInvalid)
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_recover_vault_failed_import_cleans_temp_and_keeps_destination_absent() {
+        let _lock = ceremony_lock().await;
+        let vault = create_tier_one_vault_with_default_params().await;
+        upload_manifest_backup_payload_for(&vault, b"not valid sql").await;
+        vault.session.lock().await;
+
+        let new_session = test_session_manager();
+        let destination_root = temp_dir();
+        let target = destination_root.path().join("recover.db");
+        let request = RecoverVaultRequest {
+            password_bytes: TEST_PASSWORD,
+            key_source: None,
+            vault_db_path: target.clone(),
+        };
+
+        let result = recover_vault(request, &new_session, &vault.cloud).await;
+
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::InvalidCredentials)
+        ));
+        assert!(!target.exists());
+        let remaining_entries = std::fs::read_dir(destination_root.path())
+            .expect("read_dir must succeed")
+            .count();
+        assert_eq!(remaining_entries, 0);
     }
 }

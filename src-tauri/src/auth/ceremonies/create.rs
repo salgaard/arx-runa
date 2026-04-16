@@ -35,6 +35,7 @@ pub async fn create_vault(
     cloud_transport: &dyn CloudTransport,
 ) -> Result<VaultId, AuthenticationError> {
     enforce_argon2_policy(&request.argon2_params)?;
+    let install_reservation = session_manager.reserve_session_install().await?;
 
     match (request.tier, request.target_key_file_path.as_ref()) {
         (Tier::One, Some(_)) | (Tier::Two, None) => {
@@ -186,7 +187,9 @@ pub async fn create_vault(
         );
     }
 
-    session_manager.install_session(session_keys).await?;
+    session_manager
+        .finalize_session_install(install_reservation, session_keys)
+        .await?;
 
     drop(master_key);
     drop(x25519_secret_bytes);
@@ -328,5 +331,42 @@ mod tests {
         ));
         let preserved = std::fs::read(&key_file_path).expect("key file must remain readable");
         assert_eq!(preserved, existing_content);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_vault_when_session_active_returns_session_already_active_without_new_side_effects()
+     {
+        let _lock = ceremony_lock().await;
+        let existing_vault = create_tier_one_vault().await;
+        let temp = temp_dir();
+        let new_vault_db_path = temp.path().join("new-vault.db");
+        let new_key_file_path = temp.path().join("new-key.bin");
+        let header_before = existing_vault
+            .cloud
+            .download_blob(&vault_header_blob_name())
+            .await
+            .expect("existing header must be available");
+        let request = CreateVaultRequest {
+            tier: Tier::Two,
+            password_bytes: TEST_PASSWORD,
+            target_key_file_path: Some(new_key_file_path.clone()),
+            vault_db_path: new_vault_db_path.clone(),
+            argon2_params: test_params(),
+        };
+
+        let result = create_vault(request, &existing_vault.session, &existing_vault.cloud).await;
+
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::SessionAlreadyActive)
+        ));
+        assert!(!new_vault_db_path.exists());
+        assert!(!new_key_file_path.exists());
+        let header_after = existing_vault
+            .cloud
+            .download_blob(&vault_header_blob_name())
+            .await
+            .expect("existing header must remain available");
+        assert_eq!(header_after, header_before);
     }
 }

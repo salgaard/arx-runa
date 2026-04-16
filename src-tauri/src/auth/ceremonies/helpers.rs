@@ -1,12 +1,13 @@
 //! Internal helpers for ceremony flows.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use bip39::{Language, Mnemonic};
 use rusqlite::Connection;
 use rusqlite::ffi;
 use secrecy::SecretBox;
+use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::auth::error::AuthenticationError;
@@ -101,6 +102,18 @@ pub(super) async fn ensure_parent_directory_exists(path: &Path) -> Result<(), Au
     Ok(())
 }
 
+/// Validates that recovery import can target `path` without overwriting an
+/// existing database file.
+pub(super) async fn precheck_recovery_destination(path: &Path) -> Result<(), AuthenticationError> {
+    if tokio::fs::try_exists(path)
+        .await
+        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
+    {
+        return Err(AuthenticationError::VaultHeaderInvalid);
+    }
+    Ok(())
+}
+
 /// Removes `path` if it exists, logging unexpected cleanup failures.
 pub(super) async fn remove_file_if_exists(path: &Path) {
     match tokio::fs::remove_file(path).await {
@@ -115,6 +128,56 @@ pub(super) async fn best_effort_cleanup_staging(staging_path: &Path) {
     if let Err(cleanup_error) = staging::remove_if_exists(staging_path).await {
         tracing::warn!(?cleanup_error, "staging cleanup failed");
     }
+}
+
+/// Imports decrypted manifest SQL into a temporary SQLCipher DB and atomically
+/// finalises it at `vault_db_path`.
+pub(super) async fn import_manifest_sql_atomic(
+    vault_db_path: &Path,
+    sqlcipher_key: SqlcipherKey,
+    manifest_sql_plaintext: Zeroizing<Vec<u8>>,
+) -> Result<(), AuthenticationError> {
+    let vault_db_path = vault_db_path.to_path_buf();
+    tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
+        let sql_text = std::str::from_utf8(manifest_sql_plaintext.as_slice())
+            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+        let temp_path = recovery_import_temp_path(&vault_db_path)?;
+        let import_result = (|| -> Result<(), AuthenticationError> {
+            if let Some(parent) = vault_db_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+            }
+            let conn = open_sqlcipher(&temp_path, sqlcipher_key.expose())?;
+            conn.execute_batch(sql_text)
+                .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+            drop(conn);
+            std::fs::rename(&temp_path, &vault_db_path)
+                .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+            Ok(())
+        })();
+        if import_result.is_err() {
+            match std::fs::remove_file(&temp_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(cleanup_error) => {
+                    tracing::warn!(?cleanup_error, "recovery import temp cleanup failed");
+                }
+            }
+        }
+        import_result
+    })
+    .await
+    .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
+}
+
+/// Builds a same-directory temporary path for recovery imports.
+fn recovery_import_temp_path(vault_db_path: &Path) -> Result<PathBuf, AuthenticationError> {
+    let mut file_name = vault_db_path
+        .file_name()
+        .ok_or(AuthenticationError::VaultHeaderInvalid)?
+        .to_os_string();
+    file_name.push(format!(".recovering-{}.tmp", Uuid::new_v4()));
+    Ok(vault_db_path.with_file_name(file_name))
 }
 
 /// Encodes raw bytes with standard base64.

@@ -18,7 +18,6 @@ fn greet(name: &str) -> String {
 /// Starts the Arx Runa Tauri runtime.
 pub fn run() {
     if let Err(error) = tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![greet])
         .run(tauri::generate_context!())
     {

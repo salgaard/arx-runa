@@ -19,6 +19,8 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use zeroize::Zeroizing;
+
 use crate::auth::error::AuthenticationError;
 
 /// Returns the directory used for vault-header staging files.
@@ -62,7 +64,7 @@ async fn write_owner_only_inner(
     require_new_file: bool,
 ) -> Result<(), AuthenticationError> {
     let path = path.to_path_buf();
-    let bytes = bytes.to_vec();
+    let bytes = Zeroizing::new(bytes.to_vec());
     tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
         let mut options = OpenOptions::new();
         options.write(true);
@@ -89,7 +91,7 @@ async fn write_owner_only_inner(
                 .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
         }
 
-        file.write_all(&bytes)
+        file.write_all(bytes.as_slice())
             .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
         file.sync_all()
             .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;

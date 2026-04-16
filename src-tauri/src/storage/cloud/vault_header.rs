@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const SCHEMA_VERSION: u32 = 1;
+const ARGON2_MIN_MEMORY_COST_KIB: u32 = 19_456;
+const ARGON2_MIN_TIME_COST: u32 = 2;
+const ARGON2_MIN_PARALLELISM: u32 = 1;
 
 /// Argon2id parameters as serialised inside the vault header.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -51,16 +54,46 @@ pub struct VaultHeader {
     /// BLAKE3 hex digest of the USB key file; `None` for tier 1.
     pub key_file_blake3: Option<String>,
     /// Recovery slots; empty until `setup_recovery` runs.
+    #[serde(default)]
     pub recovery_slots: Vec<RecoverySlot>,
+}
+
+/// Trusted local vault-header anchor used for existing-device trust checks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedVaultHeaderAnchor {
+    /// Expected vault identifier.
+    pub vault_id: String,
+    /// Expected primary Argon2id salt.
+    pub argon2_salt: String,
+    /// Expected primary Argon2id parameters.
+    pub argon2_params: Argon2ParamsJson,
+}
+
+/// Trust-policy mode applied after structural vault-header validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VaultHeaderTrustPolicy<'a> {
+    /// Bootstrap-mode policy for new devices.
+    Bootstrap,
+    /// Existing-device policy requiring exact match with trusted local anchor.
+    ExistingDevice {
+        /// Locally trusted anchor for downgrade resistance.
+        trusted_anchor: &'a TrustedVaultHeaderAnchor,
+    },
 }
 
 impl VaultHeader {
     /// Current schema version emitted by Phase 2.4 ceremonies.
     pub const SCHEMA_VERSION: u32 = SCHEMA_VERSION;
 
-    /// Validates the structural invariants documented in
-    /// `cloud-synchronisation/sub-phases/4.3-vault-header.md` deliverable 6.
+    /// Validates both structural invariants and bootstrap trust-policy floors.
     pub fn validate(&self) -> Result<(), VaultHeaderError> {
+        self.validate_structure()?;
+        self.validate_trust_policy(VaultHeaderTrustPolicy::Bootstrap)?;
+        Ok(())
+    }
+
+    /// Validates header field shape/encoding invariants independent of trust mode.
+    pub fn validate_structure(&self) -> Result<(), VaultHeaderError> {
         if self.schema_version != SCHEMA_VERSION {
             return Err(VaultHeaderError::UnsupportedSchemaVersion(
                 self.schema_version,
@@ -91,9 +124,6 @@ impl VaultHeader {
             return Err(VaultHeaderError::SaltWrongLength);
         }
         for slot in &self.recovery_slots {
-            if slot.method != "bip39" {
-                continue;
-            }
             let slot_salt = base64_decode(&slot.argon2_salt)
                 .map_err(|_| VaultHeaderError::RecoverySlotSaltDecodeFailed)?;
             if slot_salt.len() != 32 {
@@ -106,6 +136,34 @@ impl VaultHeader {
             }
         }
         Ok(())
+    }
+
+    /// Validates trust-policy requirements after `validate_structure()`.
+    pub fn validate_trust_policy(
+        &self,
+        policy: VaultHeaderTrustPolicy<'_>,
+    ) -> Result<(), VaultHeaderError> {
+        validate_argon2_params(&self.argon2_params)
+            .map_err(|_| VaultHeaderError::Argon2ParamsBelowMinimum)?;
+        for slot in &self.recovery_slots {
+            validate_argon2_params(&slot.argon2_params)
+                .map_err(|_| VaultHeaderError::RecoverySlotArgon2ParamsBelowMinimum)?;
+        }
+        match policy {
+            VaultHeaderTrustPolicy::Bootstrap => Ok(()),
+            VaultHeaderTrustPolicy::ExistingDevice { trusted_anchor } => {
+                if self.vault_id != trusted_anchor.vault_id {
+                    return Err(VaultHeaderError::TrustedVaultIdMismatch);
+                }
+                if self.argon2_salt != trusted_anchor.argon2_salt {
+                    return Err(VaultHeaderError::TrustedArgon2SaltMismatch);
+                }
+                if self.argon2_params != trusted_anchor.argon2_params {
+                    return Err(VaultHeaderError::TrustedArgon2ParamsMismatch);
+                }
+                Ok(())
+            }
+        }
     }
 }
 
@@ -137,6 +195,9 @@ pub enum VaultHeaderError {
     /// The primary `argon2_salt` field did not decode to 32 bytes.
     #[error("argon2_salt must decode to 32 bytes")]
     SaltWrongLength,
+    /// The primary `argon2_params` fields are below minimum floor values.
+    #[error("argon2_params are below minimum floor values")]
+    Argon2ParamsBelowMinimum,
     /// A recovery slot `argon2_salt` field failed base64 decoding.
     #[error("recovery slot argon2_salt failed base64 decode")]
     RecoverySlotSaltDecodeFailed,
@@ -149,6 +210,18 @@ pub enum VaultHeaderError {
     /// A recovery slot `wrapped_master_key` field did not decode to 72 bytes.
     #[error("recovery slot wrapped_master_key must decode to 72 bytes")]
     RecoverySlotBlobWrongLength,
+    /// A recovery slot `argon2_params` fields are below minimum floor values.
+    #[error("recovery slot argon2_params are below minimum floor values")]
+    RecoverySlotArgon2ParamsBelowMinimum,
+    /// Existing-device trust anchor mismatch on vault identifier.
+    #[error("vault_id does not match trusted local anchor")]
+    TrustedVaultIdMismatch,
+    /// Existing-device trust anchor mismatch on primary Argon2 salt.
+    #[error("argon2_salt does not match trusted local anchor")]
+    TrustedArgon2SaltMismatch,
+    /// Existing-device trust anchor mismatch on primary Argon2 parameters.
+    #[error("argon2_params do not match trusted local anchor")]
+    TrustedArgon2ParamsMismatch,
 }
 
 /// Decodes a standard base64 string into raw bytes.
@@ -157,6 +230,17 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
     base64::engine::general_purpose::STANDARD
         .decode(input)
         .map_err(|_| ())
+}
+
+/// Checks whether Argon2 parameters meet the minimum accepted floor.
+fn validate_argon2_params(params: &Argon2ParamsJson) -> Result<(), ()> {
+    if params.memory_cost < ARGON2_MIN_MEMORY_COST_KIB
+        || params.time_cost < ARGON2_MIN_TIME_COST
+        || params.parallelism < ARGON2_MIN_PARALLELISM
+    {
+        return Err(());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -312,11 +396,47 @@ mod tests {
     }
 
     #[test]
+    fn test_vault_header_validate_rejects_primary_argon2_params_below_minimum_floor() {
+        let mut header = valid_tier1_header();
+        header.argon2_params.memory_cost = ARGON2_MIN_MEMORY_COST_KIB - 1;
+
+        let result = header.validate();
+
+        assert!(matches!(
+            result,
+            Err(VaultHeaderError::Argon2ParamsBelowMinimum)
+        ));
+    }
+
+    #[test]
+    fn test_vault_header_validate_structure_accepts_primary_argon2_below_floor() {
+        let mut header = valid_tier1_header();
+        header.argon2_params.memory_cost = ARGON2_MIN_MEMORY_COST_KIB - 1;
+
+        assert!(header.validate_structure().is_ok());
+    }
+
+    #[test]
     fn test_vault_header_validate_accepts_valid_recovery_slot() {
         let mut header = valid_tier1_header();
         header.recovery_slots.push(valid_recovery_slot());
 
         assert!(header.validate().is_ok());
+    }
+
+    #[test]
+    fn test_vault_header_validate_rejects_recovery_slot_argon2_params_below_minimum_floor() {
+        let mut header = valid_tier1_header();
+        let mut slot = valid_recovery_slot();
+        slot.argon2_params.time_cost = ARGON2_MIN_TIME_COST - 1;
+        header.recovery_slots.push(slot);
+
+        let result = header.validate();
+
+        assert!(matches!(
+            result,
+            Err(VaultHeaderError::RecoverySlotArgon2ParamsBelowMinimum)
+        ));
     }
 
     #[test]
@@ -380,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn test_vault_header_validate_skips_unknown_recovery_method() {
+    fn test_vault_header_validate_rejects_unknown_recovery_method_with_invalid_structure() {
         let mut header = valid_tier1_header();
         let mut slot = valid_recovery_slot();
         slot.method = "future-method".into();
@@ -388,7 +508,83 @@ mod tests {
         slot.wrapped_master_key = "invalid".into();
         header.recovery_slots.push(slot);
 
+        let result = header.validate();
+
+        assert!(matches!(
+            result,
+            Err(VaultHeaderError::RecoverySlotSaltDecodeFailed)
+        ));
+    }
+
+    #[test]
+    fn test_vault_header_validate_accepts_unknown_recovery_method_with_valid_structure() {
+        let mut header = valid_tier1_header();
+        let mut slot = valid_recovery_slot();
+        slot.method = "future-method".into();
+        header.recovery_slots.push(slot);
+
         assert!(header.validate().is_ok());
+    }
+
+    #[test]
+    fn test_vault_header_validate_trust_policy_rejects_vault_id_anchor_mismatch() {
+        let header = valid_tier1_header();
+        let trusted_anchor = TrustedVaultHeaderAnchor {
+            vault_id: "aaaaaaaa-2222-3333-4444-555555555555".into(),
+            argon2_salt: header.argon2_salt.clone(),
+            argon2_params: header.argon2_params.clone(),
+        };
+
+        let result = header.validate_trust_policy(VaultHeaderTrustPolicy::ExistingDevice {
+            trusted_anchor: &trusted_anchor,
+        });
+
+        assert!(matches!(
+            result,
+            Err(VaultHeaderError::TrustedVaultIdMismatch)
+        ));
+    }
+
+    #[test]
+    fn test_vault_header_validate_trust_policy_rejects_argon2_salt_anchor_mismatch() {
+        let header = valid_tier1_header();
+        let trusted_anchor = TrustedVaultHeaderAnchor {
+            vault_id: header.vault_id.clone(),
+            argon2_salt: encode_base64(&[0x44u8; 32]),
+            argon2_params: header.argon2_params.clone(),
+        };
+
+        let result = header.validate_trust_policy(VaultHeaderTrustPolicy::ExistingDevice {
+            trusted_anchor: &trusted_anchor,
+        });
+
+        assert!(matches!(
+            result,
+            Err(VaultHeaderError::TrustedArgon2SaltMismatch)
+        ));
+    }
+
+    #[test]
+    fn test_vault_header_validate_trust_policy_rejects_argon2_params_anchor_mismatch() {
+        let header = valid_tier1_header();
+        let trusted_anchor = TrustedVaultHeaderAnchor {
+            vault_id: header.vault_id.clone(),
+            argon2_salt: header.argon2_salt.clone(),
+            argon2_params: Argon2ParamsJson {
+                memory_cost: 12345,
+                time_cost: header.argon2_params.time_cost,
+                parallelism: header.argon2_params.parallelism,
+            },
+        };
+
+        let result = header.validate_trust_policy(VaultHeaderTrustPolicy::ExistingDevice {
+            trusted_anchor: &trusted_anchor,
+        });
+
+        assert!(matches!(
+            result,
+            Err(VaultHeaderError::TrustedArgon2ParamsMismatch)
+        ));
     }
 
     #[test]
@@ -400,5 +596,30 @@ mod tests {
         let decoded: VaultHeader = serde_json::from_str(&json).expect("deserialize must succeed");
 
         assert_eq!(decoded, header);
+    }
+
+    #[test]
+    fn test_vault_header_serde_missing_recovery_slots_defaults_to_empty() {
+        let header_json = format!(
+            r#"{{
+  "vault_id": "11111111-2222-3333-4444-555555555555",
+  "schema_version": {},
+  "tier": 1,
+  "argon2_salt": "{}",
+  "argon2_params": {{
+    "memory_cost": 65536,
+    "time_cost": 3,
+    "parallelism": 4
+  }},
+  "key_file_blake3": null
+}}"#,
+            VaultHeader::SCHEMA_VERSION,
+            encode_base64(&[0x11u8; 32]),
+        );
+
+        let decoded: VaultHeader =
+            serde_json::from_str(&header_json).expect("deserialize must succeed");
+
+        assert!(decoded.recovery_slots.is_empty());
     }
 }

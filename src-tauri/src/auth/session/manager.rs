@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use tokio::sync::{RwLock, Semaphore, broadcast, oneshot, watch};
+use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore, broadcast, oneshot, watch};
 use tokio::task::JoinHandle;
 use zeroize::Zeroizing;
 
@@ -70,6 +70,15 @@ pub struct SessionManager {
 #[must_use = "dropping the guard decrements the operation counter"]
 pub struct OperationGuard {
     sender: Option<watch::Sender<u32>>,
+}
+
+/// Reservation token for ceremony-driven session installation.
+///
+/// Holding this token prevents concurrent `authenticate()` calls and other
+/// ceremony installers from racing lifecycle transitions while local/cloud
+/// side-effects are in flight.
+pub(crate) struct SessionInstallReservation {
+    _permit: OwnedSemaphorePermit,
 }
 
 impl Drop for OperationGuard {
@@ -269,22 +278,34 @@ impl SessionManager {
         }
     }
 
-    /// Installs pre-derived session keys and transitions `NoSession | Expired → Active`.
+    /// Reserves exclusive rights to install a session for ceremony flows.
     ///
-    /// Used by ceremony flows (`create_vault`, `recover_vault`,
-    /// `recover_with_phrase`) where the master-key bytes have already been
-    /// derived in ceremony-local scope and expanded into `SessionKeys` via
-    /// `SessionKeys::from_master_key_bytes`. Unlike `authenticate`, this
-    /// method does not run Argon2id and does not consume the
-    /// authenticate-gate semaphore — the ceremony is already the sole
-    /// lifecycle owner at this point.
-    ///
-    /// # Errors
-    /// Returns `AuthenticationError::SessionAlreadyActive` if a session is
-    /// already active; the ceremony must call `lock()` first.
-    #[allow(dead_code)]
-    pub(crate) async fn install_session(
+    /// This acquires the authenticate gate before any ceremony side-effects,
+    /// then verifies the lifecycle is not already `Active`.
+    pub(crate) async fn reserve_session_install(
         &self,
+    ) -> Result<SessionInstallReservation, AuthenticationError> {
+        let permit = self
+            .authenticate_gate
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|error| {
+                tracing::error!(?error, "session install gate unexpectedly closed");
+                AuthenticationError::InvalidCredentials
+            })?;
+        if self.state().await == LifecycleState::Active {
+            return Err(AuthenticationError::SessionAlreadyActive);
+        }
+        Ok(SessionInstallReservation { _permit: permit })
+    }
+
+    /// Finalizes a previously reserved ceremony install.
+    ///
+    /// Callers must hold a reservation acquired before ceremony side-effects.
+    pub(crate) async fn finalize_session_install(
+        &self,
+        _reservation: SessionInstallReservation,
         keys: SessionKeys,
     ) -> Result<(), AuthenticationError> {
         if !Self::derived_keys_are_initialized(&keys) {
@@ -305,6 +326,26 @@ impl SessionManager {
         self.operation_gate_closed.store(false, Ordering::SeqCst);
         self.restart_timer().await;
         Ok(())
+    }
+
+    /// Installs pre-derived session keys and transitions `NoSession | Expired → Active`.
+    ///
+    /// Used by ceremony flows (`create_vault`, `recover_vault`,
+    /// `recover_with_phrase`) where the master-key bytes have already been
+    /// derived in ceremony-local scope and expanded into `SessionKeys` via
+    /// `SessionKeys::from_master_key_bytes`. Unlike `authenticate`, this
+    /// method does not run Argon2id.
+    ///
+    /// # Errors
+    /// Returns `AuthenticationError::SessionAlreadyActive` if a session is
+    /// already active; the ceremony must call `lock()` first.
+    #[allow(dead_code)]
+    pub(crate) async fn install_session(
+        &self,
+        keys: SessionKeys,
+    ) -> Result<(), AuthenticationError> {
+        let reservation = self.reserve_session_install().await?;
+        self.finalize_session_install(reservation, keys).await
     }
 
     /// Replaces the active `SessionKeys` without disturbing lifecycle state.
@@ -986,6 +1027,37 @@ mod tests {
             .expect("install_session must succeed from NoSession");
 
         assert_eq!(manager.state().await, LifecycleState::Active);
+    }
+
+    #[tokio::test]
+    async fn test_reserve_session_install_blocks_authenticate_until_reservation_dropped() {
+        let manager = Arc::new(SessionManager::with_timeout(Duration::from_secs(5)));
+        let reservation = manager
+            .reserve_session_install()
+            .await
+            .expect("reservation must succeed");
+        let mut authenticate_task = {
+            let manager_for_auth = Arc::clone(&manager);
+            tokio::spawn(async move {
+                manager_for_auth
+                    .authenticate(b"password", None, &TEST_SALT, &TEST_PARAMS)
+                    .await
+            })
+        };
+
+        assert!(
+            timeout(Duration::from_millis(80), &mut authenticate_task)
+                .await
+                .is_err(),
+            "authenticate should wait while reservation is held"
+        );
+
+        drop(reservation);
+        let auth_result = timeout(Duration::from_millis(500), authenticate_task)
+            .await
+            .expect("authenticate should complete after reservation drop")
+            .expect("authenticate task must not panic");
+        assert!(auth_result.is_ok());
     }
 
     #[tokio::test]
