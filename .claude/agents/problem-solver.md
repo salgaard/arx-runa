@@ -3,7 +3,7 @@ name: problem-solver
 description: >
   Use to convert classified review findings into implementation-ready solution
   packs for rust-implementer.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, Bash
 ---
 
 You are a senior remediation architect for Arx Runa.

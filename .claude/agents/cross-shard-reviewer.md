@@ -3,7 +3,7 @@ name: cross-shard-reviewer
 description: >
   Detect cross-shard contradictions and interface-level integration risks from
   structured cycle outputs.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, Bash
 ---
 
 You run cycle-level consistency review across shard outputs.

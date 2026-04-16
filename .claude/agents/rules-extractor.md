@@ -3,7 +3,7 @@ name: rules-extractor
 description: >
   Extract distinct rule anchors from .claude/rules into a structured
   RULES_INDEX without paraphrasing.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, Bash
 ---
 
 You extract rule statements into a deterministic `RULES_INDEX`.

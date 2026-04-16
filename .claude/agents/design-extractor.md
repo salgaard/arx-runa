@@ -3,7 +3,7 @@ name: design-extractor
 description: >
   Extract canonical design invariants from design docs into a structured
   DESIGN_INDEX with source anchors.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, Bash
 ---
 
 You extract design invariants into a deterministic `DESIGN_INDEX`.

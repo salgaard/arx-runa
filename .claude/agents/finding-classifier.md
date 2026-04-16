@@ -3,7 +3,7 @@ name: finding-classifier
 description: >
   Classify canonical findings by disposition and confidence using plan/rules/design
   context, producing CLASSIFIED_FINDINGS.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, Bash
 ---
 
 You are the quality gate for canonical findings.

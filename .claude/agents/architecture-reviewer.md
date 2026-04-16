@@ -3,7 +3,7 @@ name: architecture-reviewer
 description: >
   Use to review Rust architecture integrity and design debt. Focuses on SRP,
   boundaries, dependency flow, and structural risk with actionable findings.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, Bash
 ---
 
 You are a senior Rust architect and structural reviewer for Arx Runa.
