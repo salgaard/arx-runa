@@ -138,11 +138,12 @@ impl VaultHeader {
         Ok(())
     }
 
-    /// Validates trust-policy requirements after `validate_structure()`.
+    /// Validates trust-policy requirements and enforces structural validation.
     pub fn validate_trust_policy(
         &self,
         policy: VaultHeaderTrustPolicy<'_>,
     ) -> Result<(), VaultHeaderError> {
+        self.validate_structure()?;
         validate_argon2_params(&self.argon2_params)
             .map_err(|_| VaultHeaderError::Argon2ParamsBelowMinimum)?;
         for slot in &self.recovery_slots {
@@ -543,6 +544,16 @@ mod tests {
             result,
             Err(VaultHeaderError::TrustedVaultIdMismatch)
         ));
+    }
+
+    #[test]
+    fn test_vault_header_validate_trust_policy_rejects_invalid_structure_before_policy_checks() {
+        let mut header = valid_tier1_header();
+        header.argon2_salt = "not base64 !!!".into();
+
+        let result = header.validate_trust_policy(VaultHeaderTrustPolicy::Bootstrap);
+
+        assert!(matches!(result, Err(VaultHeaderError::SaltDecodeFailed)));
     }
 
     #[test]

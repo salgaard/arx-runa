@@ -80,7 +80,7 @@ pub async fn recover_vault(
     let backup_wire = cloud_transport
         .download_blob(&manifest_backup_blob_name())
         .await
-        .map_err(|_| AuthenticationError::InvalidCredentials)?;
+        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     let plaintext = decrypt_manifest_backup(&backup_wire, session_keys.manifest_key.expose())
         .map_err(|_| AuthenticationError::InvalidCredentials)?;
 
@@ -301,5 +301,27 @@ mod tests {
             .expect("read_dir must succeed")
             .count();
         assert_eq!(remaining_entries, 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_recover_vault_manifest_backup_missing_returns_vault_header_invalid() {
+        let _lock = ceremony_lock().await;
+        let vault = create_tier_one_vault_with_default_params().await;
+        vault.session.lock().await;
+
+        let new_session = test_session_manager();
+        let destination_root = temp_dir();
+        let request = RecoverVaultRequest {
+            password_bytes: TEST_PASSWORD,
+            key_source: None,
+            vault_db_path: destination_root.path().join("recover.db"),
+        };
+
+        let result = recover_vault(request, &new_session, &vault.cloud).await;
+
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::VaultHeaderInvalid)
+        ));
     }
 }

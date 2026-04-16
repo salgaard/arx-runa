@@ -54,6 +54,7 @@ hex = "0.4"
 tokio-stream = "0.1"
 walkdir = "2"
 dirs = "6"
+tempfile = "3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 udev = "0.9"
@@ -71,6 +72,5 @@ libc = "0.2"
 
 [dev-dependencies]
 proptest = "1"
-tempfile = "3"
 assert_matches = "1"
 anyhow = "1"

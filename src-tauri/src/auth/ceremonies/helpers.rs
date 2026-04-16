@@ -1,13 +1,12 @@
 //! Internal helpers for ceremony flows.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use base64::Engine;
 use bip39::{Language, Mnemonic};
 use rusqlite::Connection;
 use rusqlite::ffi;
 use secrecy::SecretBox;
-use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::auth::error::AuthenticationError;
@@ -141,43 +140,27 @@ pub(super) async fn import_manifest_sql_atomic(
     tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
         let sql_text = std::str::from_utf8(manifest_sql_plaintext.as_slice())
             .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-        let temp_path = recovery_import_temp_path(&vault_db_path)?;
-        let import_result = (|| -> Result<(), AuthenticationError> {
-            if let Some(parent) = vault_db_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-            }
-            let conn = open_sqlcipher(&temp_path, sqlcipher_key.expose())?;
-            conn.execute_batch(sql_text)
-                .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-            drop(conn);
-            std::fs::rename(&temp_path, &vault_db_path)
-                .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-            Ok(())
-        })();
-        if import_result.is_err() {
-            match std::fs::remove_file(&temp_path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(cleanup_error) => {
-                    tracing::warn!(?cleanup_error, "recovery import temp cleanup failed");
-                }
-            }
+        if let Some(parent) = vault_db_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
         }
-        import_result
+        let temp_file = tempfile::NamedTempFile::new_in(
+            vault_db_path
+                .parent()
+                .ok_or(AuthenticationError::VaultHeaderInvalid)?,
+        )
+        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+        let temp_path = temp_file.path().to_path_buf();
+        let conn = open_sqlcipher(&temp_path, sqlcipher_key.expose())?;
+        conn.execute_batch(sql_text)
+            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+        drop(conn);
+        temp_file
+            .persist_noclobber(&vault_db_path)
+            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+        Ok(())
     })
     .await
     .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
-}
-
-/// Builds a same-directory temporary path for recovery imports.
-fn recovery_import_temp_path(vault_db_path: &Path) -> Result<PathBuf, AuthenticationError> {
-    let mut file_name = vault_db_path
-        .file_name()
-        .ok_or(AuthenticationError::VaultHeaderInvalid)?
-        .to_os_string();
-    file_name.push(format!(".recovering-{}.tmp", Uuid::new_v4()));
-    Ok(vault_db_path.with_file_name(file_name))
 }
 
 /// Encodes raw bytes with standard base64.
