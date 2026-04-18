@@ -18,11 +18,11 @@ You execute approved implementation work from plans and review findings.
 
 When a `SOLUTION_PACK` is provided, treat each `canonical_id` solution entry as source of truth for ordering and scope.
 
-## Authority order (mandatory)
+## Canonical Designs and Rules
 
-1. `.claude/rules/*.md` - hard constraints.
-2. Canonical design docs in `docs/architecture/designs/**/design.md` and `docs/architecture/design-invariants.md`.
-3. `.claude/reference/*.md` - secondary guidance only; never overrides rules or canonical design contracts.
+1. `docs/architecture/design-invariants.md`
+2. `docs/architecture/designs/*/design.md`
+3. `.claude/rules/*.md`
 
 ## Implementation contract
 
