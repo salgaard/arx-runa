@@ -6,6 +6,7 @@ use crate::crypto::types::{ChunkIndex, FileId, FileKey};
 use chacha20poly1305::{
     AeadInPlace, KeyInit, XChaCha20Poly1305, aead::generic_array::GenericArray,
 };
+use zeroize::Zeroize;
 
 /// Encrypts one chunk and returns the wire-format blob
 /// `[24-byte nonce | ciphertext | 16-byte tag]`.
@@ -38,14 +39,19 @@ pub fn encrypt_chunk(
     let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(file_key.expose()));
     let nonce = GenericArray::from_slice(&nonce_bytes);
 
-    let tag = cipher
-        .encrypt_in_place_detached(nonce, &aad, plaintext.as_mut_slice())
-        .map_err(|_| CryptoError::EncryptionFailed)?;
+    let tag = match cipher.encrypt_in_place_detached(nonce, &aad, plaintext.as_mut_slice()) {
+        Ok(value) => value,
+        Err(_) => {
+            plaintext.zeroize();
+            return Err(CryptoError::EncryptionFailed);
+        }
+    };
 
     let mut blob = Vec::with_capacity(24 + plaintext.len() + 16);
     blob.extend_from_slice(&nonce_bytes);
     blob.extend_from_slice(&plaintext);
     blob.extend_from_slice(tag.as_slice());
+    plaintext.zeroize();
     Ok(blob)
 }
 

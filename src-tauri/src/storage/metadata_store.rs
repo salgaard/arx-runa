@@ -21,6 +21,15 @@ pub trait MetadataStore: Send + Sync {
     /// `blob_name` collisions.
     async fn insert_chunks(&self, chunks: &[ChunkRecord]) -> Result<(), StorageError>;
 
+    /// Inserts a file node and all associated chunk rows atomically.
+    ///
+    /// Implementations must ensure both inserts succeed or neither is persisted.
+    async fn insert_file_with_chunks(
+        &self,
+        node: &Node,
+        chunks: &[ChunkRecord],
+    ) -> Result<(), StorageError>;
+
     /// Loads a node by identifier.
     ///
     /// Returns `NotFound` when no row matches.
@@ -86,4 +95,3 @@ pub trait MetadataStore: Send + Sync {
     /// This is the only supported mutation path for `snapshot_counter`.
     async fn increment_snapshot_counter(&self) -> Result<u64, StorageError>;
 }
-

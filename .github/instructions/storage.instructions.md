@@ -22,6 +22,12 @@ applyTo: "src-tauri/src/storage/**"
 - Blob names: random UUID v4 — no relation to file identity
 - See design doc for padding waste analysis table
 
+## Pipeline
+- `storage::pipeline::{encrypt_file,decrypt_file}` owns streaming chunk transforms; `storage::vault_ops::{upload_file,download_file}` owns orchestration
+- Encrypt/decrypt plaintext buffers must be `Zeroizing<Vec<u8>>` to guarantee zeroize on success, error, and cancellation
+- Decrypt flow must call `verify_checksum` before `decrypt_chunk`; `VerifiedBlob` enforces this boundary
+- Hybrid routing decision lives in `storage::vault_ops::routing::decide`
+
 ## BLAKE3
 - Checksum over encrypted blob (nonce + ciphertext + tag)
 - `verify_checksum` returns `VerifiedBlob`; pass to `decrypt_chunk` — the type system enforces check-before-decrypt order (skipping is a compile error)
@@ -45,6 +51,9 @@ applyTo: "src-tauri/src/storage/**"
 ## I/O
 - Stream via `BufReader`/`BufWriter` — never load full file
 - Async only (`tokio::io`)
+
+## Errors
+- `StorageError::from_crypto` centralizes `CryptoError → StorageError`; checksum mismatches map to `StorageError::ChecksumMismatch`, all other crypto failures map to `StorageError::Database`
 
 ## Traits
 - `MetadataStore` for manifest, `CloudTransport` for Rclone

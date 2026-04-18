@@ -20,8 +20,8 @@ use crate::storage::schema::{
 use crate::storage::types::{ChunkRecord, Node, NodeId, NodeType};
 use crate::storage::validation::{
     immutable_meta_key_violation, is_immutable_manifest_meta_key, parse_chunk_size_bytes,
-    validate_blob_name_uuid_v4, validate_chunk_target_node, validate_immutable_meta_matches_expected,
-    validate_size_padded_matches_chunk_size,
+    validate_blob_name_uuid_v4, validate_chunk_target_node,
+    validate_immutable_meta_matches_expected, validate_size_padded_matches_chunk_size,
 };
 
 /// Production metadata store backed by a SQLCipher manifest database.
@@ -66,7 +66,12 @@ impl SqlCipherMetadataStore {
             seed_manifest_meta(&conn, vault_id, chunk_size_bytes, epoch_buffer_enabled)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
-            validate_create_immutable_meta_matches(&conn, vault_id, chunk_size_bytes, epoch_buffer_enabled)?;
+            validate_create_immutable_meta_matches(
+                &conn,
+                vault_id,
+                chunk_size_bytes,
+                epoch_buffer_enabled,
+            )?;
             Ok(conn)
         })
         .await
@@ -101,7 +106,10 @@ fn protected_sqlcipher_key_from_slice(bytes: &[u8; 32]) -> SqlcipherKey {
 }
 
 /// Opens and keys a connection, verifies key correctness, and enables FK checks.
-fn open_keyed_connection(path: &PathBuf, sqlcipher_key: &SqlcipherKey) -> Result<Connection, StorageError> {
+fn open_keyed_connection(
+    path: &PathBuf,
+    sqlcipher_key: &SqlcipherKey,
+) -> Result<Connection, StorageError> {
     let conn = Connection::open(path).map_err(StorageError::from_rusqlite)?;
     apply_sqlcipher_key(&conn, sqlcipher_key)?;
     verify_sqlcipher_key(&conn)?;
@@ -111,7 +119,10 @@ fn open_keyed_connection(path: &PathBuf, sqlcipher_key: &SqlcipherKey) -> Result
 }
 
 /// Applies a raw 32-byte SQLCipher key via `sqlite3_key`.
-fn apply_sqlcipher_key(conn: &Connection, sqlcipher_key: &SqlcipherKey) -> Result<(), StorageError> {
+fn apply_sqlcipher_key(
+    conn: &Connection,
+    sqlcipher_key: &SqlcipherKey,
+) -> Result<(), StorageError> {
     let sqlcipher_key = sqlcipher_key.expose();
     let rc = {
         // SAFETY: `conn` is open for this thread and `sqlcipher_key` points to
@@ -140,10 +151,7 @@ fn apply_sqlcipher_key(conn: &Connection, sqlcipher_key: &SqlcipherKey) -> Resul
     Ok(())
 }
 
-fn manifest_meta_value(
-    conn: &Connection,
-    key: &str,
-) -> Result<Option<String>, StorageError> {
+fn manifest_meta_value(conn: &Connection, key: &str) -> Result<Option<String>, StorageError> {
     conn.query_row(
         "SELECT value FROM manifest_meta WHERE key = ?1",
         params![key],
@@ -316,11 +324,7 @@ fn read_node(row: &rusqlite::Row<'_>) -> Result<Node, rusqlite::Error> {
     let file_key_wrapped_vec: Option<Vec<u8>> = row.get(7)?;
 
     let node_id = Uuid::parse_str(&node_id_text).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            0,
-            rusqlite::types::Type::Text,
-            Box::new(error),
-        )
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
     })?;
     let parent_id = match parent_id_text {
         Some(value) => Some(Uuid::parse_str(&value).map_err(|error| {
@@ -382,18 +386,10 @@ fn read_chunk(row: &rusqlite::Row<'_>) -> Result<ChunkRecord, rusqlite::Error> {
     let checksum_vec: Vec<u8> = row.get(5)?;
 
     let chunk_id = Uuid::parse_str(&chunk_id_text).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            0,
-            rusqlite::types::Type::Text,
-            Box::new(error),
-        )
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
     })?;
     let node_id = Uuid::parse_str(&node_id_text).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            1,
-            rusqlite::types::Type::Text,
-            Box::new(error),
-        )
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))
     })?;
     let chunk_index = u32::try_from(chunk_index_i64).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
@@ -522,6 +518,78 @@ impl MetadataStore for SqlCipherMetadataStore {
         .await
     }
 
+    /// Inserts a file node and all chunk rows in one transaction.
+    async fn insert_file_with_chunks(
+        &self,
+        node: &Node,
+        chunks: &[ChunkRecord],
+    ) -> Result<(), StorageError> {
+        let node = node.clone();
+        let chunks = chunks.to_vec();
+        self.with_connection_blocking(move |conn| {
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            ensure_parent_is_directory_for_insert(&tx, &node)?;
+            tx.execute(
+                "INSERT INTO nodes (node_id, parent_id, node_type, name, created_at, modified_at, size_bytes, file_key_wrapped)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    node.node_id.to_string(),
+                    node.parent_id.map(|id| id.to_string()),
+                    node.node_type.as_ref(),
+                    node.name,
+                    node.created_at,
+                    node.modified_at,
+                    i64::try_from(node.size_bytes)
+                        .map_err(|error| StorageError::Database(error.to_string()))?,
+                    node.file_key_wrapped.map(|bytes| bytes.to_vec())
+                ],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+
+            let chunk_size_text = tx
+                .query_row(
+                    "SELECT value FROM manifest_meta WHERE key = 'chunk_size_bytes'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(StorageError::from_rusqlite)?
+                .ok_or_else(|| {
+                    StorageError::Database("missing manifest_meta key: chunk_size_bytes".to_owned())
+                })?;
+            let chunk_size_bytes = parse_chunk_size_bytes(&chunk_size_text)?;
+
+            for chunk in chunks {
+                if chunk.node_id != node.node_id {
+                    return Err(StorageError::ConstraintViolation(
+                        "chunk node_id does not match inserted file node".to_owned(),
+                    ));
+                }
+                validate_blob_name_uuid_v4(&chunk.blob_name)?;
+                validate_size_padded_matches_chunk_size(chunk.size_padded, chunk_size_bytes)?;
+                validate_chunk_target_node(Some(node.node_type))?;
+                tx.execute(
+                    "INSERT INTO chunks (chunk_id, node_id, chunk_index, blob_name, size_padded, blake3_checksum)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        chunk.chunk_id.hyphenated().to_string(),
+                        chunk.node_id.to_string(),
+                        i64::from(chunk.chunk_index),
+                        chunk.blob_name,
+                        i64::try_from(chunk.size_padded)
+                            .map_err(|error| StorageError::Database(error.to_string()))?,
+                        chunk.blake3_checksum.to_vec()
+                    ],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            }
+
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Retrieves one node by ID.
     async fn get_node(&self, node_id: Uuid) -> Result<Node, StorageError> {
         self.with_connection_blocking(move |conn| {
@@ -628,8 +696,8 @@ impl MetadataStore for SqlCipherMetadataStore {
                         modified_at,
                         node_id.hyphenated().to_string()
                     ],
-            )
-            .map_err(StorageError::from_rusqlite)?;
+                )
+                .map_err(StorageError::from_rusqlite)?;
             debug_assert_ne!(affected, 0);
             tx.commit().map_err(StorageError::from_rusqlite)?;
             Ok(())
@@ -761,7 +829,9 @@ impl MetadataStore for SqlCipherMetadataStore {
                 .map_err(StorageError::from_rusqlite)?
                 .ok_or(StorageError::NotFound)?;
             let current_parsed = current_value.parse::<u64>().map_err(|_| {
-                StorageError::Database("invalid snapshot_counter: not an unsigned integer".to_owned())
+                StorageError::Database(
+                    "invalid snapshot_counter: not an unsigned integer".to_owned(),
+                )
             })?;
             let next_value = current_parsed.checked_add(1).ok_or_else(|| {
                 StorageError::Database("invalid snapshot_counter: overflow".to_owned())
@@ -848,9 +918,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
 
         let root_id = Uuid::new_v4();
         let child_dir_id = Uuid::new_v4();
@@ -895,7 +966,11 @@ mod tests {
         store
             .insert_chunks(&[
                 chunk_for(child_file_id, 0, "11111111-1111-4111-8111-111111111111"),
-                chunk_for(grandchild_file_id, 0, "22222222-2222-4222-8222-222222222222"),
+                chunk_for(
+                    grandchild_file_id,
+                    0,
+                    "22222222-2222-4222-8222-222222222222",
+                ),
                 chunk_for(sibling_file_id, 0, "33333333-3333-4333-8333-333333333333"),
             ])
             .await
@@ -942,9 +1017,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
 
         let file_parent_id = Uuid::new_v4();
         let child_id = Uuid::new_v4();
@@ -969,9 +1045,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
         let node_id = Uuid::new_v4();
 
         let result = store
@@ -989,9 +1066,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
         let file_without_key = Node::new(
             Uuid::new_v4(),
             None,
@@ -1016,9 +1094,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
         let directory_with_key = Node::new(
             Uuid::new_v4(),
             None,
@@ -1043,9 +1122,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
         let file_id = Uuid::new_v4();
         store
             .insert_node(&file_node(file_id, None, "file.txt"))
@@ -1066,9 +1146,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
         let file_id = Uuid::new_v4();
         store
             .insert_node(&file_node(file_id, None, "file.txt"))
@@ -1076,7 +1157,11 @@ mod tests {
             .expect("file should insert");
 
         let result = store
-            .insert_chunks(&[chunk_for(file_id, 0, "f81d4fae-7dec-11d0-a765-00a0c91e6bf6")])
+            .insert_chunks(&[chunk_for(
+                file_id,
+                0,
+                "f81d4fae-7dec-11d0-a765-00a0c91e6bf6",
+            )])
             .await;
         assert!(matches!(
             result,
@@ -1089,9 +1174,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
 
         let missing_node_id = Uuid::new_v4();
         let result = store
@@ -1112,9 +1198,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
         let directory_id = Uuid::new_v4();
         store
             .insert_node(&directory_node(directory_id, None, "dir"))
@@ -1139,9 +1226,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
         let file_id = Uuid::new_v4();
         store
             .insert_node(&file_node(file_id, None, "file.txt"))
@@ -1167,14 +1255,8 @@ mod tests {
             .await
             .expect("initial store should be created");
 
-        let result = SqlCipherMetadataStore::create(
-            &db_path,
-            &key,
-            Uuid::new_v4(),
-            8_388_608,
-            true,
-        )
-        .await;
+        let result =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 8_388_608, true).await;
         assert!(matches!(
             result,
             Err(StorageError::Database(message)) if message.contains("already exists")
@@ -1186,9 +1268,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
 
         let root_id = Uuid::new_v4();
         let child_id = Uuid::new_v4();
@@ -1219,9 +1302,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
 
         let root_id = Uuid::new_v4();
         let destination_file_id = Uuid::new_v4();
@@ -1231,7 +1315,11 @@ mod tests {
             .await
             .expect("root should insert");
         store
-            .insert_node(&file_node(destination_file_id, Some(root_id), "destination.txt"))
+            .insert_node(&file_node(
+                destination_file_id,
+                Some(root_id),
+                "destination.txt",
+            ))
             .await
             .expect("destination file should insert");
         store
@@ -1239,7 +1327,9 @@ mod tests {
             .await
             .expect("moving node should insert");
 
-        let result = store.move_node(moving_id, Some(destination_file_id), 3).await;
+        let result = store
+            .move_node(moving_id, Some(destination_file_id), 3)
+            .await;
         assert!(matches!(
             result,
             Err(StorageError::ConstraintViolation(message)) if message.contains("directory")
@@ -1251,9 +1341,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
         let root_id = Uuid::new_v4();
         let child_a_id = Uuid::new_v4();
         let child_b_id = Uuid::new_v4();
@@ -1279,7 +1370,10 @@ mod tests {
             .list_children(root_id)
             .await
             .expect("children should list");
-        let names = children.into_iter().map(|node| node.name).collect::<Vec<_>>();
+        let names = children
+            .into_iter()
+            .map(|node| node.name)
+            .collect::<Vec<_>>();
 
         assert_eq!(names, vec!["a-dir".to_owned(), "b-file".to_owned()]);
     }
@@ -1289,9 +1383,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
         let node_id = Uuid::new_v4();
         store
             .insert_node(&file_node(node_id, None, "before.txt"))
@@ -1313,9 +1408,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
         let root_id = Uuid::new_v4();
         let parent_a_id = Uuid::new_v4();
         let parent_b_id = Uuid::new_v4();
@@ -1352,9 +1448,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
         let node_id = Uuid::new_v4();
         let zero_byte_file = Node::new(
             node_id,
@@ -1382,9 +1479,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
 
         let immutable_result = store.set_meta("chunk_size_bytes", "8192").await;
         assert!(matches!(
@@ -1410,9 +1508,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
 
         let result = store.set_meta("snapshot_counter", "99").await;
         assert!(matches!(
@@ -1426,9 +1525,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
 
         store
             .with_connection_blocking(move |conn| {
@@ -1454,9 +1554,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
 
         store
             .with_connection_blocking(move |conn| {
@@ -1499,9 +1600,10 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
-            .await
-            .expect("store should be created");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
 
         store
             .with_connection_blocking(move |conn| {
@@ -1529,7 +1631,10 @@ mod tests {
             .await
             .expect("pending rows should list");
 
-        assert_eq!(pending, vec!["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".to_owned()]);
+        assert_eq!(
+            pending,
+            vec!["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".to_owned()]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1568,4 +1673,3 @@ mod tests {
         );
     }
 }
-

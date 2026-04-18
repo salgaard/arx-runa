@@ -60,6 +60,8 @@ Classify every finding from 2a and 2b:
 - **Blocking** — the sub-phase must be updated before implementation. Any blocking finding sets plan `status: blocked`.
 - **Non-blocking** — proceed with an explicit assumption recorded in **Assumptions** (Section 4). Governance non-blocking findings also produce an action in **Governance sync actions** (Section 8).
 
+Blocking should be reserved for high-impact gaps: contract-surface contradictions, design-invariant or security-model violations, or missing decisions that would force unsafe guessing. Minor/contained design drift is **not** automatically blocking; it should be documented and carried as non-blocking with explicit follow-up in Sections 4 and 7.
+
 ---
 
 ## Step 3 — Write the plan
@@ -90,6 +92,7 @@ All findings from Step 2. For each:
 | **Impact** | What breaks or gets guessed if unresolved |
 | **Classification** | Blocking or Non-blocking |
 | **Resolution** | Blocking: what must change. Non-blocking: the assumption the plan makes (copy to Section 4). |
+| **Documentation updates** | If this concern changes contracts/behavior/rules, list required doc updates (or `None`) and carry concrete paths into Section 7. |
 
 If no concerns: "None — spec reviewed, no gaps identified."
 
@@ -124,6 +127,8 @@ Guidance for `/implement-plan`. Does not determine which agents run — that is 
 
 ### 7. Documentation impact
 Which `docs/architecture` files need updating post-implementation. "None" if none.
+
+For each listed item, mark whether it is **required this run** or **deferred/optional**. Deferred items must include a short rationale so `/implement-plan` can log them without treating them as silent skips.
 
 ---
 

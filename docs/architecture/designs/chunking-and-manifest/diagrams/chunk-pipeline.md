@@ -6,6 +6,8 @@
 ```mermaid
 flowchart TD
     subgraph ENCRYPT ["Encrypt Path"]
+        E0["Route decision<br/>(epoch_buffer_enabled, file_size)"]:::proc
+        E0B["Epoch buffer branch<br/>(deferred to Phase 4)"]:::proc
         E1["Source file<br/>(BufReader, streaming)"]:::io
         E2["Read chunk_size bytes<br/>(zero-pad if last chunk)"]:::proc
         E3["encrypt_chunk<br/>(file_key, AAD = file_id #124;#124; chunk_index)"]:::crypto
@@ -37,6 +39,8 @@ flowchart TD
     K1 --> K2 --> K3
     K3 --> K4 --> K5
 
+    E0 -->|Immediate| E1
+    E0 -->|EpochBuffer| E0B
     E1 --> E2 --> E3
     K1 -.->|file_key| E3
     E3 --> E4 --> E5 --> E6 --> E7 --> E8
@@ -55,13 +59,14 @@ flowchart TD
 
 ### Encrypt path
 
-1. Source file is read in configured `chunk_size_bytes` increments (default 4 MiB) via `BufReader`
-2. Each chunk is zero-padded to exactly `chunk_size_bytes` if the last segment is shorter
-3. `encrypt_chunk` applies XChaCha20-Poly1305 with AAD = `file_id || chunk_index`
-4. BLAKE3 is computed over the full encrypted blob (`nonce || ciphertext || tag`)
-5. The blob is written to the staging directory with a random UUID v4 filename
-6. A `ChunkRecord` is returned for each chunk
-7. All `ChunkRecord`s are committed to SQLCipher in a single transaction alongside the node row
+1. Upload starts with a route decision: immediate standalone chunks or epoch buffering.
+2. Immediate-route source file is read in configured `chunk_size_bytes` increments (default 4 MiB) via `BufReader`.
+3. Each chunk is zero-padded to exactly `chunk_size_bytes` if the last segment is shorter.
+4. `encrypt_chunk` applies XChaCha20-Poly1305 with AAD = `file_id || chunk_index`.
+5. BLAKE3 is computed over the full encrypted blob (`nonce || ciphertext || tag`).
+6. The blob is written to the staging directory with a random UUID v4 filename.
+7. A `ChunkRecord` is returned for each chunk.
+8. All `ChunkRecord`s are committed to SQLCipher in a single transaction alongside the node row.
 
 ### Decrypt path
 

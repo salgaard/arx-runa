@@ -1,7 +1,7 @@
 ---
 title: "Phase 3.2 — Encrypt and Decrypt Pipelines"
 created: "2026-04-18T00:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 3
 sub-phase: "3.2"
 design-document: "docs/architecture/designs/chunking-and-manifest/design.md"
@@ -555,4 +555,97 @@ Working directory: `C:\Users\chris\source\repos\arx-runa` (repo root). Implement
 - Property test wall time: reduce `chunk_size_bytes` to 128 KiB in proptests (via a test-only `MockMetadataStore` with custom `chunk_size_bytes` seed) and cap cases at 16.
 - Governance sync (Section 8) runs **before** code so `.claude/rules/storage.md` stays authoritative while `rust-reviewer` runs during implementation; failure to run `/copilot-sync` leaves the GitHub copilot mirror drifted.
 
-Status: `draft` (no blocking concerns). Proceed via `/implement-plan .claude/plans/phase-3-2-encrypt-decrypt-pipelines.md`.
+Status: `implemented` (run `phase-3-2-encrypt-decrypt-pipelines-20260418-185222` complete).
+
+## Implementation Log
+
+- **Date**: 2026-04-18T19:25:01.5534571+02:00
+- **Run ID**: `phase-3-2-encrypt-decrypt-pipelines-20260418-185222`
+- **Track**: `full`
+- **Branch**: `development`
+- **Execution mode**: orchestrator (direct implementation fallback for approach coding steps)
+
+### Agent evidence
+
+| Approach step | Agent | Agent ID | Outcome |
+|---|---|---|---|
+| Structured context build | plan-context-builder | `plan-digest-builder` | `PLAN_DIGEST` produced |
+| Structured context build | rules-extractor | `rules-index-builder` | `RULES_INDEX` produced |
+| Structured context build | design-extractor | `design-index-builder` | `DESIGN_INDEX` produced |
+| Structured context build | shard-planner | `shard-map-builder` | `SHARD_MAP` + `SHARD_DIGEST_SUMMARY[]` produced |
+| Rust review cycle | rust-reviewer | `phase32-rust-review-postfix` | no actionable findings |
+| Security review cycle | security-reviewer | `phase32-security-review-postfix` | no security findings |
+| Architecture review cycle | architecture-reviewer | `phase32-arch-review-final` | medium findings recorded/deferred by plan |
+
+### Files changed
+
+- `.claude/plans/phase-3-2-encrypt-decrypt-pipelines.md`
+- `.claude/rules/storage.md`
+- `.github/instructions/storage.instructions.md`
+- `.claude/commands/implement-plan.md`
+- `.claude/commands/plan.md`
+- `docs/architecture/designs/chunking-and-manifest/design.md`
+- `docs/architecture/designs/chunking-and-manifest/diagrams/chunk-pipeline.md`
+- `docs/architecture/designs/chunking-and-manifest/sub-phases/roadmap.md`
+- `docs/architecture/designs/chunking-and-manifest/sub-phases/3.2-encrypt-decrypt-pipelines.md`
+- `src-tauri/src/crypto/encrypt_chunk.rs`
+- `src-tauri/src/storage/error.rs`
+- `src-tauri/src/storage/metadata_store.rs`
+- `src-tauri/src/storage/mock.rs`
+- `src-tauri/src/storage/mod.rs`
+- `src-tauri/src/storage/sqlcipher.rs`
+- `src-tauri/src/storage/pipeline/mod.rs`
+- `src-tauri/src/storage/pipeline/assign_node_id.rs`
+- `src-tauri/src/storage/pipeline/chunk_size.rs`
+- `src-tauri/src/storage/pipeline/encrypt_file.rs`
+- `src-tauri/src/storage/pipeline/decrypt_file.rs`
+- `src-tauri/src/storage/vault_ops/mod.rs`
+- `src-tauri/src/storage/vault_ops/routing.rs`
+- `src-tauri/src/storage/vault_ops/upload_file.rs`
+- `src-tauri/src/storage/vault_ops/download_file.rs`
+
+### Verification
+
+- **Test results**: `cargo test --workspace` passed.
+- **Clippy results**: `cargo clippy --workspace --all-targets --all-features -- -D warnings` passed clean.
+
+### Review summaries
+
+- **Rust review**: final pass reported no actionable findings.
+- **Architecture review**: medium-only findings logged as deferred-by-plan follow-ups (interface segregation, public re-export boundary, deferred epoch-route error taxonomy).
+- **Security review**: final pass reported no findings.
+- **Cross-shard review**: N/A (single shard).
+
+### Findings quality gate
+
+- **Disposition totals**: `ACTIONABLE_NOW=10`, `INTENTIONAL_DECISION=0`, `DEFERRED_BY_PLAN=5`, `INSUFFICIENT_EVIDENCE=0`.
+- **Finding overrides**: None.
+- **Design challenge outcomes**: None.
+
+### Governance sync
+
+- **Action count**: 3 (`GA-001`, `GA-002`, `GA-003`)
+- **Files updated**: `.claude/rules/storage.md`, `.github/instructions/storage.instructions.md`
+- **copilot-sync outcome**: OK (semantic mirror applied)
+
+### Sub-phase decisions sync
+
+- **Doc path**: `docs/architecture/designs/chunking-and-manifest/sub-phases/3.2-encrypt-decrypt-pipelines.md`
+- **Decisions added**: 5 bullets under `## Implementation Decisions`
+
+### Deviations from plan
+
+- Added `MetadataStore::insert_file_with_chunks` in Phase 3.2 to satisfy atomic upload persistence immediately.
+- Hardened decrypt finalization with temporary-file replacement rollback semantics and strict blob-size pre-read validation.
+- Hardened `encrypt_chunk` to explicitly zeroize plaintext buffers on both success and encryption failure paths.
+
+### Documentation flagged
+
+- Applied in this run:
+  - `docs/architecture/designs/chunking-and-manifest/design.md` (decrypt API + flow sync)
+  - `docs/architecture/designs/chunking-and-manifest/diagrams/chunk-pipeline.md` (hybrid routing decision node)
+  - `docs/architecture/designs/chunking-and-manifest/sub-phases/roadmap.md` (Phase 3.2 deferred-branch note)
+
+### Run state
+
+- `.claude/runs/phase-3-2-encrypt-decrypt-pipelines-20260418-185222/`

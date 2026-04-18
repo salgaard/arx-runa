@@ -12,7 +12,8 @@ use crate::storage::metadata_store::MetadataStore;
 use crate::storage::types::{ChunkRecord, Node, NodeId};
 use crate::storage::validation::{
     immutable_meta_key_violation, is_immutable_manifest_meta_key, parse_chunk_size_bytes,
-    validate_blob_name_uuid_v4, validate_chunk_target_node, validate_size_padded_matches_chunk_size,
+    validate_blob_name_uuid_v4, validate_chunk_target_node,
+    validate_size_padded_matches_chunk_size,
 };
 
 /// Test-only in-memory metadata store.
@@ -70,7 +71,10 @@ fn unix_timestamp_now() -> Result<i64, StorageError> {
     i64::try_from(duration.as_secs()).map_err(|error| StorageError::Database(error.to_string()))
 }
 
-fn ensure_parent_is_directory_for_insert(state: &MockState, node: &Node) -> Result<(), StorageError> {
+fn ensure_parent_is_directory_for_insert(
+    state: &MockState,
+    node: &Node,
+) -> Result<(), StorageError> {
     if let Some(parent_id) = node.parent_id.map(|id| *id.as_uuid()) {
         if parent_id == *node.node_id.as_uuid() {
             return Err(StorageError::ConstraintViolation(
@@ -95,11 +99,11 @@ fn ensure_node_type_file_key_wrapped_parity(node: &Node) -> Result<(), StorageEr
         crate::storage::types::NodeType::File if node.file_key_wrapped.is_none() => Err(
             StorageError::ConstraintViolation("file node requires file_key_wrapped".to_owned()),
         ),
-        crate::storage::types::NodeType::Directory if node.file_key_wrapped.is_some() => Err(
-            StorageError::ConstraintViolation(
+        crate::storage::types::NodeType::Directory if node.file_key_wrapped.is_some() => {
+            Err(StorageError::ConstraintViolation(
                 "directory node must not include file_key_wrapped".to_owned(),
-            ),
-        ),
+            ))
+        }
         _ => Ok(()),
     }
 }
@@ -213,6 +217,66 @@ impl MetadataStore for MockMetadataStore {
         Ok(())
     }
 
+    /// Inserts a file node and chunk rows atomically.
+    async fn insert_file_with_chunks(
+        &self,
+        node: &Node,
+        chunks: &[ChunkRecord],
+    ) -> Result<(), StorageError> {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|error| StorageError::Database(error.to_string()))?;
+
+        let node_uuid = *node.node_id.as_uuid();
+        ensure_node_type_file_key_wrapped_parity(node)?;
+        ensure_parent_is_directory_for_insert(&guard, node)?;
+        if guard.nodes.contains_key(&node_uuid) {
+            return Err(StorageError::ConstraintViolation(
+                "duplicate node_id".to_owned(),
+            ));
+        }
+
+        let chunk_size_value = guard.meta.get("chunk_size_bytes").ok_or_else(|| {
+            StorageError::Database("missing manifest_meta key: chunk_size_bytes".to_owned())
+        })?;
+        let chunk_size_bytes = parse_chunk_size_bytes(chunk_size_value)?;
+        let mut all_blob_names = HashSet::new();
+        for existing_chunks in guard.chunks_by_node.values() {
+            for existing in existing_chunks {
+                all_blob_names.insert(existing.blob_name.clone());
+            }
+        }
+        let mut seen_chunk_indices = HashSet::new();
+        for chunk in chunks {
+            if chunk.node_id != node.node_id {
+                return Err(StorageError::ConstraintViolation(
+                    "chunk node_id does not match inserted file node".to_owned(),
+                ));
+            }
+            validate_chunk_target_node(Some(node.node_type))?;
+            validate_blob_name_uuid_v4(&chunk.blob_name)?;
+            validate_size_padded_matches_chunk_size(chunk.size_padded, chunk_size_bytes)?;
+            if all_blob_names.contains(&chunk.blob_name) {
+                return Err(StorageError::ConstraintViolation(
+                    "duplicate blob_name".to_owned(),
+                ));
+            }
+            if !seen_chunk_indices.insert(chunk.chunk_index) {
+                return Err(StorageError::ConstraintViolation(
+                    "duplicate (node_id, chunk_index)".to_owned(),
+                ));
+            }
+            all_blob_names.insert(chunk.blob_name.clone());
+        }
+
+        guard.nodes.insert(node_uuid, node.clone());
+        let node_chunks = guard.chunks_by_node.entry(node_uuid).or_default();
+        node_chunks.extend(chunks.iter().cloned());
+        node_chunks.sort_by_key(|item| item.chunk_index);
+        Ok(())
+    }
+
     /// Retrieves one node by ID.
     async fn get_node(&self, node_id: Uuid) -> Result<Node, StorageError> {
         let guard = self
@@ -266,7 +330,10 @@ impl MetadataStore for MockMetadataStore {
             .inner
             .lock()
             .map_err(|error| StorageError::Database(error.to_string()))?;
-        let node = guard.nodes.get_mut(&node_id).ok_or(StorageError::NotFound)?;
+        let node = guard
+            .nodes
+            .get_mut(&node_id)
+            .ok_or(StorageError::NotFound)?;
         node.name = new_name.to_owned();
         node.modified_at = modified_at;
         Ok(())
@@ -284,7 +351,10 @@ impl MetadataStore for MockMetadataStore {
             .lock()
             .map_err(|error| StorageError::Database(error.to_string()))?;
         ensure_move_respects_hierarchy(&guard, node_id, new_parent_id)?;
-        let node = guard.nodes.get_mut(&node_id).ok_or(StorageError::NotFound)?;
+        let node = guard
+            .nodes
+            .get_mut(&node_id)
+            .ok_or(StorageError::NotFound)?;
         node.parent_id = new_parent_id.map(NodeId::new);
         node.modified_at = modified_at;
         Ok(())
@@ -345,7 +415,8 @@ impl MetadataStore for MockMetadataStore {
             .lock()
             .map_err(|error| StorageError::Database(error.to_string()))?;
         let mut pending_deletions = guard.pending_deletions.clone();
-        pending_deletions.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
+        pending_deletions
+            .sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
         Ok(pending_deletions
             .iter()
             .take(limit)
@@ -401,10 +472,14 @@ impl MetadataStore for MockMetadataStore {
         let next = value
             .parse::<u64>()
             .map_err(|_| {
-                StorageError::Database("invalid snapshot_counter: not an unsigned integer".to_owned())
+                StorageError::Database(
+                    "invalid snapshot_counter: not an unsigned integer".to_owned(),
+                )
             })?
             .checked_add(1)
-            .ok_or_else(|| StorageError::Database("invalid snapshot_counter: overflow".to_owned()))?;
+            .ok_or_else(|| {
+                StorageError::Database("invalid snapshot_counter: overflow".to_owned())
+            })?;
         guard
             .meta
             .insert("snapshot_counter".to_owned(), next.to_string());
@@ -507,7 +582,11 @@ mod tests {
         store
             .insert_chunks(&[
                 chunk_for(child_file_id, 0, "11111111-1111-4111-8111-111111111111"),
-                chunk_for(grandchild_file_id, 0, "22222222-2222-4222-8222-222222222222"),
+                chunk_for(
+                    grandchild_file_id,
+                    0,
+                    "22222222-2222-4222-8222-222222222222",
+                ),
                 chunk_for(sibling_file_id, 0, "33333333-3333-4333-8333-333333333333"),
             ])
             .await
@@ -600,7 +679,10 @@ mod tests {
             .await
             .expect("pending deletions should list");
 
-        assert_eq!(pending, vec!["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".to_owned()]);
+        assert_eq!(
+            pending,
+            vec!["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".to_owned()]
+        );
     }
 
     #[tokio::test]
@@ -707,7 +789,11 @@ mod tests {
             .expect("file should insert");
 
         let result = store
-            .insert_chunks(&[chunk_for(file_id, 0, "f81d4fae-7dec-11d0-a765-00a0c91e6bf6")])
+            .insert_chunks(&[chunk_for(
+                file_id,
+                0,
+                "f81d4fae-7dec-11d0-a765-00a0c91e6bf6",
+            )])
             .await;
         assert!(matches!(
             result,
@@ -812,7 +898,11 @@ mod tests {
             .await
             .expect("root should insert");
         store
-            .insert_node(&file_node(destination_file_id, Some(root_id), "destination.txt"))
+            .insert_node(&file_node(
+                destination_file_id,
+                Some(root_id),
+                "destination.txt",
+            ))
             .await
             .expect("destination file should insert");
         store
@@ -820,7 +910,9 @@ mod tests {
             .await
             .expect("moving node should insert");
 
-        let result = store.move_node(moving_id, Some(destination_file_id), 3).await;
+        let result = store
+            .move_node(moving_id, Some(destination_file_id), 3)
+            .await;
         assert!(matches!(
             result,
             Err(StorageError::ConstraintViolation(message)) if message.contains("directory")
@@ -855,7 +947,10 @@ mod tests {
             .list_children(root_id)
             .await
             .expect("children should list");
-        let names = children.into_iter().map(|node| node.name).collect::<Vec<_>>();
+        let names = children
+            .into_iter()
+            .map(|node| node.name)
+            .collect::<Vec<_>>();
 
         assert_eq!(names, vec!["a-dir".to_owned(), "b-file".to_owned()]);
     }
@@ -1019,4 +1114,3 @@ mod tests {
         );
     }
 }
-

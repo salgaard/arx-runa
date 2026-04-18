@@ -344,9 +344,14 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
 
 2. **Design-doc sync gate (hard):** if `SOLUTION_PACK` contained any accepted challenges (including user-approved security-scoped ones), verify each referenced design doc was updated. If any accepted challenge has no corresponding update, halt.
 
-3. Update `status: implemented` in plan frontmatter.
+3. **Documentation-impact gate (hard):** execute plan Section 7 (`Documentation impact`) before setting `status: implemented`.
+   - If Section 7 lists concrete doc updates, apply them in this run and include them in **Files changed**.
+   - If an item is explicitly marked deferred/optional in Section 7, keep it deferred but record rationale in **Deviations from plan** and **Documentation flagged**.
+   - If applying a listed update would require a large canonical design rewrite (cross-phase contract refactor or broad semantic redesign), invoke Plan-deviation protocol and halt for user decision.
 
-4. Append **Implementation Log** to the plan file:
+4. Update `status: implemented` in plan frontmatter.
+
+5. Append **Implementation Log** to the plan file:
    - **Date** — ISO 8601 datetime
    - **Run ID** — generated in Step 1
    - **Track** — `minimal` / `standard` / `full`; note any mid-run escalation
@@ -369,9 +374,9 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
    - **Documentation flagged** — verbatim from plan Section 7
    - **Run state path** — `.claude/runs/<run-id>/`
 
-5. **Do not commit, push, or open a pull request.** Leave the working tree dirty.
+6. **Do not commit, push, or open a pull request.** Leave the working tree dirty.
 
-6. **Report to the user:**
+7. **Report to the user:**
 
 **Sub-phase plan:**
 ```
@@ -407,6 +412,7 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
 
 - Preserve hard-gate semantics in Step 3; do not silently downgrade failures.
 - Do not skip the design-doc sync gate in Step 6 when accepted challenges exist.
+- Do not skip plan Section 7 documentation-impact items when they are implementable in-run.
 - Do not broaden implementation scope outside the approved plan without triggering Plan-deviation protocol.
 - Do not auto-chain `/review-only` and `/implement-review`; this command is a separate entrypoint.
 - Do not commit, push, or open pull requests.
@@ -433,3 +439,4 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
 | Required findings thresholds not met after max cycles | Plan-deviation protocol, then halt |
 | Sensitive path drift detected outside Section 6b | Plan-deviation protocol, then halt |
 | Accepted design challenge missing design-doc update at Step 6 | Halt — require update before marking implemented |
+| Section 7 documentation updates left unapplied without explicit deferred/optional rationale | Halt before `status: implemented` |

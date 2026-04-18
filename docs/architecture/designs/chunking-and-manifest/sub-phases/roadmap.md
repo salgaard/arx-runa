@@ -106,6 +106,7 @@ cargo clippy -- -D warnings  # No new warnings
 - **`file_key_wrapped` location**: Stored in the `nodes` table (per-file), not the `chunks` table. This eliminates N redundant copies for multi-chunk files; CASCADE deletion still removes it correctly.
 - **0-byte files**: A valid edge case — the `nodes` row is inserted with `size_bytes = 0` and a generated (but unused) `file_key_wrapped`. No chunk rows exist. The encrypt pipeline must handle this without error.
 - **Streaming invariant**: At no point should more than one chunk's worth of plaintext reside in memory. This invariant must hold even for single-chunk files.
+- **Phase 3.2 deferred branch**: when `epoch_buffer_enabled = true` and `file_size < chunk_size_bytes`, upload returns a documented deferral error until Phase 4 implements epoch-buffer packing.
 
 ---
 

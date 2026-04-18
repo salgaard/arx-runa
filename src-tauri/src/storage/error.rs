@@ -3,6 +3,8 @@
 use rusqlite::ErrorCode;
 use thiserror::Error;
 
+use crate::crypto::CryptoError;
+
 /// Errors produced by the storage module.
 #[non_exhaustive]
 #[derive(Debug, Error)]
@@ -47,10 +49,27 @@ impl StorageError {
             other => Self::Database(other.to_string()),
         }
     }
+
+    /// Maps crypto-domain failures into storage-domain errors.
+    pub(crate) fn from_crypto(error: CryptoError) -> Self {
+        match error {
+            CryptoError::ChecksumMismatch => Self::ChecksumMismatch,
+            other => Self::Database(other.to_string()),
+        }
+    }
+}
+
+impl From<CryptoError> for StorageError {
+    /// Converts crypto errors into storage errors via [`StorageError::from_crypto`].
+    fn from(error: CryptoError) -> Self {
+        Self::from_crypto(error)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::crypto::CryptoError;
+
     use super::StorageError;
 
     /// Verifies SQLITE_NOTADB maps to `WrongKey`.
@@ -64,7 +83,10 @@ mod tests {
             Some("file is not a database".to_owned()),
         );
 
-        assert!(matches!(StorageError::from_rusqlite(error), StorageError::WrongKey));
+        assert!(matches!(
+            StorageError::from_rusqlite(error),
+            StorageError::WrongKey
+        ));
     }
 
     /// Verifies constraint failures map to `ConstraintViolation`.
@@ -170,5 +192,77 @@ mod tests {
         let error = StorageError::ChecksumMismatch;
 
         assert_eq!(error.to_string(), "blob checksum mismatch");
+    }
+
+    /// Verifies crypto checksum mismatch maps to storage checksum mismatch.
+    #[test]
+    fn test_from_crypto_checksum_mismatch_maps_to_checksum_mismatch() {
+        assert!(matches!(
+            StorageError::from_crypto(CryptoError::ChecksumMismatch),
+            StorageError::ChecksumMismatch
+        ));
+    }
+
+    /// Verifies decryption failures map to storage database errors.
+    #[test]
+    fn test_from_crypto_decryption_failed_maps_to_database() {
+        assert!(matches!(
+            StorageError::from_crypto(CryptoError::DecryptionFailed),
+            StorageError::Database(message) if message == "decryption failed: authentication tag mismatch"
+        ));
+    }
+
+    /// Verifies encryption failures map to storage database errors.
+    #[test]
+    fn test_from_crypto_encryption_failed_maps_to_database() {
+        assert!(matches!(
+            StorageError::from_crypto(CryptoError::EncryptionFailed),
+            StorageError::Database(message) if message == "chunk encryption failed"
+        ));
+    }
+
+    /// Verifies invalid-blob errors map to storage database errors and preserve display text.
+    #[test]
+    fn test_from_crypto_invalid_blob_format_maps_to_database_preserves_display() {
+        assert!(matches!(
+            StorageError::from_crypto(CryptoError::InvalidBlobFormat { expected: 40, actual: 10 }),
+            StorageError::Database(message) if message == "invalid blob format: expected at least 40 bytes, got 10"
+        ));
+    }
+
+    /// Verifies key-wrap failures map to storage database errors.
+    #[test]
+    fn test_from_crypto_key_wrap_failed_maps_to_database() {
+        assert!(matches!(
+            StorageError::from_crypto(CryptoError::KeyWrapFailed),
+            StorageError::Database(message) if message == "key wrap failed"
+        ));
+    }
+
+    /// Verifies key-unwrap failures map to storage database errors.
+    #[test]
+    fn test_from_crypto_key_unwrap_failed_maps_to_database() {
+        assert!(matches!(
+            StorageError::from_crypto(CryptoError::KeyUnwrapFailed),
+            StorageError::Database(message) if message == "key unwrap failed"
+        ));
+    }
+
+    /// Verifies key-derivation failures map to storage database errors.
+    #[test]
+    fn test_from_crypto_key_derivation_failed_maps_to_database() {
+        assert!(matches!(
+            StorageError::from_crypto(CryptoError::KeyDerivationFailed),
+            StorageError::Database(message) if message == "key derivation failed"
+        ));
+    }
+
+    /// Verifies the `From<CryptoError>` implementation delegates to `from_crypto`.
+    #[test]
+    fn test_from_trait_delegates_to_from_crypto() {
+        assert!(matches!(
+            StorageError::from(CryptoError::ChecksumMismatch),
+            StorageError::ChecksumMismatch
+        ));
     }
 }

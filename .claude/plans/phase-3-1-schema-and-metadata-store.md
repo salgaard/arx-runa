@@ -350,7 +350,7 @@ Working directory: `C:\Users\chris\source\repos\arx-runa`. Execution order: (1) 
 | Remediation cycles (storage/auth) | rust-implementer | `phase-3-1-remediation-*` | Completed across cycles with scoped fixes |
 | Review/classification/solver cycles | rust/architecture/security/cross-shard + classifier/solver agents | `*cycle*` | Completed; unresolved out-of-scope findings deferred by plan |
 
-- **Files changed**: storage module foundation files (`error.rs`, `metadata_store.rs`, `schema.rs`, `sqlcipher.rs`, `mock.rs`, `validation.rs`, `types/*`, `mod.rs`), auth ceremony migration files (`create.rs`, `types.rs`, `change_password.rs`, `rotate_key_file.rs`, `mod.rs`, `test_support.rs`, `recover_vault.rs`, `recover_with_phrase.rs`), governance files (`.claude/rules/storage.md`, `.github/instructions/*.instructions.md`), and docs (`docs/architecture/designs/chunking-and-manifest/design.md`, `docs/architecture/designs/chunking-and-manifest/sub-phases/3.1-schema-and-metadata-store.md`).
+- **Files changed**: storage module foundation files (`error.rs`, `metadata_store.rs`, `schema.rs`, `sqlcipher.rs`, `mock.rs`, `validation.rs`, `types/*`, `mod.rs`), auth ceremony migration files (`create.rs`, `types.rs`, `change_password.rs`, `rotate_key_file.rs`, `mod.rs`, `test_support.rs`, `recover_vault.rs`, `recover_with_phrase.rs`), governance files (`.claude/rules/storage.md`, `.github/instructions/*.instructions.md`), and docs (`docs/architecture/designs/chunking-and-manifest/design.md`, `docs/architecture/designs/chunking-and-manifest/sub-phases/3.1-schema-and-metadata-store.md`, `docs/architecture/designs/chunking-and-manifest/diagrams/manifest-schema.md`).
 - **Test results**: `cargo test --workspace --all-targets --all-features` passed (`320 passed; 0 failed; 1 ignored` in lib target; workspace run successful).
 - **Clippy results**: `cargo clippy --workspace --all-targets --all-features -- -D warnings` passed cleanly.
 - **Rust review**: completed across cycles; storage actionable findings remediated; remaining auth workflow findings deferred by plan scope lock.
@@ -366,5 +366,5 @@ Working directory: `C:\Users\chris\source\repos\arx-runa`. Execution order: (1) 
 - **Documentation flagged**:  
   - `docs/architecture/designs/chunking-and-manifest/sub-phases/3.1-schema-and-metadata-store.md` — append implementation addendum (completed).  
   - `docs/architecture/designs/chunking-and-manifest/design.md` — sync any contract clarifications discovered during implementation (completed).  
-  - `docs/architecture/designs/chunking-and-manifest/diagrams/manifest-schema.md` — regenerate diagram after schema landing (flagged for follow-up in diagram workflow).
+  - `docs/architecture/designs/chunking-and-manifest/diagrams/manifest-schema.md` — regenerated after schema landing (completed post-run follow-up).
 - **Run state path**: `.claude/runs/phase-3-1-schema-and-metadata-store-20260418-171006/`

@@ -332,6 +332,7 @@ async fn decrypt_file(
     file_size: u64,
     chunks: &[ChunkRecord],
     blob_directory: &Path,
+    metadata_store: &dyn MetadataStore,
 ) -> Result<(), StorageError>;
 ```
 
@@ -354,16 +355,18 @@ async fn decrypt_file(
 ### Decrypt flow (per chunk)
 
 ```
+0. Read `chunk_size_bytes` once from `manifest_meta` via MetadataStore
 1. Read wire_blob from blob_directory/<blob_name>.blob via BufReader
-2. Verify: blake3::hash(wire_blob) == expected blake3_checksum
+2. Validate blob length equals `chunk_size_bytes + 40` bytes
+3. Verify: blake3::hash(wire_blob) == expected blake3_checksum
    If mismatch → return ChecksumMismatch error, do NOT attempt decryption
-3. decrypt_chunk(wire_blob, file_key, file_id, chunk_index)
+4. decrypt_chunk(wire_blob, file_key, file_id, chunk_index)
    → padded_plaintext (chunk_size_bytes bytes)
-4. If this is the last chunk:
+5. If this is the last chunk:
    bytes_to_write = file_size - (chunk_index * chunk_size_bytes)
    Write only bytes_to_write bytes to destination via BufWriter
-5. Else: write full chunk_size_bytes bytes to destination
-6. Zeroize padded_plaintext
+6. Else: write full chunk_size_bytes bytes to destination
+7. Zeroize padded_plaintext
 ```
 
 ### Streaming invariant
@@ -382,7 +385,7 @@ At no point is more than one chunk's worth of plaintext in memory simultaneously
 3. Encrypt all chunks → ChunkRecords (blobs written to staging)
 4. Begin SQLCipher transaction
 5. Insert node row (node_id, name, size_bytes, file_key_wrapped, ...)
-6. Insert chunk rows for all ChunkRecords
+6. Insert chunk rows for all ChunkRecords in the same transaction
 7. Commit transaction
 8. Zeroize file_key
 ```
