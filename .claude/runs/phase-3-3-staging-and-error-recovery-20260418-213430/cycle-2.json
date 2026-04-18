@@ -1,0 +1,26 @@
+{
+  "cycle": 2,
+  "findings": [
+    {
+      "id": "CF-003",
+      "severity": "MEDIUM",
+      "disposition": "INTENTIONAL_DECISION",
+      "source_id": "rust-shard-storage-remediation-cycle-2-001"
+    },
+    {
+      "id": "CF-004",
+      "severity": "HIGH",
+      "disposition": "ACTIONABLE_NOW",
+      "source_id": "security-shard-storage-remediation-cycle-2-001"
+    },
+    {
+      "id": "CF-005",
+      "severity": "HIGH",
+      "disposition": "ACTIONABLE_NOW",
+      "source_id": "security-shard-storage-remediation-cycle-2-002"
+    }
+  ],
+  "override_records": [],
+  "cross_shard_finding_count": 0,
+  "actionable_remaining": 2
+}

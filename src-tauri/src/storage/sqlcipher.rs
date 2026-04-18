@@ -1,5 +1,6 @@
 //! SQLCipher-backed `MetadataStore` implementation.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -80,6 +81,27 @@ impl SqlCipherMetadataStore {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
+    }
+
+    /// Enumerates every `chunks.blob_name` currently stored in the manifest.
+    ///
+    /// Intentionally SQLCipher-specific; this method is not exposed on
+    /// [`MetadataStore`].
+    pub(crate) async fn list_all_blob_names(&self) -> Result<HashSet<String>, StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let mut statement = conn
+                .prepare("SELECT blob_name FROM chunks")
+                .map_err(StorageError::from_rusqlite)?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(StorageError::from_rusqlite)?;
+            let mut names = HashSet::new();
+            for row in rows {
+                names.insert(row.map_err(StorageError::from_rusqlite)?);
+            }
+            Ok(names)
+        })
+        .await
     }
 
     /// Executes a blocking SQLite closure without stalling the async runtime.
@@ -1243,6 +1265,171 @@ mod tests {
             result,
             Err(StorageError::ConstraintViolation(message)) if message.contains("size_padded")
         ));
+    }
+
+    #[tokio::test]
+    async fn test_insert_file_with_chunks_rejects_bad_chunk_and_leaves_no_partial_manifest_entry() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+        let file_id = Uuid::new_v4();
+        let mut bad_chunk = chunk_for(file_id, 1, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        bad_chunk.size_padded = 1234;
+
+        let result = store
+            .insert_file_with_chunks(
+                &file_node(file_id, None, "partial.txt"),
+                &[
+                    chunk_for(file_id, 0, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+                    bad_chunk,
+                ],
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(StorageError::ConstraintViolation(message)) if message.contains("size_padded")
+        ));
+        assert!(matches!(
+            store.get_node(file_id).await,
+            Err(StorageError::NotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_insert_file_with_chunks_chunk_node_mismatch_rolls_back_manifest_changes() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+        let file_id = Uuid::new_v4();
+        let other_file_id = Uuid::new_v4();
+
+        let result = store
+            .insert_file_with_chunks(
+                &file_node(file_id, None, "mismatch.txt"),
+                &[
+                    chunk_for(file_id, 0, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+                    chunk_for(other_file_id, 1, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+                ],
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(StorageError::ConstraintViolation(message))
+                if message == "chunk node_id does not match inserted file node"
+        ));
+        assert!(matches!(
+            store.get_node(file_id).await,
+            Err(StorageError::NotFound)
+        ));
+        assert!(
+            store
+                .get_chunks(file_id)
+                .await
+                .expect("chunks query should succeed")
+                .is_empty()
+        );
+        assert!(
+            store
+                .list_pending_deletions(10)
+                .await
+                .expect("pending deletions query should succeed")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_node_transaction_commits_pending_deletions_and_cascades() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+        let file_id = Uuid::new_v4();
+        let expected_blob_names = vec![
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".to_owned(),
+            "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".to_owned(),
+        ];
+        store
+            .insert_file_with_chunks(
+                &file_node(file_id, None, "delete-me.txt"),
+                &[
+                    chunk_for(file_id, 0, &expected_blob_names[0]),
+                    chunk_for(file_id, 1, &expected_blob_names[1]),
+                ],
+            )
+            .await
+            .expect("file and chunks should insert");
+
+        store
+            .delete_node(file_id)
+            .await
+            .expect("delete should succeed");
+
+        assert!(matches!(
+            store.get_node(file_id).await,
+            Err(StorageError::NotFound)
+        ));
+        assert_eq!(
+            store
+                .get_chunks(file_id)
+                .await
+                .expect("chunks should load after delete"),
+            Vec::<ChunkRecord>::new()
+        );
+        assert_eq!(
+            store
+                .list_pending_deletions(10)
+                .await
+                .expect("pending deletions should load"),
+            expected_blob_names
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_node_missing_node_keeps_pending_deletions_unchanged() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+        let seeded_blob = "dddddddd-dddd-4ddd-8ddd-dddddddddddd".to_owned();
+        let seeded_blob_for_insert = seeded_blob.clone();
+        store
+            .with_connection_blocking(move |conn| {
+                conn.execute(
+                    "INSERT INTO pending_deletions (blob_name, queued_at) VALUES (?1, ?2)",
+                    params![seeded_blob_for_insert, 5i64],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+                Ok(())
+            })
+            .await
+            .expect("pending deletions should seed");
+
+        let result = store.delete_node(Uuid::new_v4()).await;
+
+        assert!(matches!(result, Err(StorageError::NotFound)));
+        assert_eq!(
+            store
+                .list_pending_deletions(10)
+                .await
+                .expect("pending deletions should load"),
+            vec![seeded_blob]
+        );
     }
 
     #[tokio::test]

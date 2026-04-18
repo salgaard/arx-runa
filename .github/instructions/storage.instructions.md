@@ -47,6 +47,14 @@ applyTo: "src-tauri/src/storage/**"
 ## Deletion
 - Transaction order: read blob names, enqueue into `pending_deletions` inside the same transaction, delete node row (CASCADE removes chunk rows), commit, then delete local staging blobs
 - If blob deletion is interrupted, orphan encrypted blobs are cleaned on startup
+- `storage::vault_ops::delete_file` is the orchestration entry point: read chunk names, call `MetadataStore::delete_node` transactionally, then best-effort remove local staging blobs
+
+## Staging directory
+- Resolve the default path via `dirs::data_dir().join("arx-runa").join("staging")` across Windows, Linux, and macOS
+- Orphan cleanup runs at vault open only, before any upload/download/delete operation
+- `cleanup_orphaned_blobs` may delete only files where extension is `.blob`, stem is UUID v4, and stem is absent from `chunks.blob_name`
+- Concurrent local removal races are tolerated: `std::io::ErrorKind::NotFound` during delete is treated as success
+- `list_all_blob_names` remains a SQLCipher-specific helper and must not be added to `MetadataStore`
 
 ## I/O
 - Stream via `BufReader`/`BufWriter` — never load full file

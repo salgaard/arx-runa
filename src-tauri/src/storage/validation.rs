@@ -23,14 +23,16 @@ pub(crate) fn is_immutable_manifest_meta_key(key: &str) -> bool {
     IMMUTABLE_MANIFEST_META_KEYS.contains(&key)
 }
 
-/// Validates a chunk `blob_name` is a parseable UUIDv4 string.
+/// Validates a chunk `blob_name` is a canonical UUIDv4 string.
 pub(crate) fn validate_blob_name_uuid_v4(blob_name: &str) -> Result<(), StorageError> {
     let parsed = Uuid::parse_str(blob_name).map_err(|_| {
-        StorageError::ConstraintViolation("invalid blob_name: expected UUID v4".to_owned())
+        StorageError::ConstraintViolation(
+            "invalid blob_name: expected canonical UUID v4".to_owned(),
+        )
     })?;
-    if parsed.get_version_num() != 4 {
+    if parsed.get_version_num() != 4 || parsed.hyphenated().to_string() != blob_name {
         return Err(StorageError::ConstraintViolation(
-            "invalid blob_name: expected UUID v4".to_owned(),
+            "invalid blob_name: expected canonical UUID v4".to_owned(),
         ));
     }
     Ok(())
@@ -113,7 +115,16 @@ mod tests {
         let result = validate_blob_name_uuid_v4("f81d4fae-7dec-11d0-a765-00a0c91e6bf6");
         assert!(matches!(
             result,
-            Err(StorageError::ConstraintViolation(message)) if message.contains("UUID v4")
+            Err(StorageError::ConstraintViolation(message)) if message.contains("canonical UUID v4")
+        ));
+    }
+
+    #[test]
+    fn test_validate_blob_name_uuid_v4_rejects_non_canonical_uuid_v4() {
+        let result = validate_blob_name_uuid_v4("550E8400-E29B-41D4-A716-446655440000");
+        assert!(matches!(
+            result,
+            Err(StorageError::ConstraintViolation(message)) if message.contains("canonical UUID v4")
         ));
     }
 

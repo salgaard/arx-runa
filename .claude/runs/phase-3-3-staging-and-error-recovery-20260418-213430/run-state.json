@@ -1,0 +1,22 @@
+{
+  "run_id": "phase-3-3-staging-and-error-recovery-20260418-213430",
+  "plan_file": ".claude/plans/phase-3-3-staging-and-error-recovery.md",
+  "track": "full",
+  "branch": "development",
+  "cycle_count": 5,
+  "finding_summary": {
+    "CRITICAL": 0,
+    "HIGH": 4,
+    "MEDIUM": 9,
+    "LOW": 2
+  },
+  "disposition_summary": {
+    "ACTIONABLE_NOW": 0,
+    "INTENTIONAL_DECISION": 4,
+    "DEFERRED_BY_PLAN": 4,
+    "INSUFFICIENT_EVIDENCE": 1
+  },
+  "override_records": [],
+  "governance_sync_degraded": false,
+  "cycles": [1, 2, 3, 4, 5]
+}

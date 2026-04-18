@@ -9,6 +9,7 @@ pub mod metadata_store;
 pub mod pipeline;
 pub(crate) mod schema;
 pub mod sqlcipher;
+pub mod staging;
 pub mod types;
 pub(crate) mod validation;
 pub mod vault_ops;
@@ -21,4 +22,6 @@ pub use metadata_store::MetadataStore;
 pub use pipeline::{decrypt_file, encrypt_file};
 pub use sqlcipher::SqlCipherMetadataStore;
 pub use types::{BlobName, ChunkRecord, Node, NodeId, NodeType};
-pub use vault_ops::{RouteDecision, decide, download_file, upload_file};
+pub use vault_ops::{
+    RouteDecision, decide, delete_file, download_file, prepare_vault_storage, upload_file,
+};

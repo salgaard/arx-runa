@@ -1,7 +1,7 @@
 ---
 title: "Phase 3.3 — Staging Directory and Error Recovery"
 created: "2026-04-18T00:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 3
 sub-phase: "3.3"
 design-document: docs/architecture/designs/chunking-and-manifest/design.md
@@ -343,3 +343,68 @@ Working directory: `C:\Users\chris\source\repos\arx-runa`. Run all cargo command
 - Staging module I/O uses `tokio::fs` only — no sync `std::fs` (rule: all I/O async).
 - Watch for the "`src-tauri/src/storage/vault_ops.rs`" path in the sub-phase — it is a stale reference to the pre-split module; the correct location is `src-tauri/src/storage/vault_ops/delete_file.rs` (C-2).
 - No security-sensitive changes expected. If implementation drifts into `src-tauri/src/crypto/` or `src-tauri/src/auth/`, pause and log a plan deviation.
+
+## Implementation Log
+
+- **Date**: 2026-04-18T22:17:27.1222836+02:00
+- **Run ID**: `phase-3-3-staging-and-error-recovery-20260418-213430`
+- **Track**: `full` (no escalation)
+- **Branch**: `development`
+- **Execution mode**: rust-implementer delegated with orchestrator-managed remediation cycles; small orchestrator fallback edits were applied for final behavior alignment and formatter/clippy fixes.
+
+### Agent evidence
+
+| Approach step | Agent | Agent ID | Outcome |
+|---|---|---|---|
+| Context artifact build | plan-context-builder / rules-extractor / design-extractor / shard-planner | `plan-digest-builder`, `rules-index-builder`, `design-index-builder`, `shard-map-builder` | Completed |
+| Steps 1–7 core implementation | rust-implementer | `phase-3-3-impl` | Completed |
+| Remediation (CF-001) | problem-solver + rust-implementer | `phase3-problem-solver-cycle1`, `phase3-apply-solution-cycle1` | Completed |
+| Remediation (CF-004, CF-005) | problem-solver + rust-implementer | `phase3-problem-solver-security-retry2`, `phase3-apply-security-fixes` | Completed |
+| Remediation (CF-009, CF-012) | problem-solver + rust-implementer | `phase3-problem-solver-cycle4`, `phase3-apply-cycle4-solution-retry` | Completed |
+| Test expansion pass | test-writer | `phase3-test-writer` | Completed |
+
+- **Files changed**:
+  - `.claude/plans/phase-3-3-staging-and-error-recovery.md`
+  - `.claude/rules/storage.md`
+  - `.github/instructions/storage.instructions.md`
+  - `docs/architecture/designs/chunking-and-manifest/sub-phases/3.3-staging-and-error-recovery.md`
+  - `src-tauri/src/storage/mod.rs`
+  - `src-tauri/src/storage/sqlcipher.rs`
+  - `src-tauri/src/storage/staging.rs`
+  - `src-tauri/src/storage/validation.rs`
+  - `src-tauri/src/storage/vault_ops/mod.rs`
+  - `src-tauri/src/storage/vault_ops/prepare_vault_storage.rs`
+  - `src-tauri/src/storage/vault_ops/delete_file.rs`
+  - `.claude/runs/phase-3-3-staging-and-error-recovery-20260418-213430/{run-state.json,cycle-1.json,cycle-2.json,cycle-3.json,cycle-4.json,cycle-5.json}`
+
+- **Formatting check**: `cargo fmt --all -- --check` clean after formatting.
+- **Clippy results**: `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean.
+- **Test results**: `cargo test --workspace --all-targets --all-features` passed (`372 passed; 0 failed; 1 ignored`).
+- **Release build**: `cargo build --workspace --release` succeeded.
+- **Rust review**: cycles executed; no remaining actionable findings (deferred: `CF-015`).
+- **Architecture review**: cycles executed; no remaining actionable findings (intentional/deferred: `CF-006`, `CF-011`, `CF-013`, `CF-014`).
+- **Security review**: no remaining findings (`NO_SECURITY_FINDINGS` in final cycles).
+- **Cross-shard review**: N/A (single shard changed).
+- **Findings quality gate**: `ACTIONABLE_NOW=0`, `INTENTIONAL_DECISION=4`, `DEFERRED_BY_PLAN=4`, `INSUFFICIENT_EVIDENCE=1`.
+- **Finding overrides**: None.
+- **Design challenge outcomes**: None.
+- **Governance sync**: 3 actions executed (`G-1`, `G-2`, `G-3`); updated `.claude/rules/storage.md`, `.github/instructions/storage.instructions.md`, and `docs/architecture/designs/chunking-and-manifest/sub-phases/3.3-staging-and-error-recovery.md`; copilot-sync outcome: **OK**.
+- **Sub-phase decisions sync**: `docs/architecture/designs/chunking-and-manifest/sub-phases/3.3-staging-and-error-recovery.md` updated with `## Implementation Decisions` (5 decisions).
+
+### Deviations from plan
+
+- Added `src-tauri/src/storage/validation.rs` updates to enforce canonical UUID v4 validation reuse for delete-path path safety.
+- Added extra SQLCipher regression tests beyond the minimum requested set (chunk-node mismatch rollback and missing-node pending-deletions stability).
+- Ran security review/remediation cycles despite Section 6b expecting no security review, to close high-severity findings raised during review.
+
+### Documentation flagged
+
+- Required this run (applied):
+  - `.claude/rules/storage.md` staging/deletion guardrails.
+  - `docs/architecture/designs/chunking-and-manifest/sub-phases/3.3-staging-and-error-recovery.md` macOS staging path update.
+- Deferred / optional (unchanged):
+  - `docs/roadmap.md` Phase 3 status update to "Complete" (deferred to phase sign-off commit).
+  - `docs/architecture/diagrams/` chunk-pipeline diagram (nice-to-have; deferred).
+  - `.github/instructions/` sync (applied in this run because `.claude/rules/` changed).
+
+- **Run state path**: `.claude/runs/phase-3-3-staging-and-error-recovery-20260418-213430/`
