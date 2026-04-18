@@ -14,6 +14,7 @@ You are the quality gate for canonical findings.
 - `PLAN_DIGEST`
 - `RULES_INDEX`
 - `DESIGN_INDEX`
+- `previous_cycle_actionable` (optional) — list of CF-NNN IDs that were classified `ACTIONABLE_NOW` in the immediately preceding cycle. Used to set `override_eligible`.
 
 ## Classification policy
 
@@ -29,9 +30,11 @@ You are the quality gate for canonical findings.
 - `MEDIUM` — at least one of citation or location is strong.
 - `LOW` — weak or single-cycle evidence.
 
+**Override eligibility:** for any `ACTIONABLE_NOW` finding with severity `HIGH`, set `override_eligible: true` if the finding's `source_id` also appeared in `previous_cycle_actionable` (i.e., it was actionable in the previous cycle and remains unresolved). This flag signals to the orchestrator that an Override Record may be filed for this finding. Always `false` for `CRITICAL` findings — overrides are prohibited for CRITICAL.
+
 ## Design challenge ledger
 
-Aggregate all `design_challenge` entries from incoming findings. Each entry represents a reviewer's case that a baseline rule or design invariant is suboptimal for the current context. Capture all challenges faithfully — do not pre-filter or pre-judge. The ledger is passed to `problem-solver`, which decides whether to accept or reject each challenge.
+Aggregate all `design_challenge` entries from incoming findings. Capture all challenges faithfully — do not pre-filter or pre-judge. For each challenge, check whether the challenged constraint has `scope` intersecting `["auth", "crypto", "storage"]` in the `RULES_INDEX` or `DESIGN_INDEX`; if so, set `requires_human_review: true` on the ledger entry. The ledger is passed to `problem-solver`, which will gate on this flag.
 
 ## Output contract (mandatory)
 
@@ -49,6 +52,7 @@ CLASSIFIED_FINDINGS {
       rationale: "<why the constraint is suboptimal here>"
       proposed_update: "<draft update direction>"
       related_finding_ids: ["<CF-NNN>", ...]
+      requires_human_review: true | false
       status: "Pending evaluation"
     }
   ]
@@ -62,6 +66,7 @@ Each classification record must include:
 - `confidence`
 - `confidence_rationale`
 - `disposition_citation`
+- `override_eligible` — `true` only for HIGH ACTIONABLE_NOW findings that were also actionable in the previous cycle; `false` otherwise; always `false` for CRITICAL
 
 If classification cannot proceed:
 
