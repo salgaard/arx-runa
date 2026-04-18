@@ -7,12 +7,13 @@ use zeroize::Zeroizing;
 
 use super::helpers::*;
 use super::types::{CreateVaultRequest, Tier};
-use super::{STAGING_FILE_NAME, VAULT_STUB_SCHEMA, vault_header_blob_name};
+use super::{STAGING_FILE_NAME, vault_header_blob_name};
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::VaultId;
+use crate::storage::schema::{apply_canonical_schema, seed_manifest_meta};
 use crate::storage::cloud::CloudTransport;
 use crate::storage::cloud::vault_header::VaultHeader;
 
@@ -123,12 +124,22 @@ pub async fn create_vault(
 
     let sqlcipher_key = sqlcipher_key_from_array(session_keys.sqlcipher_key.expose());
     let vault_db_path_owned = request.vault_db_path.clone();
+    let vault_id_uuid = vault_id.to_uuid();
+    let chunk_size_bytes = request.chunk_size_bytes;
+    let epoch_buffer_enabled = request.epoch_buffer_enabled;
     let wrapped_private_key_vec: Vec<u8> = wrapped_private_key.0.to_vec();
     let public_key_vec: Vec<u8> = public_key_bytes.to_vec();
     let db_result: Result<(), AuthenticationError> =
         tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
             let conn = open_sqlcipher(&vault_db_path_owned, sqlcipher_key.expose())?;
-            conn.execute_batch(VAULT_STUB_SCHEMA)
+            apply_canonical_schema(&conn)
+                .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+            seed_manifest_meta(
+                &conn,
+                vault_id_uuid,
+                chunk_size_bytes,
+                epoch_buffer_enabled,
+            )
                 .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
             conn.execute(
                 "INSERT INTO vault_identity (id, public_key, wrapped_private_key) VALUES (1, ?, ?)",
@@ -205,6 +216,7 @@ mod tests {
     use super::super::helpers::*;
     use super::super::test_support::*;
     use super::*;
+    use async_trait::async_trait;
     use base64::Engine;
     use bip39::{Language, Mnemonic};
     use rusqlite::params;
@@ -215,15 +227,37 @@ mod tests {
     use crate::auth::kdf::derive_master_key_into;
     use crate::auth::key_source::MockKeySource;
     use crate::auth::session::{SessionKeys, SessionManager};
+    use crate::auth::staging;
     use crate::auth::{
         CreateVaultRequest, SetupRecoveryRequest, Tier, create_vault, setup_recovery,
     };
     use crate::crypto::{
         RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_master_key_from_recovery,
     };
-    use crate::storage::cloud::CloudTransport;
+    use crate::storage::cloud::{CloudTransport, CloudTransportError};
     use crate::storage::cloud::mock::MockCloudTransport;
     use crate::storage::cloud::vault_header::VaultHeader;
+
+    #[derive(Debug, Default)]
+    struct UploadFailCloudTransport;
+
+    #[async_trait]
+    impl CloudTransport for UploadFailCloudTransport {
+        async fn upload_blob(
+            &self,
+            _name: &crate::storage::types::BlobName,
+            _bytes: &[u8],
+        ) -> Result<(), CloudTransportError> {
+            Err(CloudTransportError::Other("forced upload failure".to_string()))
+        }
+
+        async fn download_blob(
+            &self,
+            _name: &crate::storage::types::BlobName,
+        ) -> Result<Vec<u8>, CloudTransportError> {
+            Err(CloudTransportError::NotFound)
+        }
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_create_vault_tier_one_produces_header_with_null_key_file_blake3_and_empty_recovery_slots()
@@ -275,6 +309,8 @@ mod tests {
             target_key_file_path: None,
             vault_db_path,
             argon2_params: test_params(),
+            chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+            epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };
         let result = create_vault(request, &session, &cloud).await;
         assert!(matches!(
@@ -297,6 +333,8 @@ mod tests {
             target_key_file_path: Some(nonexistent_parent),
             vault_db_path,
             argon2_params: test_params(),
+            chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+            epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };
         let result = create_vault(request, &session, &cloud).await;
         assert!(matches!(
@@ -322,6 +360,8 @@ mod tests {
             target_key_file_path: Some(key_file_path.clone()),
             vault_db_path,
             argon2_params: test_params(),
+            chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+            epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };
 
         let result = create_vault(request, &session, &cloud).await;
@@ -352,6 +392,8 @@ mod tests {
             target_key_file_path: Some(new_key_file_path.clone()),
             vault_db_path: new_vault_db_path.clone(),
             argon2_params: test_params(),
+            chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+            epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };
 
         let result = create_vault(request, &existing_vault.session, &existing_vault.cloud).await;
@@ -368,5 +410,41 @@ mod tests {
             .await
             .expect("existing header must remain available");
         assert_eq!(header_after, header_before);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_vault_upload_failure_preserves_no_session_and_cleans_staging_and_local_files()
+    {
+        let _lock = ceremony_lock().await;
+        let temp = temp_dir();
+        let session = test_session_manager();
+        let cloud = UploadFailCloudTransport;
+        let vault_db_path = temp.path().join("vault.db");
+        let key_file_path = temp.path().join("key.bin");
+        let pending_path = staging::staging_directory()
+            .await
+            .expect("staging dir must exist")
+            .join(STAGING_FILE_NAME);
+        let _ = staging::remove_if_exists(&pending_path).await;
+        let request = CreateVaultRequest {
+            tier: Tier::Two,
+            password_bytes: TEST_PASSWORD,
+            target_key_file_path: Some(key_file_path.clone()),
+            vault_db_path: vault_db_path.clone(),
+            argon2_params: test_params(),
+            chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+            epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+        };
+
+        let result = create_vault(request, &session, &cloud).await;
+
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::VaultHeaderInvalid)
+        ));
+        assert_eq!(session.state().await, crate::auth::LifecycleState::NoSession);
+        assert!(!vault_db_path.exists());
+        assert!(!key_file_path.exists());
+        assert!(!tokio::fs::try_exists(&pending_path).await.unwrap_or(false));
     }
 }

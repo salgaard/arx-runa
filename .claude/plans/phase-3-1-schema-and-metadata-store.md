@@ -1,7 +1,7 @@
 ---
 title: "Phase 3.1 — SQLCipher Schema and MetadataStore Trait"
 created: "2026-04-18T00:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 3
 sub-phase: "3.1"
 design-document: "docs/architecture/designs/chunking-and-manifest/design.md"
@@ -332,3 +332,39 @@ Boundary cases from Step 2:
 ## 9. Handoff Notes for Implementer
 
 Working directory: `C:\Users\chris\source\repos\arx-runa`. Execution order: (1) governance sync G-1 + `/copilot-sync` (G-2), (2) Approach steps 1–7 (new storage code in dependency order), (3) Approach step 8 (retire Phase 2.4 stub and migrate ceremony SQL in the same commit — the schema replacement is all-or-nothing), (4) Approach step 9 tests. The plan is self-contained: all DDL, trait signatures, and struct shapes are inlined via **CS-001**–**CS-005** or anchored to exact design-doc line ranges. Traps: (a) `PRAGMA foreign_keys = ON` is per-connection — forgetting it silently defeats CASCADE in tests even though SQLite "appears to work"; (b) rusqlite 0.39 `RETURNING` requires a `query_row` call, not `execute`, to retrieve the value; (c) the `CHECK ((node_type = 'file' AND file_key_wrapped IS NOT NULL) OR (node_type = 'directory' AND file_key_wrapped IS NULL))` constraint fires on INSERT — fixture code that omits `file_key_wrapped` for files must generate a deterministic 72-byte blob; (d) run `cargo test --workspace --all-targets --all-features` (not plain `cargo test`) to exercise the `test-utils`-gated `MockMetadataStore`; (e) this sub-phase is tagged `Security Review — Required` by the parent roadmap but per user preference `security-reviewer` / `test-writer` agents are not invoked automatically — run them only if the user explicitly requests.
+
+## Implementation Log
+
+- **Date**: 2026-04-18T18:26:22.5628100+02:00
+- **Run ID**: `phase-3-1-schema-and-metadata-store-20260418-171006`
+- **Track**: `full`
+- **Branch**: `development`
+- **Execution mode**: rust-implementer delegated (default), with orchestrator fallback for targeted test expectation fixes and plan/run-state bookkeeping.
+
+| Approach step | Agent | Agent ID | Outcome |
+|---|---|---|---|
+| Governance sync (G-1, G-2) | orchestrator + copilot-sync | `copilot-sync` | Completed; `.claude/rules/storage.md` updated and instruction mirrors regenerated |
+| Steps 1–7 storage foundation | rust-implementer | `phase-3-1-storage-steps-1-7` | Completed |
+| Step 8 auth schema migration | rust-implementer | `phase-3-1-auth-step-8` | Completed |
+| Step 9 test expansion | test-writer | `phase-3-1-test-writer` | Completed (storage/auth tests extended) |
+| Remediation cycles (storage/auth) | rust-implementer | `phase-3-1-remediation-*` | Completed across cycles with scoped fixes |
+| Review/classification/solver cycles | rust/architecture/security/cross-shard + classifier/solver agents | `*cycle*` | Completed; unresolved out-of-scope findings deferred by plan |
+
+- **Files changed**: storage module foundation files (`error.rs`, `metadata_store.rs`, `schema.rs`, `sqlcipher.rs`, `mock.rs`, `validation.rs`, `types/*`, `mod.rs`), auth ceremony migration files (`create.rs`, `types.rs`, `change_password.rs`, `rotate_key_file.rs`, `mod.rs`, `test_support.rs`, `recover_vault.rs`, `recover_with_phrase.rs`), governance files (`.claude/rules/storage.md`, `.github/instructions/*.instructions.md`), and docs (`docs/architecture/designs/chunking-and-manifest/design.md`, `docs/architecture/designs/chunking-and-manifest/sub-phases/3.1-schema-and-metadata-store.md`).
+- **Test results**: `cargo test --workspace --all-targets --all-features` passed (`320 passed; 0 failed; 1 ignored` in lib target; workspace run successful).
+- **Clippy results**: `cargo clippy --workspace --all-targets --all-features -- -D warnings` passed cleanly.
+- **Rust review**: completed across cycles; storage actionable findings remediated; remaining auth workflow findings deferred by plan scope lock.
+- **Architecture review**: completed across cycles; storage/actionable integrity findings remediated; remaining auth architecture debt deferred.
+- **Security review**: completed across cycles; critical ceremony operation-guard issue remediated; remaining auth pending-sync semantics deferred by plan.
+- **Cross-shard review**: invoked 1 time; 2 findings (`CSR-001` remediated via storage invariant enforcement, `CSR-002` deferred by plan).
+- **Findings quality gate**: cumulative cycle tallies recorded during run; final disposition set: `ACTIONABLE_NOW=0`, `INTENTIONAL_DECISION=0`, `DEFERRED_BY_PLAN=6`, `INSUFFICIENT_EVIDENCE=0`.
+- **Finding overrides**: None.
+- **Design challenge outcomes**: challenge entries raised during cycles were rejected for this run and deferred (blob-name/newtype boundary and broader auth refactor topics); no accepted challenge required additional design-sync beyond completed design updates.
+- **Governance sync**: 2 planned actions completed; `.claude/rules/storage.md` edited; `/copilot-sync` completed and regenerated instruction mirrors.
+- **Sub-phase decisions sync**: `docs/architecture/designs/chunking-and-manifest/sub-phases/3.1-schema-and-metadata-store.md` updated with `Implementation Notes addendum` and `Implementation Decisions` (4 decisions).
+- **Deviations from plan**: additional in-scope storage hardening landed (schema integrity validation, chunk target/type and padding invariant enforcement, create/open metadata safeguards) to satisfy review findings discovered during execution.
+- **Documentation flagged**:  
+  - `docs/architecture/designs/chunking-and-manifest/sub-phases/3.1-schema-and-metadata-store.md` — append implementation addendum (completed).  
+  - `docs/architecture/designs/chunking-and-manifest/design.md` — sync any contract clarifications discovered during implementation (completed).  
+  - `docs/architecture/designs/chunking-and-manifest/diagrams/manifest-schema.md` — regenerate diagram after schema landing (flagged for follow-up in diagram workflow).
+- **Run state path**: `.claude/runs/phase-3-1-schema-and-metadata-store-20260418-171006/`

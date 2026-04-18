@@ -28,6 +28,7 @@
 - Canonical manifest tables are `nodes`, `chunks`, `manifest_meta`, and `pending_deletions` with UUID identifiers and uniqueness constraints `UNIQUE(node_id, chunk_index)` and `UNIQUE(blob_name)`.
 - `nodes.file_key_wrapped` is stored once per file; `chunks` stores `blob_name`, `chunk_index`, `size_padded`, and `blake3_checksum`.
 - `manifest_meta.chunk_size_bytes`, `manifest_meta.epoch_buffer_enabled`, and `manifest_meta.snapshot_counter` are canonical metadata keys consumed by later phases.
+- `manifest_meta` mutability policy: `schema_version`, `vault_id`, `snapshot_counter`, `chunk_size_bytes`, and `epoch_buffer_enabled` are immutable via `set_meta`; `snapshot_counter` advances only through `increment_snapshot_counter`.
 
 ### Invariant contract
 
@@ -35,6 +36,8 @@
 - Routing mode is stable per vault: with `epoch_buffer_enabled = false`, all files follow standalone chunk uploads; with `epoch_buffer_enabled = true`, files smaller than `chunk_size_bytes` are routed to epoch buffering while files `>= chunk_size_bytes` remain immediate standalone uploads.
 - Chunk cryptographic context is fixed: `AAD = file_id || chunk_index`; BLAKE3 verification occurs before decrypt.
 - Streaming invariant holds at most one chunk plaintext buffer in memory; node deletion cascades chunk-row deletion.
+- Hierarchy invariant: parent targets for insert/move must be directories, self-parent is forbidden, and move operations must not introduce cycles.
+- SQLCipher key handling invariant: metadata-open/create applies SQLCipher keys from protected wrappers (no by-value raw stack copies in the open/create/keying flow).
 - Cross-phase invariant reference: [docs/architecture/design-invariants.md](../../design-invariants.md).
 
 ### Dependency contract
@@ -491,6 +494,8 @@ trait MetadataStore: Send + Sync {
 
     /// Moves a node to a new parent directory. Updates modified_at.
     /// Pass None for new_parent_id to move to the root.
+    /// Returns ConstraintViolation when parent is not a directory, when parent
+    /// equals node_id, or when the move would create a cycle.
     async fn move_node(
         &self,
         node_id: Uuid,
@@ -512,6 +517,9 @@ trait MetadataStore: Send + Sync {
     async fn get_meta(&self, key: &str) -> Result<Option<String>, StorageError>;
 
     /// Sets manifest_meta value.
+    /// Returns ConstraintViolation for immutable keys:
+    /// schema_version, vault_id, snapshot_counter, chunk_size_bytes,
+    /// epoch_buffer_enabled.
     async fn set_meta(&self, key: &str, value: &str) -> Result<(), StorageError>;
 
     /// Increments and returns the new snapshot_counter.

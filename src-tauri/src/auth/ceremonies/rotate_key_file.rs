@@ -29,6 +29,7 @@ pub async fn rotate_key_file(
     vault_id: &VaultId,
 ) -> Result<(), AuthenticationError> {
     enforce_argon2_policy(&request.argon2_params)?;
+    let _operation_guard = session_manager.begin_operation();
 
     if vault_header.tier != 2 {
         return Err(AuthenticationError::VaultHeaderInvalid);
@@ -139,14 +140,16 @@ pub async fn rotate_key_file(
             let transaction_result = (|| -> Result<(), AuthenticationError> {
                 {
                     let mut stmt = conn
-                        .prepare("SELECT id, file_key_wrapped FROM nodes")
+                        .prepare(
+                            "SELECT node_id, file_key_wrapped FROM nodes WHERE file_key_wrapped IS NOT NULL AND node_id IS NOT NULL",
+                        )
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    let rows: Vec<(i64, Vec<u8>)> = stmt
+                    let rows: Vec<(String, Vec<u8>)> = stmt
                         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
                         .map_err(|_| AuthenticationError::InvalidCredentials)?
                         .collect::<Result<_, _>>()
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    for (row_id, wrapped_blob) in rows {
+                    for (node_id, wrapped_blob) in rows {
                         let wrapped_array: [u8; 72] = wrapped_blob
                             .try_into()
                             .map_err(|_| AuthenticationError::InvalidCredentials)?;
@@ -156,8 +159,8 @@ pub async fn rotate_key_file(
                         let rewrapped = wrap_file_key(&file_key, &new_kek)
                             .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
                         conn.execute(
-                            "UPDATE nodes SET file_key_wrapped = ? WHERE id = ?",
-                            params![rewrapped.0.to_vec(), row_id],
+                            "UPDATE nodes SET file_key_wrapped = ? WHERE node_id = ?",
+                            params![rewrapped.0.to_vec(), node_id],
                         )
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
                     }
@@ -234,6 +237,9 @@ pub async fn rotate_key_file(
     let staging_dir = staging::staging_directory().await?;
     let staging_path = staging_dir.join(STAGING_FILE_NAME);
     staging::write_owner_only(&staging_path, &json_bytes).await?;
+    session_manager
+        .swap_active_session(new_session_keys)
+        .await?;
     let upload_result = cloud_transport
         .upload_blob(&vault_header_blob_name(), &json_bytes)
         .await;
@@ -241,10 +247,6 @@ pub async fn rotate_key_file(
         return Err(AuthenticationError::VaultHeaderInvalid);
     }
     best_effort_cleanup_staging(&staging_path).await;
-
-    session_manager
-        .swap_active_session(new_session_keys)
-        .await?;
 
     drop(current_master_key);
     drop(new_master_key);
@@ -260,6 +262,7 @@ mod tests {
     use super::super::helpers::*;
     use super::super::test_support::*;
     use super::*;
+    use async_trait::async_trait;
     use base64::Engine;
     use bip39::{Language, Mnemonic};
     use rusqlite::params;
@@ -270,6 +273,7 @@ mod tests {
     use crate::auth::kdf::derive_master_key_into;
     use crate::auth::key_source::MockKeySource;
     use crate::auth::session::{SessionKeys, SessionManager};
+    use crate::auth::staging;
     use crate::auth::{
         CreateVaultRequest, SetupRecoveryRequest, Tier, create_vault, setup_recovery,
     };
@@ -278,7 +282,29 @@ mod tests {
     };
     use crate::storage::cloud::CloudTransport;
     use crate::storage::cloud::mock::MockCloudTransport;
+    use crate::storage::cloud::CloudTransportError;
     use crate::storage::cloud::vault_header::VaultHeader;
+
+    #[derive(Debug, Default)]
+    struct UploadFailCloudTransport;
+
+    #[async_trait]
+    impl CloudTransport for UploadFailCloudTransport {
+        async fn upload_blob(
+            &self,
+            _name: &crate::storage::types::BlobName,
+            _bytes: &[u8],
+        ) -> Result<(), CloudTransportError> {
+            Err(CloudTransportError::Other("forced upload failure".to_string()))
+        }
+
+        async fn download_blob(
+            &self,
+            _name: &crate::storage::types::BlobName,
+        ) -> Result<Vec<u8>, CloudTransportError> {
+            Err(CloudTransportError::NotFound)
+        }
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_rotate_key_file_preserves_x25519_public_key_bytes() {
@@ -543,5 +569,137 @@ mod tests {
         ));
         let preserved = std::fs::read(&existing_target).expect("target file must remain readable");
         assert_eq!(preserved, existing_content);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_rotate_key_file_upload_failure_keeps_new_local_keys_and_returns_vault_header_invalid(
+    ) {
+        let _lock = ceremony_lock().await;
+        let mut vault = create_tier_two_vault().await;
+        let failing_cloud = UploadFailCloudTransport;
+        let old_salt = vault.header.argon2_salt.clone();
+
+        let old_key_bytes: [u8; 32] = std::fs::read(&vault.key_file_path)
+            .expect("key file must exist")
+            .try_into()
+            .expect("key file must be 32 bytes");
+        let old_source = MockKeySource::new(old_key_bytes);
+        let new_key_file_path = vault._temp.path().join("rotated-upload-fail.bin");
+
+        let pending_path = staging::staging_directory()
+            .await
+            .expect("staging dir must exist")
+            .join(STAGING_FILE_NAME);
+        let _ = staging::remove_if_exists(&pending_path).await;
+
+        let request = RotateKeyFileRequest {
+            password_bytes: TEST_PASSWORD,
+            current_key_source: &old_source,
+            target_new_key_file_path: new_key_file_path.clone(),
+            recovery_phrase: None,
+            argon2_params: test_params(),
+            vault_db_path: vault.vault_db_path.clone(),
+        };
+        let result = rotate_key_file(
+            request,
+            &vault.session,
+            &failing_cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::VaultHeaderInvalid)
+        ));
+        assert_ne!(vault.header.argon2_salt, old_salt);
+
+        let new_key_file: [u8; 32] = std::fs::read(&new_key_file_path)
+            .expect("new key file must persist after local success")
+            .try_into()
+            .expect("new key file must be 32 bytes");
+        let new_key_file_z: Zeroizing<[u8; 32]> = Zeroizing::new(new_key_file);
+        let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
+        let new_params = argon2_params_from_json(&vault.header.argon2_params);
+        let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+        derive_master_key_into(
+            TEST_PASSWORD,
+            Some(&new_key_file_z),
+            &new_salt,
+            &new_params,
+            &mut new_master,
+        )
+        .unwrap();
+        let expected_keys = SessionKeys::from_master_key_bytes(&new_master).unwrap();
+        let expected_sqlcipher: [u8; 32] = *expected_keys.sqlcipher_key.expose();
+        let session_sqlcipher = vault
+            .session
+            .with_sqlcipher_key(|key| *key)
+            .await
+            .expect("session must remain active with rotated keys");
+        assert_eq!(session_sqlcipher, expected_sqlcipher);
+
+        let pending_exists = tokio::fs::try_exists(&pending_path)
+            .await
+            .expect("staging probe must succeed");
+        assert!(pending_exists);
+        let _ = staging::remove_if_exists(&pending_path).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_rotate_key_file_ignores_nodes_row_with_null_node_id_during_rewrap() {
+        let _lock = ceremony_lock().await;
+        let mut vault = create_tier_two_vault().await;
+
+        let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
+        let current_params = argon2_params_from_json(&vault.header.argon2_params);
+        let current_key_file = std::fs::read(&vault.key_file_path).unwrap();
+        let current_key_file_arr: [u8; 32] = current_key_file.as_slice().try_into().unwrap();
+        let current_key_file_z: Zeroizing<[u8; 32]> = Zeroizing::new(current_key_file_arr);
+        let mut current_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+        derive_master_key_into(
+            TEST_PASSWORD,
+            Some(&current_key_file_z),
+            &current_salt,
+            &current_params,
+            &mut current_master,
+        )
+        .unwrap();
+        let current_keys = SessionKeys::from_master_key_bytes(&current_master).unwrap();
+        let current_kek: [u8; 32] = *current_keys.key_encryption_key.expose();
+        let current_sqlcipher: [u8; 32] = *current_keys.sqlcipher_key.expose();
+
+        let wrapped = wrap_with_kek_bytes(&current_kek, &[0x44u8; 32]).unwrap();
+        let wrapped_vec = wrapped.0.to_vec();
+        let vault_db_path = vault.vault_db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = open_sqlcipher(&vault_db_path, &current_sqlcipher).unwrap();
+            conn.execute(
+                "INSERT INTO nodes (node_id, parent_id, node_type, name, created_at, modified_at, size_bytes, file_key_wrapped) VALUES (NULL, NULL, 'file', 'malformed', 0, 0, 0, ?)",
+                params![wrapped_vec],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+        let old_source = MockKeySource::new(current_key_file_arr);
+        let request = RotateKeyFileRequest {
+            password_bytes: TEST_PASSWORD,
+            current_key_source: &old_source,
+            target_new_key_file_path: vault._temp.path().join("rotated-null-row.bin"),
+            recovery_phrase: None,
+            argon2_params: test_params(),
+            vault_db_path: vault.vault_db_path.clone(),
+        };
+        let result = rotate_key_file(
+            request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await;
+        assert!(result.is_ok());
     }
 }

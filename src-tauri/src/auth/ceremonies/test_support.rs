@@ -60,6 +60,8 @@ pub(super) async fn create_tier_one_vault() -> TierOneVault {
         target_key_file_path: None,
         vault_db_path: vault_db_path.clone(),
         argon2_params: test_params(),
+        chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+        epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
     };
     let vault_id = create_vault(request, &session, &cloud)
         .await
@@ -102,6 +104,8 @@ pub(super) async fn create_tier_two_vault() -> TierTwoVault {
         target_key_file_path: Some(key_file_path.clone()),
         vault_db_path: vault_db_path.clone(),
         argon2_params: test_params(),
+        chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+        epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
     };
     let vault_id = create_vault(request, &session, &cloud)
         .await

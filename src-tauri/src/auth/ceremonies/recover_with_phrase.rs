@@ -146,6 +146,8 @@ mod tests {
             target_key_file_path: None,
             vault_db_path: vault_db_path.clone(),
             argon2_params: Argon2Params::DEFAULT,
+            chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+            epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };
         let vault_id = create_vault(request, &session, &cloud)
             .await
@@ -353,6 +355,8 @@ mod tests {
             target_key_file_path: None,
             vault_db_path: vault_db_path_b.clone(),
             argon2_params: Argon2Params::DEFAULT,
+            chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+            epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };
         let _vault_b_id = create_vault(request, &session_b, &cloud_b)
             .await
@@ -396,6 +400,8 @@ mod tests {
             target_key_file_path: None,
             vault_db_path: seed_temp.path().join("seed.db"),
             argon2_params: test_params(),
+            chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+            epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };
         create_vault(seed_request, &active_session, &seed_cloud)
             .await

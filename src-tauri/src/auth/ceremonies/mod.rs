@@ -31,19 +31,6 @@ pub(super) const VAULT_HEADER_BLOB_NAME: &str = "vault-header.json";
 pub(super) const MANIFEST_BACKUP_BLOB_NAME: &str = "manifest-backup.enc";
 /// Filename used for the pre-upload staging file.
 pub(super) const STAGING_FILE_NAME: &str = "pending-vault-header.json";
-/// SQL schema applied when a new vault database is created.
-pub(super) const VAULT_STUB_SCHEMA: &str = "
-CREATE TABLE _phase_stub (id INTEGER PRIMARY KEY);
-CREATE TABLE nodes (
-    id INTEGER PRIMARY KEY,
-    file_key_wrapped BLOB NOT NULL
-);
-CREATE TABLE vault_identity (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    public_key BLOB NOT NULL UNIQUE,
-    wrapped_private_key BLOB NOT NULL
-);
-";
 
 /// Returns the cloud blob name for the vault header object.
 pub(super) fn vault_header_blob_name() -> BlobName {

@@ -10,6 +10,7 @@ paths:
 ## Manifest (SQLCipher)
 - Keyed with `sqlcipher_key` — never `master_key`, never unencrypted
 - Tables: `nodes`, `chunks`, `manifest_meta` — see design docs for schema
+- Canonical tables: `nodes`, `chunks`, `manifest_meta`, `pending_deletions`. Forward-declared: `destination_sessions` (Phase 4), `contacts` / `shares` / `received_shares` (Phase 5). See design docs for DDL.
 - `ON DELETE CASCADE` for node → chunks
 
 ## Chunking
@@ -38,7 +39,7 @@ paths:
 - Non-media types and unsupported containers pass through unmodified
 
 ## Deletion
-- Transaction order: read blob names, delete node row (CASCADE removes chunk rows), commit, then delete blobs
+- Transaction order: read blob names, enqueue into `pending_deletions` inside the same transaction, delete node row (CASCADE removes chunk rows), commit, then delete local staging blobs
 - If blob deletion is interrupted, orphan encrypted blobs are cleaned on startup
 
 ## I/O
@@ -47,3 +48,4 @@ paths:
 
 ## Traits
 - `MetadataStore` for manifest, `CloudTransport` for Rclone
+- `MetadataStore` Phase 3.1 surface: `insert_node`, `insert_chunks`, `get_node`, `list_children`, `get_chunks`, `rename_node`, `move_node`, `delete_node`, `list_pending_deletions`, `mark_deletion_complete`, `get_meta`, `set_meta`, `increment_snapshot_counter`

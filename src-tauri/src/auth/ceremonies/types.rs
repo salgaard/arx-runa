@@ -37,6 +37,36 @@ pub struct CreateVaultRequest<'a> {
     pub vault_db_path: PathBuf,
     /// Argon2id cost parameters.
     pub argon2_params: Argon2Params,
+    /// Immutable chunk size configured for this vault.
+    pub chunk_size_bytes: u64,
+    /// Enables epoch buffer routing for sub-chunk files when true.
+    pub epoch_buffer_enabled: bool,
+}
+
+impl<'a> CreateVaultRequest<'a> {
+    /// Default per-vault chunk size (4 MiB).
+    pub const DEFAULT_CHUNK_SIZE_BYTES: u64 = 4 * 1024 * 1024;
+    /// Default epoch buffer flag.
+    pub const DEFAULT_EPOCH_BUFFER_ENABLED: bool = false;
+
+    /// Creates a request using default chunk and epoch-buffer settings.
+    pub fn with_defaults(
+        tier: Tier,
+        password_bytes: &'a [u8],
+        target_key_file_path: Option<PathBuf>,
+        vault_db_path: PathBuf,
+        argon2_params: Argon2Params,
+    ) -> Self {
+        Self {
+            tier,
+            password_bytes,
+            target_key_file_path,
+            vault_db_path,
+            argon2_params,
+            chunk_size_bytes: Self::DEFAULT_CHUNK_SIZE_BYTES,
+            epoch_buffer_enabled: Self::DEFAULT_EPOCH_BUFFER_ENABLED,
+        }
+    }
 }
 
 /// Request payload for [`change_password`].
