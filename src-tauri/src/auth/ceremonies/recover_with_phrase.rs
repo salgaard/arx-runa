@@ -3,9 +3,10 @@ use zeroize::Zeroizing;
 
 use super::helpers::*;
 use super::types::RecoverWithPhraseRequest;
-use super::{manifest_backup_blob_name, vault_header_blob_name};
+use super::{MANIFEST_BACKUP_BLOB_NAME, VAULT_HEADER_BLOB_NAME};
 use crate::auth::error::AuthenticationError;
 use crate::auth::session::{SessionKeys, SessionManager};
+use crate::auth::staging;
 use crate::crypto::{VaultId, WrappedMasterKey, unwrap_master_key_from_recovery};
 use crate::storage::cloud::CloudTransport;
 use crate::storage::cloud::manifest_backup::decrypt_manifest_backup;
@@ -24,10 +25,29 @@ pub async fn recover_with_phrase(
     let canonical = canonicalize_phrase(&mnemonic);
     precheck_recovery_destination(&request.vault_db_path).await?;
 
-    let header_bytes = cloud_transport
-        .download_blob(&vault_header_blob_name())
+    let staging_dir = staging::staging_directory().await?;
+    let header_download_path = staging_dir.join("recover-with-phrase-header.json");
+    let backup_download_path = staging_dir.join("recover-with-phrase-manifest-backup.enc");
+    let _ = staging::remove_if_exists(&header_download_path).await;
+    let _ = staging::remove_if_exists(&backup_download_path).await;
+
+    staging::write_owner_only(&header_download_path, b"").await?;
+    if cloud_transport
+        .download_blob(VAULT_HEADER_BLOB_NAME, &header_download_path)
         .await
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+        .is_err()
+    {
+        let _ = staging::remove_if_exists(&header_download_path).await;
+        return Err(AuthenticationError::VaultHeaderInvalid);
+    }
+    let header_bytes = match tokio::fs::read(&header_download_path).await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            let _ = staging::remove_if_exists(&header_download_path).await;
+            return Err(AuthenticationError::VaultHeaderInvalid);
+        }
+    };
+    let _ = staging::remove_if_exists(&header_download_path).await;
     let header: VaultHeader = serde_json::from_slice(&header_bytes)
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     header
@@ -87,10 +107,23 @@ pub async fn recover_with_phrase(
     let session_keys = SessionKeys::from_master_key_bytes(&master_key)?;
     let sqlcipher_key = sqlcipher_key_from_array(session_keys.sqlcipher_key.expose());
 
-    let backup_wire = cloud_transport
-        .download_blob(&manifest_backup_blob_name())
+    staging::write_owner_only(&backup_download_path, b"").await?;
+    if cloud_transport
+        .download_blob(MANIFEST_BACKUP_BLOB_NAME, &backup_download_path)
         .await
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+        .is_err()
+    {
+        let _ = staging::remove_if_exists(&backup_download_path).await;
+        return Err(AuthenticationError::VaultHeaderInvalid);
+    }
+    let backup_wire = match tokio::fs::read(&backup_download_path).await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            let _ = staging::remove_if_exists(&backup_download_path).await;
+            return Err(AuthenticationError::VaultHeaderInvalid);
+        }
+    };
+    let _ = staging::remove_if_exists(&backup_download_path).await;
     let plaintext = decrypt_manifest_backup(&backup_wire, session_keys.manifest_key.expose())
         .map_err(|_| AuthenticationError::InvalidCredentials)?;
 
@@ -152,10 +185,14 @@ mod tests {
         let vault_id = create_vault(request, &session, &cloud)
             .await
             .expect("create_vault with default Argon2 params must succeed");
-        let header_bytes = cloud
-            .download_blob(&vault_header_blob_name())
+        let header_download_path = temp.path().join("recover-with-phrase-header.json");
+        cloud
+            .download_blob(VAULT_HEADER_BLOB_NAME, &header_download_path)
             .await
             .expect("header must be present after create_vault");
+        let header_bytes = tokio::fs::read(&header_download_path)
+            .await
+            .expect("header must be readable");
         let header: VaultHeader =
             serde_json::from_slice(&header_bytes).expect("header must deserialize");
         TierOneVault {
@@ -282,18 +319,36 @@ mod tests {
         let _lock = ceremony_lock().await;
         let mut vault = create_tier_one_vault_with_default_params().await;
         let phrase = add_recovery_slot_with_default_params(&mut vault).await;
-        let header_bytes = vault
+        vault
             .cloud
-            .download_blob(&vault_header_blob_name())
+            .download_blob(
+                VAULT_HEADER_BLOB_NAME,
+                &vault
+                    ._temp
+                    .path()
+                    .join("recover-with-phrase-floor-header.json"),
+            )
             .await
             .expect("header must be present");
+        let header_bytes = std::fs::read(
+            vault
+                ._temp
+                .path()
+                .join("recover-with-phrase-floor-header.json"),
+        )
+        .unwrap();
         let mut header: VaultHeader =
             serde_json::from_slice(&header_bytes).expect("header must deserialize");
         header.recovery_slots[0].argon2_params.time_cost = 1;
         let updated_header = serde_json::to_vec_pretty(&header).expect("header must serialize");
+        let updated_header_path = vault
+            ._temp
+            .path()
+            .join("recover-with-phrase-floor-header-updated.json");
+        std::fs::write(&updated_header_path, &updated_header).expect("header file must be written");
         vault
             .cloud
-            .upload_blob(&vault_header_blob_name(), &updated_header)
+            .upload_blob(&updated_header_path, VAULT_HEADER_BLOB_NAME)
             .await
             .expect("header upload must succeed");
         vault.session.lock().await;
@@ -361,15 +416,18 @@ mod tests {
         let _vault_b_id = create_vault(request, &session_b, &cloud_b)
             .await
             .expect("create_vault b must succeed");
-        let header_bytes_b = cloud_b
-            .download_blob(&vault_header_blob_name())
+        cloud_b
+            .download_blob(VAULT_HEADER_BLOB_NAME, &temp_b.path().join("header-b.json"))
             .await
             .unwrap();
+        let header_bytes_b = std::fs::read(temp_b.path().join("header-b.json")).unwrap();
         let mut header_b: VaultHeader = serde_json::from_slice(&header_bytes_b).unwrap();
         header_b.recovery_slots.push(slot_a);
         let updated_bytes = serde_json::to_vec_pretty(&header_b).unwrap();
+        let updated_header_b_path = temp_b.path().join("header-b-updated.json");
+        std::fs::write(&updated_header_b_path, &updated_bytes).unwrap();
         cloud_b
-            .upload_blob(&vault_header_blob_name(), &updated_bytes)
+            .upload_blob(&updated_header_b_path, VAULT_HEADER_BLOB_NAME)
             .await
             .unwrap();
         session_b.lock().await;
@@ -482,11 +540,24 @@ mod tests {
     {
         let _lock = ceremony_lock().await;
         let vault = create_tier_one_vault_with_default_params().await;
-        let header_bytes = vault
+        vault
             .cloud
-            .download_blob(&vault_header_blob_name())
+            .download_blob(
+                VAULT_HEADER_BLOB_NAME,
+                &vault
+                    ._temp
+                    .path()
+                    .join("recover-with-phrase-unknown-method-header.json"),
+            )
             .await
             .expect("header must be present");
+        let header_bytes = std::fs::read(
+            vault
+                ._temp
+                .path()
+                .join("recover-with-phrase-unknown-method-header.json"),
+        )
+        .unwrap();
         let mut header: VaultHeader =
             serde_json::from_slice(&header_bytes).expect("header must deserialize");
         header
@@ -502,9 +573,14 @@ mod tests {
                 wrapped_master_key: base64::engine::general_purpose::STANDARD.encode([0x34u8; 72]),
             });
         let updated_header = serde_json::to_vec_pretty(&header).expect("header must serialize");
+        let updated_header_path = vault
+            ._temp
+            .path()
+            .join("recover-with-phrase-unknown-method-header-updated.json");
+        std::fs::write(&updated_header_path, &updated_header).expect("header file must be written");
         vault
             .cloud
-            .upload_blob(&vault_header_blob_name(), &updated_header)
+            .upload_blob(&updated_header_path, VAULT_HEADER_BLOB_NAME)
             .await
             .expect("header upload must succeed");
 

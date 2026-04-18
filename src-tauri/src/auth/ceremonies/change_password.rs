@@ -4,7 +4,7 @@ use zeroize::Zeroizing;
 
 use super::helpers::*;
 use super::types::ChangePasswordRequest;
-use super::{STAGING_FILE_NAME, vault_header_blob_name};
+use super::{STAGING_FILE_NAME, VAULT_HEADER_BLOB_NAME};
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
@@ -229,7 +229,7 @@ pub async fn change_password(
         .swap_active_session(new_session_keys)
         .await?;
     let upload_result = cloud_transport
-        .upload_blob(&vault_header_blob_name(), &json_bytes)
+        .upload_blob(&staging_path, VAULT_HEADER_BLOB_NAME)
         .await;
     if upload_result.is_err() {
         return Err(AuthenticationError::VaultHeaderInvalid);
@@ -279,8 +279,8 @@ mod tests {
     impl CloudTransport for UploadFailCloudTransport {
         async fn upload_blob(
             &self,
-            _name: &crate::storage::types::BlobName,
-            _bytes: &[u8],
+            _local_path: &std::path::Path,
+            _remote_path: &str,
         ) -> Result<(), CloudTransportError> {
             Err(CloudTransportError::Other(
                 "forced upload failure".to_string(),
@@ -289,9 +289,21 @@ mod tests {
 
         async fn download_blob(
             &self,
-            _name: &crate::storage::types::BlobName,
-        ) -> Result<Vec<u8>, CloudTransportError> {
+            _remote_path: &str,
+            _local_path: &std::path::Path,
+        ) -> Result<(), CloudTransportError> {
             Err(CloudTransportError::NotFound)
+        }
+
+        async fn delete_blob(&self, _remote_path: &str) -> Result<(), CloudTransportError> {
+            Ok(())
+        }
+
+        async fn list_blobs(
+            &self,
+            _remote_prefix: &str,
+        ) -> Result<Vec<String>, CloudTransportError> {
+            Ok(Vec::new())
         }
     }
 

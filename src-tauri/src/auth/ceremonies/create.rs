@@ -7,7 +7,7 @@ use zeroize::Zeroizing;
 
 use super::helpers::*;
 use super::types::{CreateVaultRequest, Tier};
-use super::{STAGING_FILE_NAME, vault_header_blob_name};
+use super::{STAGING_FILE_NAME, VAULT_HEADER_BLOB_NAME};
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
@@ -16,6 +16,7 @@ use crate::crypto::VaultId;
 use crate::storage::cloud::CloudTransport;
 use crate::storage::cloud::vault_header::VaultHeader;
 use crate::storage::schema::{apply_canonical_schema, seed_manifest_meta};
+use std::path::Path;
 
 /// Creates a new vault: derives keys, creates the SQLCipher DB, builds and
 /// uploads the vault header, and installs the resulting session.
@@ -167,22 +168,33 @@ pub async fn create_vault(
         serde_json::to_vec_pretty(&header).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     let staging_dir = staging::staging_directory().await?;
     let staging_path = staging_dir.join(STAGING_FILE_NAME);
-    staging::write_owner_only(&staging_path, &json_bytes).await?;
+    if staging::write_owner_only(&staging_path, &json_bytes)
+        .await
+        .is_err()
+    {
+        rollback_after_header_publish_failure(
+            &staging_path,
+            None,
+            request.target_key_file_path.as_deref(),
+            &request.vault_db_path,
+            "staging cleanup failed after staging write failure",
+        )
+        .await;
+        return Err(AuthenticationError::VaultHeaderInvalid);
+    }
     let upload_result = cloud_transport
-        .upload_blob(&vault_header_blob_name(), &json_bytes)
+        .upload_blob(&staging_path, VAULT_HEADER_BLOB_NAME)
         .await;
     let cleanup_result = staging::remove_if_exists(&staging_path).await;
     if upload_result.is_err() {
-        if let Err(cleanup_error) = cleanup_result {
-            tracing::warn!(
-                ?cleanup_error,
-                "staging cleanup failed after upload failure"
-            );
-        }
-        if let Some(key_file_path) = request.target_key_file_path.as_ref() {
-            remove_file_if_exists(key_file_path).await;
-        }
-        remove_file_if_exists(&request.vault_db_path).await;
+        rollback_after_header_publish_failure(
+            &staging_path,
+            Some(cleanup_result),
+            request.target_key_file_path.as_deref(),
+            &request.vault_db_path,
+            "staging cleanup failed after upload failure",
+        )
+        .await;
         return Err(AuthenticationError::VaultHeaderInvalid);
     }
     if let Err(cleanup_error) = cleanup_result {
@@ -202,6 +214,26 @@ pub async fn create_vault(
     drop(key_file_bytes);
 
     Ok(vault_id)
+}
+
+async fn rollback_after_header_publish_failure(
+    staging_path: &Path,
+    staging_cleanup_result: Option<Result<(), AuthenticationError>>,
+    target_key_file_path: Option<&Path>,
+    vault_db_path: &Path,
+    staging_cleanup_warning_message: &'static str,
+) {
+    let cleanup_result = match staging_cleanup_result {
+        Some(result) => result,
+        None => staging::remove_if_exists(staging_path).await,
+    };
+    if let Err(cleanup_error) = cleanup_result {
+        tracing::warn!(?cleanup_error, staging_cleanup_warning_message);
+    }
+    if let Some(key_file_path) = target_key_file_path {
+        remove_file_if_exists(key_file_path).await;
+    }
+    remove_file_if_exists(vault_db_path).await;
 }
 
 #[cfg(test)]
@@ -239,8 +271,8 @@ mod tests {
     impl CloudTransport for UploadFailCloudTransport {
         async fn upload_blob(
             &self,
-            _name: &crate::storage::types::BlobName,
-            _bytes: &[u8],
+            _local_path: &std::path::Path,
+            _remote_path: &str,
         ) -> Result<(), CloudTransportError> {
             Err(CloudTransportError::Other(
                 "forced upload failure".to_string(),
@@ -249,9 +281,21 @@ mod tests {
 
         async fn download_blob(
             &self,
-            _name: &crate::storage::types::BlobName,
-        ) -> Result<Vec<u8>, CloudTransportError> {
+            _remote_path: &str,
+            _local_path: &std::path::Path,
+        ) -> Result<(), CloudTransportError> {
             Err(CloudTransportError::NotFound)
+        }
+
+        async fn delete_blob(&self, _remote_path: &str) -> Result<(), CloudTransportError> {
+            Ok(())
+        }
+
+        async fn list_blobs(
+            &self,
+            _remote_prefix: &str,
+        ) -> Result<Vec<String>, CloudTransportError> {
+            Ok(Vec::new())
         }
     }
 
@@ -377,11 +421,17 @@ mod tests {
         let temp = temp_dir();
         let new_vault_db_path = temp.path().join("new-vault.db");
         let new_key_file_path = temp.path().join("new-key.bin");
-        let header_before = existing_vault
+        existing_vault
             .cloud
-            .download_blob(&vault_header_blob_name())
+            .download_blob(
+                VAULT_HEADER_BLOB_NAME,
+                &temp.path().join("header-before.json"),
+            )
             .await
             .expect("existing header must be available");
+        let header_before = tokio::fs::read(temp.path().join("header-before.json"))
+            .await
+            .expect("existing header bytes must be readable");
         let request = CreateVaultRequest {
             tier: Tier::Two,
             password_bytes: TEST_PASSWORD,
@@ -400,11 +450,17 @@ mod tests {
         ));
         assert!(!new_vault_db_path.exists());
         assert!(!new_key_file_path.exists());
-        let header_after = existing_vault
+        existing_vault
             .cloud
-            .download_blob(&vault_header_blob_name())
+            .download_blob(
+                VAULT_HEADER_BLOB_NAME,
+                &temp.path().join("header-after.json"),
+            )
             .await
             .expect("existing header must remain available");
+        let header_after = tokio::fs::read(temp.path().join("header-after.json"))
+            .await
+            .expect("existing header bytes must be readable");
         assert_eq!(header_after, header_before);
     }
 
@@ -444,6 +500,78 @@ mod tests {
         );
         assert!(!vault_db_path.exists());
         assert!(!key_file_path.exists());
+        assert!(!tokio::fs::try_exists(&pending_path).await.unwrap_or(false));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_vault_staging_write_failure_preserves_no_session_and_cleans_local_files() {
+        let _lock = ceremony_lock().await;
+        let temp = temp_dir();
+        let session = test_session_manager();
+        let cloud = MockCloudTransport::new();
+        let vault_db_path = temp.path().join("vault.db");
+        let key_file_path = temp.path().join("key.bin");
+        let pending_path = staging::staging_directory()
+            .await
+            .expect("staging dir must exist")
+            .join(STAGING_FILE_NAME);
+        let _ = staging::remove_if_exists(&pending_path).await;
+        let _ = tokio::fs::remove_dir_all(&pending_path).await;
+        tokio::fs::create_dir_all(&pending_path)
+            .await
+            .expect("directory at staging file path must be creatable");
+        let request = CreateVaultRequest {
+            tier: Tier::Two,
+            password_bytes: TEST_PASSWORD,
+            target_key_file_path: Some(key_file_path.clone()),
+            vault_db_path: vault_db_path.clone(),
+            argon2_params: test_params(),
+            chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+            epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+        };
+
+        let result = create_vault(request, &session, &cloud).await;
+
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::VaultHeaderInvalid)
+        ));
+        assert_eq!(
+            session.state().await,
+            crate::auth::LifecycleState::NoSession
+        );
+        assert!(!vault_db_path.exists());
+        assert!(!key_file_path.exists());
+        tokio::fs::remove_dir_all(&pending_path)
+            .await
+            .expect("directory at staging path must be removable");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_vault_success_cleans_pending_header_staging_file() {
+        let _lock = ceremony_lock().await;
+        let temp = temp_dir();
+        let session = test_session_manager();
+        let cloud = MockCloudTransport::new();
+        let vault_db_path = temp.path().join("vault-success.db");
+        let pending_path = staging::staging_directory()
+            .await
+            .expect("staging dir must exist")
+            .join(STAGING_FILE_NAME);
+        let _ = staging::remove_if_exists(&pending_path).await;
+        let request = CreateVaultRequest {
+            tier: Tier::One,
+            password_bytes: TEST_PASSWORD,
+            target_key_file_path: None,
+            vault_db_path,
+            argon2_params: test_params(),
+            chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+            epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+        };
+
+        let result = create_vault(request, &session, &cloud).await;
+
+        assert!(result.is_ok());
         assert!(!tokio::fs::try_exists(&pending_path).await.unwrap_or(false));
     }
 }

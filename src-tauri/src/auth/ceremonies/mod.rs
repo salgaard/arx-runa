@@ -11,8 +11,6 @@
 //! function body and zeroed at end-of-scope. No struct outside this module
 //! carries a `master_key` or `MasterKey` field.
 
-use crate::storage::types::BlobName;
-
 mod change_password;
 mod create;
 mod helpers;
@@ -31,16 +29,6 @@ pub(super) const VAULT_HEADER_BLOB_NAME: &str = "vault-header.json";
 pub(super) const MANIFEST_BACKUP_BLOB_NAME: &str = "manifest-backup.enc";
 /// Filename used for the pre-upload staging file.
 pub(super) const STAGING_FILE_NAME: &str = "pending-vault-header.json";
-
-/// Returns the cloud blob name for the vault header object.
-pub(super) fn vault_header_blob_name() -> BlobName {
-    BlobName::from(VAULT_HEADER_BLOB_NAME)
-}
-
-/// Returns the cloud blob name for the manifest backup object.
-pub(super) fn manifest_backup_blob_name() -> BlobName {
-    BlobName::from(MANIFEST_BACKUP_BLOB_NAME)
-}
 
 pub use change_password::change_password;
 pub use create::create_vault;

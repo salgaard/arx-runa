@@ -17,6 +17,7 @@ pub mod vault_ops;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
 
+pub use cloud::{CloudEndpoint, CloudTransport, CloudTransportError};
 pub use error::StorageError;
 pub use metadata_store::MetadataStore;
 pub use pipeline::{decrypt_file, encrypt_file};

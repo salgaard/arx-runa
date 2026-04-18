@@ -8,6 +8,7 @@ use super::*;
 use crate::auth::Argon2Params;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
+use crate::auth::staging;
 use crate::crypto::VaultId;
 use crate::storage::cloud::CloudTransport;
 use crate::storage::cloud::manifest_backup::encrypt_manifest_backup;
@@ -66,10 +67,12 @@ pub(super) async fn create_tier_one_vault() -> TierOneVault {
     let vault_id = create_vault(request, &session, &cloud)
         .await
         .expect("create_vault tier 1 must succeed");
-    let header_bytes = cloud
-        .download_blob(&vault_header_blob_name())
+    let header_download_path = temp.path().join("test-support-tier1-header.json");
+    cloud
+        .download_blob(VAULT_HEADER_BLOB_NAME, &header_download_path)
         .await
         .expect("header must be present after create_vault");
+    let header_bytes = std::fs::read(header_download_path).expect("header must be readable");
     let header: VaultHeader =
         serde_json::from_slice(&header_bytes).expect("header must deserialize");
     TierOneVault {
@@ -110,10 +113,12 @@ pub(super) async fn create_tier_two_vault() -> TierTwoVault {
     let vault_id = create_vault(request, &session, &cloud)
         .await
         .expect("create_vault tier 2 must succeed");
-    let header_bytes = cloud
-        .download_blob(&vault_header_blob_name())
+    let header_download_path = temp.path().join("test-support-tier2-header.json");
+    cloud
+        .download_blob(VAULT_HEADER_BLOB_NAME, &header_download_path)
         .await
         .expect("header must be present after create_vault");
+    let header_bytes = std::fs::read(header_download_path).expect("header must be readable");
     let header: VaultHeader =
         serde_json::from_slice(&header_bytes).expect("header must deserialize");
     TierTwoVault {
@@ -163,9 +168,15 @@ pub(super) async fn upload_manifest_backup_payload_for(vault: &TierOneVault, pay
     let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
     let manifest_key: [u8; 32] = *keys.manifest_key.expose();
     let wire = encrypt_manifest_backup(payload.to_vec(), &manifest_key).unwrap();
-    vault
-        .cloud
-        .upload_blob(&manifest_backup_blob_name(), &wire)
+    let staging_dir = staging::staging_directory().await.unwrap();
+    let upload_path = staging_dir.join("test-support-manifest-backup.enc");
+    staging::write_owner_only(&upload_path, &wire)
         .await
         .unwrap();
+    vault
+        .cloud
+        .upload_blob(&upload_path, MANIFEST_BACKUP_BLOB_NAME)
+        .await
+        .unwrap();
+    let _ = staging::remove_if_exists(&upload_path).await;
 }

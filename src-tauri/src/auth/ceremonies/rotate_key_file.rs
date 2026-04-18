@@ -4,7 +4,7 @@ use zeroize::Zeroizing;
 
 use super::helpers::*;
 use super::types::RotateKeyFileRequest;
-use super::{STAGING_FILE_NAME, vault_header_blob_name};
+use super::{STAGING_FILE_NAME, VAULT_HEADER_BLOB_NAME};
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
@@ -76,8 +76,6 @@ pub async fn rotate_key_file(
     }
     let mut new_key_file: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
     rand::rng().fill_bytes(new_key_file.as_mut_slice());
-    staging::write_owner_only_new(&request.target_new_key_file_path, new_key_file.as_slice())
-        .await?;
     let new_key_file_blake3 = hex::encode(blake3::hash(new_key_file.as_slice()).as_bytes());
 
     let mut will_remove_slots = false;
@@ -116,6 +114,8 @@ pub async fn rotate_key_file(
             }
         }
     }
+    staging::write_owner_only_new(&request.target_new_key_file_path, new_key_file.as_slice())
+        .await?;
 
     let mut new_salt: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
     rand::rng().fill_bytes(new_salt.as_mut_slice());
@@ -241,7 +241,7 @@ pub async fn rotate_key_file(
         .swap_active_session(new_session_keys)
         .await?;
     let upload_result = cloud_transport
-        .upload_blob(&vault_header_blob_name(), &json_bytes)
+        .upload_blob(&staging_path, VAULT_HEADER_BLOB_NAME)
         .await;
     if upload_result.is_err() {
         return Err(AuthenticationError::VaultHeaderInvalid);
@@ -292,8 +292,8 @@ mod tests {
     impl CloudTransport for UploadFailCloudTransport {
         async fn upload_blob(
             &self,
-            _name: &crate::storage::types::BlobName,
-            _bytes: &[u8],
+            _local_path: &std::path::Path,
+            _remote_path: &str,
         ) -> Result<(), CloudTransportError> {
             Err(CloudTransportError::Other(
                 "forced upload failure".to_string(),
@@ -302,9 +302,21 @@ mod tests {
 
         async fn download_blob(
             &self,
-            _name: &crate::storage::types::BlobName,
-        ) -> Result<Vec<u8>, CloudTransportError> {
+            _remote_path: &str,
+            _local_path: &std::path::Path,
+        ) -> Result<(), CloudTransportError> {
             Err(CloudTransportError::NotFound)
+        }
+
+        async fn delete_blob(&self, _remote_path: &str) -> Result<(), CloudTransportError> {
+            Ok(())
+        }
+
+        async fn list_blobs(
+            &self,
+            _remote_prefix: &str,
+        ) -> Result<Vec<String>, CloudTransportError> {
+            Ok(Vec::new())
         }
     }
 
@@ -504,6 +516,67 @@ mod tests {
         let recovery_key = RecoveryKey::from_bytes(*recovery_key_bytes);
         let _recovered = unwrap_master_key_from_recovery(&wrapped, &recovery_key, &vault.vault_id)
             .expect("phrase must unlock new master key after rotate");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_rotate_key_file_with_invalid_recovery_phrase_does_not_leave_new_key_file() {
+        let _lock = ceremony_lock().await;
+        let mut vault = create_tier_two_vault().await;
+
+        let setup_request = SetupRecoveryRequest {
+            current_password_bytes: TEST_PASSWORD,
+            current_key_source: Some(&MockKeySource::new(
+                std::fs::read(&vault.key_file_path)
+                    .expect("key file must exist")
+                    .try_into()
+                    .expect("key file must be 32 bytes"),
+            )),
+            argon2_params: test_params(),
+            vault_db_path: vault.vault_db_path.clone(),
+        };
+        let _phrase = setup_recovery(
+            setup_request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await
+        .expect("setup_recovery must succeed");
+
+        let old_bytes: [u8; 32] = std::fs::read(&vault.key_file_path)
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let old_source = MockKeySource::new(old_bytes);
+        let new_path = vault
+            ._temp
+            .path()
+            .join("rotated-invalid-recovery-phrase.bin");
+        let wrong_phrase = Mnemonic::from_entropy_in(Language::English, &[0u8; 32])
+            .expect("mnemonic generation must succeed")
+            .to_string();
+        let request = RotateKeyFileRequest {
+            password_bytes: TEST_PASSWORD,
+            current_key_source: &old_source,
+            target_new_key_file_path: new_path.clone(),
+            recovery_phrase: Some(&wrong_phrase),
+            argon2_params: test_params(),
+            vault_db_path: vault.vault_db_path.clone(),
+        };
+        let result = rotate_key_file(
+            request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::InvalidCredentials)
+        ));
+        assert!(!new_path.exists());
     }
 
     #[tokio::test(flavor = "multi_thread")]

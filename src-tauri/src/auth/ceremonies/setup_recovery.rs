@@ -4,7 +4,7 @@ use zeroize::Zeroizing;
 
 use super::helpers::*;
 use super::types::SetupRecoveryRequest;
-use super::{STAGING_FILE_NAME, vault_header_blob_name};
+use super::{STAGING_FILE_NAME, VAULT_HEADER_BLOB_NAME};
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
@@ -27,6 +27,7 @@ pub async fn setup_recovery(
     vault_id: &VaultId,
 ) -> Result<Zeroizing<String>, AuthenticationError> {
     enforce_argon2_policy(&request.argon2_params)?;
+    let _operation_guard = session_manager.begin_operation();
 
     if session_manager.state().await != crate::auth::LifecycleState::Active {
         return Err(AuthenticationError::SessionNotActive);
@@ -111,7 +112,7 @@ pub async fn setup_recovery(
         return Err(error);
     }
     let upload_result = cloud_transport
-        .upload_blob(&vault_header_blob_name(), &json_bytes)
+        .upload_blob(&staging_path, VAULT_HEADER_BLOB_NAME)
         .await;
     let cleanup_result = staging::remove_if_exists(&staging_path).await;
     if upload_result.is_err() {
@@ -227,11 +228,16 @@ mod tests {
         let phrase = add_recovery_slot_and_return_phrase(&mut vault).await;
         let phrase_bytes = phrase.as_bytes().to_vec();
 
-        let header_bytes = vault
+        vault
             .cloud
-            .download_blob(&vault_header_blob_name())
+            .download_blob(
+                VAULT_HEADER_BLOB_NAME,
+                &vault._temp.path().join("setup-recovery-header.json"),
+            )
             .await
             .expect("header must be present");
+        let header_bytes =
+            std::fs::read(vault._temp.path().join("setup-recovery-header.json")).unwrap();
         assert!(
             !header_bytes
                 .windows(phrase_bytes.len())

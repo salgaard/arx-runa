@@ -1,7 +1,7 @@
 ---
 title: "Phase 4.1 — CloudTransport Trait and Mock Implementation"
 created: "2026-04-18T20:53:37Z"
-status: approved
+status: implemented
 roadmap-phase: 4
 sub-phase: "4.1"
 design-document: "docs/architecture/designs/cloud-synchronisation/design.md"
@@ -398,3 +398,110 @@ Platform note: staging paths resolve via `dirs::config_dir()` which returns
 `%APPDATA%` on Windows, `~/.config` on Linux, `~/Library/Application Support` on
 macOS. No platform-specific branches are introduced by this sub-phase. No new
 feature flags; `test-utils` remains the only optional feature touched.
+
+## Implementation Log
+
+- **Date**: 2026-04-19T00:34:08.1170452+02:00
+- **Run ID**: `phase-4-1-cloud-transport-20260418-234838`
+- **Track**: `full`
+- **Branch**: `development`
+- **Execution mode**: delegated (`rust-implementer`) with orchestrator-managed remediation/review cycles
+
+### Agent evidence
+
+| Approach step | Agent | Agent ID | Outcome |
+|---|---|---|---|
+| Governance sync GS-001/GS-002 | orchestrator | N/A | Updated `.claude/rules/storage.md` and `.claude/rules/auth.md` |
+| Governance sync GS-003 | copilot-sync skill + orchestrator | N/A | Synced instruction mirrors; second sync remained idempotent |
+| Steps 1-6 implementation | rust-implementer | `rust-impl-4-1` | Completed |
+| Remediation cycle fixes (CF-002/CF-003/CF-005) | rust-implementer | `rust-fix-cf002-3-5` | Completed |
+| Remediation cycle fix (CF-008) | rust-implementer | `rust-fix-cf008` | Completed |
+| Test expansion audit | test-writer | `test-writer-4-1` | Added focused mock transport tests |
+
+### Files changed
+
+- `.claude/plans/phase-4-1-cloud-transport.md`
+- `.claude/rules/auth.md`
+- `.claude/rules/storage.md`
+- `.github/instructions/auth.instructions.md`
+- `.github/instructions/crypto.instructions.md`
+- `.github/instructions/leptos.instructions.md`
+- `.github/instructions/memory-protection.instructions.md`
+- `.github/instructions/mermaid.instructions.md`
+- `.github/instructions/research.instructions.md`
+- `.github/instructions/rust.instructions.md`
+- `.github/instructions/storage.instructions.md`
+- `.github/instructions/tauri.instructions.md`
+- `docs/architecture/designs/cloud-synchronisation/sub-phases/4.1-cloud-transport.md`
+- `src-tauri/src/storage/cloud/mod.rs`
+- `src-tauri/src/storage/cloud/endpoint.rs`
+- `src-tauri/src/storage/cloud/mock.rs`
+- `src-tauri/src/storage/mod.rs`
+- `src-tauri/src/auth/ceremonies/mod.rs`
+- `src-tauri/src/auth/ceremonies/create.rs`
+- `src-tauri/src/auth/ceremonies/change_password.rs`
+- `src-tauri/src/auth/ceremonies/rotate_key_file.rs`
+- `src-tauri/src/auth/ceremonies/setup_recovery.rs`
+- `src-tauri/src/auth/ceremonies/recover_vault.rs`
+- `src-tauri/src/auth/ceremonies/recover_with_phrase.rs`
+- `src-tauri/src/auth/ceremonies/test_support.rs`
+
+### Verification gates
+
+- **Formatting check** (`cargo fmt --all -- --check`): clean after formatting pass.
+- **Clippy** (`cargo clippy --workspace --all-targets --all-features -- -D warnings`): clean.
+- **Tests** (`cargo test --workspace --all-targets --all-features`): passed (`388 passed; 0 failed; 1 ignored` in main tauri lib suite; workspace test command exited success).
+- **Release build** (`cargo build --workspace --release`): success.
+
+### Review outcomes
+
+- **Rust review**: actionable findings resolved for in-scope items (CF-002, CF-003, CF-005, CF-008); later cycle no actionable findings in shard reviews.
+- **Architecture review**: no structural findings in auth shard final cycle; storage-shard residual findings classified as deferred-by-plan/intentional decision per phase boundary.
+- **Security review**: no CRITICAL findings; residual session-gate race concern classified deferred-by-plan (out-of-scope for 4.1).
+- **Cross-shard review**: 2 invocations; no cross-shard contradictions found.
+
+### Findings quality gate
+
+- **ACTIONABLE_NOW**: 4 (`CF-002`, `CF-003`, `CF-005`, `CF-008`) — implemented
+- **INTENTIONAL_DECISION**: 1 (`CF-014`)
+- **DEFERRED_BY_PLAN**: 9 (`CF-001`, `CF-004`, `CF-006`, `CF-007`, `CF-009`, `CF-010`, `CF-011`, `CF-012`, `CF-013`)
+- **INSUFFICIENT_EVIDENCE**: 0
+
+### Finding overrides
+
+- None.
+
+### Design challenge outcomes
+
+- **Rejected**: validated cloud path abstraction in 4.1 (deferred to 4.2 per assumption #7).
+- **Rejected**: pending-header concurrency serialization hardening in 4.1 (deferred to 4.3).
+- **Rejected**: ceremony SQLCipher rewrap/rekey dedup refactor in 4.1 (out of deliverable scope).
+- No design-document updates were required from accepted challenges.
+
+### Governance sync
+
+- **Actions executed**: 3 (`GS-001`, `GS-002`, `GS-003`)
+- **Files updated**: `.claude/rules/auth.md`, `.claude/rules/storage.md`, `.github/instructions/*.instructions.md` (auth, crypto, leptos, memory-protection, mermaid, research, rust, storage, tauri)
+- **`/copilot-sync` outcome**: OK
+
+### Sub-phase decisions sync
+
+- **Doc path**: `docs/architecture/designs/cloud-synchronisation/sub-phases/4.1-cloud-transport.md`
+- **Decisions added**: 4 bullets under `## Implementation Decisions`
+
+### Deviations from plan
+
+- Additional remediation cycles addressed review findings directly coupled to touched ceremony flows (cleanup/guard ordering) before closure.
+- Security-scoped and architecture-wide concerns outside approved 4.1 boundaries were recorded and deferred by plan classification rather than broadened into cross-phase refactors.
+
+### Documentation flagged
+
+- `Update storage/cloud/mod.rs module-level doc-comment to drop "forward declaration" wording.` — **Required** — applied.
+- `docs/architecture/designs/cloud-synchronisation/sub-phases/4.1-cloud-transport.md` — **Deferred / optional** in plan, but updated in this run for mandatory sub-phase implementation-decision sync.
+- `docs/architecture/designs/cloud-synchronisation/design.md` — **Deferred / optional** — unchanged (no Resolution B/C selection).
+- `docs/architecture/design-invariants.md` — **Deferred** — unchanged.
+- `Diagrams under docs/architecture/designs/cloud-synchronisation/diagrams/` — **Deferred / optional** — unchanged.
+
+### Run state path
+
+- `.claude/runs/phase-4-1-cloud-transport-20260418-234838/`

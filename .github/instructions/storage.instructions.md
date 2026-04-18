@@ -65,4 +65,5 @@ applyTo: "src-tauri/src/storage/**"
 
 ## Traits
 - `MetadataStore` for manifest, `CloudTransport` for Rclone
+- `CloudTransport` uses `&str` for cloud-root-relative paths (forward slashes only); `BlobName` is reserved for chunk blob filenames in the manifest and staging directory.
 - `MetadataStore` Phase 3.1 surface: `insert_node`, `insert_chunks`, `get_node`, `list_children`, `get_chunks`, `rename_node`, `move_node`, `delete_node`, `list_pending_deletions`, `mark_deletion_complete`, `get_meta`, `set_meta`, `increment_snapshot_counter`
