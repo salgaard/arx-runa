@@ -12,22 +12,22 @@ You run cycle-level consistency review across shard outputs.
 
 - `cycle_id`
 - `SHARD_MAP`
-- merged Wave 1 and Wave 2 findings for the cycle (structured records only — not full agent prose outputs)
-- optional suppression list (`CANONICAL_FINDINGS`) for cycles 2-N
-- `SHARD_DIGEST_SUMMARY[]` — one entry per shard, structured as:
+- Merged Wave 1 and Wave 2 findings for the cycle (structured records only — not full agent prose outputs)
+- Optional suppression list (`CANONICAL_FINDINGS`) for cycles 2-N
+- `SHARD_DIGEST_SUMMARY[]` — one entry per shard:
 
 ```
 SHARD_DIGEST_SUMMARY {
   shard_id: "<shard-auth|shard-crypto|shard-storage|shard-default>"
   scopes: ["auth" | "crypto" | "storage" | "global" | ...]
-  rule_ids: ["<R-NNN>", ...]       // IDs of rules governing this shard
-  design_ids: ["<D-NNN>", ...]     // IDs of design invariants governing this shard
+  rule_ids: ["<R-NNN>", ...]
+  design_ids: ["<D-NNN>", ...]
   implemented_phases: ["<phase>"]
   deferred_phases: ["<phase>"]
 }
 ```
 
-Do not read full source files or full `DIGEST_SLICE` content unless orchestrator explicitly provides them. Reason exclusively over structured finding records and `SHARD_DIGEST_SUMMARY` entries.
+**Hard constraint:** Reason exclusively over structured finding records and `SHARD_DIGEST_SUMMARY` entries. Do not read full source files or full `DIGEST_SLICE` content unless the orchestrator explicitly provides them.
 
 ## Mission
 
@@ -52,7 +52,7 @@ FINDING CSR-001
   category: CROSS_SHARD_CONTRADICTION|INTERFACE_MISMATCH|DEPENDENCY_FLOW
   location: <file:line[, file:line...] or "cross-shard">
   problem: <what conflicts and why it matters>
-  evidence: <cross-shard evidence and references to rule_ids or design_ids from SHARD_DIGEST_SUMMARY>
+  evidence: <cross-shard evidence with references to rule_ids or design_ids from SHARD_DIGEST_SUMMARY>
   rule_refs: [<R-NNN>, ...]
   design_refs: [<D-NNN>, ...]
   plan_context: <relevant phase/rationale or "None">
