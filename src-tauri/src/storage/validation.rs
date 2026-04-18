@@ -51,9 +51,9 @@ pub(crate) fn validate_chunk_target_node(node_type: Option<NodeType>) -> Result<
 
 /// Parses and validates canonical `chunk_size_bytes` metadata.
 pub(crate) fn parse_chunk_size_bytes(value: &str) -> Result<u64, StorageError> {
-    let chunk_size = value
-        .parse::<u64>()
-        .map_err(|_| StorageError::Database("invalid chunk_size_bytes: not an integer".to_owned()))?;
+    let chunk_size = value.parse::<u64>().map_err(|_| {
+        StorageError::Database("invalid chunk_size_bytes: not an integer".to_owned())
+    })?;
     if !(131_072..=67_108_864).contains(&chunk_size) {
         return Err(StorageError::Database(
             "invalid chunk_size_bytes: out of range".to_owned(),
@@ -93,8 +93,8 @@ pub(crate) fn validate_immutable_meta_matches_expected(
 mod tests {
     use super::{
         immutable_meta_key_violation, is_immutable_manifest_meta_key, parse_chunk_size_bytes,
-        validate_blob_name_uuid_v4, validate_chunk_target_node, validate_immutable_meta_matches_expected,
-        validate_size_padded_matches_chunk_size,
+        validate_blob_name_uuid_v4, validate_chunk_target_node,
+        validate_immutable_meta_matches_expected, validate_size_padded_matches_chunk_size,
     };
     use crate::storage::error::StorageError;
     use crate::storage::types::NodeType;

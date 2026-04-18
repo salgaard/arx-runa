@@ -129,7 +129,9 @@ pub(crate) fn verify_sqlcipher_key(conn: &Connection) -> Result<(), StorageError
 /// Runs low-level SQLite integrity checks for schema and foreign keys.
 pub(crate) fn validate_schema_integrity(conn: &Connection) -> Result<(), StorageError> {
     let integrity_result = conn
-        .query_row("PRAGMA integrity_check(1)", [], |row| row.get::<_, String>(0))
+        .query_row("PRAGMA integrity_check(1)", [], |row| {
+            row.get::<_, String>(0)
+        })
         .map_err(StorageError::from_rusqlite)?;
     if integrity_result != "ok" {
         return Err(StorageError::Database(format!(
@@ -165,7 +167,11 @@ pub(crate) fn seed_manifest_meta(
     chunk_size_bytes: u64,
     epoch_buffer_enabled: bool,
 ) -> Result<(), StorageError> {
-    let epoch_buffer_enabled = if epoch_buffer_enabled { "true" } else { "false" };
+    let epoch_buffer_enabled = if epoch_buffer_enabled {
+        "true"
+    } else {
+        "false"
+    };
     let chunk_size_bytes = chunk_size_bytes.to_string();
     let vault_id = vault_id.hyphenated().to_string();
     conn.execute(
@@ -245,7 +251,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        apply_canonical_schema, seed_manifest_meta, validate_manifest_meta, validate_schema_integrity,
+        apply_canonical_schema, seed_manifest_meta, validate_manifest_meta,
+        validate_schema_integrity,
     };
     use crate::storage::error::StorageError;
 
@@ -295,7 +302,9 @@ mod tests {
 
         let result = validate_schema_integrity(&conn);
 
-        assert!(matches!(result, Err(StorageError::Database(message)) if message.contains("foreign key")));
+        assert!(
+            matches!(result, Err(StorageError::Database(message)) if message.contains("foreign key"))
+        );
     }
 
     /// Verifies out-of-range chunk sizes are rejected.
@@ -307,7 +316,9 @@ mod tests {
 
         let result = validate_manifest_meta(&conn);
 
-        assert!(matches!(result, Err(StorageError::Database(message)) if message.contains("chunk_size_bytes")));
+        assert!(
+            matches!(result, Err(StorageError::Database(message)) if message.contains("chunk_size_bytes"))
+        );
     }
 
     /// Verifies non-boolean epoch flag values are rejected.
@@ -324,7 +335,9 @@ mod tests {
 
         let result = validate_manifest_meta(&conn);
 
-        assert!(matches!(result, Err(StorageError::Database(message)) if message.contains("epoch_buffer_enabled")));
+        assert!(
+            matches!(result, Err(StorageError::Database(message)) if message.contains("epoch_buffer_enabled"))
+        );
     }
 
     /// Verifies unsupported schema versions are rejected.
@@ -341,7 +354,9 @@ mod tests {
 
         let result = validate_manifest_meta(&conn);
 
-        assert!(matches!(result, Err(StorageError::Database(message)) if message.contains("schema_version")));
+        assert!(
+            matches!(result, Err(StorageError::Database(message)) if message.contains("schema_version"))
+        );
     }
 
     /// Verifies non-UUID vault identifiers are rejected.
@@ -350,12 +365,17 @@ mod tests {
         let conn = Connection::open_in_memory().expect("in-memory connection should open");
         apply_canonical_schema(&conn).expect("schema should apply");
         seed_manifest_meta(&conn, Uuid::new_v4(), 4_194_304, false).expect("seed should succeed");
-        conn.execute("UPDATE manifest_meta SET value = 'not-a-uuid' WHERE key = 'vault_id'", [])
-            .expect("test setup should update vault_id");
+        conn.execute(
+            "UPDATE manifest_meta SET value = 'not-a-uuid' WHERE key = 'vault_id'",
+            [],
+        )
+        .expect("test setup should update vault_id");
 
         let result = validate_manifest_meta(&conn);
 
-        assert!(matches!(result, Err(StorageError::Database(message)) if message.contains("vault_id")));
+        assert!(
+            matches!(result, Err(StorageError::Database(message)) if message.contains("vault_id"))
+        );
     }
 
     /// Verifies non-integer snapshot counters are rejected.
@@ -372,7 +392,9 @@ mod tests {
 
         let result = validate_manifest_meta(&conn);
 
-        assert!(matches!(result, Err(StorageError::Database(message)) if message.contains("snapshot_counter")));
+        assert!(
+            matches!(result, Err(StorageError::Database(message)) if message.contains("snapshot_counter"))
+        );
     }
 
     /// Verifies missing required manifest-meta keys are rejected.
@@ -386,7 +408,8 @@ mod tests {
 
         let result = validate_manifest_meta(&conn);
 
-        assert!(matches!(result, Err(StorageError::Database(message)) if message.contains("missing manifest_meta key: vault_id")));
+        assert!(
+            matches!(result, Err(StorageError::Database(message)) if message.contains("missing manifest_meta key: vault_id"))
+        );
     }
 }
-

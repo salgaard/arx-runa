@@ -327,14 +327,16 @@ If Section 6d says no tests are needed and no Rust files changed: skip `test-wri
 
 ### Validation checkpoint
 
-If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Run automated tests. Display manual verification steps and acceptance criteria — do not mark `implemented` if the automated portion fails.
+If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Run the full CI-equivalent local checks from Step 5. Display manual verification steps and acceptance criteria — do not mark `implemented` if the automated portion fails.
 
 ---
 
 ## Step 5 — Verify
 
-1. Run `cargo test` (full workspace). Fix related failures. Record pre-existing unrelated failures.
-2. Run `cargo clippy --workspace -- -D warnings`. Fix new warnings; note pre-existing.
+1. Run `cargo fmt --all -- --check` (**Check formatting**). Fix related failures.
+2. Run `cargo clippy --workspace --all-targets --all-features -- -D warnings` (**Run Clippy (warnings as errors)**). Fix related failures; note pre-existing unrelated issues.
+3. Run `cargo test --workspace --all-targets --all-features` (**Run tests**). Fix related failures; note pre-existing unrelated issues.
+4. Run `cargo build --workspace --release` (**Release build**). Fix related failures; note pre-existing unrelated issues.
 
 ---
 
@@ -359,8 +361,10 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
    - **Execution mode** — rust-implementer (default) or orchestrator (fallback); note which steps fell back
    - **Agent evidence** — table: `Approach step | Agent | Agent ID | Outcome`
    - **Files changed** — including any updated design docs
-   - **Test results** — `cargo test` summary
-   - **Clippy results** — clean / warnings introduced / pre-existing
+   - **Formatting check** — `cargo fmt --all -- --check` summary
+   - **Clippy results** — `cargo clippy --workspace --all-targets --all-features -- -D warnings` summary
+   - **Test results** — `cargo test --workspace --all-targets --all-features` summary
+   - **Release build** — `cargo build --workspace --release` summary
    - **Rust review** — findings summary or "Skipped"
    - **Architecture review** — findings summary or "Skipped"
    - **Security review** — findings summary or "Skipped"
@@ -392,8 +396,10 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
 ✓ Findings quality gate: [counts by disposition]
 ✓ Finding overrides: [None | CF-NNN list with confidence]
 ✓ Design challenge outcomes: [None | summary; security-scoped user decisions noted]
+✓ Formatting: [clean | failures fixed]
+✓ Clippy: [clean | failures fixed | pre-existing unrelated issues]
 ✓ Tests: [summary]
-✓ Clippy: [clean | N warnings]
+✓ Release build: [success | failures fixed | pre-existing unrelated issues]
 ⚠ Governance sync: [OK | DEGRADED — run /copilot-sync manually]
 → Validation checkpoint (manual): [from sub-roadmap]
 → Acceptance criteria (manual): [from sub-roadmap]
@@ -413,6 +419,7 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
 - Preserve hard-gate semantics in Step 3; do not silently downgrade failures.
 - Do not skip the design-doc sync gate in Step 6 when accepted challenges exist.
 - Do not skip plan Section 7 documentation-impact items when they are implementable in-run.
+- Do not mark `status: implemented` unless all Step 5 CI-equivalent checks pass locally.
 - Do not broaden implementation scope outside the approved plan without triggering Plan-deviation protocol.
 - Do not auto-chain `/review-only` and `/implement-review`; this command is a separate entrypoint.
 - Do not commit, push, or open pull requests.
@@ -438,5 +445,6 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
 | HIGH Override Record confidence `UNCERTAIN` | Hard pause; resume on user input |
 | Required findings thresholds not met after max cycles | Plan-deviation protocol, then halt |
 | Sensitive path drift detected outside Section 6b | Plan-deviation protocol, then halt |
+| Any Step 5 CI-equivalent local check fails | Halt — do not set `status: implemented` |
 | Accepted design challenge missing design-doc update at Step 6 | Halt — require update before marking implemented |
 | Section 7 documentation updates left unapplied without explicit deferred/optional rationale | Halt before `status: implemented` |

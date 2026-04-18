@@ -18,4 +18,3 @@ pub struct ChunkRecord {
     /// BLAKE3 checksum over encrypted blob bytes.
     pub blake3_checksum: [u8; 32],
 }
-

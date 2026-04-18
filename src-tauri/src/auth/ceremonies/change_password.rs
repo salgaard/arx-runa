@@ -268,8 +268,8 @@ mod tests {
         RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_master_key_from_recovery,
     };
     use crate::storage::cloud::CloudTransport;
-    use crate::storage::cloud::mock::MockCloudTransport;
     use crate::storage::cloud::CloudTransportError;
+    use crate::storage::cloud::mock::MockCloudTransport;
     use crate::storage::cloud::vault_header::VaultHeader;
 
     #[derive(Debug, Default)]
@@ -282,7 +282,9 @@ mod tests {
             _name: &crate::storage::types::BlobName,
             _bytes: &[u8],
         ) -> Result<(), CloudTransportError> {
-            Err(CloudTransportError::Other("forced upload failure".to_string()))
+            Err(CloudTransportError::Other(
+                "forced upload failure".to_string(),
+            ))
         }
 
         async fn download_blob(
@@ -696,8 +698,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_change_password_upload_failure_keeps_new_local_keys_and_returns_vault_header_invalid(
-    ) {
+    async fn test_change_password_upload_failure_keeps_new_local_keys_and_returns_vault_header_invalid()
+     {
         let _lock = ceremony_lock().await;
         let mut vault = create_tier_one_vault().await;
         let failing_cloud = UploadFailCloudTransport;

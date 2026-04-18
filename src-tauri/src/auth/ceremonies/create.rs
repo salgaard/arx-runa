@@ -13,9 +13,9 @@ use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::VaultId;
-use crate::storage::schema::{apply_canonical_schema, seed_manifest_meta};
 use crate::storage::cloud::CloudTransport;
 use crate::storage::cloud::vault_header::VaultHeader;
+use crate::storage::schema::{apply_canonical_schema, seed_manifest_meta};
 
 /// Creates a new vault: derives keys, creates the SQLCipher DB, builds and
 /// uploads the vault header, and installs the resulting session.
@@ -132,14 +132,8 @@ pub async fn create_vault(
     let db_result: Result<(), AuthenticationError> =
         tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
             let conn = open_sqlcipher(&vault_db_path_owned, sqlcipher_key.expose())?;
-            apply_canonical_schema(&conn)
-                .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-            seed_manifest_meta(
-                &conn,
-                vault_id_uuid,
-                chunk_size_bytes,
-                epoch_buffer_enabled,
-            )
+            apply_canonical_schema(&conn).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+            seed_manifest_meta(&conn, vault_id_uuid, chunk_size_bytes, epoch_buffer_enabled)
                 .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
             conn.execute(
                 "INSERT INTO vault_identity (id, public_key, wrapped_private_key) VALUES (1, ?, ?)",
@@ -234,9 +228,9 @@ mod tests {
     use crate::crypto::{
         RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_master_key_from_recovery,
     };
-    use crate::storage::cloud::{CloudTransport, CloudTransportError};
     use crate::storage::cloud::mock::MockCloudTransport;
     use crate::storage::cloud::vault_header::VaultHeader;
+    use crate::storage::cloud::{CloudTransport, CloudTransportError};
 
     #[derive(Debug, Default)]
     struct UploadFailCloudTransport;
@@ -248,7 +242,9 @@ mod tests {
             _name: &crate::storage::types::BlobName,
             _bytes: &[u8],
         ) -> Result<(), CloudTransportError> {
-            Err(CloudTransportError::Other("forced upload failure".to_string()))
+            Err(CloudTransportError::Other(
+                "forced upload failure".to_string(),
+            ))
         }
 
         async fn download_blob(
@@ -414,7 +410,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_create_vault_upload_failure_preserves_no_session_and_cleans_staging_and_local_files()
-    {
+     {
         let _lock = ceremony_lock().await;
         let temp = temp_dir();
         let session = test_session_manager();
@@ -442,7 +438,10 @@ mod tests {
             result,
             Err(AuthenticationError::VaultHeaderInvalid)
         ));
-        assert_eq!(session.state().await, crate::auth::LifecycleState::NoSession);
+        assert_eq!(
+            session.state().await,
+            crate::auth::LifecycleState::NoSession
+        );
         assert!(!vault_db_path.exists());
         assert!(!key_file_path.exists());
         assert!(!tokio::fs::try_exists(&pending_path).await.unwrap_or(false));
