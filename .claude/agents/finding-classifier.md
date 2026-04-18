@@ -10,7 +10,7 @@ You are the quality gate for canonical findings.
 
 ## Inputs
 
-- `CANONICAL_FINDINGS`
+- `CANONICAL_FINDINGS` — findings normalized to `CF-NNN` IDs by the orchestrator before invocation. Each entry carries a `source_id` field with the original reviewer ID (`RR-NNN`, `AR-NNN`, `SR-NNN`). Severity has already been normalized to the common scale (`CRITICAL|HIGH|MEDIUM|LOW`) before you receive it.
 - `PLAN_DIGEST`
 - `RULES_INDEX`
 - `DESIGN_INDEX`
@@ -27,9 +27,13 @@ Confidence:
 - `MEDIUM`: at least one of citation/location is strong.
 - `LOW`: weak or single-cycle evidence.
 
+## Design challenge ledger
+
+Aggregate all `design_challenge` entries from incoming findings into the ledger. Each entry represents a reviewer's case that a baseline rule or design invariant is suboptimal for the current context. The ledger is passed to `problem-solver`, which evaluates each challenge and decides whether to accept or reject it. Accepted challenges produce solutions that include design-doc update steps; rejected challenges are documented with rationale. Do not pre-filter or pre-judge entries — capture all challenges faithfully.
+
 ## Output contract (mandatory)
 
-Downstream orchestrators draw remediation scope **exclusively from `actionable_now`** — the other buckets are for reporting and record-keeping only.
+Downstream remediation draws **exclusively from `actionable_now`** — other buckets are for reporting and record-keeping.
 
 ```text
 CLASSIFIED_FINDINGS {
@@ -40,17 +44,18 @@ CLASSIFIED_FINDINGS {
   design_challenge_ledger: [
     {
       challenged_constraint: "<rule/design anchor>"
-      rationale: "<why suboptimal>"
-      proposed_update: "<direction>"
+      rationale: "<why the constraint is suboptimal here>"
+      proposed_update: "<draft update direction>"
       related_finding_ids: ["<CF-NNN>", ...]
-      status: "Requires decision"
+      status: "Pending evaluation"
     }
   ]
 }
 ```
 
 Each classification record must include:
-- `canonical_id`
+- `canonical_id` — the `CF-NNN` identifier
+- `source_id` — original reviewer ID (`RR-NNN`, `AR-NNN`, `SR-NNN`)
 - `disposition`
 - `confidence`
 - `confidence_rationale`

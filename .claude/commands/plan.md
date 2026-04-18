@@ -8,7 +8,7 @@ Plan the implementation of: $ARGUMENTS
 
 - **Planning output only.** Produce a plan artefact; do not begin implementation.
 - **Self-contained handoff.** Plans are handed off to agents with zero conversation context. Inline trait signatures, error enums, and DDL verbatim; use absolute paths; do not assume the reader can infer intent from prior discussion.
-- **Execution-agnostic.** Plans must be executable by `/implement-plan` without requiring a specific model or agent.
+- **Execution-agnostic.** Plans must be executable by `/implement-plan` without requiring a specific model or agent. The plan describes *what* to review and *what* to test — `/implement-plan` decides which agents to invoke.
 - **Producer schema authority.** Agent files own their output schemas — reference `.claude/agents/<agent>.md` rather than duplicating schemas in plans.
 
 ---
@@ -28,7 +28,7 @@ Match $ARGUMENTS against:
 2. Extract the matching sub-phase section: Deliverables, Dependencies, Design sections, Validation checkpoint.
 3. Read the parent design document; extract only the referenced sections. These are the primary input for the Approach.
 4. Plan filename: `phase-N-S-kebab-case-description.md`.
-5. Add both `design-document:` and `sub-phase-roadmap:` to frontmatter.
+5. Set both `design-document:` and `sub-phase-roadmap:` in frontmatter.
 
 **Full phase:**
 1. Read `docs/roadmap.md`; extract Objective, Depends on, Deliverables, Parallelisable with.
@@ -48,7 +48,7 @@ Match $ARGUMENTS against:
 
 ## Step 2 — Adversarial review of the source spec
 
-Read the sub-phase (or design document) adversarially before structuring the plan. Do not treat it as ground truth.
+Read the sub-phase (or design document) adversarially. Do not treat it as ground truth.
 
 ### 2a — Spec integrity
 
@@ -58,7 +58,7 @@ Read the sub-phase (or design document) adversarially before structuring the pla
 4. **Under-specified failure modes** — for every trait method: what cancels it, what happens on partial failure, concurrent access, shutdown? Unresolved = a gap.
 5. **Missing edge cases** — do enumerated tests cover implied failure modes or only the happy path?
 6. **Infeasible APIs** — signatures that cannot be implemented as stated (non-dyn-safe traits claimed as `dyn`, lifetimes that won't compose, `async` in sync traits).
-7. **Unwarranted security self-assessments** — if the sub-phase claims "Security Review: Not required", verify independently. Touching `src-tauri/src/crypto/`, `src-tauri/src/auth/`, or `src-tauri/src/storage/` warrants review.
+7. **Unwarranted security self-assessments** — if the sub-phase claims "Security Review: Not required", verify independently. Touching `src-tauri/src/crypto/`, `src-tauri/src/auth/`, or `src-tauri/src/storage/` always warrants security review regardless of what the sub-phase claims.
 8. **Implementer gaps** — anything an agent would have to guess: default values, file locations, config keys, error wording.
 
 ### 2b — Governance drift
@@ -68,14 +68,14 @@ Check planned behavior against `.claude/rules/*.md`:
 1. **Contradictions** — planned behavior conflicts with existing rules.
 2. **Stale guardrails** — rules or checklists omit newly required constraints.
 
-### Classification and output of Step 2
+### Classification and output
 
 Classify every finding from 2a and 2b as:
 
 - **Blocking** — the sub-phase must be updated before implementation can proceed. If any blocking finding exists, set plan `status: blocked`.
 - **Non-blocking** — the plan can proceed with an explicit assumption, recorded in **Assumptions** (Section 4).
 
-Governance non-blocking findings also produce an action in **Governance sync actions** (Section 12).
+Governance non-blocking findings also produce an action in **Governance sync actions** (Section 8).
 
 ---
 
@@ -83,72 +83,75 @@ Governance non-blocking findings also produce an action in **Governance sync act
 
 **Token budget (hard):** Keep the plan concise but self-contained. Use `CONTRACT_SNIPPETS` IDs (defined in Section 5) to reference each contract after its first appearance — never re-inline the same signature or enum. Include only implementation-relevant evidence.
 
-Structure the plan body as follows:
+---
 
 **1. Goal** — what is being built or changed, in one sentence.
 
+---
+
 **2. Context** — what exists today and what constraints apply.
-   - Sub-phase: sub-roadmap dependencies, estimated scope, implementation notes.
-   - Roadmap phase: phase objective, dependencies, deliverables list, any pending architectural decisions.
+- Sub-phase: sub-roadmap dependencies, estimated scope, implementation notes.
+- Roadmap phase: phase objective, dependencies, deliverables list, any pending architectural decisions.
+
+---
 
 **3. Design Concerns / Open Questions** — all findings from Step 2. For each:
-   - **Concern** — one-line summary
-   - **Source** — location in the sub-phase or design
-   - **Impact** — what breaks or gets guessed if left unresolved
-   - **Classification** — Blocking or Non-blocking
-   - **Resolution** — for Blocking: what must change. For Non-blocking: the explicit assumption the plan makes (also copy to Section 4).
+- **Concern** — one-line summary
+- **Source** — location in the sub-phase or design
+- **Impact** — what breaks or gets guessed if left unresolved
+- **Classification** — Blocking or Non-blocking
+- **Resolution** — for Blocking: what must change. For Non-blocking: the explicit assumption the plan makes (also copy to Section 4).
 
-   If no concerns: "None — spec reviewed, no gaps identified." Do not omit this section.
+If no concerns: "None — spec reviewed, no gaps identified." Do not omit this section.
+
+---
 
 **4. Assumptions** — every non-obvious fact the plan takes for granted that is not stated in the sub-phase (defaults, file locations, config keys, error wording, ordering). List explicitly so the user can correct before handoff.
 
+---
+
 **5. Approach** — step-by-step implementation plan with absolute file paths.
 
-   Begin with a **`CONTRACT_SNIPPETS`** subsection. Inline each unique trait signature, error enum variant, struct field, and DDL **verbatim once**, assigning IDs `CS-001`, `CS-002`, etc. Reference snippets by ID in each implementation step. The design's `## Contract Surface` is ground truth.
+Begin with a **`CONTRACT_SNIPPETS`** subsection. Inline each unique trait signature, error enum variant, struct field, and DDL **verbatim once**, assigning IDs `CS-001`, `CS-002`, etc. Reference snippets by ID in each implementation step. The design's `## Contract Surface` is ground truth.
 
-   If sub-phase: use the Deliverables list as the primary structure; each deliverable becomes an implementation step. Map each step to a specific design section when a design document is present.
+If sub-phase: use the Deliverables list as the primary structure; each deliverable becomes an implementation step. Map each step to a specific design section when a design document is present.
 
-**6. Rust quality review implications** — three parts:
-   a. **Expected Rust change surface** — files or directories under `src-tauri/**/*.rs` anticipated. "None anticipated" if none.
-   b. **Invoke rust-reviewer? YES / NO** — with rationale.
-   c. **What the reviewer should check** — if YES: concrete focus areas. If NO: explicit reasons.
+---
 
-**7. Security implications** — three parts:
-   a. **Expected sensitive path set** — files under `src-tauri/src/crypto/`, `src-tauri/src/auth/`, or `src-tauri/src/storage/`. "None anticipated" if none. This is the drift-check anchor for `/implement-plan` — unanticipated sensitive paths trigger a Plan Deviation.
-   b. **Invoke security-reviewer? YES / NO** — with rationale.
-   c. **What the reviewer should check** — if YES: specific concerns. If NO: specific reasons.
+**6. Review focus areas** — guidance for `/implement-plan`. Does not determine which agents run; that is `implement-plan`'s responsibility based on actual changed files. Four subsections, all required:
 
-**8. Architecture review implications** — three parts:
-   a. **Expected architecture risk surface** — files where SRP, boundary, or dependency-flow risks are most likely.
-   b. **Invoke architecture-reviewer? YES / NO** — YES by default for Rust-touching plans.
-   c. **What the reviewer should check** — if YES: specific checks (SRP, module visibility discipline, dependency flow, abstraction debt). If NO: explicit reasons.
+**6a. Rust change surface** — list anticipated files under `src-tauri/**/*.rs`. "None anticipated" if none.
 
-**9. Findings-to-fix synthesis** — three parts:
-   a. **Invoke problem-solver? YES / NO** — Hard coupling: if any of Sections 6, 7, or 8 is YES, this must be YES unless a non-empty `Solver override justification:` explicitly states a direct-handoff rationale.
-   b. **When the solver runs** — define trigger points explicitly.
-   c. **Handoff contract** — choose one:
-      - **Solver mode (default):** require `problem-solver` output contract per `.claude/agents/problem-solver.md`.
-      - **Direct mode (override only):** state that reviewer findings are passed directly to `rust-implementer` with explicit severity mapping and ordering.
+**6b. Security-sensitive paths** — list anticipated files under `src-tauri/src/crypto/`, `src-tauri/src/auth/`, or `src-tauri/src/storage/`. "None anticipated" if none.
+   - This is the drift-check anchor for `/implement-plan`: any sensitive file touched that does not appear here triggers a Plan Deviation.
+   - For each listed path, note specific security concerns (e.g., key zeroization, nonce handling, IPC sanitization).
 
-**10. Execution and testing strategy** — what tests are needed and what boundary cases matter.
-   - **Invoke test-writer? YES / NO** — with rationale. Mirror as `test-agent-required` in frontmatter.
-   - If sub-phase: include the Validation checkpoint from the sub-roadmap.
-   - Include edge-case tests surfaced by Step 2.
+**6c. Architecture risk areas** — list files or modules where SRP, boundary, or dependency-flow risks are most likely. Note specific checks: concern isolation, module visibility discipline, dependency direction, abstraction debt.
 
-**11. Documentation impact** — which `docs/architecture` files need updating after implementation. "None" if none.
+**6d. Testing requirements** — what tests are needed and which boundary cases matter. Include the Validation checkpoint from the sub-roadmap if sub-phase. Include edge cases surfaced by Step 2.
 
-**12. Governance sync actions (pre-implementation)** — ordered, machine-actionable actions for `/implement-plan` to execute before coding.
-   - For each action: **Action ID**, **Reason / linked concern**, **Target files** (absolute paths), **Required edit**, **Verification**.
-   - If any action touches `.claude/rules/*.md`: include "Run `/copilot-sync` after rule edits."
-   - "None" if no governance sync is required.
+---
 
-**13. Implementation execution mode** — select one and justify:
-   - `direct` — the invoking agent performs coding steps itself.
-   - `delegated` — the invoking agent delegates coding steps to `rust-implementer` and focuses on orchestration and verification.
+**7. Documentation impact** — which `docs/architecture` files need updating after implementation. "None" if none.
 
-   When `delegated`: list delegation boundaries (which Approach steps may be delegated and which must stay with the orchestrator). The plan must remain valid for direct execution as a fallback; Section 14 must state delegation boundaries explicitly.
+---
 
-**14. Handoff Notes for Implementer** — one short paragraph for an agent with zero conversation context. State: working directory, order of operations, whether the plan is self-contained or requires re-reading the sub-phase, and any traps (platform-specific paths, feature flags, gated tests). If `status: blocked`: "Do not implement — resolve Design Concerns first."
+**8. Governance sync actions (pre-implementation)** — ordered, machine-actionable actions for `/implement-plan` to execute before coding begins.
+- For each action: **Action ID**, **Reason / linked concern**, **Target files** (absolute paths), **Required edit**, **Verification**.
+- If any action touches `.claude/rules/*.md`: include "Run `/copilot-sync` after rule edits."
+- "None" if no governance sync is required.
+
+---
+
+**9. Implementation execution mode** — select one and justify:
+- `direct` — the invoking agent performs coding steps itself.
+- `delegated` — the invoking agent delegates coding steps to `rust-implementer` and focuses on orchestration and verification.
+
+When `delegated`: list delegation boundaries — which Approach steps may be delegated and which must stay with the orchestrator. The plan must remain valid for direct execution as a fallback.
+
+---
+
+**10. Handoff Notes for Implementer** — one short paragraph for an agent with zero conversation context. State: working directory, order of operations, whether the plan is self-contained or requires re-reading the sub-phase, and any traps (platform-specific paths, feature flags, gated tests). If `status: blocked`: "Do not implement — resolve Design Concerns first."
 
 ---
 
@@ -171,27 +174,14 @@ sub-phase: <"N.S" or null>
 design-document: <relative path or null>
 sub-phase-roadmap: <relative path or null>
 implementation-delegation: <"direct"|"delegated">
-rust-review-agent-required: <true|false>
-security-agent-required: <true|false>
-architecture-review-agent-required: <true|false>
-solution-agent-required: <true|false>
-test-agent-required: <true|false>
 governance-sync-required: <true|false>
 tags: [<relevant tags>]
 ---
 ```
 
-**Frontmatter consistency rules (all hard):**
-
-- `implementation-delegation` must match Section 13.
-- `rust-review-agent-required` must match the Section 6 YES/NO decision.
-- `security-agent-required` must match the Section 7 YES/NO decision.
-- `architecture-review-agent-required` must match the Section 8 YES/NO decision.
-- If `rust-review-agent-required: true`, `architecture-review-agent-required` must also be `true`.
-- `solution-agent-required` must match the Section 9 YES/NO decision.
-- If any reviewer agent is `true` and `solution-agent-required` is `false`, Section 9 must include a non-empty `Solver override justification:`.
-- `test-agent-required` must match the Section 10 YES/NO decision.
-- `governance-sync-required: true` when Section 12 lists actions; `false` when "None."
+**Frontmatter consistency rules (hard):**
+- `implementation-delegation` must match Section 9.
+- `governance-sync-required: true` when Section 8 lists actions; `false` when "None."
 - Valid `status` values: `draft`, `blocked`, `approved`, `in-progress`, `implemented`.
 
 3. Report the saved path. If `status: blocked`, surface each blocking concern explicitly and recommend resolving the sub-phase before proceeding.

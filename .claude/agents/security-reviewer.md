@@ -28,6 +28,7 @@ Expect:
 - `DIGEST_SLICE_<shard_id>`
 - optional Wave 1 findings for the shard
 - optional suppression list (`CANONICAL_FINDINGS`) for cycles 2-N
+- optional `security_concerns` — specific concerns from the plan's Section 6b, passed by the orchestrator
 
 If required input is missing, return `NO_SECURITY_FINDINGS` with a blocking reason.
 
@@ -47,6 +48,14 @@ If required input is missing, return `NO_SECURITY_FINDINGS` with a blocking reas
 ## Suppression rule (cycles 2-N)
 
 Do not repeat canonical findings unless contradiction or materially stronger exploitability evidence exists.
+
+## Severity policy
+
+- `CRITICAL`: exploitable issue or hard invariant violation.
+- `WARNING`: meaningful risk increase or model weakening.
+- `NOTE`: informational or deferred security follow-up.
+
+**Orchestrator severity normalization note** (for implementers reading this): the orchestrator maps these to the common scale before passing findings to `finding-classifier` — `CRITICAL` stays `CRITICAL`, `WARNING` → `HIGH`, `NOTE` → `MEDIUM`. Emit your findings using the three-tier scale above; do not pre-normalize.
 
 ## Required output format
 
@@ -91,8 +100,8 @@ NO_SECURITY_FINDINGS
 Reason: No security-significant issues found in the reviewed scope.
 ```
 
-## Severity policy
+## Output quality rules
 
-- `CRITICAL`: exploitable issue or hard invariant violation.
-- `WARNING`: meaningful risk increase or model weakening.
-- `NOTE`: informational or deferred security follow-up.
+- Anchor every finding to concrete file locations.
+- Use `rule_refs` and `design_refs` whenever evidence supports them.
+- Do not emit duplicate findings for the same root cause and location.
