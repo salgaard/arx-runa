@@ -19,7 +19,7 @@ use crate::storage::schema::{
     apply_canonical_schema, seed_manifest_meta, validate_manifest_meta, validate_schema_integrity,
     verify_sqlcipher_key,
 };
-use crate::storage::types::{ChunkRecord, Node, NodeId, NodeType};
+use crate::storage::types::{ChunkRecord, Node, NodeId, NodeType, SyncChunkRecord};
 use crate::storage::validation::{
     immutable_meta_key_violation, is_immutable_manifest_meta_key, parse_chunk_size_bytes,
     validate_blob_name_uuid_v4, validate_chunk_target_node,
@@ -112,6 +112,88 @@ impl SqlCipherMetadataStore {
                 names.insert(row.map_err(StorageError::from_rusqlite)?);
             }
             Ok(names)
+        })
+        .await
+    }
+
+    /// Lists chunk records used by cloud push/pull synchronisation.
+    ///
+    /// Intentionally SQLCipher-specific; this method is not exposed on
+    /// [`MetadataStore`].
+    pub(crate) async fn list_sync_chunks(&self) -> Result<Vec<SyncChunkRecord>, StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let mut statement = conn
+                .prepare("SELECT blob_name, blake3_checksum FROM chunks ORDER BY blob_name ASC")
+                .map_err(StorageError::from_rusqlite)?;
+            let rows = statement
+                .query_map([], |row| {
+                    let blob_name: String = row.get(0)?;
+                    let checksum_bytes: Vec<u8> = row.get(1)?;
+                    let blake3_checksum: [u8; 32] = checksum_bytes.try_into().map_err(|_| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Blob,
+                            Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "expected 32-byte checksum",
+                            )),
+                        )
+                    })?;
+                    Ok(SyncChunkRecord {
+                        blob_name,
+                        blake3_checksum,
+                    })
+                })
+                .map_err(StorageError::from_rusqlite)?;
+            let mut records = Vec::new();
+            for row in rows {
+                records.push(row.map_err(StorageError::from_rusqlite)?);
+            }
+            Ok(records)
+        })
+        .await
+    }
+
+    /// Rolls back `snapshot_counter` to `previous_value` when and only when the
+    /// currently stored value is `previous_value + 1`.
+    ///
+    /// Intentionally SQLCipher-specific; this method is not exposed on
+    /// [`MetadataStore`].
+    pub(crate) async fn rollback_snapshot_counter(
+        &self,
+        previous_value: u64,
+    ) -> Result<(), StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            let current_value = tx
+                .query_row(
+                    "SELECT value FROM manifest_meta WHERE key = 'snapshot_counter'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(StorageError::from_rusqlite)?
+                .ok_or(StorageError::NotFound)?;
+            let current_value = current_value.parse::<u64>().map_err(|_| {
+                StorageError::Database(
+                    "invalid snapshot_counter: not an unsigned integer".to_owned(),
+                )
+            })?;
+            let expected_current = previous_value.checked_add(1).ok_or_else(|| {
+                StorageError::Database("invalid snapshot_counter: overflow".to_owned())
+            })?;
+            if current_value != expected_current {
+                return Err(StorageError::Database(
+                    "snapshot_counter rollback precondition violated".to_owned(),
+                ));
+            }
+            tx.execute(
+                "UPDATE manifest_meta SET value = ?1 WHERE key = 'snapshot_counter'",
+                params![previous_value.to_string()],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
         })
         .await
     }
@@ -223,6 +305,39 @@ pub(crate) fn open_sqlcipher(
     conn.execute_batch("PRAGMA foreign_keys = ON;")
         .map_err(|error| SqlcipherOpenError::Open(error.to_string()))?;
     Ok(conn)
+}
+
+/// Reads `snapshot_counter` and optional `last_synced_at` from a SQLCipher DB.
+pub(crate) fn read_snapshot_state_from_database(
+    path: &Path,
+    sqlcipher_key: &[u8; 32],
+) -> Result<(u64, Option<i64>), StorageError> {
+    let conn = open_sqlcipher(path, sqlcipher_key)
+        .map_err(|error| StorageError::Database(error.to_string()))?;
+    let snapshot_counter_raw = conn
+        .query_row(
+            "SELECT value FROM manifest_meta WHERE key = 'snapshot_counter'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(StorageError::from_rusqlite)?
+        .ok_or_else(|| {
+            StorageError::Database("missing manifest_meta key: snapshot_counter".to_owned())
+        })?;
+    let snapshot_counter = snapshot_counter_raw.parse::<u64>().map_err(|_| {
+        StorageError::Database("invalid snapshot_counter: not an unsigned integer".to_owned())
+    })?;
+    let last_synced_at = conn
+        .query_row(
+            "SELECT value FROM manifest_meta WHERE key = 'last_synced_at'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(StorageError::from_rusqlite)?
+        .and_then(|value| value.parse::<i64>().ok());
+    Ok((snapshot_counter, last_synced_at))
 }
 
 fn manifest_meta_value(conn: &Connection, key: &str) -> Result<Option<String>, StorageError> {
@@ -1814,6 +1929,175 @@ mod tests {
             result,
             Err(StorageError::Database(message)) if message.contains("snapshot_counter")
         ));
+    }
+
+    #[tokio::test]
+    async fn test_list_sync_chunks_returns_empty_when_no_rows() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+
+        let rows = store
+            .list_sync_chunks()
+            .await
+            .expect("list_sync_chunks should succeed");
+
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_sync_chunks_returns_alphabetical_order() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+        let file_id = Uuid::new_v4();
+        store
+            .insert_node(&file_node(file_id, None, "file.txt"))
+            .await
+            .expect("file should insert");
+        store
+            .insert_chunks(&[
+                chunk_for(file_id, 0, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+                chunk_for(file_id, 1, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            ])
+            .await
+            .expect("chunks should insert");
+
+        let rows = store
+            .list_sync_chunks()
+            .await
+            .expect("list_sync_chunks should succeed");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].blob_name, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        assert_eq!(rows[1].blob_name, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    }
+
+    #[tokio::test]
+    async fn test_list_sync_chunks_includes_blake3_checksum_bytes() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+        let file_id = Uuid::new_v4();
+        store
+            .insert_node(&file_node(file_id, None, "file.txt"))
+            .await
+            .expect("file should insert");
+        let mut chunk = chunk_for(file_id, 0, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        chunk.blake3_checksum = [0xAB; 32];
+        store
+            .insert_chunks(&[chunk])
+            .await
+            .expect("chunk should insert");
+
+        let rows = store
+            .list_sync_chunks()
+            .await
+            .expect("list_sync_chunks should succeed");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].blake3_checksum, [0xAB; 32]);
+    }
+
+    #[tokio::test]
+    async fn test_rollback_snapshot_counter_restores_previous_value() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+        let previous_value = store
+            .increment_snapshot_counter()
+            .await
+            .expect("first increment should succeed");
+        let _ = store
+            .increment_snapshot_counter()
+            .await
+            .expect("second increment should succeed");
+
+        store
+            .rollback_snapshot_counter(previous_value)
+            .await
+            .expect("rollback should succeed");
+
+        assert_eq!(
+            store
+                .get_meta("snapshot_counter")
+                .await
+                .expect("meta should load"),
+            Some(previous_value.to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rollback_snapshot_counter_rejects_when_precondition_violated() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+        let _ = store
+            .increment_snapshot_counter()
+            .await
+            .expect("increment should succeed");
+
+        let result = store.rollback_snapshot_counter(3).await;
+
+        assert!(matches!(
+            result,
+            Err(StorageError::Database(message)) if message.contains("precondition")
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_rollback_snapshot_counter_concurrent_with_increment_fails_one_side() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let store = Arc::new(
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created"),
+        );
+        let _ = store
+            .increment_snapshot_counter()
+            .await
+            .expect("first increment should succeed");
+        let _ = store
+            .increment_snapshot_counter()
+            .await
+            .expect("second increment should succeed");
+
+        let rollback_store = Arc::clone(&store);
+        let increment_store = Arc::clone(&store);
+        let rollback_task =
+            tokio::spawn(async move { rollback_store.rollback_snapshot_counter(0).await });
+        let increment_task =
+            tokio::spawn(async move { increment_store.increment_snapshot_counter().await });
+
+        let rollback_result = rollback_task.await.expect("rollback task should complete");
+        let increment_result = increment_task
+            .await
+            .expect("increment task should complete");
+
+        assert!(rollback_result.is_err());
+        assert!(increment_result.is_ok());
     }
 
     #[tokio::test]

@@ -13,6 +13,7 @@ mod rclone;
 pub(crate) mod rclone_subprocess;
 pub(crate) mod remote_path;
 pub(crate) mod stderr_sanitiser;
+pub mod sync;
 mod sync_config;
 pub mod vault_header;
 pub mod vault_header_io;
@@ -27,6 +28,10 @@ pub use manifest_backup::{
     upload_manifest_backup,
 };
 pub use rclone::RcloneTransport;
+pub use sync::{
+    CloudDeletionReport, PullReport, PushReport, SyncConflict, SyncError, delete_vault_from_cloud,
+    pull_vault, push_vault,
+};
 pub use sync_config::SyncConfig;
 pub use vault_header_io::{
     VAULT_HEADER_BLOB_NAME, VAULT_HEADER_UPLOAD_STAGING_FILE_NAME, VaultHeaderSyncError,

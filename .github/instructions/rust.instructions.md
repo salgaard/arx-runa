@@ -2,7 +2,6 @@
 applyTo: "src-tauri/**/*.rs"
 ---
 
-
 # Rust — project-wide rules
 
 ## Structure

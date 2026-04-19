@@ -121,6 +121,7 @@ dependencies = [
  "core-foundation",
  "core-foundation-sys",
  "dirs",
+ "futures-util",
  "hex",
  "hkdf",
  "libc",

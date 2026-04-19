@@ -2,7 +2,6 @@
 applyTo: "docs/architecture/designs/**/diagrams/**,docs/architecture/diagrams/**"
 ---
 
-
 # Mermaid Diagrams — Rules
 
 **Full syntax reference**: `.claude/reference/mermaid.md`

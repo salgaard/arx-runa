@@ -2,7 +2,6 @@
 applyTo: "src-tauri/src/ui/**,src-tauri/tauri.conf.json,src-tauri/capabilities/**,src-tauri/build.rs"
 ---
 
-
 # Tauri — rules
 
 **Design specification**: `docs/architecture/designs/tauri-ipc-and-frontend/design.md` — last verified against design dated 2026-04-12

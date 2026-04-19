@@ -2,7 +2,6 @@
 applyTo: "src-tauri/src/storage/**"
 ---
 
-
 # Storage module — rules
 
 **Design specification**: `docs/architecture/designs/chunking-and-manifest/design.md` — last verified against design dated 2026-04-08
@@ -38,6 +37,9 @@ applyTo: "src-tauri/src/storage/**"
 - Manifest backup blob path is `manifest/manifest-backup.blob` (constant owned by `storage::cloud::manifest_backup::MANIFEST_BACKUP_BLOB_NAME`)
 - Push flow uploads manifest backup, then uploads vault header idempotently on every push
 - Snapshot model: atomic full export, `snapshot_counter` increments each push
+- `rollback_snapshot_counter` is a SQLCipher-specific helper on `SqlCipherMetadataStore` (not on `MetadataStore`); push-only after manifest-upload failure and must enforce current counter equals `previous + 1` before rollback
+- `list_sync_chunks` is a SQLCipher-specific helper on `SqlCipherMetadataStore` (not on `MetadataStore`); returns alphabetical `(blob_name, blake3_checksum)` pairs for push/pull flows
+- Fisher-Yates upload-order randomisation uses `rand::rngs::SysRng` (CSPRNG) in production; deterministic seeding is permitted only under `#[cfg(test)]`
 - `RcloneTransport` invokes the bundled sidecar via `tokio::process::Command` only; remote paths pass the `^[a-zA-Z0-9._/-]+$` allowlist (reject `..` and leading `/`); stderr strips lines containing `token|key|secret|password|credential|auth` before surfacing in `CloudTransportError::RcloneProcessFailed`
 
 ## EXIF stripping

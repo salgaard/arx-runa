@@ -22,6 +22,10 @@ pub use cloud::{
     GoogleDriveSetupRequest, GoogleDriveSetupResult, OpenerLike, RcloneTransport, S3SetupRequest,
     SyncConfig, setup_google_drive, setup_s3_provider,
 };
+pub use cloud::{
+    CloudDeletionReport, PullReport, PushReport, SyncConflict, SyncError, delete_vault_from_cloud,
+    pull_vault, push_vault,
+};
 pub use cloud::{CloudEndpoint, CloudTransport, CloudTransportError};
 pub use error::StorageError;
 pub use metadata_store::MetadataStore;

@@ -2,7 +2,6 @@
 applyTo: "docs/research/**"
 ---
 
-
 # Research documents — rules
 
 ## Required sections

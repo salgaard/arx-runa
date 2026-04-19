@@ -1,7 +1,7 @@
 ---
 title: "Phase 4.5 — Push/Pull Flows and Conflict Detection"
 created: "2026-04-19T20:12:00+02:00"
-status: approved
+status: implemented
 roadmap-phase: 4
 sub-phase: "4.5"
 design-document: "docs/architecture/designs/cloud-synchronisation/design.md"
@@ -457,3 +457,74 @@ Traps:
 - Single-invocation assumption (A-15): document at module level but do not implement locking.
 - Do not drain `pending_deletions` in push — that is explicitly C-5 deferred.
 - The integration test with a local Rclone remote (design `#testing-strategy`) requires the sidecar to be discoverable; if the harness cannot locate it, mark the test `#[ignore]` with a rationale and rely on `MockCloudTransport` for CI.
+
+## Implementation Log
+
+- **Date**: 2026-04-20T00:42:33+02:00
+- **Run ID**: `phase-4-5-push-pull-flows-20260420-004233`
+- **Track**: `full`
+- **Branch**: `development`
+- **Execution mode**: rust-implementer delegated for initial implementation, orchestrator fallback for remediation and final hardening.
+
+### Agent evidence
+
+| Approach step | Agent | Agent ID | Outcome |
+|---|---|---|---|
+| Initial code implementation | `rust-implementer` | `phase45-impl` | Implemented base 4.5 surface (`sync.rs`, SQLCipher helpers, exports, tests scaffold). |
+| Rust review cycles | `rust-reviewer` | `phase45-rust-review-c1*` / `phase45-rust-review-final` | Iterative findings; all actionable findings remediated, one HIGH finding classified deferred by plan C-5. |
+| Architecture review | `architecture-reviewer` | `phase45-arch-review-c2` | No structural findings after boundary/type refactor. |
+| Security review | `security-reviewer` | `phase45-security-review-c2` | No security findings in final scope. |
+| Cross-shard consistency | `cross-shard-reviewer` | `phase45-cross-shard-review` | No cross-shard contradictions. |
+| Findings disposition | `finding-classifier` | `phase45-finding-classifier-final` | Classified pending-deletion finding as `DEFERRED_BY_PLAN` per C-5. |
+
+- **Files changed**:
+  - `.claude/rules/storage.md`
+  - `.github/instructions/auth.instructions.md`
+  - `.github/instructions/crypto.instructions.md`
+  - `.github/instructions/leptos.instructions.md`
+  - `.github/instructions/memory-protection.instructions.md`
+  - `.github/instructions/mermaid.instructions.md`
+  - `.github/instructions/research.instructions.md`
+  - `.github/instructions/rust.instructions.md`
+  - `.github/instructions/storage.instructions.md`
+  - `.github/instructions/tauri.instructions.md`
+  - `.claude/runs/phase-4-5-push-pull-flows-20260420-004233/run-state.json`
+  - `.claude/runs/phase-4-5-push-pull-flows-20260420-004233/cycle-1.json`
+  - `Cargo.lock`
+  - `src-tauri/Cargo.toml`
+  - `src-tauri/src/storage/cloud/mod.rs`
+  - `src-tauri/src/storage/cloud/sync.rs`
+  - `src-tauri/src/storage/mod.rs`
+  - `src-tauri/src/storage/sqlcipher.rs`
+  - `src-tauri/src/storage/types/mod.rs`
+  - `src-tauri/src/storage/types/sync_chunk_record.rs`
+  - `src-tauri/tests/integration_cloud_sync.rs`
+  - `docs/architecture/designs/cloud-synchronisation/sub-phases/4.5-push-pull-flows.md`
+
+- **Formatting check**: `cargo fmt --all -- --check` passed.
+- **Clippy results**: `cargo clippy --workspace --all-targets --all-features -- -D warnings` passed.
+- **Test results**: `cargo test --workspace --all-targets --all-features` passed.
+- **Release build**: `cargo build --workspace --release` passed.
+- **Rust review**: Final actionable count `0`; one HIGH finding (`pending_deletions` drain) classified deferred by plan concern C-5.
+- **Architecture review**: No structural findings.
+- **Security review**: No findings.
+- **Cross-shard review**: 1 invocation, no findings.
+- **Findings quality gate**:
+  - `ACTIONABLE_NOW`: 0
+  - `INTENTIONAL_DECISION`: 0
+  - `DEFERRED_BY_PLAN`: 1
+  - `INSUFFICIENT_EVIDENCE`: 0
+- **Finding overrides**: None.
+- **Design challenge outcomes**: None.
+- **Governance sync**: 3 planned actions completed (`G-1`, `G-2`, `G-3`); rule mirror refreshed, with instruction sync touching all mapped instruction files.
+- **Sub-phase decisions sync**: `docs/architecture/designs/cloud-synchronisation/sub-phases/4.5-push-pull-flows.md` updated with 5 implementation decisions.
+- **Deviations from plan**:
+  - Implemented bounded concurrency with `FuturesUnordered` instead of `tokio::task::JoinSet` while preserving the same bounded scheduling semantics.
+  - Production shuffle policy implemented with `rand::rngs::SysRng` (rand 0.10 system RNG) and unbiased rejection sampling.
+  - Integration test added as `#[ignore]` placeholder because real-cloud harness remains environment-coupled.
+- **Documentation flagged**:
+  - `docs/architecture/designs/cloud-synchronisation/design.md#conflict-detection` note for `SyncError::CloudManifestUnreadable` (**deferred**).
+  - `docs/architecture/designs/cloud-synchronisation/design.md#cloud-garbage-collection` note for deferred drain wiring (**deferred**).
+  - `docs/architecture/designs/cloud-synchronisation/diagrams/` push/pull sequence diagram work (**deferred**).
+  - `docs/guides/glossary.md` entries for sync terms and rollback semantics (**deferred**).
+- **Run state path**: `.claude/runs/phase-4-5-push-pull-flows-20260420-004233/`

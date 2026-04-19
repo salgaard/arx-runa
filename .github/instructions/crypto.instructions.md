@@ -2,7 +2,6 @@
 applyTo: "src-tauri/src/crypto/**"
 ---
 
-
 # Crypto module — rules
 
 **Design specification**: `docs/architecture/designs/cryptographic-primitives/design.md` — last verified against design dated 2026-04-01

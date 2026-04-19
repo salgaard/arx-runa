@@ -2,7 +2,6 @@
 applyTo: "src-tauri/src/memory/**"
 ---
 
-
 # Memory protection — rules
 
 ## Purpose
