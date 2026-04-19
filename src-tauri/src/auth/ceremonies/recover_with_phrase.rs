@@ -1,16 +1,17 @@
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use super::MANIFEST_BACKUP_BLOB_NAME;
 use super::helpers::*;
 use super::types::RecoverWithPhraseRequest;
 use crate::auth::error::AuthenticationError;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::{VaultId, WrappedMasterKey, unwrap_master_key_from_recovery};
-use crate::storage::cloud::manifest_backup::decrypt_manifest_backup;
+use crate::storage;
 use crate::storage::cloud::vault_header::VaultHeaderTrustPolicy;
-use crate::storage::cloud::{CloudTransport, download_vault_header};
+use crate::storage::cloud::{
+    CloudTransport, ManifestBackupSyncError, download_manifest_backup, download_vault_header,
+};
 
 #[cfg(test)]
 use super::VAULT_HEADER_BLOB_NAME;
@@ -29,8 +30,6 @@ pub async fn recover_with_phrase(
     precheck_recovery_destination(&request.vault_db_path).await?;
 
     let staging_dir = staging::staging_directory().await?;
-    let backup_download_path = staging_dir.join("recover-with-phrase-manifest-backup.enc");
-    let _ = staging::remove_if_exists(&backup_download_path).await;
 
     let header = download_vault_header(
         cloud_transport,
@@ -89,33 +88,20 @@ pub async fn recover_with_phrase(
     let master_key = recovered_master_key.ok_or(AuthenticationError::InvalidCredentials)?;
     let session_keys = SessionKeys::from_master_key_bytes(&master_key)?;
     let sqlcipher_key = sqlcipher_key_from_array(session_keys.sqlcipher_key.expose());
-
-    staging::write_owner_only(&backup_download_path, b"").await?;
-    if cloud_transport
-        .download_blob(MANIFEST_BACKUP_BLOB_NAME, &backup_download_path)
+    let storage_staging_dir = storage::staging::default_staging_directory()
+        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+    storage::staging::ensure_staging_directory(&storage_staging_dir)
         .await
-        .is_err()
-    {
-        let _ = staging::remove_if_exists(&backup_download_path).await;
-        return Err(AuthenticationError::VaultHeaderInvalid);
-    }
-    let backup_wire = match tokio::fs::read(&backup_download_path).await {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            let _ = staging::remove_if_exists(&backup_download_path).await;
-            return Err(AuthenticationError::VaultHeaderInvalid);
-        }
-    };
-    let _ = staging::remove_if_exists(&backup_download_path).await;
-    let plaintext = decrypt_manifest_backup(&backup_wire, session_keys.manifest_key.expose())
-        .map_err(|_| AuthenticationError::InvalidCredentials)?;
-
-    import_manifest_sql_atomic(&request.vault_db_path, sqlcipher_key, plaintext)
-        .await
-        .map_err(|error| match error {
-            AuthenticationError::VaultHeaderInvalid => AuthenticationError::InvalidCredentials,
-            other => other,
-        })?;
+        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+    download_manifest_backup(
+        cloud_transport,
+        &storage_staging_dir,
+        session_keys.manifest_key.expose(),
+        &request.vault_db_path,
+        &sqlcipher_key,
+    )
+    .await
+    .map_err(map_manifest_backup_sync_error)?;
 
     session_manager
         .finalize_session_install(install_reservation, session_keys)
@@ -123,6 +109,20 @@ pub async fn recover_with_phrase(
 
     drop(master_key);
     Ok(vault_id)
+}
+
+/// Maps manifest-backup sync failures into ceremony-visible auth errors.
+fn map_manifest_backup_sync_error(error: ManifestBackupSyncError) -> AuthenticationError {
+    match error {
+        ManifestBackupSyncError::CryptoFailed | ManifestBackupSyncError::IntegrityCheckFailed => {
+            AuthenticationError::InvalidCredentials
+        }
+        ManifestBackupSyncError::Transport(_)
+        | ManifestBackupSyncError::StagingIo(_)
+        | ManifestBackupSyncError::Vacuum(_)
+        | ManifestBackupSyncError::ExportRead(_)
+        | ManifestBackupSyncError::DbPersistIo(_) => AuthenticationError::VaultHeaderInvalid,
+    }
 }
 
 #[cfg(test)]
@@ -582,5 +582,59 @@ mod tests {
         let result = recover_with_phrase(request, &new_session, &vault.cloud).await;
 
         assert!(matches!(result, Err(AuthenticationError::NoRecoverySlot)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_recover_with_phrase_destination_exists_returns_vault_header_invalid() {
+        let _lock = ceremony_lock().await;
+        let valid_phrase = Mnemonic::from_entropy_in(Language::English, &[0x22u8; 32])
+            .unwrap()
+            .words()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let destination_root = temp_dir();
+        let destination = destination_root.path().join("recover.db");
+        std::fs::write(&destination, b"existing destination").expect("seed file must be written");
+        let request = RecoverWithPhraseRequest {
+            phrase: &valid_phrase,
+            vault_db_path: destination.clone(),
+        };
+
+        let result =
+            recover_with_phrase(request, &test_session_manager(), &MockCloudTransport::new()).await;
+
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::VaultHeaderInvalid)
+        ));
+        assert_eq!(
+            std::fs::read(&destination).expect("seed file must remain readable"),
+            b"existing destination"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_recover_with_phrase_corrupted_manifest_backup_returns_invalid_credentials() {
+        let _lock = ceremony_lock().await;
+        let mut vault = create_tier_one_vault_with_default_params().await;
+        let phrase = add_recovery_slot_with_default_params(&mut vault).await;
+        upload_corrupted_manifest_backup_for(&vault).await;
+        vault.session.lock().await;
+
+        let new_session = test_session_manager();
+        let destination_root = temp_dir();
+        let target = destination_root.path().join("recover.db");
+        let request = RecoverWithPhraseRequest {
+            phrase: phrase.as_str(),
+            vault_db_path: target.clone(),
+        };
+
+        let result = recover_with_phrase(request, &new_session, &vault.cloud).await;
+
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::InvalidCredentials)
+        ));
+        assert!(!target.exists());
     }
 }

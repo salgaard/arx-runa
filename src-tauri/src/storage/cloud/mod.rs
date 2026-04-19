@@ -22,6 +22,10 @@ mod wizard;
 pub mod mock;
 pub use destination_session::{BackupSyncMode, DestinationSessionPublic, DestinationType};
 pub use endpoint::CloudEndpoint;
+pub use manifest_backup::{
+    MANIFEST_BACKUP_BLOB_NAME, ManifestBackupSyncError, download_manifest_backup,
+    upload_manifest_backup,
+};
 pub use rclone::RcloneTransport;
 pub use sync_config::SyncConfig;
 pub use vault_header_io::{

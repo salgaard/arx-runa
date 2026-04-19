@@ -25,8 +25,6 @@ mod test_support;
 
 /// Name of the vault header object at the cloud root.
 pub(super) const VAULT_HEADER_BLOB_NAME: &str = "vault-header.json";
-/// Name of the manifest backup object at the cloud root.
-pub(super) const MANIFEST_BACKUP_BLOB_NAME: &str = "manifest-backup.enc";
 /// Filename used for the pre-upload staging file.
 #[cfg(test)]
 pub(super) const STAGING_FILE_NAME: &str = "pending-vault-header.json";

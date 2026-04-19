@@ -127,40 +127,6 @@ pub(super) fn map_vault_header_sync_error(_error: VaultHeaderSyncError) -> Authe
     AuthenticationError::VaultHeaderInvalid
 }
 
-/// Imports decrypted manifest SQL into a temporary SQLCipher DB and atomically
-/// finalises it at `vault_db_path`.
-pub(super) async fn import_manifest_sql_atomic(
-    vault_db_path: &Path,
-    sqlcipher_key: SqlcipherKey,
-    manifest_sql_plaintext: Zeroizing<Vec<u8>>,
-) -> Result<(), AuthenticationError> {
-    let vault_db_path = vault_db_path.to_path_buf();
-    tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
-        let sql_text = std::str::from_utf8(manifest_sql_plaintext.as_slice())
-            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-        if let Some(parent) = vault_db_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-        }
-        let temp_file = tempfile::NamedTempFile::new_in(
-            vault_db_path
-                .parent()
-                .ok_or(AuthenticationError::VaultHeaderInvalid)?,
-        )
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-        let temp_path = temp_file.path().to_path_buf();
-        let conn = open_sqlcipher(&temp_path, sqlcipher_key.expose())?;
-        conn.execute_batch(sql_text)
-            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-        drop(conn);
-        temp_file
-            .persist_noclobber(&vault_db_path)
-            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-        Ok(())
-    })
-    .await
-    .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
-}
-
 /// Encodes raw bytes with standard base64.
 pub(super) fn encode_base64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)

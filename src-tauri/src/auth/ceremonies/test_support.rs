@@ -8,12 +8,12 @@ use super::*;
 use crate::auth::Argon2Params;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
-use crate::auth::staging;
 use crate::crypto::VaultId;
 use crate::storage::cloud::CloudTransport;
 use crate::storage::cloud::manifest_backup::encrypt_manifest_backup;
 use crate::storage::cloud::mock::MockCloudTransport;
 use crate::storage::cloud::vault_header::VaultHeader;
+use crate::storage::cloud::{MANIFEST_BACKUP_BLOB_NAME, upload_manifest_backup};
 
 pub(super) const TEST_PASSWORD: &[u8] = b"correct horse battery staple";
 pub(super) const TEST_NEW_PASSWORD: &[u8] = b"stapler battery horse correct";
@@ -153,11 +153,22 @@ pub(super) async fn add_recovery_slot_and_return_phrase(
 }
 
 pub(super) async fn upload_manifest_backup_for(vault: &TierOneVault) {
-    upload_manifest_backup_payload_for(
-        vault,
-        b"CREATE TABLE IF NOT EXISTS imported_stub (id INTEGER);",
+    let salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
+    let params = argon2_params_from_json(&vault.header.argon2_params);
+    let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+    derive_master_key_into(TEST_PASSWORD, None, &salt, &params, &mut master).unwrap();
+    let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
+    let sqlcipher_key = sqlcipher_key_from_array(keys.sqlcipher_key.expose());
+    let staging_root = tempfile::tempdir().expect("manifest backup staging tempdir must exist");
+    upload_manifest_backup(
+        &vault.vault_db_path,
+        &sqlcipher_key,
+        keys.manifest_key.expose(),
+        &vault.cloud,
+        staging_root.path(),
     )
-    .await;
+    .await
+    .expect("manifest backup upload must succeed");
 }
 
 pub(super) async fn upload_manifest_backup_payload_for(vault: &TierOneVault, payload: &[u8]) {
@@ -167,16 +178,48 @@ pub(super) async fn upload_manifest_backup_payload_for(vault: &TierOneVault, pay
     derive_master_key_into(TEST_PASSWORD, None, &salt, &params, &mut master).unwrap();
     let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
     let manifest_key: [u8; 32] = *keys.manifest_key.expose();
-    let wire = encrypt_manifest_backup(payload.to_vec(), &manifest_key).unwrap();
-    let staging_dir = staging::staging_directory().await.unwrap();
-    let upload_path = staging_dir.join("test-support-manifest-backup.enc");
-    staging::write_owner_only(&upload_path, &wire)
+    let wire = encrypt_manifest_backup(Zeroizing::new(payload.to_vec()), &manifest_key).unwrap();
+    let staging_root = tempfile::tempdir().expect("payload bypass staging tempdir must exist");
+    let upload_path = staging_root
+        .path()
+        .join("test-support-manifest-backup.blob");
+    tokio::fs::write(&upload_path, &wire)
         .await
-        .unwrap();
+        .expect("payload bypass write must succeed");
     vault
         .cloud
         .upload_blob(&upload_path, MANIFEST_BACKUP_BLOB_NAME)
         .await
         .unwrap();
-    let _ = staging::remove_if_exists(&upload_path).await;
+    let _ = tokio::fs::remove_file(&upload_path).await;
+}
+
+pub(super) async fn upload_corrupted_manifest_backup_for(vault: &TierOneVault) {
+    upload_manifest_backup_for(vault).await;
+    let staging_root = tempfile::tempdir().expect("corruption staging tempdir must be created");
+    let wire_path = staging_root
+        .path()
+        .join("test-support-corrupt-manifest-backup.blob");
+    vault
+        .cloud
+        .download_blob(MANIFEST_BACKUP_BLOB_NAME, &wire_path)
+        .await
+        .expect("manifest backup must exist before corruption");
+    let mut wire = tokio::fs::read(&wire_path)
+        .await
+        .expect("manifest backup wire must be readable");
+    let last_index = wire
+        .len()
+        .checked_sub(1)
+        .expect("manifest backup wire must be non-empty");
+    wire[last_index] ^= 0x01;
+    tokio::fs::write(&wire_path, &wire)
+        .await
+        .expect("corrupted manifest backup wire must be writable");
+    vault
+        .cloud
+        .upload_blob(&wire_path, MANIFEST_BACKUP_BLOB_NAME)
+        .await
+        .expect("corrupted manifest backup upload must succeed");
+    let _ = tokio::fs::remove_file(&wire_path).await;
 }

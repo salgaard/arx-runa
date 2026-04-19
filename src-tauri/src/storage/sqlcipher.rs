@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use rusqlite::{Connection, OptionalExtension, params};
 use secrecy::SecretBox;
+use thiserror::Error;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -24,6 +25,17 @@ use crate::storage::validation::{
     validate_blob_name_uuid_v4, validate_chunk_target_node,
     validate_immutable_meta_matches_expected, validate_size_padded_matches_chunk_size,
 };
+
+/// Errors produced while opening and keying a SQLCipher connection.
+#[derive(Debug, Error)]
+pub enum SqlcipherOpenError {
+    /// Opening the SQLite database file failed.
+    #[error("failed to open SQLCipher database: {0}")]
+    Open(String),
+    /// SQLCipher rejected the provided key bytes.
+    #[error("SQLCipher key rejected")]
+    KeyRejected,
+}
 
 /// Production metadata store backed by a SQLCipher manifest database.
 #[derive(Debug)]
@@ -184,6 +196,30 @@ fn apply_sqlcipher_key(
         return Err(StorageError::Database(message));
     }
     Ok(())
+}
+
+/// Opens a SQLCipher database and applies a raw 32-byte key.
+pub(crate) fn open_sqlcipher(
+    path: &Path,
+    sqlcipher_key: &[u8; 32],
+) -> Result<Connection, SqlcipherOpenError> {
+    let conn =
+        Connection::open(path).map_err(|error| SqlcipherOpenError::Open(error.to_string()))?;
+    let rc = {
+        // SAFETY: `conn` is open for this thread and `sqlcipher_key` points to
+        // a valid 32-byte buffer for the duration of the call.
+        unsafe {
+            rusqlite::ffi::sqlite3_key(
+                conn.handle(),
+                sqlcipher_key.as_ptr().cast(),
+                sqlcipher_key.len() as i32,
+            )
+        }
+    };
+    if rc != rusqlite::ffi::SQLITE_OK {
+        return Err(SqlcipherOpenError::KeyRejected);
+    }
+    Ok(conn)
 }
 
 fn manifest_meta_value(conn: &Connection, key: &str) -> Result<Option<String>, StorageError> {

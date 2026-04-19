@@ -35,6 +35,7 @@ applyTo: "src-tauri/src/storage/**"
 ## Cloud backup
 - Manifest encrypted with `manifest_key`
 - Manifest backup is a singleton blob (no AAD); vault header stays plaintext JSON at cloud root
+- Manifest backup blob path is `manifest/manifest-backup.blob` (constant owned by `storage::cloud::manifest_backup::MANIFEST_BACKUP_BLOB_NAME`)
 - Push flow uploads manifest backup, then uploads vault header idempotently on every push
 - Snapshot model: atomic full export, `snapshot_counter` increments each push
 - `RcloneTransport` invokes the bundled sidecar via `tokio::process::Command` only; remote paths pass the `^[a-zA-Z0-9._/-]+$` allowlist (reject `..` and leading `/`); stderr strips lines containing `token|key|secret|password|credential|auth` before surfacing in `CloudTransportError::RcloneProcessFailed`

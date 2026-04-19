@@ -1,7 +1,7 @@
 ---
 title: "Phase 4.4 — Manifest Cloud Backup"
 created: "2026-04-19T17:34:12+02:00"
-status: approved
+status: implemented
 roadmap-phase: 4
 sub-phase: "4.4"
 design-document: "docs/architecture/designs/cloud-synchronisation/design.md"
@@ -335,3 +335,65 @@ All three sensitive subtrees are touched. Reviewer scope per path:
 ## 9. Handoff Notes for Implementer
 
 Working directory is `C:\Users\chris\source\repos\arx-runa`. Plan is self-contained — you do **not** need to re-read the sub-phase doc once this plan is loaded; CS-001 through CS-005 plus Sections 4–5 cover all signatures, file paths, and ordering decisions. Execute Steps 1–13 in order: Step 1 (relocate `open_sqlcipher`) is a hard prerequisite for Steps 3–4, and Steps 7–9 (ceremony + test-support migrations) must wait until Steps 2–5 (new helper surface) compile. Do not touch `VAULT_HEADER_BLOB_NAME` — Phase 4.3 owns it. Do not re-derive `manifest_key`; it is already in `SessionKeys` (`src-tauri/src/auth/session/keys.rs:17`) and is expected to be borrowed as `&[u8; 32]` via `.expose()`. Traps: (a) SQLCipher `VACUUM INTO` needs the destination path escaped in the SQL string — prefer `conn.execute("VACUUM INTO ?1", [export_path.to_string_lossy().as_ref()])` style if `rusqlite` supports bound parameters for this statement; otherwise validate the staging-directory path does not contain `'` before string interpolation. (b) On Windows, `std::fs::set_permissions(0o600)` is a no-op — the 0o600 discipline is Unix-only; the `cfg(unix)` guards in `storage::staging::write_owner_only` are the template to follow. (c) Test suite command per user preference: `cargo test --workspace --all-targets --all-features` (full run, not narrow). (d) After implementation, spawn `security-reviewer` per C-7 / Step 13 — the sub-phase gate is mandatory. (e) The `test_recover_vault_failed_import_cleans_temp_and_keeps_destination_absent` test relies on `upload_manifest_backup_payload_for`'s direct-bytes bypass path — keep that variant in `test_support`; do not collapse it into the real-VACUUM helper.
+
+## Implementation Log
+
+- **Date**: 2026-04-19T18:18:00+02:00
+- **Run ID**: `phase-4-4-manifest-backup-20260419-174221`
+- **Track**: `full`
+- **Branch**: `development`
+- **Execution mode**: Orchestrator-led implementation with delegated review/test agents
+
+| Approach step | Agent | Agent ID | Outcome |
+|---|---|---|---|
+| Structured context build | plan-context-builder | `plan-digest-builder` | `PLAN_DIGEST` produced |
+| Structured context build | rules-extractor | `rules-index-builder` | `RULES_INDEX` produced |
+| Structured context build | design-extractor | `design-index-builder-1` | `DESIGN_INDEX` produced |
+| Structured context build | shard-planner | `shard-map-builder-1` | `SHARD_MAP` + `SHARD_DIGEST_SUMMARY[]` produced |
+| Rust review (cycle 2/3) | rust-reviewer | `phase44-rust-review-r3` | No actionable findings |
+| Security review (cycle 3) | security-reviewer | `phase44-security-review-r4` | No security findings |
+| Architecture review (cycle 3) | architecture-reviewer | `phase44-architecture-review-r3` | No structural findings |
+| Cross-shard review | cross-shard-reviewer | `phase44-cross-shard-review`, `phase44-cross-shard-review-r2` | No cross-shard findings |
+| Findings quality gate | finding-classifier | `phase44-finding-classifier` | `CLASSIFIED_FINDINGS` with empty actionable set |
+| Test expansion/audit | test-writer | `phase44-test-writer` | Additional adversarial/guard tests added |
+
+- **Files changed**:
+  - `.claude/plans/phase-4-4-manifest-backup.md`
+  - `.claude/rules/auth.md`
+  - `.claude/rules/storage.md`
+  - `.github/instructions/auth.instructions.md`
+  - `.github/instructions/storage.instructions.md`
+  - `.github/instructions/tauri.instructions.md`
+  - `docs/architecture/designs/cloud-synchronisation/sub-phases/4.4-manifest-backup.md`
+  - `src-tauri/src/auth/ceremonies/helpers.rs`
+  - `src-tauri/src/auth/ceremonies/mod.rs`
+  - `src-tauri/src/auth/ceremonies/recover_vault.rs`
+  - `src-tauri/src/auth/ceremonies/recover_with_phrase.rs`
+  - `src-tauri/src/auth/ceremonies/test_support.rs`
+  - `src-tauri/src/storage/cloud/manifest_backup.rs`
+  - `src-tauri/src/storage/cloud/mod.rs`
+  - `src-tauri/src/storage/sqlcipher.rs`
+  - `.claude/runs/phase-4-4-manifest-backup-20260419-174221/run-state.json`
+  - `.claude/runs/phase-4-4-manifest-backup-20260419-174221/cycle-3.json`
+
+- **Formatting check**: `cargo fmt --all -- --check` passed (after applying `cargo fmt --all`)
+- **Clippy results**: `cargo clippy --workspace --all-targets --all-features -- -D warnings` passed
+- **Test results**: `cargo test --workspace --all-targets --all-features` passed (`495 passed; 0 failed; 1 ignored` in `arx-runa-tauri` library tests)
+- **Release build**: `cargo build --workspace --release` passed
+- **Rust review**: No actionable findings in final cycle
+- **Architecture review**: No structural findings in final cycle
+- **Security review**: No security findings in final cycle
+- **Cross-shard review**: 2 invocations, no findings
+- **Findings quality gate**: `ACTIONABLE_NOW=0`, `INTENTIONAL_DECISION=0`, `DEFERRED_BY_PLAN=0`, `INSUFFICIENT_EVIDENCE=0`
+- **Finding overrides**: None
+- **Design challenge outcomes**: None
+- **Governance sync**: 6 actions executed; `/copilot-sync` completed and updated derived instruction files (`auth`, `storage`, `tauri`)
+- **Sub-phase decisions sync**: `docs/architecture/designs/cloud-synchronisation/sub-phases/4.4-manifest-backup.md` updated with 5 implementation decisions
+- **Deviations from plan**:
+  - Implemented SQLCipher opener in `src-tauri/src/storage/sqlcipher.rs` (existing module file) instead of introducing a new `src-tauri/src/storage/sqlcipher/open.rs` module path.
+  - Retained existing ceremony-local `open_sqlcipher` helper for unchanged ceremony flows outside this sub-phase scope.
+- **Documentation flagged**:
+  - Deferred/optional — `docs/architecture/designs/cloud-synchronisation/design.md` line 815 footnote clarification remains deferred (design already canonical for this flow).
+  - Deferred/optional — freshness stamp update in `.claude/rules/storage.md` remains deferred.
+  - Deferred/optional — narrowing sub-phase implementation note (`backup_to_path` vs `VACUUM INTO`) remains deferred.
+- **Run state path**: `.claude/runs/phase-4-4-manifest-backup-20260419-174221/`
