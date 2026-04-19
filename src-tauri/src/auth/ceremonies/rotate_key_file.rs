@@ -194,9 +194,9 @@ pub async fn rotate_key_file(
             })();
             match transaction_result {
                 Ok(()) => {
-                    rekey_sqlcipher(&conn, new_sqlcipher.expose())?;
                     conn.execute_batch("COMMIT;")
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
+                    rekey_sqlcipher(&conn, new_sqlcipher.expose())?;
                     drop(conn);
                     Ok(())
                 }

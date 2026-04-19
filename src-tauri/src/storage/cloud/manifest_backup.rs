@@ -20,6 +20,7 @@ use super::{CloudTransport, CloudTransportError};
 use crate::crypto::SqlcipherKey;
 use crate::crypto::error::CryptoError;
 use crate::crypto::nonce::generate_nonce;
+use crate::storage::schema::{validate_manifest_meta, validate_schema_integrity};
 use crate::storage::sqlcipher::open_sqlcipher;
 use crate::storage::staging::{ensure_staging_directory, write_owner_only};
 
@@ -317,25 +318,16 @@ fn persist_manifest_database_atomically(
     Ok(())
 }
 
-/// Verifies that the persisted SQLCipher DB opens and exposes `sqlite_master`.
+/// Verifies that the persisted SQLCipher DB opens with the provided key and
+/// satisfies canonical schema invariants.
 fn verify_manifest_database_integrity(
     destination_db_path: &Path,
     sqlcipher_key: &[u8; 32],
 ) -> Result<(), ManifestBackupSyncError> {
     let conn = open_sqlcipher(destination_db_path, sqlcipher_key)
         .map_err(|_| ManifestBackupSyncError::IntegrityCheckFailed)?;
-    let integrity_status = conn
-        .query_row("PRAGMA integrity_check(1)", [], |row| {
-            row.get::<_, String>(0)
-        })
-        .map_err(|_| ManifestBackupSyncError::IntegrityCheckFailed)?;
-    if integrity_status != "ok" {
-        return Err(ManifestBackupSyncError::IntegrityCheckFailed);
-    }
-    conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |row| {
-        row.get::<_, i64>(0)
-    })
-    .map_err(|_| ManifestBackupSyncError::IntegrityCheckFailed)?;
+    validate_schema_integrity(&conn).map_err(|_| ManifestBackupSyncError::IntegrityCheckFailed)?;
+    validate_manifest_meta(&conn).map_err(|_| ManifestBackupSyncError::IntegrityCheckFailed)?;
     Ok(())
 }
 
@@ -357,6 +349,7 @@ mod tests {
     use super::*;
     use crate::storage::SqlCipherMetadataStore;
     use crate::storage::cloud::mock::{CloudTransportErrorKind, MockCloudTransport};
+    use crate::storage::error::StorageError;
 
     /// Creates a `SqlcipherKey` from fixed test bytes.
     fn sqlcipher_key_from_bytes(bytes: [u8; 32]) -> SqlcipherKey {
@@ -584,6 +577,63 @@ mod tests {
             &manifest_key,
             &destination_db_path,
             &wrong_sqlcipher_key,
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(ManifestBackupSyncError::IntegrityCheckFailed)
+        ));
+        assert!(!destination_db_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_download_manifest_backup_missing_manifest_meta_returns_integrity_check_failed() {
+        let temp = tempdir().expect("tempdir must succeed");
+        let source_db_path = temp.path().join("source.db");
+        let destination_db_path = temp.path().join("recovered.db");
+        let upload_staging_dir = temp.path().join("upload-staging");
+        let download_staging_dir = temp.path().join("download-staging");
+        let sqlcipher_key_bytes = [0x58u8; 32];
+        let sqlcipher_key = sqlcipher_key_from_bytes(sqlcipher_key_bytes);
+        let manifest_key = [0x68u8; 32];
+        let cloud_transport = MockCloudTransport::new();
+
+        let store = SqlCipherMetadataStore::create(
+            &source_db_path,
+            &sqlcipher_key_bytes,
+            Uuid::new_v4(),
+            4_194_304,
+            false,
+        )
+        .await
+        .expect("manifest database must be created");
+        store
+            .with_connection_mut(|conn| {
+                conn.execute_batch("DROP TABLE manifest_meta;")
+                    .map_err(StorageError::from_rusqlite)?;
+                Ok(())
+            })
+            .await
+            .expect("manifest_meta drop must succeed");
+        drop(store);
+
+        upload_manifest_backup(
+            &source_db_path,
+            &sqlcipher_key,
+            &manifest_key,
+            &cloud_transport,
+            &upload_staging_dir,
+        )
+        .await
+        .expect("upload must succeed");
+
+        let result = download_manifest_backup(
+            &cloud_transport,
+            &download_staging_dir,
+            &manifest_key,
+            &destination_db_path,
+            &sqlcipher_key,
         )
         .await;
 

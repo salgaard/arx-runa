@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use secrecy::SecretBox;
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -203,8 +203,8 @@ pub(crate) fn open_sqlcipher(
     path: &Path,
     sqlcipher_key: &[u8; 32],
 ) -> Result<Connection, SqlcipherOpenError> {
-    let conn =
-        Connection::open(path).map_err(|error| SqlcipherOpenError::Open(error.to_string()))?;
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)
+        .map_err(|error| SqlcipherOpenError::Open(error.to_string()))?;
     let rc = {
         // SAFETY: `conn` is open for this thread and `sqlcipher_key` points to
         // a valid 32-byte buffer for the duration of the call.
@@ -219,6 +219,9 @@ pub(crate) fn open_sqlcipher(
     if rc != rusqlite::ffi::SQLITE_OK {
         return Err(SqlcipherOpenError::KeyRejected);
     }
+    verify_sqlcipher_key(&conn).map_err(|_| SqlcipherOpenError::KeyRejected)?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|error| SqlcipherOpenError::Open(error.to_string()))?;
     Ok(conn)
 }
 
@@ -982,6 +985,34 @@ mod tests {
         let result = SqlCipherMetadataStore::open(&db_path, &wrong_key).await;
 
         assert!(matches!(result, Err(StorageError::WrongKey)));
+    }
+
+    #[tokio::test]
+    async fn test_open_sqlcipher_missing_path_returns_open_error() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("missing.db");
+
+        let result = super::open_sqlcipher(&db_path, &[5u8; 32]);
+
+        assert!(matches!(result, Err(super::SqlcipherOpenError::Open(_))));
+    }
+
+    #[tokio::test]
+    async fn test_open_sqlcipher_wrong_key_returns_key_rejected() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let create_key = [7u8; 32];
+        let wrong_key = [8u8; 32];
+        SqlCipherMetadataStore::create(&db_path, &create_key, Uuid::new_v4(), 4_194_304, false)
+            .await
+            .expect("store should be created");
+
+        let result = super::open_sqlcipher(&db_path, &wrong_key);
+
+        assert!(matches!(
+            result,
+            Err(super::SqlcipherOpenError::KeyRejected)
+        ));
     }
 
     #[tokio::test]
