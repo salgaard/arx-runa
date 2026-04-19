@@ -3,13 +3,14 @@
 //! Phase 2.4 needs to write the next vault-header value to a staging file
 //! under `dirs::config_dir() / "arx-runa/"` before uploading it to the cloud,
 //! so that a crash between the write and the upload leaves a record the
-//! Phase 4.3 startup retry path can consume. This helper centralises the
+//! Phase 4.5 push flow will consume (header upload is idempotent per push).
+//! This helper centralises the
 //! owner-only permission logic so every ceremony writes consistently.
 //!
 //! Platform handling:
 //! - Unix (Linux/macOS): file is created with mode `0o600`.
 //! - Windows: file is created with `OpenOptions`; restrictive DACLs are a
-//!   documented limitation — Phase 4.3 will add explicit DACL restriction
+//!   documented limitation — Phase 4.5 will add explicit DACL restriction
 //!   via the `windows` crate. The staging file only ever holds the public
 //!   vault-header JSON (no secrets); the permission gap does not leak key
 //!   material but does allow local non-admin users to read the ciphertext

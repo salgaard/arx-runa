@@ -7,16 +7,20 @@ use zeroize::Zeroizing;
 
 use super::helpers::*;
 use super::types::{CreateVaultRequest, Tier};
-use super::{STAGING_FILE_NAME, VAULT_HEADER_BLOB_NAME};
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::VaultId;
-use crate::storage::cloud::CloudTransport;
 use crate::storage::cloud::vault_header::VaultHeader;
+use crate::storage::cloud::{
+    CloudTransport, VAULT_HEADER_UPLOAD_STAGING_FILE_NAME, upload_vault_header,
+};
 use crate::storage::schema::{apply_canonical_schema, seed_manifest_meta};
 use std::path::Path;
+
+#[cfg(test)]
+use super::{STAGING_FILE_NAME, VAULT_HEADER_BLOB_NAME};
 
 /// Creates a new vault: derives keys, creates the SQLCipher DB, builds and
 /// uploads the vault header, and installs the resulting session.
@@ -164,46 +168,20 @@ pub async fn create_vault(
         recovery_slots: Vec::new(),
     };
 
-    let json_bytes =
-        serde_json::to_vec_pretty(&header).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     let staging_dir = staging::staging_directory().await?;
-    let staging_path = staging_dir.join(STAGING_FILE_NAME);
-    if staging::write_owner_only(&staging_path, &json_bytes)
-        .await
-        .is_err()
-    {
+    let staging_path = staging_dir.join(VAULT_HEADER_UPLOAD_STAGING_FILE_NAME);
+    let upload_result = upload_vault_header(&header, cloud_transport, &staging_dir).await;
+    if let Err(error) = upload_result {
         rollback_after_header_publish_failure(
             &staging_path,
             None,
             request.target_key_file_path.as_deref(),
             &request.vault_db_path,
-            "staging cleanup failed after staging write failure",
+            "staging cleanup failed after vault-header publish failure",
         )
         .await;
-        return Err(AuthenticationError::VaultHeaderInvalid);
+        return Err(map_vault_header_sync_error(error));
     }
-    let upload_result = cloud_transport
-        .upload_blob(&staging_path, VAULT_HEADER_BLOB_NAME)
-        .await;
-    let cleanup_result = staging::remove_if_exists(&staging_path).await;
-    if upload_result.is_err() {
-        rollback_after_header_publish_failure(
-            &staging_path,
-            Some(cleanup_result),
-            request.target_key_file_path.as_deref(),
-            &request.vault_db_path,
-            "staging cleanup failed after upload failure",
-        )
-        .await;
-        return Err(AuthenticationError::VaultHeaderInvalid);
-    }
-    if let Err(cleanup_error) = cleanup_result {
-        tracing::warn!(
-            ?cleanup_error,
-            "staging cleanup failed after successful upload"
-        );
-    }
-
     session_manager
         .finalize_session_install(install_reservation, session_keys)
         .await?;

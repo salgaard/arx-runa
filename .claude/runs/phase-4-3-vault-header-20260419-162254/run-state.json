@@ -1,0 +1,25 @@
+{
+  "run_id": "phase-4-3-vault-header-20260419-162254",
+  "plan_file": ".claude/plans/phase-4-3-vault-header.md",
+  "track": "full",
+  "branch": "development",
+  "cycle_count": 2,
+  "finding_summary": {
+    "CRITICAL": 1,
+    "HIGH": 8,
+    "MEDIUM": 3,
+    "LOW": 0
+  },
+  "disposition_summary": {
+    "ACTIONABLE_NOW": 7,
+    "INTENTIONAL_DECISION": 0,
+    "DEFERRED_BY_PLAN": 2,
+    "INSUFFICIENT_EVIDENCE": 3
+  },
+  "override_records": [],
+  "governance_sync_degraded": false,
+  "cycles": [
+    ".claude/runs/phase-4-3-vault-header-20260419-162254/cycle-1.json",
+    ".claude/runs/phase-4-3-vault-header-20260419-162254/cycle-2.json"
+  ]
+}

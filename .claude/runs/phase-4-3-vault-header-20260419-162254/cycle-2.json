@@ -1,0 +1,14 @@
+{
+  "cycle": 2,
+  "findings": [
+    {
+      "id": "CF-012",
+      "severity": "HIGH",
+      "disposition": "DEFERRED_BY_PLAN",
+      "source_id": "SR-001"
+    }
+  ],
+  "override_records": [],
+  "cross_shard_finding_count": 0,
+  "actionable_remaining": 0
+}

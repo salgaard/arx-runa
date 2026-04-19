@@ -1,8 +1,8 @@
 //! Vault header schema forward declaration for Phase 4.1 / Phase 4.3.
 //!
 //! Phase 2.4 defines the serialisation shape required by vault ceremonies.
-//! Phase 4.3 will adopt this struct as-is, add richer validation, and wire
-//! the startup retry path for `pending-vault-header.json`. Phase 2.4
+//! Phase 4.3 added `vault_header_io::{upload_vault_header, download_vault_header}`;
+//! startup retry is deferred to Phase 4.5. Phase 2.4
 //! ceremonies uphold the `MasterKey` containment rule: this module must not
 //! gain any field that stores a `MasterKey` (serialised or in memory).
 

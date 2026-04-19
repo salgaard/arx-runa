@@ -4,7 +4,6 @@ use zeroize::Zeroizing;
 
 use super::helpers::*;
 use super::types::ChangePasswordRequest;
-use super::{STAGING_FILE_NAME, VAULT_HEADER_BLOB_NAME};
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
@@ -13,8 +12,11 @@ use crate::crypto::{
     RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
     unwrap_master_key_from_recovery, wrap_file_key, wrap_master_key_for_recovery,
 };
-use crate::storage::cloud::CloudTransport;
 use crate::storage::cloud::vault_header::VaultHeader;
+use crate::storage::cloud::{CloudTransport, upload_vault_header};
+
+#[cfg(test)]
+use super::STAGING_FILE_NAME;
 
 /// Changes the user's password by re-wrapping all stored keys under a new
 /// master key and rekeying the SQLCipher database.
@@ -184,9 +186,9 @@ pub async fn change_password(
             })();
             match transaction_result {
                 Ok(()) => {
+                    rekey_sqlcipher(&conn, new_sqlcipher.expose())?;
                     conn.execute_batch("COMMIT;")
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    rekey_sqlcipher(&conn, new_sqlcipher.expose())?;
                     drop(conn);
                     Ok(())
                 }
@@ -220,21 +222,14 @@ pub async fn change_password(
     }
     drop(recovery_key_for_rewrap);
 
-    let json_bytes = serde_json::to_vec_pretty(&vault_header)
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     let staging_dir = staging::staging_directory().await?;
-    let staging_path = staging_dir.join(STAGING_FILE_NAME);
-    staging::write_owner_only(&staging_path, &json_bytes).await?;
     session_manager
         .swap_active_session(new_session_keys)
         .await?;
-    let upload_result = cloud_transport
-        .upload_blob(&staging_path, VAULT_HEADER_BLOB_NAME)
-        .await;
-    if upload_result.is_err() {
-        return Err(AuthenticationError::VaultHeaderInvalid);
+    let upload_result = upload_vault_header(vault_header, cloud_transport, &staging_dir).await;
+    if let Err(error) = upload_result {
+        return Err(map_vault_header_sync_error(error));
     }
-    best_effort_cleanup_staging(&staging_path).await;
 
     drop(current_master_key);
     drop(new_master_key);

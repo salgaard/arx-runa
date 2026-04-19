@@ -12,11 +12,11 @@ use zeroize::Zeroizing;
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::{Argon2Params, derive_master_key_into};
 use crate::auth::session::SessionKeys;
-use crate::auth::staging;
 use crate::crypto::{
     FileKey, KeyEncryptionKey, MasterKey, RecoveryKey, SqlcipherKey, WrappedFileKey,
     unwrap_file_key, wrap_file_key,
 };
+use crate::storage::cloud::VaultHeaderSyncError;
 use crate::storage::cloud::vault_header::Argon2ParamsJson;
 
 /// Converts runtime Argon2 parameters into vault-header JSON shape.
@@ -122,11 +122,9 @@ pub(super) async fn remove_file_if_exists(path: &Path) {
     }
 }
 
-/// Logs and ignores staging cleanup failures so primary upload outcome wins.
-pub(super) async fn best_effort_cleanup_staging(staging_path: &Path) {
-    if let Err(cleanup_error) = staging::remove_if_exists(staging_path).await {
-        tracing::warn!(?cleanup_error, "staging cleanup failed");
-    }
+/// Maps cloud vault-header sync failures to the auth boundary error.
+pub(super) fn map_vault_header_sync_error(_error: VaultHeaderSyncError) -> AuthenticationError {
+    AuthenticationError::VaultHeaderInvalid
 }
 
 /// Imports decrypted manifest SQL into a temporary SQLCipher DB and atomically

@@ -1,16 +1,19 @@
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+use super::MANIFEST_BACKUP_BLOB_NAME;
 use super::helpers::*;
 use super::types::RecoverWithPhraseRequest;
-use super::{MANIFEST_BACKUP_BLOB_NAME, VAULT_HEADER_BLOB_NAME};
 use crate::auth::error::AuthenticationError;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::{VaultId, WrappedMasterKey, unwrap_master_key_from_recovery};
-use crate::storage::cloud::CloudTransport;
 use crate::storage::cloud::manifest_backup::decrypt_manifest_backup;
-use crate::storage::cloud::vault_header::{VaultHeader, VaultHeaderTrustPolicy};
+use crate::storage::cloud::vault_header::VaultHeaderTrustPolicy;
+use crate::storage::cloud::{CloudTransport, download_vault_header};
+
+#[cfg(test)]
+use super::VAULT_HEADER_BLOB_NAME;
 
 /// Unlocks a vault using a BIP-39 recovery phrase, downloading the vault
 /// header and manifest backup and installing the recovered session.
@@ -26,36 +29,16 @@ pub async fn recover_with_phrase(
     precheck_recovery_destination(&request.vault_db_path).await?;
 
     let staging_dir = staging::staging_directory().await?;
-    let header_download_path = staging_dir.join("recover-with-phrase-header.json");
     let backup_download_path = staging_dir.join("recover-with-phrase-manifest-backup.enc");
-    let _ = staging::remove_if_exists(&header_download_path).await;
     let _ = staging::remove_if_exists(&backup_download_path).await;
 
-    staging::write_owner_only(&header_download_path, b"").await?;
-    if cloud_transport
-        .download_blob(VAULT_HEADER_BLOB_NAME, &header_download_path)
-        .await
-        .is_err()
-    {
-        let _ = staging::remove_if_exists(&header_download_path).await;
-        return Err(AuthenticationError::VaultHeaderInvalid);
-    }
-    let header_bytes = match tokio::fs::read(&header_download_path).await {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            let _ = staging::remove_if_exists(&header_download_path).await;
-            return Err(AuthenticationError::VaultHeaderInvalid);
-        }
-    };
-    let _ = staging::remove_if_exists(&header_download_path).await;
-    let header: VaultHeader = serde_json::from_slice(&header_bytes)
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    header
-        .validate_structure()
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    header
-        .validate_trust_policy(VaultHeaderTrustPolicy::Bootstrap)
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+    let header = download_vault_header(
+        cloud_transport,
+        &staging_dir,
+        VaultHeaderTrustPolicy::Bootstrap,
+    )
+    .await
+    .map_err(map_vault_header_sync_error)?;
     let vault_uuid =
         Uuid::parse_str(&header.vault_id).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     let vault_id = VaultId::from_uuid(vault_uuid);

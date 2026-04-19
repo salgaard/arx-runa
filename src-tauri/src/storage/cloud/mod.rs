@@ -15,6 +15,7 @@ pub(crate) mod remote_path;
 pub(crate) mod stderr_sanitiser;
 mod sync_config;
 pub mod vault_header;
+pub mod vault_header_io;
 mod wizard;
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -23,6 +24,10 @@ pub use destination_session::{BackupSyncMode, DestinationSessionPublic, Destinat
 pub use endpoint::CloudEndpoint;
 pub use rclone::RcloneTransport;
 pub use sync_config::SyncConfig;
+pub use vault_header_io::{
+    VAULT_HEADER_BLOB_NAME, VAULT_HEADER_UPLOAD_STAGING_FILE_NAME, VaultHeaderSyncError,
+    download_vault_header, upload_vault_header,
+};
 pub use wizard::{
     GoogleDriveRuntimePaths, GoogleDriveSetupRequest, GoogleDriveSetupResult, OpenerLike,
     S3SetupRequest, setup_google_drive, setup_s3_provider,

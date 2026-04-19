@@ -1,7 +1,7 @@
 ---
 title: "Phase 4.3 — Vault Header Upload and Download"
 created: "2026-04-19T12:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 4
 sub-phase: "4.3"
 design-document: "docs/architecture/designs/cloud-synchronisation/design.md"
@@ -372,3 +372,101 @@ Traps:
 - **Constant ownership migration.** If you relocate `VAULT_HEADER_BLOB_NAME` from `auth/ceremonies/mod.rs` to `vault_header_io.rs`, every remaining reference in ceremonies must be re-imported from the new home; run `rg "VAULT_HEADER_BLOB_NAME" src-tauri/src` after the refactor.
 - **Do not touch `MANIFEST_BACKUP_BLOB_NAME`** — Phase 4.4 owns it.
 - **Do not introduce `local-vault-params.json` read/write** — C-1 defers it; resist the temptation even though `TrustedVaultHeaderAnchor` is already on hand.
+
+## Implementation Log
+
+- **Date**: 2026-04-19T16:59:55.0367953+02:00
+- **Run ID**: `phase-4-3-vault-header-20260419-162254`
+- **Track**: `full`
+- **Branch**: `development`
+- **Execution mode**: orchestrator fallback (coding steps implemented directly; reviewers/classifier/solver/test-writer delegated)
+
+### Agent evidence
+
+| Approach step | Agent | Agent ID | Outcome |
+|---|---|---|---|
+| Structured context build | plan-context-builder | `plan-digest-43` | `PLAN_DIGEST` produced |
+| Structured context build | rules-extractor | `rules-index-43` | `RULES_INDEX` produced |
+| Structured context build | design-extractor | `design-index-43-1` | `DESIGN_INDEX` produced |
+| Structured context build | shard-planner | `shard-map-43-1` | `SHARD_MAP` + `SHARD_DIGEST_SUMMARY[]` produced |
+| Review cycle 1 | rust-reviewer | `rust-review-43-retry` | Findings emitted |
+| Review cycle 1 | security-reviewer | `security-review-43` | Findings emitted |
+| Review cycle 1 | architecture-reviewer | `arch-review-43` | Findings emitted |
+| Review cycle 1 | cross-shard-reviewer | `cross-shard-43` | Findings emitted |
+| Findings gate cycle 1 | finding-classifier | `classify-43-c1` | `CLASSIFIED_FINDINGS` produced |
+| Remediation synthesis cycle 1 | problem-solver | `solver-43-c1-retry` | `SOLUTION_PACK` produced |
+| Review cycle 2 | rust-reviewer | `rust-review-43-c2` | `NO_ACTIONABLE_FINDINGS` |
+| Review cycle 2 | security-reviewer | `security-review-43-c2-retry` | 1 warning emitted |
+| Review cycle 2 | architecture-reviewer | `arch-review-43-c2` | `NO_STRUCTURAL_FINDINGS` |
+| Review cycle 2 | cross-shard-reviewer | `cross-shard-43-c2` | `NO_CROSS_SHARD_FINDINGS` |
+| Findings gate cycle 2 | finding-classifier | `classify-43-c2` | Remaining warning classified `DEFERRED_BY_PLAN` |
+| Testing audit | test-writer | `test-writer-43` | Added adversarial temp-cleanup test in `vault_header_io.rs` |
+
+### Files changed
+
+- `.claude/plans/phase-4-3-vault-header.md`
+- `docs/architecture/designs/cloud-synchronisation/sub-phases/4.3-vault-header.md`
+- `.claude/runs/phase-4-3-vault-header-20260419-162254/run-state.json`
+- `.claude/runs/phase-4-3-vault-header-20260419-162254/cycle-1.json`
+- `.claude/runs/phase-4-3-vault-header-20260419-162254/cycle-2.json`
+- `src-tauri/src/storage/cloud/vault_header_io.rs`
+- `src-tauri/src/storage/cloud/mod.rs`
+- `src-tauri/src/storage/cloud/vault_header.rs`
+- `src-tauri/src/auth/staging.rs`
+- `src-tauri/src/auth/ceremonies/helpers.rs`
+- `src-tauri/src/auth/ceremonies/mod.rs`
+- `src-tauri/src/auth/ceremonies/create.rs`
+- `src-tauri/src/auth/ceremonies/change_password.rs`
+- `src-tauri/src/auth/ceremonies/rotate_key_file.rs`
+- `src-tauri/src/auth/ceremonies/setup_recovery.rs`
+- `src-tauri/src/auth/ceremonies/recover_with_phrase.rs`
+
+### Verification
+
+- **Formatting check** (`cargo fmt --all -- --check`): clean.
+- **Clippy** (`cargo clippy --workspace --all-targets --all-features -- -D warnings`): clean.
+- **Tests** (`cargo test --workspace --all-targets --all-features`): clean (`479 passed, 0 failed, 1 ignored` in `arx-runa-tauri` test suite; workspace commands succeeded).
+- **Release build** (`cargo build --workspace --release`): success.
+
+### Review summaries
+
+- **Rust review**: cycle 1 findings remediated; cycle 2 reported no actionable findings.
+- **Architecture review**: cycle 1 findings addressed for in-scope 4.3 concerns; cycle 2 reported no structural findings.
+- **Security review**: cycle 1 CRITICAL/HIGH items addressed for 4.3 scope; cycle 2 left one Windows ACL warning deferred by plan.
+- **Cross-shard review**: cycle 1 raised consistency findings around publish/retention boundary; cycle 2 reported no cross-shard findings.
+
+### Findings quality gate
+
+- **Counts by disposition (all cycles)**: `ACTIONABLE_NOW=7`, `INTENTIONAL_DECISION=0`, `DEFERRED_BY_PLAN=2`, `INSUFFICIENT_EVIDENCE=3`.
+- **Finding overrides**: None.
+- **Design challenge outcomes**: None.
+
+### Governance sync
+
+- **Action count**: 2 (`G-1`, `G-2`).
+- **Files updated**: `src-tauri/src/auth/staging.rs`, `src-tauri/src/storage/cloud/vault_header.rs`.
+- **`/copilot-sync`**: not required (no `.claude/rules/*.md` changes).
+
+### Sub-phase decisions sync
+
+- **Doc path**: `docs/architecture/designs/cloud-synchronisation/sub-phases/4.3-vault-header.md`
+- **Updates**: added `## Implementation Decisions` with 5 run decisions (including 4.5 deferrals).
+
+### Deviations from plan
+
+- Added shared ceremony mapping helper `map_vault_header_sync_error` to enforce uniform auth-boundary error translation.
+- Kept `STAGING_FILE_NAME` as `#[cfg(test)]` in ceremony `mod.rs` because it is now test-only after helper migration.
+- Added an adversarial transport-failure cleanup test for `download_vault_header` to tighten temp-file lifecycle coverage.
+
+### Documentation flagged
+
+- **Required this run**: `src-tauri/src/auth/staging.rs:1-16` module comment updated to defer startup retry to Phase 4.5.
+- **Deferred / optional from Section 7**:
+  - `docs/architecture/designs/cloud-synchronisation/sub-phases/4.3-vault-header.md` optional note about `local-vault-params.json` persistence tracking.
+  - `docs/architecture/designs/cloud-synchronisation/design.md#local-vault-parameter-cache` implementation remains deferred.
+  - `.claude/rules/storage.md` unchanged.
+  - `.claude/rules/auth.md` forward-declarations line unchanged (planned for Phase 4.5).
+
+### Run state path
+
+- `.claude/runs/phase-4-3-vault-header-20260419-162254/`

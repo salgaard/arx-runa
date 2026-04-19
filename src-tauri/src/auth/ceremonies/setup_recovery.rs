@@ -4,14 +4,16 @@ use zeroize::Zeroizing;
 
 use super::helpers::*;
 use super::types::SetupRecoveryRequest;
-use super::{STAGING_FILE_NAME, VAULT_HEADER_BLOB_NAME};
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::{VaultId, wrap_master_key_for_recovery};
-use crate::storage::cloud::CloudTransport;
 use crate::storage::cloud::vault_header::{RecoverySlot, VaultHeader};
+use crate::storage::cloud::{CloudTransport, upload_vault_header};
+
+#[cfg(test)]
+use super::VAULT_HEADER_BLOB_NAME;
 
 /// Adds a BIP-39 recovery slot to the vault header, returning the freshly
 /// generated 24-word recovery phrase exactly once.
@@ -98,38 +100,11 @@ pub async fn setup_recovery(
     };
     vault_header.recovery_slots.push(slot);
 
-    let json_bytes = match serde_json::to_vec_pretty(&vault_header) {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            vault_header.recovery_slots.pop();
-            return Err(AuthenticationError::VaultHeaderInvalid);
-        }
-    };
     let staging_dir = staging::staging_directory().await?;
-    let staging_path = staging_dir.join(STAGING_FILE_NAME);
-    if let Err(error) = staging::write_owner_only(&staging_path, &json_bytes).await {
+    let upload_result = upload_vault_header(vault_header, cloud_transport, &staging_dir).await;
+    if let Err(error) = upload_result {
         vault_header.recovery_slots.pop();
-        return Err(error);
-    }
-    let upload_result = cloud_transport
-        .upload_blob(&staging_path, VAULT_HEADER_BLOB_NAME)
-        .await;
-    let cleanup_result = staging::remove_if_exists(&staging_path).await;
-    if upload_result.is_err() {
-        vault_header.recovery_slots.pop();
-        if let Err(cleanup_error) = cleanup_result {
-            tracing::warn!(
-                ?cleanup_error,
-                "staging cleanup failed after upload failure"
-            );
-        }
-        return Err(AuthenticationError::VaultHeaderInvalid);
-    }
-    if let Err(cleanup_error) = cleanup_result {
-        tracing::warn!(
-            ?cleanup_error,
-            "staging cleanup failed after successful upload"
-        );
+        return Err(map_vault_header_sync_error(error));
     }
 
     drop(master_key);
