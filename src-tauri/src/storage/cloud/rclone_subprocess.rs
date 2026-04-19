@@ -52,6 +52,10 @@ pub(crate) async fn run_rclone(
             if let Err(error) = tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
                 tracing::warn!(error = %error, "failed to reap timed out rclone child");
             }
+            stdout_task.abort();
+            stderr_task.abort();
+            let _ = stdout_task.await;
+            let _ = stderr_task.await;
             return Err(CloudTransportError::Timeout);
         }
     };
