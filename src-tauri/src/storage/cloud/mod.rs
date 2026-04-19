@@ -1,17 +1,32 @@
-//! Canonical cloud transport trait, errors, and endpoint descriptor; Phase 4.2 adds `RcloneTransport`.
+//! Canonical cloud transport trait, errors, endpoint descriptor, and transport implementations.
 
 use async_trait::async_trait;
 use thiserror::Error;
 
 use std::path::Path;
 
+pub(crate) mod cloud_config;
+pub(crate) mod destination_session;
 mod endpoint;
 pub mod manifest_backup;
+mod rclone;
+pub(crate) mod rclone_subprocess;
+pub(crate) mod remote_path;
+pub(crate) mod stderr_sanitiser;
+mod sync_config;
 pub mod vault_header;
+mod wizard;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
+pub use destination_session::{BackupSyncMode, DestinationSessionPublic, DestinationType};
 pub use endpoint::CloudEndpoint;
+pub use rclone::RcloneTransport;
+pub use sync_config::SyncConfig;
+pub use wizard::{
+    GoogleDriveRuntimePaths, GoogleDriveSetupRequest, GoogleDriveSetupResult, OpenerLike,
+    S3SetupRequest, setup_google_drive, setup_s3_provider,
+};
 
 /// Errors produced by [`CloudTransport`] implementations.
 #[derive(Debug, Error)]

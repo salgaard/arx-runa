@@ -37,6 +37,7 @@ applyTo: "src-tauri/src/storage/**"
 - Manifest backup is a singleton blob (no AAD); vault header stays plaintext JSON at cloud root
 - Push flow uploads manifest backup, then uploads vault header idempotently on every push
 - Snapshot model: atomic full export, `snapshot_counter` increments each push
+- `RcloneTransport` invokes the bundled sidecar via `tokio::process::Command` only; remote paths pass the `^[a-zA-Z0-9._/-]+$` allowlist (reject `..` and leading `/`); stderr strips lines containing `token|key|secret|password|credential|auth` before surfacing in `CloudTransportError::RcloneProcessFailed`
 
 ## EXIF stripping
 - Optional pre-processing before the encrypt pipeline; enabled by default for `image/jpeg`, `image/png`, `image/tiff`, and can be disabled (detected by magic bytes, not extension)
@@ -67,3 +68,4 @@ applyTo: "src-tauri/src/storage/**"
 - `MetadataStore` for manifest, `CloudTransport` for Rclone
 - `CloudTransport` uses `&str` for cloud-root-relative paths (forward slashes only); `BlobName` is reserved for chunk blob filenames in the manifest and staging directory.
 - `MetadataStore` Phase 3.1 surface: `insert_node`, `insert_chunks`, `get_node`, `list_children`, `get_chunks`, `rename_node`, `move_node`, `delete_node`, `list_pending_deletions`, `mark_deletion_complete`, `get_meta`, `set_meta`, `increment_snapshot_counter`
+- `destination_sessions` CRUD lives in `storage::cloud::destination_session` using a SQLCipher-specific accessor and must not be added to `MetadataStore`

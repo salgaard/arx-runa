@@ -24,6 +24,13 @@
   },
   "bundle": {
     "active": true,
+    "externalBin": [
+      "bin/rclone-x86_64-pc-windows-msvc",
+      "bin/rclone-x86_64-unknown-linux-gnu",
+      "bin/rclone-aarch64-unknown-linux-gnu",
+      "bin/rclone-x86_64-apple-darwin",
+      "bin/rclone-aarch64-apple-darwin"
+    ],
     "targets": "all",
     "icon": [
       "icons/32x32.png",

@@ -1,6 +1,7 @@
 //! Staging-directory helpers and orphaned-blob cleanup.
 
-use std::io::ErrorKind;
+use std::fs::OpenOptions;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
@@ -20,6 +21,38 @@ pub async fn ensure_staging_directory(path: &Path) -> Result<(), StorageError> {
     tokio::fs::create_dir_all(path)
         .await
         .map_err(|error| StorageError::Io(format!("{}: {error}", path.display())))
+}
+
+/// Writes bytes to `path` with owner-only permissions where supported.
+pub(crate) async fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
+    let path = path.to_path_buf();
+    let payload = bytes.to_vec();
+    tokio::task::spawn_blocking(move || -> Result<(), StorageError> {
+        let mut options = OpenOptions::new();
+        options.create(true).write(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+
+        let mut file = options
+            .open(&path)
+            .map_err(|error| StorageError::Io(format!("{}: {error}", path.display())))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                .map_err(|error| StorageError::Io(format!("{}: {error}", path.display())))?;
+        }
+        file.write_all(&payload)
+            .map_err(|error| StorageError::Io(format!("{}: {error}", path.display())))?;
+        file.sync_all()
+            .map_err(|error| StorageError::Io(format!("{}: {error}", path.display())))?;
+        Ok(())
+    })
+    .await
+    .map_err(|error| StorageError::Database(error.to_string()))?
 }
 
 /// Deletes orphaned staged blobs that are not referenced by manifest chunk rows.
@@ -87,10 +120,13 @@ pub async fn cleanup_orphaned_blobs(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     use tempfile::tempdir;
     use uuid::Uuid;
 
-    use super::{cleanup_orphaned_blobs, ensure_staging_directory};
+    use super::{cleanup_orphaned_blobs, ensure_staging_directory, write_owner_only};
     use crate::storage::MetadataStore;
     use crate::storage::NodeId;
     use crate::storage::sqlcipher::SqlCipherMetadataStore;
@@ -293,5 +329,27 @@ mod tests {
         let result = cleanup_orphaned_blobs(&staging_directory, &store).await;
 
         assert!(matches!(result, Ok(0)));
+    }
+
+    #[tokio::test]
+    async fn test_write_owner_only_writes_bytes() {
+        let temp = tempdir().expect("tempdir should be created");
+        let path = temp.path().join("owner-only.bin");
+        write_owner_only(&path, b"payload")
+            .await
+            .expect("write should succeed");
+        assert_eq!(std::fs::read(path).unwrap(), b"payload");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_write_owner_only_sets_0600_permissions_on_unix() {
+        let temp = tempdir().expect("tempdir should be created");
+        let path = temp.path().join("owner-only.bin");
+        write_owner_only(&path, b"payload")
+            .await
+            .expect("write should succeed");
+        let metadata = std::fs::metadata(path).expect("metadata should be readable");
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
     }
 }

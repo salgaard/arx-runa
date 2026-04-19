@@ -118,6 +118,19 @@ impl SqlCipherMetadataStore {
         .await
         .map_err(|error| StorageError::Database(error.to_string()))?
     }
+
+    /// Executes a SQLCipher-specific closure against the underlying connection.
+    ///
+    /// Intentionally not exposed on [`MetadataStore`].
+    pub(crate) async fn with_connection_mut<T>(
+        &self,
+        operation: impl FnOnce(&mut Connection) -> Result<T, StorageError> + Send + 'static,
+    ) -> Result<T, StorageError>
+    where
+        T: Send + 'static,
+    {
+        self.with_connection_blocking(operation).await
+    }
 }
 
 /// Copies borrowed SQLCipher key bytes into protected heap storage.

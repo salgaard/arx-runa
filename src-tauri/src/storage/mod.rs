@@ -17,6 +17,11 @@ pub mod vault_ops;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
 
+pub use cloud::{
+    BackupSyncMode, DestinationSessionPublic, DestinationType, GoogleDriveRuntimePaths,
+    GoogleDriveSetupRequest, GoogleDriveSetupResult, OpenerLike, RcloneTransport, S3SetupRequest,
+    SyncConfig, setup_google_drive, setup_s3_provider,
+};
 pub use cloud::{CloudEndpoint, CloudTransport, CloudTransportError};
 pub use error::StorageError;
 pub use metadata_store::MetadataStore;

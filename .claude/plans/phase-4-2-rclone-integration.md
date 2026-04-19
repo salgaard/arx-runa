@@ -1,7 +1,7 @@
 ---
 title: "Phase 4.2 — Rclone Integration and Provider Setup"
 created: "2026-04-19T10:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 4
 sub-phase: "4.2"
 design-document: "docs/architecture/designs/cloud-synchronisation/design.md"
@@ -407,3 +407,79 @@ Traps:
 - **Integration test stays `#[ignore]`** — CI without `ARX_RCLONE_INTEGRATION=1` must not attempt to shell out.
 - **Credentials are Zeroise-on-drop everywhere** — audit every `String` that holds `access_key_id`, `secret_access_key`, or a rclone config section before merge.
 - **Plan is self-contained.** The sub-phase and design are referenced for context; nothing in this plan requires re-reading those docs during implementation unless a new blocking concern surfaces.
+
+## Implementation Log
+
+- **Date**: 2026-04-19T03:14:21.9294163+02:00
+- **Run ID**: `phase-4-2-rclone-integration-20260419-021054`
+- **Track**: `full`
+- **Branch**: `development`
+- **Execution mode**: rust-implementer delegated with orchestrator fallback for compile/clippy/test-driven fixes
+
+| Approach step | Agent | Agent ID | Outcome |
+|---|---|---|---|
+| Step 1–14 initial implementation | `rust-implementer` | `impl-phase-4-2` | Implemented initial phase surface |
+| Remediation cycle 1 (CF-001..010) | `problem-solver` + `rust-implementer` | `solver-*` + `impl-remediation-cycle-1` | Applied security/correctness hardening |
+| Remediation cycle 2 (CF-011..016) | `problem-solver` + `rust-implementer` | `solver-*` + `impl-remediation-cycle-2` | Applied boundary/validation fixes |
+| Remediation cycle 3 (CF-017..024) | `problem-solver` + `rust-implementer` | `solver-*` + `impl-remediation-cycle-3` | Applied auth classification, lifecycle cleanup, HTTPS policy, rollback consistency |
+
+- **Files changed**:
+  - `.claude/plans/phase-4-2-rclone-integration.md`
+  - `.claude/rules/storage.md`
+  - `.claude/rules/tauri.md`
+  - `.github/instructions/storage.instructions.md`
+  - `.github/instructions/tauri.instructions.md`
+  - `Cargo.lock`
+  - `docs/architecture/designs/cloud-synchronisation/design.md`
+  - `docs/architecture/designs/cloud-synchronisation/sub-phases/4.2-rclone-integration.md`
+  - `src-tauri/.gitignore`
+  - `src-tauri/Cargo.toml`
+  - `src-tauri/capabilities/default.json`
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/storage/cloud/endpoint.rs`
+  - `src-tauri/src/storage/cloud/mod.rs`
+  - `src-tauri/src/storage/mod.rs`
+  - `src-tauri/src/storage/sqlcipher.rs`
+  - `src-tauri/src/storage/staging.rs`
+  - `src-tauri/tauri.conf.json`
+  - `src-tauri/src/storage/cloud/cloud_config.rs`
+  - `src-tauri/src/storage/cloud/destination_session.rs`
+  - `src-tauri/src/storage/cloud/rclone.rs`
+  - `src-tauri/src/storage/cloud/rclone_subprocess.rs`
+  - `src-tauri/src/storage/cloud/remote_path.rs`
+  - `src-tauri/src/storage/cloud/stderr_sanitiser.rs`
+  - `src-tauri/src/storage/cloud/sync_config.rs`
+  - `src-tauri/src/storage/cloud/wizard.rs`
+  - `src-tauri/tests/rclone_integration.rs`
+  - `src-tauri/tests/fixtures/fake_rclone.sh`
+  - `src-tauri/tests/fixtures/fake_rclone.cmd`
+  - `src-tauri/bin/.gitkeep`
+  - `src-tauri/bin/README.md`
+  - `.claude/runs/phase-4-2-rclone-integration-20260419-021054/run-state.json`
+  - `.claude/runs/phase-4-2-rclone-integration-20260419-021054/cycle-1.json`
+  - `.claude/runs/phase-4-2-rclone-integration-20260419-021054/cycle-2.json`
+  - `.claude/runs/phase-4-2-rclone-integration-20260419-021054/cycle-3.json`
+  - `.claude/runs/phase-4-2-rclone-integration-20260419-021054/cycle-4.json`
+
+- **Formatting check**: `cargo fmt --all -- --check` passed
+- **Clippy results**: `cargo clippy --workspace --all-targets --all-features -- -D warnings` passed
+- **Test results**: `cargo test --workspace --all-targets --all-features` passed
+- **Release build**: `cargo build --workspace --release` passed
+- **Rust review**: final run reported `NO_ACTIONABLE_FINDINGS`
+- **Architecture review**: final run yielded `CF-025` (`DEFERRED_BY_PLAN`, explicit Step 10 defer to Phase 4.5) and `CF-026` (`INTENTIONAL_DECISION`)
+- **Security review**: final run reported `NO_SECURITY_FINDINGS`
+- **Cross-shard review**: invoked across cycles; final run reported `NO_CROSS_SHARD_FINDINGS`
+- **Findings quality gate**: `ACTIONABLE_NOW=24`, `INTENTIONAL_DECISION=1`, `DEFERRED_BY_PLAN=1`, `INSUFFICIENT_EVIDENCE=0`
+- **Finding overrides**: None
+- **Design challenge outcomes**:
+  - `CF-023` endpoint policy challenge — **ACCEPTED** (autonomous decision due unavailable human response) with design update applied to `docs/architecture/designs/cloud-synchronisation/design.md` (HTTPS default, explicit local-dev HTTP override)
+- **Governance sync**: GS-001..GS-004 applied; `.claude/rules/*` and mirrored `.github/instructions/*` updated; copilot-sync outcome recorded as OK (manual sync completed in-run)
+- **Sub-phase decisions sync**: `docs/architecture/designs/cloud-synchronisation/sub-phases/4.2-rclone-integration.md` updated with 4 implementation decisions
+- **Deviations from plan**:
+  - Added additional remediation cycles driven by reviewer findings before completion
+  - Added deterministic auth-failure classification refinements and fixture robustness fixes discovered during full-suite execution
+- **Documentation flagged**:
+  - `docs/architecture/design-invariants.md` — deferred
+  - `docs/architecture/designs/cloud-synchronisation/diagrams/` — deferred / optional
+  - `docs/architecture/designs/cloud-synchronisation/design.md` — updated due accepted design challenge (`CF-023`)
+- **Run state path**: `.claude/runs/phase-4-2-rclone-integration-20260419-021054/`

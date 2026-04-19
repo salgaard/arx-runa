@@ -197,6 +197,10 @@ pub struct CloudEndpoint {
 
     /// Provider endpoint URL for S3-compatible services. Empty string for
     /// default provider endpoints (AWS S3, Google Drive).
+    ///
+    /// Policy: `https://` is required by default. `http://` is rejected unless
+    /// an explicit local-development override is enabled and the host resolves
+    /// to loopback (`localhost`, `127.0.0.0/8`, `::1`).
     pub endpoint: String,
 
     /// Path prefix within the bucket that acts as the cloud root for all
@@ -577,6 +581,10 @@ The guided forms cover the five most common backends. The advanced paste option 
    - `access_key_id`, `secret_access_key`
 4. Encrypts and stores the stanza in SQLCipher as `destination_sessions.rclone_config_blob`
 5. Stores non-sensitive `CloudEndpoint` (including `path_prefix`) in `cloud-config.json`
+
+Endpoint URL validation is strict:
+- Default: only `https://` endpoints are accepted.
+- Local development opt-in: `http://` is accepted only for loopback hosts (`localhost`, `127.0.0.0/8`, `::1`) when explicit override is enabled in runtime configuration.
 
 Credentials are never passed via process arguments. They exist only in-process during wizard input and are then persisted only as SQLCipher-encrypted `rclone_config_blob`.
 
