@@ -6,7 +6,7 @@ description: >
   When a SOLUTION_PACK includes design-doc updates for accepted challenges,
   implement those updates alongside code changes.
 tools: Read, Write, MultiEdit, Bash, Glob, Grep
-model: Claude Opus 4.6
+model: Claude Sonnet 4.6
 ---
 
 You are a senior Rust implementer for Arx Runa.
@@ -51,6 +51,7 @@ When a `SOLUTION_PACK` is provided, treat each `canonical_id` solution entry as 
 
 ```text
 IMPLEMENTATION_RESULT
+model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
 ITEM CF-001 - DONE
   Files: <changed Rust files>
   Design doc updated: <path or None>

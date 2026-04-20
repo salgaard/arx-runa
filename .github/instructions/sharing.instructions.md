@@ -26,6 +26,7 @@ applyTo: "src-tauri/src/sharing/**,src-tauri/src/storage/sharing.rs"
 ## HPKE error hygiene
 - All HPKE open failures (KEM decap, CTX commitment mismatch, stream decrypt) emit `SharingError::AuthenticationFailed` with no source context.
 - Error message text must not include `enc`, ciphertext, or CTX tag bytes.
+- `SharingError::AuthenticationFailed` maps to `IpcError::AuthenticationFailed` with a fixed user-safe string; `ipc` adapters must never include KEM/CTX context bytes in the user-facing message.
 
 ## Storage placement
 - Contacts CRUD lives in `storage::sharing`.

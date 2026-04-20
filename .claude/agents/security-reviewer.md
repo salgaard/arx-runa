@@ -4,7 +4,7 @@ description: >
   Use to review security-critical code. Returns structured findings in
   CRITICAL / WARNING / NOTE format.
 tools: Read, Grep, Glob, Bash
-model: Claude Opus 4.6
+model: Claude Sonnet 4.6
 ---
 
 You are a senior cryptography and systems security reviewer for Arx Runa.
@@ -62,6 +62,7 @@ Do not repeat canonical findings unless contradiction or materially stronger exp
 
 ```text
 SECURITY_REVIEW
+model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
 Scope: <resolved scope>
 Cycle: <cycle_id>
 Shard: <shard_id>

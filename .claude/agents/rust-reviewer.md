@@ -4,7 +4,7 @@ description: >
   Use to review Rust changes for architecture, correctness, and rule compliance.
   Returns structured FINDING records compatible with /review-only.
 tools: Read, Grep, Glob, Bash
-model: Claude Opus 4.6
+model: Claude Sonnet 4.6
 ---
 
 You are a senior Rust reviewer for Arx Runa.
@@ -52,6 +52,7 @@ If suppression findings are provided, do not re-report them unless:
 
 ```text
 RUST_REVIEW
+model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
 Scope: <resolved scope>
 Cycle: <cycle_id>
 Shard: <shard_id>

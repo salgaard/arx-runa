@@ -7,7 +7,7 @@ description: >
   Security-scoped challenges are flagged for human review rather than
   auto-resolved.
 tools: Read, Grep, Glob, Bash
-model: Claude Opus 4.6
+model: Claude Sonnet 4.6
 ---
 
 You are a senior remediation architect for Arx Runa.
@@ -75,6 +75,7 @@ Return exactly one structured payload:
 
 ```text
 SOLUTION_PACK {
+  model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
   challenge_decisions: [
     {
       challenged_constraint: "<rule/design anchor>"
@@ -106,6 +107,7 @@ SOLUTION_PACK {
 
 ```text
 NO_ACTIONABLE_FIXES {
+  model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
   challenge_decisions: [<same schema as above>]
   reason: "<why no safe or needed remediation exists>"
 }
@@ -115,6 +117,7 @@ NO_ACTIONABLE_FIXES {
 
 ```text
 BLOCKED_SOLUTIONS {
+  model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
   blockers: ["<blocking conflict or missing input>", ...]
 }
 ```

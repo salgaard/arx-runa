@@ -16,6 +16,9 @@ applyTo: "src-tauri/src/ui/**,src-tauri/tauri.conf.json,src-tauri/capabilities/*
 - Validate vault-relative paths with allowlist + explicit traversal/absolute-path rejection (not denylist-only checks)
 - For password-bearing IPC payloads, immediately convert `String` to `Zeroizing<Vec<u8>>`, scrub String backing bytes, and drop the original
 - `tauri::State<T>` for config — never for keys (those stay in mlocked memory)
+- `From<StorageError>` maps the real variants (`Database`, `NotFound`, `ChecksumMismatch`, `Io`, `WrongKey`, `ConstraintViolation`); design §Error Sanitisation code block is illustrative and out of date.
+- `storage::SyncError` (re-export of `storage::cloud::sync::SyncError`) and `storage::CloudTransportError` are the canonical cloud-error inputs for IPC sanitisation.
+- `AppState.database` is `Arc<RwLock<Option<SqlCipherMetadataStore>>>`; there is no separate `DatabaseConnection` type.
 
 ## Config (`tauri.conf.json`)
 - CSP required: `default-src 'self'` with explicit local-only directives (`connect-src`, `script-src`, `style-src`, `img-src`) per design

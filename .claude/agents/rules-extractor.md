@@ -24,6 +24,7 @@ You extract rule statements into a deterministic `RULES_INDEX`.
 
 ```text
 RULES_INDEX {
+  model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
   rules: [
     {
       id: "<rule-id or R-NNN>"

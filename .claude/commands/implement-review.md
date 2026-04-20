@@ -61,13 +61,13 @@ task(agent_type="rules-extractor",      model="claude-sonnet-4.6", ...)    → R
 task(agent_type="design-extractor",     model="claude-sonnet-4.6", ...)    → DESIGN_INDEX
 task(agent_type="shard-planner",        model="claude-sonnet-4.6", ...)    → SHARD_MAP + SHARD_DIGEST_SUMMARY[]
 task(agent_type="finding-classifier",   model="claude-sonnet-4.6", ...)    → CLASSIFIED_FINDINGS
-task(agent_type="problem-solver",       model="claude-opus-4.6",   ...)    → SOLUTION_PACK / NO_ACTIONABLE_FIXES / BLOCKED_SOLUTIONS
-task(agent_type="rust-implementer",     model="claude-opus-4.6",   ...)    → IMPLEMENTATION_RESULT
-task(agent_type="rust-reviewer",        model="claude-opus-4.6",   ...)    → Raw findings
-task(agent_type="architecture-reviewer",model="claude-opus-4.6",   ...)    → Raw findings
-task(agent_type="security-reviewer",    model="claude-opus-4.6",   ...)    → Raw findings
+task(agent_type="problem-solver",       model="claude-sonnet-4.6",   ...)    → SOLUTION_PACK / NO_ACTIONABLE_FIXES / BLOCKED_SOLUTIONS
+task(agent_type="rust-implementer",     model="claude-sonnet-4.6",   ...)    → IMPLEMENTATION_RESULT
+task(agent_type="rust-reviewer",        model="claude-sonnet-4.6",   ...)    → Raw findings
+task(agent_type="architecture-reviewer",model="claude-sonnet-4.6",   ...)    → Raw findings
+task(agent_type="security-reviewer",    model="claude-sonnet-4.6",   ...)    → Raw findings
 task(agent_type="cross-shard-reviewer", model="claude-sonnet-4.6", ...)    → Raw findings
-task(agent_type="test-writer",          model="claude-opus-4.6",   ...)    → Test additions/updates
+task(agent_type="test-writer",          model="claude-sonnet-4.6",   ...)    → Test additions/updates
 ```
 
 All custom agent names in the Agent Roster map directly to `agent_type` values. Skipping an agent invocation is a protocol violation, not a valid optimization.
@@ -78,12 +78,12 @@ Apply these model overrides on every `task` invocation. Never omit the `model` p
 
 | Agent | Model | Rationale |
 |---|---|---|
-| `rust-implementer` | `claude-opus-4.6` | Writes all production Rust code — maximum code quality and rule compliance |
-| `rust-reviewer` | `claude-opus-4.6` | Deep code review with security/rule awareness across large shards |
-| `security-reviewer` | `claude-opus-4.6` | Crypto correctness and zero-knowledge threat model — no false negatives tolerable |
-| `architecture-reviewer` | `claude-opus-4.6` | Broad cross-cutting structural analysis requiring deep reasoning |
-| `problem-solver` | `claude-opus-4.6` | Complex solution synthesis across multiple classified findings and design challenges |
-| `test-writer` | `claude-opus-4.6` | Adversarial crypto tests and full coverage planning require domain depth |
+| `rust-implementer` | `claude-sonnet-4.6` | Writes all production Rust code — maximum code quality and rule compliance |
+| `rust-reviewer` | `claude-sonnet-4.6` | Deep code review with security/rule awareness across large shards |
+| `security-reviewer` | `claude-sonnet-4.6` | Crypto correctness and zero-knowledge threat model — no false negatives tolerable |
+| `architecture-reviewer` | `claude-sonnet-4.6` | Broad cross-cutting structural analysis requiring deep reasoning |
+| `problem-solver` | `claude-sonnet-4.6` | Complex solution synthesis across multiple classified findings and design challenges |
+| `test-writer` | `claude-sonnet-4.6` | Adversarial crypto tests and full coverage planning require domain depth |
 | `finding-classifier` | `claude-sonnet-4.6` | Structured disposition classification — accurate table output, no deep reasoning needed |
 | `cross-shard-reviewer` | `claude-sonnet-4.6` | Pattern-based contradiction detection using structured shard digests |
 | `shard-planner` | `claude-sonnet-4.6` | File-to-shard mapping and keyword classification — structured analysis |

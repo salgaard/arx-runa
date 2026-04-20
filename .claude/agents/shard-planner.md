@@ -33,6 +33,7 @@ You assign files to shard groups for review orchestration and produce lightweigh
 
 ```text
 SHARD_MAP {
+  model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
   shards: [
     {
       shard_id: "<shard-auth|shard-crypto|shard-storage|shard-default>"

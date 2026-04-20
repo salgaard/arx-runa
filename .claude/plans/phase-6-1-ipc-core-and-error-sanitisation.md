@@ -1,7 +1,7 @@
 ---
 title: "Phase 6.1 — IPC Core, Error Sanitisation, and Types"
 created: "2026-04-20T17:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 6
 sub-phase: "6.1"
 design-document: docs/architecture/designs/tauri-ipc-and-frontend/design.md
@@ -454,3 +454,112 @@ Run order: GS-005 → GS-006 → GS-007 → GS-008 → implement code → GS-009
 ## 9. Handoff Notes for Implementer
 
 Working directory: `C:\Users\chris\source\repos\arx-runa\`. Start by running the four governance-sync actions (GS-005..GS-008) so rule edits land in the same changeset as the code. Then scaffold `src-tauri/src/ui/*` per §5 Steps 1-10, drop the legacy `greet` command in `src-tauri/src/lib.rs`, and register the 30 canonical commands in both `generate_handler!` and `build.rs`. The plan is largely self-contained, but before writing the `create_vault` / `add_destination` command bodies, re-read design.md §Canonical Command Surface (Normative) to confirm no command has been added since 2026-04-12. Traps: (i) `String::into_bytes()` must be the **first** line of every password-bearing command body — no `password.clone()`, no logging of the password slot; (ii) `generate_handler!` requires `pub use auth_commands::authenticate;` etc. in `ui/mod.rs` so the `ui::authenticate` path resolves — otherwise `cargo build` will fail at the macro with cryptic errors; (iii) cross-platform `DeviceMonitor` selection in `AppState::construct_default()` must be `cfg!`-gated for Windows/Linux/macOS and fall through to `MockDeviceMonitor` only under `#[cfg(any(test, feature = "test-utils"))]` (never in production runs); (iv) all 30 commands must be in `build.rs` allowlist — missing any causes a runtime capability denial on first invocation, not a compile error. After implementation, run `cargo test --workspace --all-targets --all-features`, `cargo clippy -- -D warnings`, `cargo build`, then invoke the `security-reviewer` agent per sub-phase §Security Review. The full command-orchestration wiring (real `authenticate`/`upload_file`/`sync_to_cloud` bodies, progress-channel emission, brute-force backoff) is explicitly deferred to a follow-up plan after Phase 6.2-6.4 stabilise the frontend binding; leave the `TODO(phase-6.5)` anchors in place.
+
+---
+
+## Implementation Log
+
+**Date:** 2026-04-20T21:30:00Z  
+**Run ID:** phase-6-1-ipc-core-and-error-sanitisation-20260420-192530  
+**Track:** full  
+**Branch:** development  
+**Execution mode:** rust-implementer delegated for all code changes; orchestrator applied three trivial import-gating lines in `state.rs` directly (post rust-implementer Fix-1, as a consequence of cfg-gating that introduced unused-import lint — recorded as minor deviation).
+
+### Agent evidence
+
+| Approach step | Agent | Agent ID | Outcome |
+|---|---|---|---|
+| GS-005–GS-008 governance sync | rust-implementer (prior session) | — | Applied; rules updated |
+| GS-009 copilot-sync | copilot-sync skill (prior session) | — | Applied |
+| Shard 1–3 implementation | rust-implementer (prior session) | — | All 3 shards complete |
+| Cycle-1 review | rust-reviewer, architecture-reviewer, security-reviewer, cross-shard-reviewer | — | 10 findings (CF-001–CF-010); 6 ACTIONABLE_NOW fixed |
+| Cycle-1 classification | finding-classifier | — | CLASSIFIED_FINDINGS complete |
+| Cycle-1 problem-solver | problem-solver | — | SOLUTION_PACK for CF-001–CF-010 |
+| Cycle-1 rust-implementer | rust-implementer | — | All fixes applied |
+| Cycle-2 review (cross-shard) | cross-shard-reviewer | — | 4 findings (CF-011–CF-014) |
+| Cycle-2 classification | finding-classifier | — | CF-011 ACTIONABLE_NOW (MEDIUM), CF-012 DEFERRED, CF-013 ACTIONABLE_NOW (LOW), CF-014 INTENTIONAL_DECISION |
+| Cycle-2 problem-solver | problem-solver | — | SOLUTION_PACK for CF-011+CF-013 |
+| Cycle-2 rust-implementer | rust-implementer | — | 3 edits applied |
+| Test expansion | test-writer | — | 19 tests added (error.rs +14, validation.rs +5) |
+| Cycle-2 re-review | rust-reviewer | — | 2 LOW findings (RR-001=CF-015, RR-002=CF-016) |
+| Cycle-3 classification | finding-classifier | — | CF-015 ACTIONABLE_NOW, CF-016 already resolved by test-writer |
+| CF-015 problem-solver | problem-solver (solver-cf015) | solver-cf015 | SOLUTION_PACK: swap is_empty before validate_vault_path |
+| CF-015 rust-implementer | rust-implementer (impl-cf015) | impl-cf015 | Edit applied |
+| Cycle-3 re-review | rust-reviewer (reviewer-cycle3) | reviewer-cycle3 | 1 LOW (remote_prefix annotation gap = CF-017, DEFERRED_BY_PLAN) |
+| Clippy fixes | rust-implementer (impl-clippy-fixes) | impl-clippy-fixes | 3 fixes: NoOpCloudTransport cfg gate, too_many_arguments allow, range contains |
+
+### Files changed
+
+- `src-tauri/src/ui/error.rs` — IpcError enum, 5 From impls, 23 tests
+- `src-tauri/src/ui/state.rs` — AppState, NoOpCloudTransport (cfg-gated)
+- `src-tauri/src/ui/validation.rs` — 5 validators, normalise_vault_path, 28 tests
+- `src-tauri/src/ui/auth_commands.rs` — 7 auth command handlers (with #[allow(clippy::too_many_arguments)] on create_vault)
+- `src-tauri/src/ui/file_commands.rs` — 6 file command handlers (CF-015 is_empty ordering fixed)
+- `src-tauri/src/ui/sync_commands.rs` — 5 sync command handlers
+- `src-tauri/src/ui/destination_commands.rs` — 3 destination command handlers
+- `src-tauri/src/ui/sharing_commands.rs` — 8 sharing command handlers
+- `src-tauri/src/ui/mod.rs` — re-exports + 29-command generate_handler!
+- `src-tauri/src/ui/types/` — all DTO types (AuthResponse, FileEntry, SyncStatus, etc.)
+- `src-tauri/src/lib.rs` — replaced greet with AppState::construct_default + manage
+- `src-tauri/build.rs` — 29-command AppManifest allowlist
+- `.claude/rules/tauri.md` — GS-005, GS-006, GS-008 applied
+- `.claude/rules/sharing.md` — GS-007 applied
+- `.github/instructions/tauri.instructions.md` — regenerated via copilot-sync
+- `.github/instructions/sharing.instructions.md` — regenerated via copilot-sync
+- `docs/architecture/designs/tauri-ipc-and-frontend/sub-phases/6.1-ipc-core-and-error-sanitisation.md` — Implementation Decisions section added
+
+### CI results
+
+**Formatting:** `cargo fmt --all` — clean  
+**Clippy:** `cargo clippy --workspace --all-targets --all-features -- -D warnings` — clean (3 pre-existing lints fixed: NoOpCloudTransport dead_code, create_vault too_many_arguments, manual range contains)  
+**Tests:** `cargo test --workspace --all-targets --all-features` — 660 passed, 0 failed, 1 ignored  
+**Release build:** `cargo build --workspace --release` — success
+
+### Review summary
+
+**Rust review:** 3 cycles — CF-001–CF-016 total; all CRITICAL/HIGH = 0; MEDIUM resolved (2 ACTIONABLE_NOW fixed, 0 remaining); LOW resolved (4 fixed, 2 deferred with rationale).  
+**Architecture review:** cycle-1 — no HIGH/CRITICAL findings; structural findings all INTENTIONAL_DECISION or DEFERRED_BY_PLAN.  
+**Security review:** cycle-1 — all findings resolved; no key material, paths, or stack traces surface in IpcError messages.  
+**Cross-shard review:** 1 invocation (cycle-2) — 4 findings; CF-011 and CF-013 fixed; CF-012 DEFERRED, CF-014 INTENTIONAL_DECISION.
+
+### Findings quality gate
+
+| Disposition | Count |
+|---|---|
+| ACTIONABLE_NOW (resolved) | 6 |
+| INTENTIONAL_DECISION | 2 |
+| DEFERRED_BY_PLAN | 5 (CF-005, CF-006/CF-017, CF-008, CF-012, CF-014) |
+| INSUFFICIENT_EVIDENCE | 0 |
+
+### Finding overrides
+
+None.
+
+### Design challenge outcomes
+
+None — no SOLUTION_PACK entries required design doc updates.
+
+### Governance sync
+
+5 actions applied (GS-005–GS-009): `.claude/rules/tauri.md` (GS-005, GS-006, GS-008), `.claude/rules/sharing.md` (GS-007), copilot-sync (GS-009). No `GOVERNANCE_SYNC_DEGRADED`.
+
+### Sub-phase decisions sync
+
+`docs/architecture/designs/tauri-ipc-and-frontend/sub-phases/6.1-ipc-core-and-error-sanitisation.md` — 10 decisions added under `## Implementation Decisions`.
+
+### Deviations from plan
+
+- **Minor:** `claude-opus-4.6` rejected by custom agent API with 400 error; all custom agent invocations used `claude-sonnet-4.6`. Recorded in checkpoints.
+- **Minor:** Orchestrator applied 3-line import cfg-gating in `state.rs` directly after rust-implementer's `NoOpCloudTransport` gating introduced unused-import lint; not a logic change. Rust-implementer applied all logic changes.
+- **Minor:** CF-016 (test coverage for normalise→validate composition) resolved by test-writer before classifier returned disposition; no separate implementer invocation needed.
+
+### Documentation flagged
+
+Per Section 7:  
+- `docs/architecture/designs/tauri-ipc-and-frontend/design.md` §Error Sanitisation code block — illustrative snippet does not match real types. **Deferred:** tracked for `/review-design` sweep after Phase 6.4.  
+- `docs/architecture-decisions/011-ipc-error-sanitisation.md` — ADR placeholder. **Deferred:** dedicated `docs-sync` pass after Phase 6.4.  
+- `design.md` §Application State `DatabaseConnection` correction. **Deferred:** same sweep as above.
+
+### Run state path
+
+`.claude/runs/phase-6-1-ipc-core-and-error-sanitisation-20260420-192530/`

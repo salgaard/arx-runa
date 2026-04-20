@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-revoke-share"
+description = "Enables the revoke_share command without any pre-configured scope."
+commands.allow = ["revoke_share"]
+
+[[permission]]
+identifier = "deny-revoke-share"
+description = "Denies the revoke_share command without any pre-configured scope."
+commands.deny = ["revoke_share"]

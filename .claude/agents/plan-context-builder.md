@@ -25,6 +25,7 @@ You convert plan and handoff markdown files into a strict `PLAN_DIGEST` contract
 
 ```text
 PLAN_DIGEST {
+  model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
   highest_implemented_phase: "<phase/sub-phase>"
   in_progress_phases: ["<phase>", ...]
   deferred_phases: ["<phase>", ...]

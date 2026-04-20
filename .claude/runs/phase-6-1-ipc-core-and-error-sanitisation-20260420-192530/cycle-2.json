@@ -1,0 +1,44 @@
+{
+  "cycle": 2,
+  "findings": [
+    {
+      "id": "CF-011",
+      "source_id": "XS-001",
+      "severity": "MEDIUM",
+      "disposition": "ACTIONABLE_NOW",
+      "status": "resolved",
+      "file": "src-tauri/src/ui/auth_commands.rs",
+      "summary": "get_session_status missing TODO annotation; vault_id/timeout_seconds return None without wiring note"
+    },
+    {
+      "id": "CF-012",
+      "source_id": "XS-002",
+      "severity": "MEDIUM",
+      "disposition": "DEFERRED_BY_PLAN",
+      "status": "deferred",
+      "file": "src-tauri/src/ui/{sharing,sync}_commands.rs",
+      "summary": "contact_id/share_id/destination_id validated non-empty only, not UUID v4 — deferred to Phase 6.5"
+    },
+    {
+      "id": "CF-013",
+      "source_id": "XS-003",
+      "severity": "LOW",
+      "disposition": "ACTIONABLE_NOW",
+      "status": "resolved",
+      "file": "src-tauri/src/ui/file_commands.rs",
+      "summary": "upload_file missing normalise_vault_path before validate_vault_path — asymmetric with list_directory"
+    },
+    {
+      "id": "CF-014",
+      "source_id": "XS-004",
+      "severity": "LOW",
+      "disposition": "INTENTIONAL_DECISION",
+      "status": "no_source_fix",
+      "file": "N/A",
+      "summary": "INTERFACE_SLICE annotation error in orchestrator grep output (validate_password param name) — no source defect"
+    }
+  ],
+  "override_records": [],
+  "cross_shard_finding_count": 0,
+  "actionable_remaining": 0
+}

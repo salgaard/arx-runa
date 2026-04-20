@@ -1,0 +1,25 @@
+//! Destination entry response type.
+
+use serde::Serialize;
+
+/// Destination metadata returned by `list_destinations` or `add_destination`.
+///
+/// Never includes credential material.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DestinationEntry {
+    /// Unique destination identifier.
+    pub destination_id: String,
+    /// Human-readable label.
+    pub label: String,
+    /// Destination type: `"cloud"`, `"external_drive"`, or `"local_path"`.
+    pub destination_type: String,
+    /// Cloud provider identifier.
+    pub provider: String,
+    /// Cloud bucket name.
+    pub bucket: String,
+    /// Whether this is the primary destination.
+    pub is_primary: bool,
+    /// Backup sync mode, `None` for primary destinations.
+    pub backup_mode: Option<String>,
+}

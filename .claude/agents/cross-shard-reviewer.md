@@ -57,6 +57,7 @@ The `INTERFACE_SLICE` is your primary tool for detecting interface mismatches th
 
 ```text
 CROSS_SHARD_REVIEW
+model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
 Cycle: <cycle_id>
 Summary: HIGH=<N>, MEDIUM=<N>, LOW=<N>
 

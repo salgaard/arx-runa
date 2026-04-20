@@ -1,0 +1,19 @@
+//! Sync result response type.
+
+use serde::Serialize;
+
+use super::SyncConflict;
+
+/// Result returned from a completed `sync_to_cloud` or `sync_backup` operation.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncResult {
+    /// Number of files uploaded to cloud during this sync.
+    pub files_uploaded: u32,
+    /// Number of files downloaded from cloud during this sync.
+    pub files_downloaded: u32,
+    /// Number of files deleted from cloud during this sync.
+    pub files_deleted: u32,
+    /// Conflicts detected that require user attention.
+    pub conflicts: Vec<SyncConflict>,
+}

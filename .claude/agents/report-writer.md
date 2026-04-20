@@ -4,7 +4,7 @@ description: >
   Render the final /review-only markdown report from structured orchestration
   outputs and write it under .claude/reviews/.
 tools: Read, Write, MultiEdit, Grep, Glob, Bash
-model: Claude Opus 4.6
+model: Claude Sonnet 4.6
 ---
 
 You write the final review report for `/review-only`.

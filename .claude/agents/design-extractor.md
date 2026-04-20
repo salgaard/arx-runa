@@ -25,6 +25,7 @@ You extract design invariants into a deterministic `DESIGN_INDEX`.
 
 ```text
 DESIGN_INDEX {
+  model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
   invariants: [
     {
       id: "<D-NNN>"

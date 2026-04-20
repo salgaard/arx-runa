@@ -38,8 +38,8 @@ Implement the saved plan: $ARGUMENTS
 
 **How to invoke agents:** Use the `task` tool with the agent's name as `agent_type` and the `model` override from the Model Assignments table below. Example:
 ```
-task(agent_type="rust-implementer", model="claude-opus-4.6", prompt="<step context + SOLUTION_PACK>")
-task(agent_type="rust-reviewer", model="claude-opus-4.6", prompt="<shard context>")
+task(agent_type="rust-implementer", model="claude-sonnet-4.6", prompt="<step context + SOLUTION_PACK>")
+task(agent_type="rust-reviewer", model="claude-sonnet-4.6", prompt="<shard context>")
 task(agent_type="finding-classifier", model="claude-sonnet-4.6", prompt="<canonicalized findings + PLAN_DIGEST + RULES_INDEX + DESIGN_INDEX>")
 ```
 All custom agent names in the Agent Roster above map directly to `agent_type` values in the `task` tool.
@@ -48,17 +48,19 @@ All custom agent names in the Agent Roster above map directly to `agent_type` va
 
 Apply these model overrides on every `task` invocation. Never omit the `model` parameter — rely on defaults only when an agent is not listed here.
 
+> **Note:** `claude-opus-4.6` and `claude-opus-4.5` return `CAPIError: 400 The requested model is not supported` for sub-agent task invocations in this environment (premium tier unavailable). Use `claude-sonnet-4.6` for all agents.
+
 | Agent | Model | Rationale |
 |---|---|---|
-| `rust-implementer` | `claude-opus-4.6` | Writes all production Rust code — maximum code quality, rule compliance, and zeroization correctness |
-| `rust-reviewer` | `claude-opus-4.6` | Deep code review with security/rule awareness across large shards |
-| `security-reviewer` | `claude-opus-4.6` | Crypto correctness and zero-knowledge threat model — no false negatives tolerable |
-| `architecture-reviewer` | `claude-opus-4.6` | Broad cross-cutting structural analysis requiring deep reasoning |
-| `problem-solver` | `claude-opus-4.6` | Complex solution synthesis across multiple classified findings and design challenges |
-| `test-writer` | `claude-opus-4.6` | Adversarial crypto tests and full coverage planning require domain depth |
-| `finding-classifier` | `claude-sonnet-4.6` | Structured disposition classification — accurate table output, no deep reasoning needed |
+| `rust-implementer` | `claude-sonnet-4.6` | Best available model — writes all production Rust code |
+| `rust-reviewer` | `claude-sonnet-4.6` | Best available model — deep code review with security/rule awareness |
+| `security-reviewer` | `claude-sonnet-4.6` | Best available model — crypto correctness and zero-knowledge threat model |
+| `architecture-reviewer` | `claude-sonnet-4.6` | Best available model — cross-cutting structural analysis |
+| `problem-solver` | `claude-sonnet-4.6` | Best available model — solution synthesis across classified findings |
+| `test-writer` | `claude-sonnet-4.6` | Best available model — adversarial crypto tests and coverage planning |
+| `finding-classifier` | `claude-sonnet-4.6` | Structured disposition classification — accurate table output |
 | `cross-shard-reviewer` | `claude-sonnet-4.6` | Pattern-based contradiction detection using structured shard digests |
-| `shard-planner` | `claude-sonnet-4.6` | File-to-shard mapping and keyword classification — structured analysis |
+| `shard-planner` | `claude-sonnet-4.6` | File-to-shard mapping and keyword classification |
 | `plan-context-builder` | `claude-sonnet-4.6` | Document parsing and structured extraction |
 | `rules-extractor` | `claude-sonnet-4.6` | Text extraction from rule files — mechanical |
 | `design-extractor` | `claude-sonnet-4.6` | Design invariant extraction — mechanical |
@@ -395,7 +397,7 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
    - **Track** — `minimal` / `standard` / `full`; note any mid-run escalation
    - **Branch** — from Step 2
    - **Execution mode** — rust-implementer (default) or orchestrator (fallback); note which steps fell back
-   - **Agent evidence** — table: `Approach step | Agent | Agent ID | Outcome`
+   - **Agent evidence** — table: `Approach step | Agent | Model Requested | Model Reported | Agent ID | Outcome`. Parse `Model Reported` from the `model_self_reported:` field in each agent's output block header; use `—` if the field is absent.
    - **Files changed** — including any updated design docs
    - **Formatting check** — `cargo fmt --all -- --check` summary
    - **Clippy results** — `cargo clippy --workspace --all-targets --all-features -- -D warnings` summary

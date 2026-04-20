@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-received-shares"
+description = "Enables the list_received_shares command without any pre-configured scope."
+commands.allow = ["list_received_shares"]
+
+[[permission]]
+identifier = "deny-list-received-shares"
+description = "Denies the list_received_shares command without any pre-configured scope."
+commands.deny = ["list_received_shares"]

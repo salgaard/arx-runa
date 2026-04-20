@@ -43,6 +43,7 @@ Downstream remediation draws **exclusively from `actionable_now`** — other buc
 
 ```text
 CLASSIFIED_FINDINGS {
+  model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
   actionable_now: [<CANONICAL_FINDING + CLASSIFICATION>, ...]
   intentional_decisions: [<CANONICAL_FINDING + CLASSIFICATION>, ...]
   deferred_by_plan: [<CANONICAL_FINDING + CLASSIFICATION>, ...]

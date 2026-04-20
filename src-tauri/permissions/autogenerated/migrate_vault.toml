@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-migrate-vault"
+description = "Enables the migrate_vault command without any pre-configured scope."
+commands.allow = ["migrate_vault"]
+
+[[permission]]
+identifier = "deny-migrate-vault"
+description = "Denies the migrate_vault command without any pre-configured scope."
+commands.deny = ["migrate_vault"]

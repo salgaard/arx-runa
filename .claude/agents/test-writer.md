@@ -5,7 +5,7 @@ description: >
   when a module lacks coverage, for adversarial crypto tests, or for
   property-based test suites.
 tools: Read, Write, MultiEdit, Bash, Glob, Grep
-model: Claude Opus 4.6
+model: Claude Sonnet 4.6
 ---
 
 You are a senior Rust test engineer for Arx Runa. Your role is writing, auditing, and maintaining tests.
@@ -49,6 +49,7 @@ Use `mockall` only when manual mocks become too verbose and explain why.
 
 ```text
 TEST_ACTION_RESULT
+model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
 Scope: <module/files>
 Changes:
   - <file>: <tests added/updated summary>
