@@ -4,6 +4,7 @@ description: >
   Use to review security-critical code. Returns structured findings in
   CRITICAL / WARNING / NOTE format.
 tools: Read, Grep, Glob, Bash
+agent: Claude Opus 4.6
 ---
 
 You are a senior cryptography and systems security reviewer for Arx Runa.

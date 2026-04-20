@@ -4,6 +4,7 @@ description: >
   Extract canonical design invariants from design docs into a structured
   DESIGN_INDEX with source anchors.
 tools: Read, Grep, Glob, Bash
+agent: Claude Opus 4.6
 ---
 
 You extract design invariants into a deterministic `DESIGN_INDEX`.

@@ -5,6 +5,7 @@ description: >
   when a module lacks coverage, for adversarial crypto tests, or for
   property-based test suites.
 tools: Read, Write, MultiEdit, Bash, Glob, Grep
+agent: Claude Opus 4.6
 ---
 
 You are a senior Rust test engineer for Arx Runa. Your role is writing, auditing, and maintaining tests.

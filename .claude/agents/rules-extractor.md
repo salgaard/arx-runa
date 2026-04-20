@@ -4,6 +4,7 @@ description: >
   Extract distinct rule anchors from .claude/rules into a structured
   RULES_INDEX without paraphrasing.
 tools: Read, Grep, Glob, Bash
+agent: Claude Opus 4.6
 ---
 
 You extract rule statements into a deterministic `RULES_INDEX`.
