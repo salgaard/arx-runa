@@ -369,7 +369,7 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
 
 ## Step 5 — Verify
 
-1. Run `cargo fmt --all -- --check` (**Check formatting**). Fix related failures.
+1. Run `cargo fmt --all` (**Fix formatting**).
 2. Run `cargo clippy --workspace --all-targets --all-features -- -D warnings` (**Run Clippy (warnings as errors)**). Fix related failures; note pre-existing unrelated issues.
 3. Run `cargo test --workspace --all-targets --all-features` (**Run tests**). Fix related failures; note pre-existing unrelated issues.
 4. Run `cargo build --workspace --release` (**Release build**). Fix related failures; note pre-existing unrelated issues.

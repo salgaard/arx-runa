@@ -596,16 +596,18 @@ Full finding prose, `SOLUTION_PACK` content, and `IMPLEMENTATION_RESULT` records
 
 ---
 
-## Phase 6 — Test Pass
+## Phase 6 — Test + Verify
 
-1. Run relevant tests for changed scope.
-2. Run `cargo test --workspace --all-targets --all-features` when behavior changed materially or sensitive modules were edited.
-3. Invoke `test-writer` when:
+1. Run `cargo fmt --all` (**Fix formatting**).
+2. Run `cargo clippy --workspace --all-targets --all-features -- -D warnings` (**Run Clippy (warnings as errors)**). Fix related failures; note pre-existing unrelated issues.
+3. Run `cargo test --workspace --all-targets --all-features` (**Run tests**). Fix related failures; note pre-existing unrelated issues.
+4. Run `cargo build --workspace --release` (**Release build**). Fix related failures; note pre-existing unrelated issues.
+5. Invoke `test-writer` when:
    - reviewers identify missing tests, or
    - behavior changed without adequate coverage, or
    - sensitive modules were modified and adversarial coverage is missing.
-4. Apply output parsing protocol to `test-writer` result.
-5. If tests fail, fix failures within scope and re-run. If a second run fails, record the failure as a blocker in the final report rather than looping indefinitely.
+6. Apply output parsing protocol to `test-writer` result.
+7. If tests fail, fix failures within scope and re-run. If a second run fails, record the failure as a blocker in the final report rather than looping indefinitely.
 
 ---
 

@@ -17,6 +17,5 @@ jobs:
       - name: Mirror to GitLab
         uses: yesolutions/mirror-action@master
         with:
-          # Replace 'username/repo' with your actual GitLab path
           REMOTE: "https://oauth2:${{ secrets.GITLAB_TOKEN }}@gitlab.com/Salgaar/arx-runa.git"
-          GIT_PUSH_ARGS: "--tags --force --all"
+          GIT_PUSH_ARGS: "--tags --force"
