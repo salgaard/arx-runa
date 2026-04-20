@@ -1,0 +1,22 @@
+{
+  "id": "CF-004",
+  "severity": "HIGH",
+  "category": "BOUNDARY_LEAK",
+  "confidence": "MEDIUM",
+  "disposition": "ACTIONABLE_NOW",
+  "location": "src-tauri/src/auth/staging.rs",
+  "rule_refs": [
+    "owner-only staging"
+  ],
+  "design_refs": [
+    "auth-design"
+  ],
+  "problem": "Windows staging ACL hardening gap",
+  "evidence": "architecture-shard-auth-cycle-1-001",
+  "plan_context": "implemented<=4.5",
+  "recommended_fix": "owner-only ACL enforcement",
+  "proposed_solution": "single secure staging helper with Windows ACLs",
+  "blast_radius": "MODULE",
+  "estimated_complexity": "MEDIUM",
+  "design_challenge": null
+}

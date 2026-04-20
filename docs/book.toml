@@ -1,0 +1,38 @@
+[book]
+title = "Arx Runa Documentation"
+authors = ["Chorizzio"]
+description = "Zero-knowledge cloud storage — technical documentation"
+src = "."
+language = "en"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+theme = "theme"
+default-theme = "coal"
+preferred-dark-theme = "coal"
+git-repository-url = "https://github.com/Chorizzio/arx-runa"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/Chorizzio/arx-runa/edit/master/docs/{path}"
+site-url = "/arx-runa/"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-css = ["arx-runa-brand.css"]
+favicon-svg = "arx-runa-logo.svg"
+no-section-label = true
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+enable = true
+limit-results = 20
+use-hierarchical-headings = true
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html.playground]
+editable = false

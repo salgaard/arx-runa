@@ -1,0 +1,11 @@
+{
+  "cycle": 3,
+  "findings": [
+    { "id": "CF-013", "severity": "MEDIUM", "disposition": "DEFERRED_BY_PLAN", "source_id": "architecture-shard-storage-remediation-cycle-3-001" },
+    { "id": "CF-014", "severity": "MEDIUM", "disposition": "DEFERRED_BY_PLAN", "source_id": "architecture-shard-storage-remediation-cycle-3-002" },
+    { "id": "CF-015", "severity": "MEDIUM", "disposition": "DEFERRED_BY_PLAN", "source_id": "architecture-shard-storage-remediation-cycle-3-003" }
+  ],
+  "override_records": [],
+  "cross_shard_finding_count": 0,
+  "actionable_remaining": 0
+}

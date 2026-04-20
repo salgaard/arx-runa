@@ -1,0 +1,20 @@
+{
+  "cycle": 1,
+  "findings": [
+    {
+      "id": "CF-001",
+      "severity": "MEDIUM",
+      "disposition": "ACTIONABLE_NOW",
+      "source_id": "rust-sharing-storage-remediation-cycle-1-001"
+    },
+    {
+      "id": "CF-002",
+      "severity": "HIGH",
+      "disposition": "ACTIONABLE_NOW",
+      "source_id": "security-sharing-storage-remediation-cycle-1-001"
+    }
+  ],
+  "override_records": [],
+  "cross_shard_finding_count": 0,
+  "actionable_remaining": 2
+}

@@ -1,0 +1,450 @@
+# `/implement-plan` — Plan-Driven Implementation Command
+
+Implement the saved plan: $ARGUMENTS
+
+---
+
+## Design Principles
+
+- **Plan is source of truth.** Unexpected reality is handled as a plan deviation, not improvised execution.
+- **Hard-gated execution.** Gate failures halt execution; unattended operation must not silently bypass safeguards.
+- **Thin orchestrator, explicit specialists.** The invoking agent sequences and verifies; designated agents own review, classification, and solution semantics.
+- **Structured context handoff.** Once digest artifacts exist, downstream agents consume structured contracts rather than raw narrative.
+- **Scope-driven reviewers.** Which reviewers run is determined by actual changed files — not plan frontmatter flags.
+- **Context-bounded cycles.** Cycle state is persisted to disk; the orchestrator never accumulates full records across cycles in working memory.
+
+---
+
+## Agent Roster
+
+| Agent | Role | Output |
+|---|---|---|
+| `plan-context-builder` | Plan context extraction | `PLAN_DIGEST` |
+| `rules-extractor` | Rule anchor extraction | `RULES_INDEX` |
+| `design-extractor` | Design invariant extraction | `DESIGN_INDEX` |
+| `shard-planner` | Scope-to-shard mapping and digest summaries | `SHARD_MAP` + `SHARD_DIGEST_SUMMARY[]` |
+| `rust-implementer` | Delegated code and design-doc implementation | `IMPLEMENTATION_RESULT` |
+| `rust-reviewer` | Rust quality review (all Rust-touching plans) | Structured findings |
+| `architecture-reviewer` | Architecture integrity review (all Rust-touching plans) | Structured findings |
+| `security-reviewer` | Security review (security-path-touching plans) | Structured findings |
+| `cross-shard-reviewer` | Cross-shard contradiction detection | Structured findings |
+| `finding-classifier` | Findings disposition/confidence quality gate | `CLASSIFIED_FINDINGS` |
+| `problem-solver` | Findings-to-fix synthesis and design challenge evaluation | `SOLUTION_PACK` / `NO_ACTIONABLE_FIXES` / `BLOCKED_SOLUTIONS` |
+| `test-writer` | Test expansion (all code-changing plans) | Test additions/updates |
+
+**Execution contract (hard):** The invoking agent owns implementation end-to-end. It may delegate coding steps to sub-agents but retains orchestration, verification, and final accountability.
+
+**Orchestrator delegation contract (hard):** Keep orchestration thin. Delegate reviewer semantics, finding classification, and solution synthesis to designated agents. When structured artifacts exist, pass those artifacts — not raw prose.
+
+## Structured contract ownership (hard)
+
+| Artifact | Owner |
+|---|---|
+| `PLAN_DIGEST` | `.claude/agents/plan-context-builder.md` |
+| `RULES_INDEX` | `.claude/agents/rules-extractor.md` |
+| `DESIGN_INDEX` | `.claude/agents/design-extractor.md` |
+| `SHARD_MAP` + `SHARD_DIGEST_SUMMARY[]` | `.claude/agents/shard-planner.md` |
+| `CLASSIFIED_FINDINGS` | `.claude/agents/finding-classifier.md` |
+| `SOLUTION_PACK` / `NO_ACTIONABLE_FIXES` / `BLOCKED_SOLUTIONS` | `.claude/agents/problem-solver.md` |
+| `IMPLEMENTATION_RESULT` | `.claude/agents/rust-implementer.md` |
+
+This command owns orchestration and gates. Producer schema details live in agent contracts.
+
+---
+
+## Step 1 — Resolve the plan file
+
+Locate the plan from $ARGUMENTS:
+
+- Full filename (e.g., `phase-1-cryptographic-primitives.md`) → read `.claude/plans/$ARGUMENTS`
+- Filename without `.md` → append and retry
+- `latest` → most recently created file in `.claude/plans/` by `created` frontmatter, excluding `_template.md` and `status: blocked` plans
+- Empty or no match → list all plans (excluding `_template.md`) with title, status, and created date; ask the user to choose
+
+Generate a run ID: `<plan-slug>-<YYYYMMDD-HHMMSS>`. All run-state artifacts are written under `.claude/runs/<run-id>/`.
+
+---
+
+## Step 2 — Pre-flight checks
+
+Any failure halts execution. Do not attempt to auto-fix these conditions.
+
+1. **Working directory:** confirm cwd is the repo root (directory containing `CLAUDE.md`). If not, halt with actual and expected paths.
+2. **Git state:** run `git status --porcelain` and `git branch --show-current`. Record branch for the Implementation Log. If the working tree is dirty, display the dirty files and halt — re-run with `--force-dirty` to override.
+3. **Baseline build:** run `cargo check --workspace`. If it fails, halt and report errors — the baseline must be green before implementation begins.
+
+---
+
+## Step 3 — Validate the plan and enforce gates
+
+Any hard-gate failure stops execution before implementation begins.
+
+1. Read the plan file and parse its YAML frontmatter.
+
+2. **Status gate (hard):**
+   - `approved` → proceed.
+   - `draft` → halt: "Plan is still a draft. Set `status: approved` before running `/implement-plan`."
+   - `blocked` → halt: "Plan is blocked." Display **Design Concerns / Open Questions**.
+   - `in-progress` → halt: "Plan is already in progress. Reset `status: approved` to re-run."
+   - `implemented` / `superseded` → halt: "Plan is already `<status>`. Reset to `approved` if intentional."
+
+3. **Blocking-concerns gate (hard):** scan **Design Concerns / Open Questions** for any **Blocking** entry. If found, halt and display each — regardless of `status`.
+
+4. **Display Handoff Notes:** output the plan's **Handoff Notes for Implementer** section verbatim before continuing.
+
+5. **Verify Assumptions:** for each Assumptions entry, verify it holds against the current repo state. If any assumption is now false, halt with: which assumption failed, the current state, and a suggested resolution.
+
+6. **Sub-phase detection:** if `sub-phase` is present in frontmatter, enable sub-phase-aware implementation.
+
+7. **Sub-phase prerequisites (sub-phase plans only):** read the sub-phase roadmap from `sub-phase-roadmap`. Extract the sub-phase section. If any prerequisite sub-phase is missing or not marked implemented, halt with the list.
+
+8. **Governance-sync gate (hard, pre-implementation):**
+   - Require frontmatter `governance-sync-required`.
+   - If `true` but **Governance sync actions** section is missing or says "None" → halt.
+   - If `false` but section lists actions → halt.
+   - If actions are listed: execute them in order. Apply `.claude/rules/*.md` and `.claude/agents/*.md` edits as declared. Re-read each target file and confirm the declared edit is present — if a file edit cannot be applied or verified, invoke Plan-deviation protocol and halt.
+   - If any action touches `.claude/rules/*.md`: run `/copilot-sync` with a 30-second timeout.
+     - Success → record outcome in Implementation Log.
+     - Failure or timeout → record `GOVERNANCE_SYNC_DEGRADED` with failure reason; continue implementation. Surface warning at Step 6: "Run `/copilot-sync` manually before next session."
+     - The file edits are the hard requirement; copilot-sync propagation is best-effort.
+
+### Post-gate setup
+
+After all gates pass (before updating plan status):
+
+**A. Track selection (required before context build)**
+
+Evaluate the plan to assign an implementation track. The track is locked after selection and recorded in the Implementation Log.
+
+| Condition | Track |
+|---|---|
+| Section 6b lists any security-sensitive paths, OR `governance-sync-required: true`, OR Section 6a lists > 10 files | `full` |
+| Section 6a lists 4–10 non-security files, no governance sync | `standard` |
+| Section 6a lists ≤ 3 non-security files, single anticipated shard, no governance sync | `minimal` |
+
+Track capabilities:
+
+- **`full`** — all agents, max 8 remediation cycles, security-reviewer, cross-shard review when 2+ shards touched.
+- **`standard`** — rust-implementer + rust-reviewer + architecture-reviewer + finding-classifier + problem-solver + test-writer; max 3 remediation cycles; cross-shard only if 2+ shards touched; no security-reviewer unless drift check fires.
+- **`minimal`** — rust-implementer + rust-reviewer + finding-classifier + test-writer; 1 review cycle; no architecture-reviewer; no cross-shard review. If any HIGH finding surfaces after the review cycle → automatically escalate to `standard` track and continue.
+
+**B. Build structured context artifacts** — spawn in parallel:
+
+- `plan-context-builder` → `PLAN_DIGEST`
+- `rules-extractor` → `RULES_INDEX`
+- `design-extractor` → `DESIGN_INDEX`
+- `shard-planner` (receives resolved Rust file list from plan Section 6a) → `SHARD_MAP` + `SHARD_DIGEST_SUMMARY[]`
+
+Required consumer fields:
+- `PLAN_DIGEST`: `highest_implemented_phase`, `in_progress_phases`, `deferred_phases`, `plans[]`, `handoffs[]`
+- `RULES_INDEX`: `rules[].{id, source_file, anchor, verbatim, scope, severity_if_violated}`
+- `DESIGN_INDEX`: `invariants[].{id, source_file, anchor, verbatim, scope, challenged}`
+- `SHARD_MAP` + `SHARD_DIGEST_SUMMARY[]`: per `.claude/agents/shard-planner.md`
+
+Apply output parsing protocol to each artifact. Do not pass full raw plan or design prose to reviewer or solver agents once these structures exist. If any artifact fails to build, halt and report which gatherer failed.
+
+**C. Write initial run state to disk**
+
+Write `.claude/runs/<run-id>/run-state.json`:
+
+```json
+{
+  "run_id": "<run-id>",
+  "plan_file": "<path>",
+  "track": "<minimal|standard|full>",
+  "branch": "<branch>",
+  "cycle_count": 0,
+  "finding_summary": { "CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0 },
+  "disposition_summary": {
+    "ACTIONABLE_NOW": 0, "INTENTIONAL_DECISION": 0,
+    "DEFERRED_BY_PLAN": 0, "INSUFFICIENT_EVIDENCE": 0
+  },
+  "override_records": [],
+  "governance_sync_degraded": false,
+  "cycles": []
+}
+```
+
+**D. Update `status` to `in-progress`** in the plan frontmatter. (Intentionally after artifact build — a failed build leaves plan status unchanged.)
+
+---
+
+## Output parsing protocol (applies after every agent invocation)
+
+1. Locate the named output block by scanning for its keyword header (e.g., `RUST_REVIEW`, `SOLUTION_PACK`, `CLASSIFIED_FINDINGS`, `IMPLEMENTATION_RESULT`). Strip any prose wrapper or markdown fences.
+2. Validate that all required top-level fields are present per the agent's output contract.
+3. **If the block is not found or required fields are missing:**
+   a. Re-invoke the agent once. Prepend the raw output to the new invocation with the correction prompt: `"Your previous output did not match the required schema. Return only the structured block specified in your agent contract — no prose preamble, no markdown fences unless part of the schema."`
+   b. If the second attempt also fails: halt with `PARSE_ERROR`. Record the agent name, expected schema, and raw output. Surface to the user. Do not infer missing field values.
+4. Do not proceed with a partially parsed output.
+
+---
+
+## Step 4 — Implement
+
+Follow the **Approach** section of the plan step by step, in order.
+
+### Delegation model
+
+`rust-implementer` is the default executor for all coding steps. The orchestrator retains orchestration, gate enforcement, review invocation, and verification throughout.
+
+- Delegate each coding-focused Approach step to `rust-implementer` with full step context, expected outputs, and constraints. Apply output parsing protocol. Require `IMPLEMENTATION_RESULT`.
+- If `rust-implementer` returns `BLOCKED` on an Approach step, the orchestrator implements that step directly as fallback. Record the fallback in the Implementation Log.
+- If any required delegation contract cannot be satisfied and direct fallback is also infeasible, invoke Plan-deviation protocol and halt.
+
+1. Delegate coding-focused Approach steps to `rust-implementer`.
+2. Execute every Approach step as written — via delegation or direct fallback.
+3. **No speculative fallback:** if a step cannot be completed as written by either path, follow Plan-deviation protocol and halt.
+4. After each Approach step, run `cargo check --workspace`. Fix compile errors before moving to the next step.
+
+### Review invocation (scope-driven)
+
+Reviewers are invoked based on which files were actually changed — not plan flags. Read plan **Section 6** for reviewer guidance.
+
+5. **Rust quality review:** if any `src-tauri/**/*.rs` files were changed, invoke `rust-reviewer`. Pass `DIGEST_SLICE_<shard_id>` for each touched shard. Apply output parsing protocol. Skip and record if no Rust files changed.
+
+6. **Security review:** if any files under `src-tauri/src/{crypto,auth,storage}/` were changed, invoke `security-reviewer`. Pass relevant `DIGEST_SLICE` and security concerns from plan Section 6b. Apply output parsing protocol. Skip and record if no security-path files changed.
+   - **Drift check (always runs):** if any sensitive file was touched that plan Section 6b did not anticipate, invoke Plan-deviation protocol and halt.
+
+7. **Architecture review (`full` and `standard` tracks only):** if any `src-tauri/**/*.rs` files were changed, invoke `architecture-reviewer`. Pass relevant `DIGEST_SLICE`. Apply output parsing protocol. Skip and record if no Rust files changed.
+
+8. **INTERFACE_SLICE extraction (when 2+ shards have changed files):** before invoking `cross-shard-reviewer`, extract boundary pub signatures:
+
+   ```bash
+   grep -rn "^pub fn\|^pub trait\|^pub struct\|^pub enum\|^pub type" \
+     <files at the boundary between each pair of changed shards>
+   ```
+
+   Pass the resulting `INTERFACE_SLICE` to `cross-shard-reviewer` alongside structured findings. This gives the reviewer the contract surface at shard boundaries without passing full implementation content.
+
+### Findings remediation loop
+
+9. **Finding canonicalization:** assign stable `CF-NNN` IDs in arrival order (rust-reviewer → architecture-reviewer → security-reviewer). Preserve original IDs in `source_id`. Mapping is fixed for the entire loop.
+
+10. **Severity normalization:** security-reviewer: `CRITICAL` → `CRITICAL`, `WARNING` → `HIGH`, `NOTE` → `MEDIUM`. Rust and architecture findings use `HIGH|MEDIUM|LOW` directly.
+
+11. **Finding classification:** invoke `finding-classifier` with canonicalized normalized findings + `PLAN_DIGEST` + `RULES_INDEX` + `DESIGN_INDEX`. Apply output parsing protocol. Require `CLASSIFIED_FINDINGS`.
+
+12. **Problem-solver invocation:** if `ACTIONABLE_NOW` is empty, continue to Testing. Otherwise:
+
+    **Security-scoped challenge checkpoint (hard):** check the `design_challenge_ledger` for entries where `requires_human_review: true`. If any exist, halt and display each to the user — the challenged constraint, the reviewer's rationale, and the proposed update. Require explicit `accept` or `reject` per challenge before proceeding. Record decisions in `run-state.json`. Resume with user decisions injected into the `problem-solver` invocation.
+
+    Group remaining actionable findings:
+    - One isolated solver invocation per CRITICAL finding
+    - HIGH findings: one per finding or grouped by root cause
+    - MEDIUM findings grouped by shard (max 10 per invocation)
+    - One LOW batch
+
+    Invoke `problem-solver` per group with scoped files, `DIGEST_SLICE`, and `design_challenge_entries`. Apply output parsing protocol. Require `SOLUTION_PACK`, `NO_ACTIONABLE_FIXES`, or `BLOCKED_SOLUTIONS`.
+
+    - If `BLOCKED_SOLUTIONS`: invoke Plan-deviation protocol and halt.
+    - If `NO_ACTIONABLE_FIXES`: continue.
+    - Invoke `rust-implementer` with `SOLUTION_PACK`. Apply output parsing protocol. If any item returns `BLOCKED`, orchestrator implements directly; if also infeasible, invoke Plan-deviation protocol and halt.
+
+    **Cross-shard consistency pass (`full` and `standard` tracks, when 2+ shards changed):** invoke `cross-shard-reviewer` with per-shard finding records + `SHARD_DIGEST_SUMMARY[]` + `INTERFACE_SLICE`. Apply output parsing protocol. Use stable labels (`remediation-cycle-1`, ...). CRITICAL/HIGH cross-shard findings feed into the next `finding-classifier` invocation.
+
+    **Persist cycle state to disk** (see Run-state persistence).
+
+    **Re-review:** re-run enabled reviewers on changed files. Repeat steps 9–12.
+
+    **Acceptance thresholds:**
+    - CRITICAL → must remediate before completion.
+    - HIGH → must remediate or carry an approved Override Record before completion.
+    - MEDIUM and LOW → record in Implementation Log with rationale when deferred.
+
+    **Max cycles:** `full`: 8. `standard`: 3. `minimal`: 1 (then escalate to `standard` or accept with rationale).
+
+### Orchestrator override for persistent HIGH findings
+
+Available from cycle 3 (`full`) or cycle 2 (`standard`). **Never available for CRITICAL findings.**
+
+If a HIGH finding has been `ACTIONABLE_NOW` in two consecutive cycles without resolution, the orchestrator may file an Override Record:
+
+```
+OVERRIDE_RECORD {
+  finding_id: "<CF-NNN>"
+  cycles_unresolved: <N>
+  override_rationale: "<why this is a false positive or intentional exception>"
+  confidence: "CERTAIN" | "LIKELY" | "UNCERTAIN"
+  supporting_evidence: "<plan section, design doc anchor, or rule reference>"
+}
+```
+
+- `CERTAIN` or `LIKELY` → reclassify as `INTENTIONAL_DECISION`. Does not block completion.
+- `UNCERTAIN` → halt and surface to the user for manual decision. Resume on input.
+
+All Override Records appear in the Implementation Log under "Finding overrides."
+
+### Run-state persistence
+
+After each remediation cycle, write `.claude/runs/<run-id>/cycle-<N>.json`:
+
+```json
+{
+  "cycle": <N>,
+  "findings": [{ "id": "CF-NNN", "severity": "...", "disposition": "...", "source_id": "..." }],
+  "override_records": [],
+  "cross_shard_finding_count": <N>,
+  "actionable_remaining": <N>
+}
+```
+
+Update `run-state.json` with incremented `cycle_count` and cumulative summary counts.
+
+**The orchestrator carries forward between cycles only:**
+- CF-NNN → severity mapping for ACTIONABLE_NOW items (IDs and severities only)
+- Running disposition and severity summary counts
+- Override Records filed so far
+
+Full finding prose, SOLUTION_PACK content, and IMPLEMENTATION_RESULT records must not accumulate across cycles. Reload from disk when a specific record is needed.
+
+**Context compaction:** if the orchestrator estimates it cannot complete another full cycle within a safe context budget:
+1. Persist current cycle state to disk.
+2. Emit `CONTEXT_CHECKPOINT`: "Context compacted after cycle N — state at `.claude/runs/<run-id>/`. Resuming from disk."
+3. Continue with a fresh working context loaded from run-state only.
+
+### Plan-deviation protocol
+
+If any Approach step cannot be executed as written, or a governance sync file edit cannot be applied:
+
+1. Revert or stash any partial work so the repo is in a consistent state.
+2. Append `## Plan Deviation` to the plan file: **Step**, **Expected**, **Actual**, **Suggested resolution**.
+3. Update `status: blocked`.
+4. Halt. Do not proceed.
+
+### Testing
+
+Invoke `test-writer` with the focus from plan Section 6d. Apply output parsing protocol. Run `cargo test` after completion and report results.
+
+If Section 6d says no tests are needed and no Rust files changed: skip `test-writer` and record rationale.
+
+### Sub-phase implementation decisions sync (mandatory for sub-phase plans)
+
+1. Locate the sub-phase document (prefer explicit path in plan body).
+2. Ensure the sub-phase doc has `## Implementation Decisions`; create if missing.
+3. Append bullets: **decision + rationale + deferred follow-up if any**.
+4. Required before Step 6 can set status to `implemented`.
+
+### Validation checkpoint
+
+If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Run the full CI-equivalent local checks from Step 5. Display manual verification steps and acceptance criteria — do not mark `implemented` if the automated portion fails.
+
+---
+
+## Step 5 — Verify
+
+1. Run `cargo fmt --all -- --check` (**Check formatting**). Fix related failures.
+2. Run `cargo clippy --workspace --all-targets --all-features -- -D warnings` (**Run Clippy (warnings as errors)**). Fix related failures; note pre-existing unrelated issues.
+3. Run `cargo test --workspace --all-targets --all-features` (**Run tests**). Fix related failures; note pre-existing unrelated issues.
+4. Run `cargo build --workspace --release` (**Release build**). Fix related failures; note pre-existing unrelated issues.
+
+---
+
+## Step 6 — Mark complete and report
+
+1. **Sub-phase decision-sync gate (hard):** verify the sub-phase doc has `## Implementation Decisions` reflecting this run. If missing or stale, return to the sync step.
+
+2. **Design-doc sync gate (hard):** if `SOLUTION_PACK` contained any accepted challenges (including user-approved security-scoped ones), verify each referenced design doc was updated. If any accepted challenge has no corresponding update, halt.
+
+3. **Documentation-impact gate (hard):** execute plan Section 7 (`Documentation impact`) before setting `status: implemented`.
+   - If Section 7 lists concrete doc updates, apply them in this run and include them in **Files changed**.
+   - If an item is explicitly marked deferred/optional in Section 7, keep it deferred but record rationale in **Deviations from plan** and **Documentation flagged**.
+   - If applying a listed update would require a large canonical design rewrite (cross-phase contract refactor or broad semantic redesign), invoke Plan-deviation protocol and halt for user decision.
+
+4. Update `status: implemented` in plan frontmatter.
+
+5. Append **Implementation Log** to the plan file:
+   - **Date** — ISO 8601 datetime
+   - **Run ID** — generated in Step 1
+   - **Track** — `minimal` / `standard` / `full`; note any mid-run escalation
+   - **Branch** — from Step 2
+   - **Execution mode** — rust-implementer (default) or orchestrator (fallback); note which steps fell back
+   - **Agent evidence** — table: `Approach step | Agent | Agent ID | Outcome`
+   - **Files changed** — including any updated design docs
+   - **Formatting check** — `cargo fmt --all -- --check` summary
+   - **Clippy results** — `cargo clippy --workspace --all-targets --all-features -- -D warnings` summary
+   - **Test results** — `cargo test --workspace --all-targets --all-features` summary
+   - **Release build** — `cargo build --workspace --release` summary
+   - **Rust review** — findings summary or "Skipped"
+   - **Architecture review** — findings summary or "Skipped"
+   - **Security review** — findings summary or "Skipped"
+   - **Cross-shard review** — invocation count + findings or "N/A"
+   - **Findings quality gate** — counts by disposition across all cycles
+   - **Finding overrides** — for each Override Record: CF-NNN, rationale, confidence, decision
+   - **Design challenge outcomes** — finding ID, summary, decision, rationale, design doc path or "N/A"; flag user-approved security challenges
+   - **Governance sync** — action count, files updated, copilot-sync outcome or `GOVERNANCE_SYNC_DEGRADED`
+   - **Sub-phase decisions sync** — doc path + decisions added/updated (or "N/A")
+   - **Deviations from plan** — small adjustments only
+   - **Documentation flagged** — verbatim from plan Section 7
+   - **Run state path** — `.claude/runs/<run-id>/`
+
+6. **Do not commit, push, or open a pull request.** Leave the working tree dirty.
+
+7. **Report to the user:**
+
+**Sub-phase plan:**
+```
+✓ Phase [X.Y] implementation complete — status: implemented
+✓ Run ID: [run-id]
+✓ Track: [minimal|standard|full] [escalated? note it]
+✓ Branch: [branch]
+✓ Execution mode: [rust-implementer delegated | fallback steps noted]
+✓ Rust review: [Skipped | summary]
+✓ Architecture review: [Skipped | summary]
+✓ Security review: [Skipped | summary]
+✓ Cross-shard review: [N/A | count + summary]
+✓ Findings quality gate: [counts by disposition]
+✓ Finding overrides: [None | CF-NNN list with confidence]
+✓ Design challenge outcomes: [None | summary; security-scoped user decisions noted]
+✓ Formatting: [clean | failures fixed]
+✓ Clippy: [clean | failures fixed | pre-existing unrelated issues]
+✓ Tests: [summary]
+✓ Release build: [success | failures fixed | pre-existing unrelated issues]
+⚠ Governance sync: [OK | DEGRADED — run /copilot-sync manually]
+→ Validation checkpoint (manual): [from sub-roadmap]
+→ Acceptance criteria (manual): [from sub-roadmap]
+→ Files changed: [list]
+→ Sub-phase decisions sync: [doc path + count]
+→ Documentation flagged: [from Section 7]
+→ Run state: [.claude/runs/<run-id>/]
+→ Next sub-phase: [X.Y+1 title, or "end of roadmap"]
+```
+
+**Full-phase or ad-hoc plan:** report the same fields, omitting sub-phase-specific items.
+
+---
+
+## Guardrails
+
+- Preserve hard-gate semantics in Step 3; do not silently downgrade failures.
+- Do not skip the design-doc sync gate in Step 6 when accepted challenges exist.
+- Do not skip plan Section 7 documentation-impact items when they are implementable in-run.
+- Do not mark `status: implemented` unless all Step 5 CI-equivalent checks pass locally.
+- Do not broaden implementation scope outside the approved plan without triggering Plan-deviation protocol.
+- Do not auto-chain `/review-only` and `/implement-review`; this command is a separate entrypoint.
+- Do not commit, push, or open pull requests.
+- `cross-shard-reviewer` receives `SHARD_DIGEST_SUMMARY[]` + `INTERFACE_SLICE` — never full `DIGEST_SLICE` content.
+- Override Records are prohibited for CRITICAL findings.
+- Security-scoped design challenge decisions require explicit user input before `problem-solver` proceeds.
+
+---
+
+## Failure Modes and Halt Conditions
+
+| Condition | Action |
+|---|---|
+| Plan file cannot be resolved | Halt and report candidate plan files |
+| Any Step 3 gate fails | Halt before implementation begins |
+| Structured context artifact build fails | Halt before updating plan status |
+| Governance sync file edit cannot be applied or verified | Plan-deviation protocol, then halt |
+| `/copilot-sync` fails or times out | Record `GOVERNANCE_SYNC_DEGRADED`; continue |
+| Agent output fails to parse after one retry | Halt with `PARSE_ERROR`; surface raw output to user |
+| `rust-implementer` BLOCKED and direct fallback infeasible | Plan-deviation protocol, then halt |
+| `BLOCKED_SOLUTIONS` returned during remediation | Plan-deviation protocol, then halt |
+| Security-scoped design challenge awaits user decision | Hard pause; resume on user input |
+| HIGH Override Record confidence `UNCERTAIN` | Hard pause; resume on user input |
+| Required findings thresholds not met after max cycles | Plan-deviation protocol, then halt |
+| Sensitive path drift detected outside Section 6b | Plan-deviation protocol, then halt |
+| Any Step 5 CI-equivalent local check fails | Halt — do not set `status: implemented` |
+| Accepted design challenge missing design-doc update at Step 6 | Halt — require update before marking implemented |
+| Section 7 documentation updates left unapplied without explicit deferred/optional rationale | Halt before `status: implemented` |

@@ -1,0 +1,228 @@
+use std::path::PathBuf;
+use std::time::Duration;
+
+use zeroize::Zeroizing;
+
+use super::helpers::*;
+use super::types::Argon2MigrationIntent;
+use super::*;
+use crate::auth::Argon2Params;
+use crate::auth::kdf::derive_master_key_into;
+use crate::auth::session::{SessionKeys, SessionManager};
+use crate::crypto::VaultId;
+use crate::storage::cloud::CloudTransport;
+use crate::storage::cloud::manifest_backup::encrypt_manifest_backup;
+use crate::storage::cloud::mock::MockCloudTransport;
+use crate::storage::cloud::vault_header::VaultHeader;
+use crate::storage::cloud::{MANIFEST_BACKUP_BLOB_NAME, upload_manifest_backup};
+
+pub(super) const TEST_PASSWORD: &[u8] = b"correct horse battery staple";
+pub(super) const TEST_NEW_PASSWORD: &[u8] = b"stapler battery horse correct";
+pub(super) const TEST_WRONG_PASSWORD: &[u8] = b"not the password";
+
+static CEREMONY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+pub(super) async fn ceremony_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    CEREMONY_TEST_LOCK.lock().await
+}
+
+pub(super) fn test_params() -> Argon2Params {
+    Argon2Params {
+        memory_cost_kib: 1024,
+        time_cost: 1,
+        parallelism: 1,
+    }
+}
+
+pub(super) fn test_session_manager() -> SessionManager {
+    SessionManager::with_timeout(Duration::from_secs(3600))
+}
+
+pub(super) fn temp_dir() -> tempfile::TempDir {
+    tempfile::tempdir().expect("tempdir must be created")
+}
+
+pub(super) struct TierOneVault {
+    pub(super) _temp: tempfile::TempDir,
+    pub(super) vault_db_path: PathBuf,
+    pub(super) cloud: MockCloudTransport,
+    pub(super) session: SessionManager,
+    pub(super) vault_id: VaultId,
+    pub(super) header: VaultHeader,
+}
+
+pub(super) async fn create_tier_one_vault() -> TierOneVault {
+    let temp = temp_dir();
+    let vault_db_path = temp.path().join("vault.db");
+    let cloud = MockCloudTransport::new();
+    let session = test_session_manager();
+    let request = CreateVaultRequest {
+        tier: Tier::One,
+        password_bytes: TEST_PASSWORD,
+        target_key_file_path: None,
+        vault_db_path: vault_db_path.clone(),
+        argon2_params: Argon2Params::DEFAULT,
+        chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+        epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+    };
+    let vault_id = create_vault(request, &session, &cloud)
+        .await
+        .expect("create_vault tier 1 must succeed");
+    let header_download_path = temp.path().join("test-support-tier1-header.json");
+    cloud
+        .download_blob(VAULT_HEADER_BLOB_NAME, &header_download_path)
+        .await
+        .expect("header must be present after create_vault");
+    let header_bytes = std::fs::read(header_download_path).expect("header must be readable");
+    let header: VaultHeader =
+        serde_json::from_slice(&header_bytes).expect("header must deserialize");
+    TierOneVault {
+        _temp: temp,
+        vault_db_path,
+        cloud,
+        session,
+        vault_id,
+        header,
+    }
+}
+
+pub(super) struct TierTwoVault {
+    pub(super) _temp: tempfile::TempDir,
+    pub(super) vault_db_path: PathBuf,
+    pub(super) key_file_path: PathBuf,
+    pub(super) cloud: MockCloudTransport,
+    pub(super) session: SessionManager,
+    pub(super) vault_id: VaultId,
+    pub(super) header: VaultHeader,
+}
+
+pub(super) async fn create_tier_two_vault() -> TierTwoVault {
+    let temp = temp_dir();
+    let vault_db_path = temp.path().join("vault.db");
+    let key_file_path = temp.path().join("key.bin");
+    let cloud = MockCloudTransport::new();
+    let session = test_session_manager();
+    let request = CreateVaultRequest {
+        tier: Tier::Two,
+        password_bytes: TEST_PASSWORD,
+        target_key_file_path: Some(key_file_path.clone()),
+        vault_db_path: vault_db_path.clone(),
+        argon2_params: Argon2Params::DEFAULT,
+        chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+        epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+    };
+    let vault_id = create_vault(request, &session, &cloud)
+        .await
+        .expect("create_vault tier 2 must succeed");
+    let header_download_path = temp.path().join("test-support-tier2-header.json");
+    cloud
+        .download_blob(VAULT_HEADER_BLOB_NAME, &header_download_path)
+        .await
+        .expect("header must be present after create_vault");
+    let header_bytes = std::fs::read(header_download_path).expect("header must be readable");
+    let header: VaultHeader =
+        serde_json::from_slice(&header_bytes).expect("header must deserialize");
+    TierTwoVault {
+        _temp: temp,
+        vault_db_path,
+        key_file_path,
+        cloud,
+        session,
+        vault_id,
+        header,
+    }
+}
+
+pub(super) async fn add_recovery_slot_and_return_phrase(
+    vault: &mut TierOneVault,
+) -> Zeroizing<String> {
+    let request = SetupRecoveryRequest {
+        current_password_bytes: TEST_PASSWORD,
+        current_key_source: None,
+        argon2_params: test_params(),
+        argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
+        vault_db_path: vault.vault_db_path.clone(),
+    };
+    setup_recovery(
+        request,
+        &vault.session,
+        &vault.cloud,
+        &mut vault.header,
+        &vault.vault_id,
+    )
+    .await
+    .expect("setup_recovery must succeed")
+}
+
+pub(super) async fn upload_manifest_backup_for(vault: &TierOneVault) {
+    let salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
+    let params = argon2_params_from_json(&vault.header.argon2_params);
+    let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+    derive_master_key_into(TEST_PASSWORD, None, &salt, &params, &mut master).unwrap();
+    let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
+    let sqlcipher_key = sqlcipher_key_from_array(keys.sqlcipher_key.expose());
+    let manifest_key: [u8; 32] = *keys.manifest_key.expose();
+    let staging_root = tempfile::tempdir().expect("manifest backup staging tempdir must exist");
+    upload_manifest_backup(
+        &vault.vault_db_path,
+        &sqlcipher_key,
+        &manifest_key,
+        &vault.cloud,
+        staging_root.path(),
+    )
+    .await
+    .expect("manifest backup upload must succeed");
+}
+
+pub(super) async fn upload_manifest_backup_payload_for(vault: &TierOneVault, payload: &[u8]) {
+    let salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
+    let params = argon2_params_from_json(&vault.header.argon2_params);
+    let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+    derive_master_key_into(TEST_PASSWORD, None, &salt, &params, &mut master).unwrap();
+    let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
+    let manifest_key: [u8; 32] = *keys.manifest_key.expose();
+    let wire = encrypt_manifest_backup(Zeroizing::new(payload.to_vec()), &manifest_key).unwrap();
+    let staging_root = tempfile::tempdir().expect("payload bypass staging tempdir must exist");
+    let upload_path = staging_root
+        .path()
+        .join("test-support-manifest-backup.blob");
+    tokio::fs::write(&upload_path, &wire)
+        .await
+        .expect("payload bypass write must succeed");
+    vault
+        .cloud
+        .upload_blob(&upload_path, MANIFEST_BACKUP_BLOB_NAME)
+        .await
+        .unwrap();
+    let _ = tokio::fs::remove_file(&upload_path).await;
+}
+
+pub(super) async fn upload_corrupted_manifest_backup_for(vault: &TierOneVault) {
+    upload_manifest_backup_for(vault).await;
+    let staging_root = tempfile::tempdir().expect("corruption staging tempdir must be created");
+    let wire_path = staging_root
+        .path()
+        .join("test-support-corrupt-manifest-backup.blob");
+    vault
+        .cloud
+        .download_blob(MANIFEST_BACKUP_BLOB_NAME, &wire_path)
+        .await
+        .expect("manifest backup must exist before corruption");
+    let mut wire = tokio::fs::read(&wire_path)
+        .await
+        .expect("manifest backup wire must be readable");
+    let last_index = wire
+        .len()
+        .checked_sub(1)
+        .expect("manifest backup wire must be non-empty");
+    wire[last_index] ^= 0x01;
+    tokio::fs::write(&wire_path, &wire)
+        .await
+        .expect("corrupted manifest backup wire must be writable");
+    vault
+        .cloud
+        .upload_blob(&wire_path, MANIFEST_BACKUP_BLOB_NAME)
+        .await
+        .expect("corrupted manifest backup upload must succeed");
+    let _ = tokio::fs::remove_file(&wire_path).await;
+}

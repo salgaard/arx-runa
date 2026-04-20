@@ -1,0 +1,20 @@
+{
+  "cycle": 4,
+  "findings": [
+    { "id": "CF-401", "severity": "MEDIUM", "disposition": "ACTIONABLE_NOW", "source_id": "RR-storage-001" },
+    { "id": "CF-402", "severity": "MEDIUM", "disposition": "ACTIONABLE_NOW", "source_id": "RR-storage-002" },
+    { "id": "CF-403", "severity": "MEDIUM", "disposition": "ACTIONABLE_NOW", "source_id": "AR-storage-003" },
+    { "id": "CF-404", "severity": "CRITICAL", "disposition": "ACTIONABLE_NOW", "source_id": "SR-auth-001" },
+    { "id": "CF-405", "severity": "HIGH", "disposition": "ACTIONABLE_NOW", "source_id": "SR-auth-002" },
+    { "id": "CF-406", "severity": "HIGH", "disposition": "DEFERRED_BY_PLAN", "source_id": "SR-storage-001" },
+    { "id": "CF-407", "severity": "HIGH", "disposition": "DEFERRED_BY_PLAN", "source_id": "AR-storage-001" },
+    { "id": "CF-408", "severity": "HIGH", "disposition": "DEFERRED_BY_PLAN", "source_id": "RR-auth-001" },
+    { "id": "CF-409", "severity": "HIGH", "disposition": "DEFERRED_BY_PLAN", "source_id": "AR-auth-001" },
+    { "id": "CF-410", "severity": "LOW", "disposition": "DEFERRED_BY_PLAN", "source_id": "RR-storage-003" },
+    { "id": "CF-411", "severity": "MEDIUM", "disposition": "DEFERRED_BY_PLAN", "source_id": "AR-storage-002" },
+    { "id": "CF-412", "severity": "MEDIUM", "disposition": "DEFERRED_BY_PLAN", "source_id": "AR-auth-002" }
+  ],
+  "override_records": [],
+  "cross_shard_finding_count": 0,
+  "actionable_remaining": 5
+}

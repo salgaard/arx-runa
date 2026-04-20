@@ -1,0 +1,6 @@
+{
+  "challenge": "Manifest backup no-AAD contract",
+  "decision": "reject",
+  "rationale": "Canonical storage/design contract explicitly requires no AAD for manifest backup; finding CF-013 was already classified insufficient evidence and requires design adjudication before any change.",
+  "source": "autonomous decision due unavailable user response"
+}

@@ -1,0 +1,22 @@
+{
+  "run_id": "phase-4-2-rclone-integration-20260419-021054",
+  "plan_file": ".claude/plans/phase-4-2-rclone-integration.md",
+  "track": "full",
+  "branch": "development",
+  "cycle_count": 4,
+  "finding_summary": {
+    "CRITICAL": 0,
+    "HIGH": 15,
+    "MEDIUM": 11,
+    "LOW": 0
+  },
+  "disposition_summary": {
+    "ACTIONABLE_NOW": 24,
+    "INTENTIONAL_DECISION": 1,
+    "DEFERRED_BY_PLAN": 1,
+    "INSUFFICIENT_EVIDENCE": 0
+  },
+  "override_records": [],
+  "governance_sync_degraded": false,
+  "cycles": [1, 2, 3, 4]
+}

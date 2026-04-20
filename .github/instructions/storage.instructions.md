@@ -2,69 +2,76 @@
 applyTo: "src-tauri/src/storage/**"
 ---
 
-# Storage module — scoped instructions
 
-These rules apply to all files under `src-tauri/src/storage/`.
+# Storage module — rules
 
-## Manifest database (SQLCipher)
-- The manifest is a SQLCipher database keyed with `sqlcipher_key` (HKDF-derived)
-  — never `master_key`, never unencrypted
-- Schema:
-  - `nodes`: node_id, parent_id, node_type, name, created_at, modified_at,
-    size_bytes — names stored as plaintext inside SQLCipher (the DB is the
-    encryption layer; double-encrypting names adds complexity with no benefit)
-  - `chunks`: chunk_id, node_id, chunk_index, blob_name, size_padded,
-    blake3_checksum
-  - `manifest_meta`: key-value store — schema_version, vault_id,
-    snapshot_counter, last_synced_at
-- ON DELETE CASCADE: deleting a node must cascade to its chunk rows
-- snapshot_counter: monotonic integer, increment on every cloud push
+**Design specification**: `docs/architecture/designs/chunking-and-manifest/design.md` — last verified against design dated 2026-04-08
+
+## Manifest (SQLCipher)
+- Keyed with `sqlcipher_key` — never `master_key`, never unencrypted
+- Tables: `nodes`, `chunks`, `manifest_meta` — see design docs for schema
+- Canonical tables: `nodes`, `chunks`, `manifest_meta`, `pending_deletions`. Forward-declared: `destination_sessions` (Phase 4), `contacts` / `shares` / `received_shares` (Phase 5). See design docs for DDL.
+- `ON DELETE CASCADE` for node → chunks
 
 ## Chunking
-- Fixed-size uniform padding only — no Content-Defined Chunking (CDC)
-  CDC leaks file size as a side channel; fixed chunks do not
-- All chunks for a given file must be the same padded size
-- chunk_index is 0-based, stored in both the manifest and as AAD on the
-  encrypted blob
-- Blob names are random UUID v4 — no relation to file identity or content
+- Chunk size is immutable per vault (set at creation): 128 KiB-64 MiB, default 4 MiB
+- `epoch_buffer_enabled` is opt-in per vault (default `false`)
+- Hybrid routing when enabled: files `< chunk_size_bytes` are staged and packed; files `>= chunk_size_bytes` use immediate standalone chunk upload (including trailing partial chunks)
+- Zero-pad each chunk to `chunk_size_bytes` (no CDC — leaks size info)
+- `chunk_index` 0-based, stored in manifest and used as AAD
+- Blob names: random UUID v4 — no relation to file identity
+- See design doc for padding waste analysis table
 
-## BLAKE3 integrity check
-- Compute BLAKE3 over the ENCRYPTED blob (nonce + ciphertext + tag) after
-  encryption; store in manifest
-- Before decrypting any chunk: fetch BLAKE3 from manifest, recompute over
-  the downloaded blob, compare. Fail if mismatch — do not attempt decryption
-- BLAKE3 is an operational integrity check, not a security feature
-  (AEAD tag handles authenticity)
+## Pipeline
+- `storage::pipeline::{encrypt_file,decrypt_file}` owns streaming chunk transforms; `storage::vault_ops::{upload_file,download_file}` owns orchestration
+- Encrypt/decrypt plaintext buffers must be `Zeroizing<Vec<u8>>` to guarantee zeroize on success, error, and cancellation
+- Decrypt flow must call `verify_checksum` before `decrypt_chunk`; `VerifiedBlob` enforces this boundary
+- Hybrid routing decision lives in `storage::vault_ops::routing::decide`
 
-## Cloud manifest backup
-- Encrypted with `manifest_key` (HKDF-derived) — not `chunk_key`
-- Vault header (unencrypted JSON: vault_id, schema_version, argon2_salt,
-  argon2_params) MUST be uploaded before the manifest blob
-  A new device needs the salt to derive keys before it can decrypt the manifest
-- Snapshot model: atomic full export of SQLCipher DB after each batch
-  No incremental diffs at this scope
+## BLAKE3
+- Checksum over encrypted blob (nonce + ciphertext + tag)
+- `verify_checksum` returns `VerifiedBlob`; pass to `decrypt_chunk` — the type system enforces check-before-decrypt order (skipping is a compile error)
 
-## File deletion
-- Immediate: delete chunk blobs from cloud, remove node + chunk rows from
-  manifest in a single transaction
-- ON DELETE CASCADE handles chunk row cleanup automatically
-- Do not defer or batch deletes — blobs should be gone before the UI confirms
+## Cloud backup
+- Manifest encrypted with `manifest_key`
+- Manifest backup is a singleton blob (no AAD); vault header stays plaintext JSON at cloud root
+- Manifest backup blob path is `manifest/manifest-backup.blob` (constant owned by `storage::cloud::manifest_backup::MANIFEST_BACKUP_BLOB_NAME`)
+- Push flow uploads manifest backup, then uploads vault header idempotently on every push
+- Snapshot model: atomic full export, `snapshot_counter` increments each push
+- `rollback_snapshot_counter` is a SQLCipher-specific helper on `SqlCipherMetadataStore` (not on `MetadataStore`); push-only after manifest-upload failure and must enforce current counter equals `previous + 1` before rollback
+- `list_sync_chunks` is a SQLCipher-specific helper on `SqlCipherMetadataStore` (not on `MetadataStore`); returns alphabetical `(blob_name, blake3_checksum)` pairs for push/pull flows
+- Fisher-Yates upload-order randomisation uses `rand::rngs::SysRng` (CSPRNG) in production; deterministic seeding is permitted only under `#[cfg(test)]`
+- `RcloneTransport` invokes the bundled sidecar via `tokio::process::Command` only; remote paths pass the `^[a-zA-Z0-9._/-]+$` allowlist (reject `..` and leading `/`); stderr strips lines containing `token|key|secret|password|credential|auth` before surfacing in `CloudTransportError::RcloneProcessFailed`
 
-## Streaming I/O
-- Never read a complete file into a `Vec<u8>` — stream via `BufReader`/
-  `BufWriter` through the encrypt/decrypt pipeline
-- Use `tokio::io` async I/O — never block the Tauri UI thread with sync I/O
+## EXIF stripping
+- Optional pre-processing before the encrypt pipeline; enabled by default for `image/jpeg`, `image/png`, `image/tiff`, and can be disabled (detected by magic bytes, not extension)
+- Strips EXIF, XMP, IPTC segments in RAM — original file on disk is never modified
+- MP4/QuickTime excluded: `moov` atom at end-of-file breaks the streaming invariant
+- Non-media types and unsupported containers pass through unmodified
 
-## Trait boundary
-- Define `MetadataStore` trait for manifest operations
-- Define `CloudTransport` trait for Rclone operations
-- Code depends on traits, not concrete types — enables mock-based testing
-  without a live Rclone backend or real SQLCipher DB
+## Deletion
+- Transaction order: read blob names, enqueue into `pending_deletions` inside the same transaction, delete node row (CASCADE removes chunk rows), commit, then delete local staging blobs
+- If blob deletion is interrupted, orphan encrypted blobs are cleaned on startup
+- `storage::vault_ops::delete_file` is the orchestration entry point: read chunk names, call `MetadataStore::delete_node` transactionally, then best-effort remove local staging blobs
 
-## Required tests
-- SQLCipher DB opened with wrong key returns error
-- node insertion -> query -> deletion cycle is consistent and CASCADE works
-- snapshot_counter increments on each export call
-- BLAKE3 mismatch before decryption returns error, does not proceed
-- Chunk blobs use UUID v4 names (no sequential, no filename-derived names)
-- All chunks for a file have identical padded sizes
+## Staging directory
+- Resolve the default path via `dirs::data_dir().join("arx-runa").join("staging")` across Windows, Linux, and macOS
+- Orphan cleanup runs at vault open only, before any upload/download/delete operation
+- `cleanup_orphaned_blobs` may delete only files where extension is `.blob`, stem is UUID v4, and stem is absent from `chunks.blob_name`
+- Concurrent local removal races are tolerated: `std::io::ErrorKind::NotFound` during delete is treated as success
+- `list_all_blob_names` remains a SQLCipher-specific helper and must not be added to `MetadataStore`
+
+## I/O
+- Stream via `BufReader`/`BufWriter` — never load full file
+- Async only (`tokio::io`)
+
+## Errors
+- `StorageError::from_crypto` centralizes `CryptoError → StorageError`; checksum mismatches map to `StorageError::ChecksumMismatch`, all other crypto failures map to `StorageError::Database`
+
+## Traits
+- `MetadataStore` for manifest, `CloudTransport` for Rclone
+- `CloudTransport` uses `&str` for cloud-root-relative paths (forward slashes only); `BlobName` is reserved for chunk blob filenames in the manifest and staging directory.
+- `MetadataStore` Phase 3.1 surface: `insert_node`, `insert_chunks`, `get_node`, `list_children`, `get_chunks`, `rename_node`, `move_node`, `delete_node`, `list_pending_deletions`, `mark_deletion_complete`, `get_meta`, `set_meta`, `increment_snapshot_counter`
+- `destination_sessions` CRUD lives in `storage::cloud::destination_session` using a SQLCipher-specific accessor and must not be added to `MetadataStore`
+- `contacts` CRUD lives in `storage::sharing` behind the `SharingStore` trait in `sharing::store`, not on `MetadataStore`; this mirrors the `destination_session` split.
+

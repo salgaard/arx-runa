@@ -1,0 +1,14 @@
+{
+  "cycle": 2,
+  "findings": [
+    { "id": "CF-011", "severity": "HIGH", "disposition": "ACTIONABLE_NOW", "source_id": "RR-001" },
+    { "id": "CF-012", "severity": "MEDIUM", "disposition": "ACTIONABLE_NOW", "source_id": "RR-002" },
+    { "id": "CF-013", "severity": "MEDIUM", "disposition": "ACTIONABLE_NOW", "source_id": "RR-003" },
+    { "id": "CF-014", "severity": "HIGH", "disposition": "ACTIONABLE_NOW", "source_id": "AR-001" },
+    { "id": "CF-015", "severity": "HIGH", "disposition": "ACTIONABLE_NOW", "source_id": "AR-002" },
+    { "id": "CF-016", "severity": "MEDIUM", "disposition": "ACTIONABLE_NOW", "source_id": "CSR-001" }
+  ],
+  "override_records": [],
+  "cross_shard_finding_count": 1,
+  "actionable_remaining": 0
+}

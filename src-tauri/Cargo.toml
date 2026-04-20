@@ -1,0 +1,79 @@
+[package]
+name = "arx-runa-tauri"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["Chrizzio AKA Christian Salgård Svinding"]
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "arx_runa_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[features]
+default = []
+test-utils = []
+
+[dependencies]
+# --- Core (design.md Backend Core table) ---
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "io-util", "sync", "time", "process"] }
+futures-util = "0.3"
+thiserror = "2"
+async-trait = "0.1"
+tracing = "0.1"
+regex = "1"
+tauri-plugin-shell = "2"
+
+# --- Cryptography (design.md Backend Cryptography table — Phase 1+) ---
+chacha20poly1305 = "0.10"
+argon2 = "0.5"
+bip39 = "2"
+hkdf = "0.13"
+sha2 = "0.11"
+blake3 = "1"
+rand = "0.10"
+zeroize = { version = "1", features = ["derive"] }
+secrecy = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+
+# --- Storage (design.md Backend Storage table — Phase 3+) ---
+rusqlite = { version = "0.39", features = ["bundled-sqlcipher-vendored-openssl"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+base64 = "0.22"
+hex = "0.4"
+
+# --- Auth / Phase 2.1 ---
+tokio-stream = "0.1"
+walkdir = "2"
+dirs = "6"
+tempfile = "3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+udev = "0.9"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wmi = "0.14"
+windows = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_System_Memory", "Win32_Security", "Win32_Security_Authorization"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+proptest = "1"
+assert_matches = "1"
+anyhow = "1"

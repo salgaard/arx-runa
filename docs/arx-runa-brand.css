@@ -1,0 +1,169 @@
+/* ============================================================
+   ARX RUNA — Brand Design Tokens
+   Encrypted here · Stored anywhere
+   ============================================================ */
+
+:root {
+
+  /* --- Color Palette --- */
+  --color-iron: #09090B;
+  /* Darkest. Outer backgrounds, page fill. */
+  --color-stone: #0C0E14;
+  /* Card/surface backgrounds. */
+  --color-steel: #222736;
+  /* Borders, dividers, subtle UI lines. */
+  --color-rune: #5C7090;
+  /* Primary accent. Logomark, highlights. */
+  --color-bone: #DBD7CD;
+  /* Primary text on dark backgrounds. */
+
+  /* --- Extended Text Scale --- */
+  --color-text-primary: #DBD7CD;
+  /* bone — headings, labels */
+  --color-text-secondary: #9AA3B0;
+  /* mid — body text */
+  --color-text-muted: #636D7E;
+  /* dim — descriptions, subtitles */
+  --color-text-ghost: #3E4A5E;
+  /* faintest — taglines, metadata */
+
+  /* --- Surface Scale --- */
+  --color-surface-base: #09090B;
+  /* iron */
+  --color-surface-raised: #0C0E14;
+  /* stone */
+  --color-surface-overlay: #111420;
+  /* between stone and steel */
+
+  /* --- Border Scale --- */
+  --color-border-subtle: #181C26;
+  --color-border-default: #1C2030;
+  --color-border-strong: #222736;
+  /* steel */
+
+  /* --- Typography --- */
+  --font-display: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-body: Georgia, 'Times New Roman', serif;
+  --font-mono: 'Courier New', Courier, monospace;
+
+  /* --- Letter Spacing --- */
+  --tracking-wordmark: 0.5em;
+  --tracking-tagline: 0.28em;
+  --tracking-label: 0.12em;
+
+  /* --- Border Radius --- */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* --- Spacing --- */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 48px;
+
+}
+
+.arx-sheet {
+  background: #09090B;
+  border-radius: 12px;
+  padding: 3rem 1.5rem 2.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  margin: 2rem 0 3rem;
+}
+
+.arx-wordmark {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+  font-weight: 500;
+  font-size: 28px;
+  letter-spacing: 0.5em;
+  color: #DBD7CD;
+  margin-top: 1.75rem;
+  text-indent: 0.5em;
+}
+
+.arx-tagline {
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: #3E4A5E;
+  margin-top: 0.55rem;
+  text-indent: 0.28em;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+}
+
+.arx-divider {
+  width: 220px;
+  height: 0.5px;
+  background: #181C26;
+  margin: 2.25rem auto;
+}
+
+.arx-desc {
+  max-width: 460px;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 14.5px;
+  line-height: 1.9;
+  color: #636D7E;
+}
+
+.arx-desc em {
+  font-style: normal;
+  color: #9AA3B0;
+}
+
+.arx-swatches {
+  display: flex;
+  gap: 10px;
+  margin-top: 2.5rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.arx-sw {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.arx-sw-block {
+  width: 34px;
+  height: 34px;
+  border-radius: 5px;
+}
+
+.arx-sw-name {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: #2E3445;
+  text-transform: uppercase;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+}
+
+.arx-rule-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 420px;
+  margin-top: 2.25rem;
+  text-align: left;
+}
+
+.arx-rule {
+  font-size: 12px;
+  color: #3A4255;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+  padding-left: 1rem;
+  border-left: 1px solid #1C2030;
+  line-height: 1.6;
+}
+
+.arx-rule em {
+  font-style: normal;
+  color: #6B7E9A;
+}

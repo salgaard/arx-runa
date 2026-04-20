@@ -1,0 +1,32 @@
+{
+  "cycle": 4,
+  "findings": [
+    {
+      "id": "CF-009",
+      "severity": "MEDIUM",
+      "disposition": "ACTIONABLE_NOW",
+      "source_id": "rust-shard-storage-remediation-cycle-4-001"
+    },
+    {
+      "id": "CF-010",
+      "severity": "LOW",
+      "disposition": "INSUFFICIENT_EVIDENCE",
+      "source_id": "rust-shard-storage-remediation-cycle-4-002"
+    },
+    {
+      "id": "CF-011",
+      "severity": "MEDIUM",
+      "disposition": "DEFERRED_BY_PLAN",
+      "source_id": "architecture-shard-storage-remediation-cycle-4-001"
+    },
+    {
+      "id": "CF-012",
+      "severity": "MEDIUM",
+      "disposition": "ACTIONABLE_NOW",
+      "source_id": "architecture-shard-storage-remediation-cycle-4-002"
+    }
+  ],
+  "override_records": [],
+  "cross_shard_finding_count": 0,
+  "actionable_remaining": 2
+}
