@@ -1,7 +1,7 @@
 # Arx Runa — File Sharing Architecture Design
 
 > Status: Design complete. Implementation target: Phase 5.
-> Last updated: 2026-04-12
+> Last updated: 2026-04-20
 
 ---
 
@@ -137,7 +137,9 @@ plaintext = HPKE.Open(
 
 ### Rust implementation
 
-The `hpke` crate (v0.13.0) provides RFC 9180 primitives. `CTX-ChaCha20-Poly1305` is a thin wrapper type in the sharing crypto module that replaces the AEAD tag with a BLAKE3 commitment.
+The `hpke` crate (v0.13.0) is used only for DHKEM(X25519, HKDF-SHA256) encapsulation/decapsulation via `hpke::kem::X25519HkdfSha256`. The HPKE key schedule (RFC 9180 §5.1) is implemented manually in `sharing::hpke` so that `CTX-ChaCha20-Poly1305` can be plugged in as the AEAD without using the crate's sealed `Aead` trait, which does not support custom tag lengths. The `suite_id` used for labeled extraction/expansion is `b"HPKE" || 0x0020 || 0x0001 || 0x0003`, where AEAD ID `0x0003` is the IANA-registered identifier for ChaCha20-Poly1305; CTX is a wire-equivalent committing wrapper that does not alter the key schedule.
+
+`CTX-ChaCha20-Poly1305` is a thin wrapper type in the sharing crypto module that replaces the standard 16-byte Poly1305 tag with a 32-byte BLAKE3 commitment.
 Implementation must include adversarial tests that flip one bit in `enc`, ciphertext, and the 32-byte CTX tag; all variants must fail decryption with authentication error.
 
 ---

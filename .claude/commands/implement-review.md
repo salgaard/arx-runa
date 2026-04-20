@@ -51,6 +51,29 @@ This command owns orchestration and gates. Producer schema details live in agent
 
 ---
 
+## Tool Invocation Contract (Hard)
+
+**Every named agent in the Agent Roster MUST be invoked via the `task` tool.** The orchestrator MUST NOT classify findings, synthesize solutions, implement code, or write reports directly. The `task` tool runs each agent in an isolated context window — this is the core context-preservation mechanism of this command.
+
+```
+task(agent_type="plan-context-builder", ...)    → PLAN_DIGEST
+task(agent_type="rules-extractor", ...)          → RULES_INDEX
+task(agent_type="design-extractor", ...)         → DESIGN_INDEX
+task(agent_type="shard-planner", ...)            → SHARD_MAP + SHARD_DIGEST_SUMMARY[]
+task(agent_type="finding-classifier", ...)       → CLASSIFIED_FINDINGS
+task(agent_type="problem-solver", ...)           → SOLUTION_PACK / NO_ACTIONABLE_FIXES / BLOCKED_SOLUTIONS
+task(agent_type="rust-implementer", ...)         → IMPLEMENTATION_RESULT
+task(agent_type="rust-reviewer", ...)            → Raw findings
+task(agent_type="architecture-reviewer", ...)    → Raw findings
+task(agent_type="security-reviewer", ...)        → Raw findings
+task(agent_type="cross-shard-reviewer", ...)     → Raw findings
+task(agent_type="test-writer", ...)              → Test additions/updates
+```
+
+All custom agent names in the Agent Roster map directly to `agent_type` values. Skipping an agent invocation is a protocol violation, not a valid optimization.
+
+---
+
 ## Input Resolution
 
 `$ARGUMENTS` can be:
@@ -130,7 +153,7 @@ Apply after every agent invocation throughout all phases.
 
 ## Phase 0 — Parallel Preflight
 
-Spawn all agents and the baseline check **in parallel**. The orchestrator does not read plan, rules, or design files directly — it consumes only structured outputs. Kick off `cargo check --workspace` concurrently to overlap baseline latency with gather time; the result is consumed in Phase 2.
+Spawn all agents and the baseline check **in parallel via `task` tool** (mandatory — HALT if any are skipped). The orchestrator does not read plan, rules, or design files directly — it consumes only structured outputs. Kick off `cargo check --workspace` concurrently to overlap baseline latency with gather time; the result is consumed in Phase 2.
 
 Parallel launch set:
 - `plan-context-builder` (Step 0-A)
@@ -339,7 +362,7 @@ The orchestrator waits for all four structured outputs (0-A, 0-B, 0-C, 0-E) befo
 
 ### Finding Grouping Strategy
 
-Group `ACTIONABLE_FINDINGS` before spawning `problem-solver` agents:
+Group `ACTIONABLE_FINDINGS` before spawning `problem-solver` agents via `task` tool (mandatory — HALT if skipped):
 
 | Group | Contents | Agent scope |
 |---|---|---|
@@ -397,7 +420,7 @@ If any group returns `BLOCKED_SOLUTIONS`, keep blockers in the final report and 
 
 ## Phase 4 — Implementation Pass
 
-1. For each shard with `SOLUTION_PACK`, invoke `rust-implementer`.
+1. For each shard with `SOLUTION_PACK`, invoke `rust-implementer` via `task` tool (mandatory — HALT if skipped). **Orchestrator MUST NOT write code directly.**
 2. Run shard implementations in **parallel only when file sets are disjoint**; otherwise run sequentially.
 3. Apply output parsing protocol. Require `IMPLEMENTATION_RESULT`; parse items for `DONE|BLOCKED` status and per-item file/summary or reason/needed fields.
 4. After each shard implementation, run `cargo check --workspace`. Fix compile errors before proceeding.
@@ -448,11 +471,11 @@ CANONICAL_FINDING {
 
 ### Per-Cycle Execution
 
-1. Re-run `rust-reviewer` on changed files only, sharded by path. Pass existing `DIGEST_SLICE_<shard_id>` artifacts from Phase 0 — do not re-read full indices. Apply output parsing protocol.
-2. Re-run `architecture-reviewer` on changed files only, sharded by path (`full` and `standard` tracks only). Pass same digest slices. Apply output parsing protocol.
-3. Re-run `security-reviewer` on changed shards under `auth/`, `crypto/`, `storage/`, or when risk indicators appear in reviewer findings (`full` track; `standard` only if drift check fires). Apply output parsing protocol.
-4. **Finding classification:** invoke `finding-classifier` with canonicalized normalized findings + `PLAN_DIGEST` + `RULES_INDEX` + `DESIGN_INDEX`. Apply output parsing protocol. Require `CLASSIFIED_FINDINGS`.
-5. After all shard reviewers complete, invoke `cross-shard-reviewer` **when two or more shards had changed files in this cycle** (`full` and `standard` tracks only):
+1. Re-run `rust-reviewer` via `task` tool on changed files only, sharded by path. Pass existing `DIGEST_SLICE_<shard_id>` artifacts from Phase 0 — do not re-read full indices. Apply output parsing protocol.
+2. Re-run `architecture-reviewer` via `task` tool on changed files only, sharded by path (`full` and `standard` tracks only). Pass same digest slices. Apply output parsing protocol.
+3. Re-run `security-reviewer` via `task` tool on changed shards under `auth/`, `crypto/`, `storage/`, or when risk indicators appear in reviewer findings (`full` track; `standard` only if drift check fires). Apply output parsing protocol.
+4. **Finding classification:** invoke `finding-classifier` via `task` tool with canonicalized normalized findings + `PLAN_DIGEST` + `RULES_INDEX` + `DESIGN_INDEX`. Apply output parsing protocol. Require `CLASSIFIED_FINDINGS`.
+5. After all shard reviewers complete, invoke `cross-shard-reviewer` via `task` tool **when two or more shards had changed files in this cycle** (`full` and `standard` tracks only):
 
    **Before invoking `cross-shard-reviewer`, extract boundary pub signatures:**
 
@@ -470,9 +493,9 @@ CANONICAL_FINDING {
    Apply output parsing protocol.
 
 6. If actionable CRITICAL/HIGH remain in a shard:
-   - invoke `problem-solver` for that shard with the relevant `DIGEST_SLICE` and findings
+   - invoke `problem-solver` via `task` tool for that shard with the relevant `DIGEST_SLICE` and findings
    - apply output parsing protocol
-   - invoke `rust-implementer` with the new `SOLUTION_PACK`
+   - invoke `rust-implementer` via `task` tool with the new `SOLUTION_PACK`
    - apply output parsing protocol
 
 ### Orchestrator Override for Persistent HIGH Findings
@@ -666,6 +689,10 @@ Full finding prose, `SOLUTION_PACK` content, and `IMPLEMENTATION_RESULT` records
 - Security-scoped design challenge decisions require explicit user input before `problem-solver` proceeds.
 - Do not mark a fix as complete unless `cargo check --workspace` passes after implementation.
 - **Orchestrator must not perform deep reasoning on file content.** Delegate to the appropriate gatherer, reviewer, or implementer agent instead.
+- **NEVER** read source files and implement fixes yourself — invoke `rust-implementer` via `task` tool.
+- **NEVER** classify findings directly — invoke `finding-classifier` via `task` tool.
+- **NEVER** synthesize solutions without invoking `problem-solver` via `task` tool.
+- **NEVER** skip a delegated agent invocation because the orchestrator believes it can reason over the inputs directly — this is a protocol violation regardless of reasoning quality.
 
 ---
 

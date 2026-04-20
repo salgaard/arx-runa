@@ -32,9 +32,17 @@ Implement the saved plan: $ARGUMENTS
 | `problem-solver` | Findings-to-fix synthesis and design challenge evaluation | `SOLUTION_PACK` / `NO_ACTIONABLE_FIXES` / `BLOCKED_SOLUTIONS` |
 | `test-writer` | Test expansion (all code-changing plans) | Test additions/updates |
 
-**Execution contract (hard):** The invoking agent owns implementation end-to-end. It may delegate coding steps to sub-agents but retains orchestration, verification, and final accountability.
+**Execution contract (hard):** The invoking agent owns orchestration, gate enforcement, and final accountability. It **MUST NOT** write Rust code, read design docs for content reasoning, or perform review/classification work directly — all of these are delegated to named agents via the `task` tool. The only direct work the orchestrator performs is: file reads for gate verification, `cargo` commands for verification, and writing run-state/log files.
 
-**Orchestrator delegation contract (hard):** Keep orchestration thin. Delegate reviewer semantics, finding classification, and solution synthesis to designated agents. When structured artifacts exist, pass those artifacts — not raw prose.
+**Orchestrator delegation contract (hard — enforced):** Every named agent in the Agent Roster **MUST** be invoked via the `task` tool before the orchestrator may proceed past the step that requires it. The orchestrator MUST NOT skip an agent invocation because it believes it can do the work itself. The `task` tool runs each agent in an isolated context window — this is the core context-preservation mechanism of this command. Skipping an agent invocation is a protocol violation, not a valid optimization. If the orchestrator finds itself writing Rust code or synthesising review findings directly, it must STOP, record the violation, and restart the step using the correct agent.
+
+**How to invoke agents:** Use the `task` tool with the agent's name as `agent_type`. Example:
+```
+task(agent_type="rust-implementer", prompt="<step context + SOLUTION_PACK>")
+task(agent_type="rust-reviewer", prompt="<shard context>")
+task(agent_type="finding-classifier", prompt="<canonicalized findings + PLAN_DIGEST + RULES_INDEX + DESIGN_INDEX>")
+```
+All custom agent names in the Agent Roster above map directly to `agent_type` values in the `task` tool.
 
 ## Structured contract ownership (hard)
 
@@ -128,12 +136,18 @@ Track capabilities:
 - **`standard`** — rust-implementer + rust-reviewer + architecture-reviewer + finding-classifier + problem-solver + test-writer; max 3 remediation cycles; cross-shard only if 2+ shards touched; no security-reviewer unless drift check fires.
 - **`minimal`** — rust-implementer + rust-reviewer + finding-classifier + test-writer; 1 review cycle; no architecture-reviewer; no cross-shard review. If any HIGH finding surfaces after the review cycle → automatically escalate to `standard` track and continue.
 
-**B. Build structured context artifacts** — spawn in parallel:
+**B. Build structured context artifacts (mandatory — HALT if skipped)**
 
-- `plan-context-builder` → `PLAN_DIGEST`
-- `rules-extractor` → `RULES_INDEX`
-- `design-extractor` → `DESIGN_INDEX`
-- `shard-planner` (receives resolved Rust file list from plan Section 6a) → `SHARD_MAP` + `SHARD_DIGEST_SUMMARY[]`
+**MUST** invoke all four agents in parallel via the `task` tool before any implementation begins. These are not optional pre-work — they are the contract surfaces downstream agents consume. Skipping them is a hard violation that blocks all subsequent steps.
+
+```
+task(agent_type="plan-context-builder", ...)  → PLAN_DIGEST
+task(agent_type="rules-extractor", ...)        → RULES_INDEX
+task(agent_type="design-extractor", ...)       → DESIGN_INDEX
+task(agent_type="shard-planner", ...)          → SHARD_MAP + SHARD_DIGEST_SUMMARY[]
+```
+
+Invoke all four in a single parallel `task` call batch (they have no dependencies on each other). Wait for all four to complete before continuing.
 
 Required consumer fields:
 - `PLAN_DIGEST`: `highest_implemented_phase`, `in_progress_phases`, `deferred_phases`, `plans[]`, `handoffs[]`
@@ -186,27 +200,30 @@ Follow the **Approach** section of the plan step by step, in order.
 
 ### Delegation model
 
-`rust-implementer` is the default executor for all coding steps. The orchestrator retains orchestration, gate enforcement, review invocation, and verification throughout.
+`rust-implementer` is the **mandatory** executor for all coding steps. The orchestrator **MUST NOT** write, edit, or reason about Rust code directly — it orchestrates and verifies only.
 
-- Delegate each coding-focused Approach step to `rust-implementer` with full step context, expected outputs, and constraints. Apply output parsing protocol. Require `IMPLEMENTATION_RESULT`.
-- If `rust-implementer` returns `BLOCKED` on an Approach step, the orchestrator implements that step directly as fallback. Record the fallback in the Implementation Log.
-- If any required delegation contract cannot be satisfied and direct fallback is also infeasible, invoke Plan-deviation protocol and halt.
+**For every coding-focused Approach step:**
+1. Invoke `rust-implementer` via the `task` tool with: full step context, the relevant `DIGEST_SLICE` from `SHARD_MAP`, expected outputs, and constraints. Apply output parsing protocol. Require `IMPLEMENTATION_RESULT`.
+2. **Fallback is only available if `rust-implementer` returns `BLOCKED`** (not for convenience, context, or speed). If fallback is used, record it explicitly in the Implementation Log as a deviation with justification.
+3. If any required delegation contract cannot be satisfied and direct fallback is also infeasible, invoke Plan-deviation protocol and halt.
+
+> **If you are writing Rust code directly without a `BLOCKED` return from `rust-implementer`: STOP. You are in violation of the delegation contract. Restart the step using the `task` tool.**
 
 1. Delegate coding-focused Approach steps to `rust-implementer`.
 2. Execute every Approach step as written — via delegation or direct fallback.
 3. **No speculative fallback:** if a step cannot be completed as written by either path, follow Plan-deviation protocol and halt.
 4. After each Approach step, run `cargo check --workspace`. Fix compile errors before moving to the next step.
 
-### Review invocation (scope-driven)
+### Review invocation (scope-driven, mandatory)
 
-Reviewers are invoked based on which files were actually changed — not plan flags. Read plan **Section 6** for reviewer guidance.
+Reviewers **MUST** be invoked via the `task` tool. The orchestrator **MUST NOT** perform review, classification, or finding synthesis directly. Read plan **Section 6** for reviewer guidance.
 
-5. **Rust quality review:** if any `src-tauri/**/*.rs` files were changed, invoke `rust-reviewer`. Pass `DIGEST_SLICE_<shard_id>` for each touched shard. Apply output parsing protocol. Skip and record if no Rust files changed.
+5. **Rust quality review:** if any `src-tauri/**/*.rs` files were changed, invoke `rust-reviewer` via `task` tool. Pass `DIGEST_SLICE_<shard_id>` for each touched shard. Apply output parsing protocol. Skip and record if no Rust files changed.
 
-6. **Security review:** if any files under `src-tauri/src/{crypto,auth,storage}/` were changed, invoke `security-reviewer`. Pass relevant `DIGEST_SLICE` and security concerns from plan Section 6b. Apply output parsing protocol. Skip and record if no security-path files changed.
+6. **Security review:** if any files under `src-tauri/src/{crypto,auth,storage}/` were changed, invoke `security-reviewer` via `task` tool. Pass relevant `DIGEST_SLICE` and security concerns from plan Section 6b. Apply output parsing protocol. Skip and record if no security-path files changed.
    - **Drift check (always runs):** if any sensitive file was touched that plan Section 6b did not anticipate, invoke Plan-deviation protocol and halt.
 
-7. **Architecture review (`full` and `standard` tracks only):** if any `src-tauri/**/*.rs` files were changed, invoke `architecture-reviewer`. Pass relevant `DIGEST_SLICE`. Apply output parsing protocol. Skip and record if no Rust files changed.
+7. **Architecture review (`full` and `standard` tracks only):** if any `src-tauri/**/*.rs` files were changed, invoke `architecture-reviewer` via `task` tool. Pass relevant `DIGEST_SLICE`. Apply output parsing protocol. Skip and record if no Rust files changed.
 
 8. **INTERFACE_SLICE extraction (when 2+ shards have changed files):** before invoking `cross-shard-reviewer`, extract boundary pub signatures:
 
@@ -223,7 +240,7 @@ Reviewers are invoked based on which files were actually changed — not plan fl
 
 10. **Severity normalization:** security-reviewer: `CRITICAL` → `CRITICAL`, `WARNING` → `HIGH`, `NOTE` → `MEDIUM`. Rust and architecture findings use `HIGH|MEDIUM|LOW` directly.
 
-11. **Finding classification:** invoke `finding-classifier` with canonicalized normalized findings + `PLAN_DIGEST` + `RULES_INDEX` + `DESIGN_INDEX`. Apply output parsing protocol. Require `CLASSIFIED_FINDINGS`.
+11. **Finding classification:** invoke `finding-classifier` via `task` tool with canonicalized normalized findings + `PLAN_DIGEST` + `RULES_INDEX` + `DESIGN_INDEX`. Apply output parsing protocol. Require `CLASSIFIED_FINDINGS`. The orchestrator **MUST NOT** classify findings itself.
 
 12. **Problem-solver invocation:** if `ACTIONABLE_NOW` is empty, continue to Testing. Otherwise:
 
@@ -235,7 +252,7 @@ Reviewers are invoked based on which files were actually changed — not plan fl
     - MEDIUM findings grouped by shard (max 10 per invocation)
     - One LOW batch
 
-    Invoke `problem-solver` per group with scoped files, `DIGEST_SLICE`, and `design_challenge_entries`. Apply output parsing protocol. Require `SOLUTION_PACK`, `NO_ACTIONABLE_FIXES`, or `BLOCKED_SOLUTIONS`.
+    Invoke `problem-solver` via `task` tool per group with scoped files, `DIGEST_SLICE`, and `design_challenge_entries`. Apply output parsing protocol. Require `SOLUTION_PACK`, `NO_ACTIONABLE_FIXES`, or `BLOCKED_SOLUTIONS`. The orchestrator **MUST NOT** synthesise solutions itself.
 
     - If `BLOCKED_SOLUTIONS`: invoke Plan-deviation protocol and halt.
     - If `NO_ACTIONABLE_FIXES`: continue.
@@ -416,6 +433,11 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
 
 ## Guardrails
 
+- **NEVER write Rust code directly** — always delegate to `rust-implementer` via `task` tool.
+- **NEVER synthesise review findings directly** — always delegate to `rust-reviewer`, `security-reviewer`, `architecture-reviewer`.
+- **NEVER classify findings directly** — always delegate to `finding-classifier`.
+- **NEVER synthesise solutions directly** — always delegate to `problem-solver`.
+- **NEVER skip Step 3B context artifact build** — all four agents must be invoked before Step 4.
 - Preserve hard-gate semantics in Step 3; do not silently downgrade failures.
 - Do not skip the design-doc sync gate in Step 6 when accepted challenges exist.
 - Do not skip plan Section 7 documentation-impact items when they are implementable in-run.
@@ -436,6 +458,8 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
 | Plan file cannot be resolved | Halt and report candidate plan files |
 | Any Step 3 gate fails | Halt before implementation begins |
 | Structured context artifact build fails | Halt before updating plan status |
+| **Step 3B context agents not invoked** | **Halt — context artifact build is mandatory before Step 4** |
+| **Orchestrator writes Rust code without BLOCKED return** | **Record delegation violation in log; restart step via `task` tool** |
 | Governance sync file edit cannot be applied or verified | Plan-deviation protocol, then halt |
 | `/copilot-sync` fails or times out | Record `GOVERNANCE_SYNC_DEGRADED`; continue |
 | Agent output fails to parse after one retry | Halt with `PARSE_ERROR`; surface raw output to user |

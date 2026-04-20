@@ -23,6 +23,10 @@ applyTo: "src-tauri/src/sharing/**,src-tauri/src/storage/sharing.rs"
 - Never log X25519 public-key bytes.
 - `Debug` output must not print raw public-key bytes.
 
+## HPKE error hygiene
+- All HPKE open failures (KEM decap, CTX commitment mismatch, stream decrypt) emit `SharingError::AuthenticationFailed` with no source context.
+- Error message text must not include `enc`, ciphertext, or CTX tag bytes.
+
 ## Storage placement
 - Contacts CRUD lives in `storage::sharing`.
 - Do not colocate sharing CRUD in `storage::sqlcipher`; mirror the destination-session split pattern.

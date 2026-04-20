@@ -72,8 +72,8 @@ CREATE TABLE destination_sessions (
 );
 -- Constraint: exactly one primary destination per vault (enforced in application logic).
 
--- Phase 5 placeholder
--- Sharing tables (Phase 5, included here for schema completeness):
+-- Phase 5 canonical (see docs/architecture/designs/file-sharing/design.md §Database Schema)
+-- Sharing tables:
 CREATE TABLE contacts (
     contact_id       TEXT PRIMARY KEY,
     display_name     TEXT NOT NULL,
@@ -96,13 +96,16 @@ CREATE TABLE shares (
 CREATE TABLE received_shares (
     share_id             TEXT PRIMARY KEY,
     sender_contact_id    TEXT REFERENCES contacts(contact_id),
+    sender_public_key    BLOB NOT NULL,       -- X25519 public key, 32 bytes
     file_name            TEXT NOT NULL,
     file_key_wrapped     BLOB NOT NULL,
     chunk_count          INTEGER NOT NULL,
     chunk_size           INTEGER NOT NULL,
-    chunk_uuids          TEXT NOT NULL      -- JSON array of UUID v4 blob names, e.g. ["uuid1","uuid2"]
+    chunk_uuids          TEXT NOT NULL
                              CHECK (json_valid(chunk_uuids)),
-    cloud_endpoint       TEXT NOT NULL,
+    cloud_endpoint       TEXT NOT NULL
+                             CHECK (json_valid(cloud_endpoint)),
+    expires_at           INTEGER,
     imported_at          INTEGER NOT NULL
 );
 

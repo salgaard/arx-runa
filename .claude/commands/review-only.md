@@ -49,6 +49,28 @@ This command owns orchestration and gates. Producer schema details live in agent
 
 ---
 
+## Tool Invocation Contract (Hard)
+
+**Every named agent in the Agent Roster MUST be invoked via the `task` tool.** The orchestrator MUST NOT perform review, classification, solution synthesis, or report assembly directly. The `task` tool runs each agent in an isolated context window — this is the core context-preservation mechanism of this command.
+
+```
+task(agent_type="plan-context-builder", ...)    → PLAN_DIGEST
+task(agent_type="rules-extractor", ...)          → RULES_INDEX
+task(agent_type="design-extractor", ...)         → DESIGN_INDEX
+task(agent_type="shard-planner", ...)            → SHARD_MAP + SHARD_DIGEST_SUMMARY[]
+task(agent_type="rust-reviewer", ...)            → Raw findings
+task(agent_type="architecture-reviewer", ...)    → Raw findings
+task(agent_type="security-reviewer", ...)        → Raw findings
+task(agent_type="cross-shard-reviewer", ...)     → Raw findings
+task(agent_type="finding-classifier", ...)       → CLASSIFIED_FINDINGS
+task(agent_type="problem-solver", ...)           → SOLUTION_PACK / NO_ACTIONABLE_FIXES / BLOCKED_SOLUTIONS
+task(agent_type="report-writer", ...)            → REPORT_WRITER_RESULT
+```
+
+All custom agent names in the Agent Roster map directly to `agent_type` values. Skipping an agent invocation is a protocol violation, not a valid optimization.
+
+---
+
 ## Scope Resolution
 
 1. If `$ARGUMENTS` is empty or `all`, set scope to all Rust implementation files under `src-tauri/src/**/*.rs`.
@@ -120,7 +142,7 @@ Apply after every agent invocation, including gatherers, reviewers, classifier, 
 
 ## Phase 0 — Parallel Preflight
 
-Spawn all agents and the baseline check **in parallel**. The orchestrator does not read plan, rules, or design files directly — it consumes only structured outputs.
+Spawn all agents and the baseline check **in parallel via the `task` tool**. The orchestrator does not read plan, rules, or design files directly — it consumes only structured outputs.
 
 Parallel launch set:
 - `plan-context-builder` (Step 0-A)
@@ -286,7 +308,7 @@ The orchestrator maintains a rolling `CANONICAL_FINDINGS` list that is updated a
 
 #### Step 2-A: Wave 1 — Parallel Reviewer Invocation
 
-For each shard in `SHARD_MAP`, invoke in **parallel**:
+For each shard in `SHARD_MAP`, invoke in **parallel via `task` tool** (mandatory — HALT if skipped):
 
 - `rust-reviewer` with `DIGEST_SLICE_<shard_id>` + shard file list + current `CANONICAL_FINDINGS` suppression list (IDs + one-line descriptions only, from cycle 2 onward)
 - `architecture-reviewer` with same inputs (required for every shard, every cycle — `standard` and `full` tracks only)
@@ -300,7 +322,7 @@ Apply output parsing protocol to each reviewer result.
 
 #### Step 2-B: Wave 2 — Conditional Security Review
 
-After Wave 1 completes for a shard, invoke `security-reviewer` on that shard **only if**:
+After Wave 1 completes for a shard, invoke `security-reviewer` via `task` tool on that shard **only if**:
 
 - `shard.is_security_sensitive == true` (always true for `shard-auth`, `shard-crypto`, `shard-storage`), **OR**
 - any Wave 1 finding for this shard includes `security_flag: true`, **OR**
@@ -312,7 +334,7 @@ Apply output parsing protocol. **If no condition is met, skip `security-reviewer
 
 #### Step 2-C: Wave 3 — Cross-Shard Consistency Review (`full` and `standard` tracks, when 2+ shards in scope)
 
-After Wave 1 and Wave 2 complete for **all shards** in a cycle, invoke `cross-shard-reviewer` **once** for that cycle.
+After Wave 1 and Wave 2 complete for **all shards** in a cycle, invoke `cross-shard-reviewer` via `task` tool **once** for that cycle.
 
 **Before invoking `cross-shard-reviewer`, extract boundary pub signatures** from files at the interface between changed shards:
 
@@ -459,7 +481,7 @@ Full finding prose and `SHARD_DIGEST_SUMMARY` content must not accumulate across
 
 ## Phase 2.5 — `finding-classifier` Agent (Quality Gate)
 
-**Do not perform this classification in the orchestrator.** Spawn a dedicated `finding-classifier` agent.
+**Do not perform this classification in the orchestrator.** Spawn a dedicated `finding-classifier` agent via `task` tool (mandatory — HALT if skipped).
 
 **Input:**
 - Full `CANONICAL_FINDINGS` list
@@ -513,7 +535,7 @@ If `CLASSIFIED_FINDINGS.actionable_now` is empty, skip to Phase 4.
 
 ### Finding Grouping Strategy
 
-The orchestrator groups `actionable_now` findings **before** spawning `problem-solver` agents:
+The orchestrator groups `actionable_now` findings **before** spawning `problem-solver` agents via `task` tool (mandatory — HALT if skipped):
 
 | Group | Contents | Agent scope |
 |---|---|---|
@@ -563,7 +585,7 @@ Apply output parsing protocol to each solver result.
 
 ## Phase 4 — `report-writer` Agent
 
-**Do not assemble the report in the orchestrator.** Spawn a dedicated `report-writer` agent.
+**Do not assemble the report in the orchestrator.** Spawn a dedicated `report-writer` agent via `task` tool (mandatory — HALT if skipped).
 
 **Input (all structured — no raw prose):**
 - `PLAN_DIGEST`
@@ -808,6 +830,10 @@ Schema mirrors `/implement-review` Phase 1 normalized finding fields. The `dispo
 - No commits, pushes, branch operations, or destructive git commands.
 - No scope broadening without explicit documentation in the report of why.
 - **Orchestrator must not perform deep reasoning on file content.** If the orchestrator finds itself reading and interpreting source files or plan files directly, it must delegate to the appropriate gatherer or reviewer agent instead.
+- **NEVER** invoke a reviewer agent by reading source files yourself and summarizing findings — use `task` tool.
+- **NEVER** classify findings directly — invoke `finding-classifier` via `task` tool.
+- **NEVER** assemble the report yourself — invoke `report-writer` via `task` tool.
+- **NEVER** skip a delegated agent invocation because the orchestrator believes it can reason over the inputs directly — this is a protocol violation regardless of reasoning quality.
 - Every `ACTIONABLE_NOW` finding must cite at least one `rule_refs` or `design_refs` entry. Findings without citations must be reclassified as `INSUFFICIENT_EVIDENCE`.
 - Agents must never receive another agent's full raw output as context — only the extracted, structured fields they need.
 - Gatherer agents (`plan-context-builder`, `rules-extractor`, `design-extractor`) must use verbatim extraction for high-authority content. Paraphrasing of rules or design invariants is not permitted.

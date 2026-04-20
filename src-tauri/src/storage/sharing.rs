@@ -1,11 +1,11 @@
 //! Sharing-store implementation backed by SQLCipher metadata storage.
 
 use async_trait::async_trait;
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{OptionalExtension, Row, params};
 use uuid::Uuid;
 
 use crate::sharing::{
-    Contact, ContactId, DisplayName, SharingError, SharingStore, X25519PublicKey,
+    Contact, ContactId, DisplayName, ReceivedShare, SharingError, SharingStore, X25519PublicKey,
 };
 use crate::storage::{SqlCipherMetadataStore, StorageError};
 
@@ -178,6 +178,199 @@ impl SharingStore for SqlCipherMetadataStore {
         })
         .await
         .map_err(map_storage_error)
+    }
+
+    /// Inserts one received-share row in SQLCipher.
+    async fn insert_received_share(&self, row: &ReceivedShare) -> Result<(), SharingError> {
+        if !is_uuid_v4_string(&row.share_id) {
+            return Err(SharingError::InvalidJsonPayload(format!(
+                "share_id is not UUID v4: {}",
+                row.share_id
+            )));
+        }
+        let share_id = row.share_id.clone();
+        let sender_contact_id = row
+            .sender_contact_id
+            .map(|contact_id| contact_id.to_uuid().hyphenated().to_string());
+        let sender_public_key_blob = row.sender_public_key.as_bytes().to_vec();
+        let file_name = row.file_name.clone();
+        let file_key_wrapped_blob = row.file_key_wrapped.to_vec();
+        let chunk_count = row.chunk_count as i64;
+        let chunk_size = row.chunk_size as i64;
+        let chunk_uuids_json = serde_json::to_string(&row.chunk_uuids)
+            .map_err(|error| SharingError::InvalidJsonPayload(error.to_string()))?;
+        let cloud_endpoint_json = serde_json::to_string(&row.cloud_endpoint)
+            .map_err(|error| SharingError::InvalidJsonPayload(error.to_string()))?;
+        let expires_at = row.expires_at;
+        let imported_at = row.imported_at;
+
+        self.with_connection_blocking(move |connection| {
+            connection
+                .execute(
+                    "INSERT INTO received_shares (share_id, sender_contact_id, sender_public_key, file_name, file_key_wrapped, chunk_count, chunk_size, chunk_uuids, cloud_endpoint, expires_at, imported_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    params![
+                        share_id,
+                        sender_contact_id,
+                        sender_public_key_blob,
+                        file_name,
+                        file_key_wrapped_blob,
+                        chunk_count,
+                        chunk_size,
+                        chunk_uuids_json,
+                        cloud_endpoint_json,
+                        expires_at,
+                        imported_at,
+                    ],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+        .map_err(map_storage_error)
+    }
+
+    /// Fetches one received-share row by share identifier.
+    async fn get_received_share(&self, share_id: &str) -> Result<ReceivedShare, SharingError> {
+        let share_id_owned = share_id.to_owned();
+        let row = self
+            .with_connection_blocking(move |connection| {
+                connection
+                    .query_row(
+                        "SELECT share_id, sender_contact_id, sender_public_key, file_name, file_key_wrapped, chunk_count, chunk_size, chunk_uuids, cloud_endpoint, expires_at, imported_at FROM received_shares WHERE share_id = ?1",
+                        params![share_id_owned],
+                        map_received_share_row,
+                    )
+                    .optional()
+                    .map_err(StorageError::from_rusqlite)?
+                    .ok_or(StorageError::NotFound)
+            })
+            .await
+            .map_err(map_received_share_error)?;
+        parse_received_share_row(row)
+    }
+
+    /// Lists all received shares ordered by import time descending.
+    async fn list_received_shares(&self) -> Result<Vec<ReceivedShare>, SharingError> {
+        let rows = self
+            .with_connection_blocking(move |connection| {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT share_id, sender_contact_id, sender_public_key, file_name, file_key_wrapped, chunk_count, chunk_size, chunk_uuids, cloud_endpoint, expires_at, imported_at FROM received_shares ORDER BY imported_at DESC, share_id ASC",
+                    )
+                    .map_err(StorageError::from_rusqlite)?;
+                let mapped_rows = statement
+                    .query_map([], map_received_share_row)
+                    .map_err(StorageError::from_rusqlite)?;
+                let mut rows = Vec::new();
+                for row in mapped_rows {
+                    rows.push(row.map_err(StorageError::from_rusqlite)?);
+                }
+                Ok(rows)
+            })
+            .await
+            .map_err(map_received_share_error)?;
+        rows.into_iter().map(parse_received_share_row).collect()
+    }
+}
+
+/// Checks whether a string is a valid hyphenated UUID v4.
+fn is_uuid_v4_string(value: &str) -> bool {
+    Uuid::parse_str(value)
+        .map(|uuid| uuid.get_version_num() == 4)
+        .unwrap_or(false)
+}
+
+/// Raw row tuple from a `received_shares` SELECT.
+type ReceivedShareRow = (
+    String,
+    Option<String>,
+    Vec<u8>,
+    String,
+    Vec<u8>,
+    i64,
+    i64,
+    String,
+    String,
+    Option<i64>,
+    i64,
+);
+
+/// Maps a single rusqlite row into the raw row tuple.
+fn map_received_share_row(row: &Row<'_>) -> rusqlite::Result<ReceivedShareRow> {
+    Ok((
+        row.get::<_, String>(0)?,
+        row.get::<_, Option<String>>(1)?,
+        row.get::<_, Vec<u8>>(2)?,
+        row.get::<_, String>(3)?,
+        row.get::<_, Vec<u8>>(4)?,
+        row.get::<_, i64>(5)?,
+        row.get::<_, i64>(6)?,
+        row.get::<_, String>(7)?,
+        row.get::<_, String>(8)?,
+        row.get::<_, Option<i64>>(9)?,
+        row.get::<_, i64>(10)?,
+    ))
+}
+
+/// Converts a raw row tuple into the domain `ReceivedShare`.
+fn parse_received_share_row(row: ReceivedShareRow) -> Result<ReceivedShare, SharingError> {
+    let (
+        share_id,
+        sender_contact_id_text,
+        sender_public_key_blob,
+        file_name,
+        file_key_wrapped_blob,
+        chunk_count,
+        chunk_size,
+        chunk_uuids_json,
+        cloud_endpoint_json,
+        expires_at,
+        imported_at,
+    ) = row;
+
+    let sender_contact_id = sender_contact_id_text
+        .map(|text| {
+            let uuid =
+                Uuid::parse_str(&text).map_err(|_| SharingError::InvalidContactId(text.clone()))?;
+            Ok::<_, SharingError>(ContactId::from_uuid(uuid))
+        })
+        .transpose()?;
+
+    let sender_public_key_bytes: [u8; 32] = sender_public_key_blob
+        .try_into()
+        .map_err(|blob: Vec<u8>| SharingError::InvalidPublicKeyLength(blob.len()))?;
+
+    let file_key_wrapped: [u8; 72] = file_key_wrapped_blob
+        .try_into()
+        .map_err(|_| SharingError::Backend("file_key_wrapped is not 72 bytes".to_owned()))?;
+
+    let chunk_uuids: Vec<String> = serde_json::from_str(&chunk_uuids_json)
+        .map_err(|error| SharingError::InvalidJsonPayload(error.to_string()))?;
+
+    let cloud_endpoint: serde_json::Value = serde_json::from_str(&cloud_endpoint_json)
+        .map_err(|error| SharingError::InvalidJsonPayload(error.to_string()))?;
+
+    Ok(ReceivedShare {
+        share_id,
+        sender_contact_id,
+        sender_public_key: X25519PublicKey::new(sender_public_key_bytes),
+        file_name,
+        file_key_wrapped,
+        chunk_count: chunk_count as u32,
+        chunk_size: chunk_size as u32,
+        chunk_uuids,
+        cloud_endpoint,
+        expires_at,
+        imported_at,
+    })
+}
+
+/// Converts storage-domain failures into sharing-domain errors for received shares.
+fn map_received_share_error(error: StorageError) -> SharingError {
+    match error {
+        StorageError::NotFound => SharingError::ReceivedShareNotFound,
+        StorageError::ConstraintViolation(message) => SharingError::ConstraintViolation(message),
+        _ => SharingError::Backend("storage backend failure".to_owned()),
     }
 }
 
@@ -561,5 +754,108 @@ mod tests {
 
         let result = store.get_contact(contact_id).await;
         assert!(matches!(result, Err(SharingError::EmptyDisplayName)));
+    }
+
+    /// Creates a sample `ReceivedShare` for testing.
+    fn sample_received_share(marker: u8) -> crate::sharing::ReceivedShare {
+        crate::sharing::ReceivedShare {
+            share_id: Uuid::new_v4().hyphenated().to_string(),
+            sender_contact_id: None,
+            sender_public_key: X25519PublicKey::new([marker; 32]),
+            file_name: format!("shared-doc-{marker}.pdf"),
+            file_key_wrapped: [marker; 72],
+            chunk_count: 2,
+            chunk_size: 4_194_304,
+            chunk_uuids: vec![
+                Uuid::new_v4().hyphenated().to_string(),
+                Uuid::new_v4().hyphenated().to_string(),
+            ],
+            cloud_endpoint: serde_json::json!({"provider": "s3", "bucket": "test"}),
+            expires_at: Some(1_800_000_000),
+            imported_at: 1_700_000_000 + marker as i64,
+        }
+    }
+
+    /// Verifies insert → get → list round-trip for received shares.
+    #[tokio::test]
+    async fn test_sharing_store_received_share_crud_round_trip_preserves_fields() {
+        let (_directory, store) = create_store().await;
+        let share = sample_received_share(0x42);
+
+        store
+            .insert_received_share(&share)
+            .await
+            .expect("insert should succeed");
+
+        let fetched = store
+            .get_received_share(&share.share_id)
+            .await
+            .expect("get should succeed");
+        assert_eq!(fetched.share_id, share.share_id);
+        assert_eq!(fetched.sender_contact_id, None);
+        assert_eq!(fetched.sender_public_key, share.sender_public_key);
+        assert_eq!(fetched.file_name, share.file_name);
+        assert_eq!(fetched.file_key_wrapped, share.file_key_wrapped);
+        assert_eq!(fetched.chunk_count, share.chunk_count);
+        assert_eq!(fetched.chunk_size, share.chunk_size);
+        assert_eq!(fetched.chunk_uuids, share.chunk_uuids);
+        assert_eq!(fetched.cloud_endpoint, share.cloud_endpoint);
+        assert_eq!(fetched.expires_at, share.expires_at);
+        assert_eq!(fetched.imported_at, share.imported_at);
+
+        let listed = store
+            .list_received_shares()
+            .await
+            .expect("list should succeed");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].share_id, share.share_id);
+    }
+
+    /// Verifies duplicate share_id returns `ConstraintViolation`.
+    #[tokio::test]
+    async fn test_sharing_store_insert_received_share_duplicate_returns_constraint_violation() {
+        let (_directory, store) = create_store().await;
+        let share = sample_received_share(0x55);
+
+        store
+            .insert_received_share(&share)
+            .await
+            .expect("first insert should succeed");
+
+        let result = store.insert_received_share(&share).await;
+        assert!(
+            matches!(result, Err(SharingError::ConstraintViolation(_))),
+            "expected ConstraintViolation, got {result:?}"
+        );
+    }
+
+    /// Verifies missing share_id returns `ReceivedShareNotFound`.
+    #[tokio::test]
+    async fn test_sharing_store_get_received_share_missing_returns_not_found() {
+        let (_directory, store) = create_store().await;
+
+        let result = store
+            .get_received_share(&Uuid::new_v4().hyphenated().to_string())
+            .await;
+        assert!(matches!(result, Err(SharingError::ReceivedShareNotFound)));
+    }
+
+    /// Verifies `expires_at: None` round-trips to NULL in SQLCipher.
+    #[tokio::test]
+    async fn test_sharing_store_received_share_none_expires_at_round_trips() {
+        let (_directory, store) = create_store().await;
+        let mut share = sample_received_share(0x88);
+        share.expires_at = None;
+
+        store
+            .insert_received_share(&share)
+            .await
+            .expect("insert should succeed");
+
+        let fetched = store
+            .get_received_share(&share.share_id)
+            .await
+            .expect("get should succeed");
+        assert_eq!(fetched.expires_at, None);
     }
 }
