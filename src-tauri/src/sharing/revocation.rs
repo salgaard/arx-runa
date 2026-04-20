@@ -242,10 +242,9 @@ pub(crate) async fn strong_revoke_share(
         if let Err(error) = sharing_store
             .set_share_revoked_at(&old_share.share_id, now_unix_seconds)
             .await
+            && first_revocation_error.is_none()
         {
-            if first_revocation_error.is_none() {
-                first_revocation_error = Some(error);
-            }
+            first_revocation_error = Some(error);
         }
     }
     if let Some(error) = first_revocation_error {

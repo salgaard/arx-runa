@@ -28,6 +28,18 @@ pub(crate) struct CreateShareOutput {
     pub wire_bytes: Vec<u8>,
 }
 
+/// Data parameters for a [`create_share`] call.
+pub(crate) struct CreateShareRequest {
+    /// The file to share.
+    pub file_id: Uuid,
+    /// The recipient contact.
+    pub contact_id: ContactId,
+    /// Optional Unix-second expiry for the share.
+    pub expires_at: Option<i64>,
+    /// Current time as Unix seconds (used for `created_at`).
+    pub now_unix_seconds: i64,
+}
+
 /// Creates an outgoing file share for a single recipient.
 ///
 /// If an active share already exists for this file, the existing `file_share_id`
@@ -39,16 +51,19 @@ pub(crate) struct CreateShareOutput {
 /// Temporary local copies are stored as `shared-copy-<uuid>.blob` in
 /// `staging_directory` and are deleted on both success and failure.
 pub(crate) async fn create_share(
-    file_id: Uuid,
-    contact_id: ContactId,
-    expires_at: Option<i64>,
-    now_unix_seconds: i64,
+    request: CreateShareRequest,
     metadata_store: &dyn MetadataStore,
     sharing_store: &dyn SharingStore,
     cloud: &dyn CloudTransport,
     key_encryption_key: &KeyEncryptionKey,
     staging_directory: &Path,
 ) -> Result<CreateShareOutput, SharingError> {
+    let CreateShareRequest {
+        file_id,
+        contact_id,
+        expires_at,
+        now_unix_seconds,
+    } = request;
     let file_id_str = file_id.hyphenated().to_string();
 
     let active_shares = sharing_store
