@@ -197,7 +197,7 @@ Reports GitHub Pages deployment status and configuration.
 ### Information gathered
 
 1. **Workflow status** — `.github/workflows/docs.yml` exists (enabled) or `.github/workflows/docs.yml.disabled` (disabled)
-2. **Expected URL** — `https://chorizzio.github.io/arx-runa/` (from `book.toml` + repository)
+2. **Expected URL** — `https://salgaard.github.io/arx-runa/` (from `book.toml` + repository)
 3. **Last build** — query Git for last commit that modified `docs/`
 4. **GitHub Actions status** — if possible, query GitHub API for last workflow run (optional, may require auth)
 
@@ -210,7 +210,7 @@ GitHub Pages Status
 Workflow: ENABLED (.github/workflows/docs.yml)
 Triggers: push to master branch when docs/ or workflow file changes
 
-Expected URL: https://chorizzio.github.io/arx-runa/
+Expected URL: https://salgaard.github.io/arx-runa/
 Configuration: docs/book.toml (site-url: /arx-runa/)
 
 Last docs change: 2026-04-02 02:44:15 (commit: abc1234)
