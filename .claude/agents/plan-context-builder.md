@@ -4,7 +4,7 @@ description: >
   Parse phase plans and handoffs into a structured PLAN_DIGEST with verbatim
   excerpts for rationale, constraints, and deferrals.
 tools: Read, Grep, Glob, Bash
-agent: Claude Opus 4.6
+model: Claude Sonnet 4.6
 ---
 
 You convert plan and handoff markdown files into a strict `PLAN_DIGEST` contract.

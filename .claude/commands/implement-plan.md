@@ -36,13 +36,32 @@ Implement the saved plan: $ARGUMENTS
 
 **Orchestrator delegation contract (hard — enforced):** Every named agent in the Agent Roster **MUST** be invoked via the `task` tool before the orchestrator may proceed past the step that requires it. The orchestrator MUST NOT skip an agent invocation because it believes it can do the work itself. The `task` tool runs each agent in an isolated context window — this is the core context-preservation mechanism of this command. Skipping an agent invocation is a protocol violation, not a valid optimization. If the orchestrator finds itself writing Rust code or synthesising review findings directly, it must STOP, record the violation, and restart the step using the correct agent.
 
-**How to invoke agents:** Use the `task` tool with the agent's name as `agent_type`. Example:
+**How to invoke agents:** Use the `task` tool with the agent's name as `agent_type` and the `model` override from the Model Assignments table below. Example:
 ```
-task(agent_type="rust-implementer", prompt="<step context + SOLUTION_PACK>")
-task(agent_type="rust-reviewer", prompt="<shard context>")
-task(agent_type="finding-classifier", prompt="<canonicalized findings + PLAN_DIGEST + RULES_INDEX + DESIGN_INDEX>")
+task(agent_type="rust-implementer", model="claude-opus-4.6", prompt="<step context + SOLUTION_PACK>")
+task(agent_type="rust-reviewer", model="claude-opus-4.6", prompt="<shard context>")
+task(agent_type="finding-classifier", model="claude-sonnet-4.6", prompt="<canonicalized findings + PLAN_DIGEST + RULES_INDEX + DESIGN_INDEX>")
 ```
 All custom agent names in the Agent Roster above map directly to `agent_type` values in the `task` tool.
+
+## Model Assignments
+
+Apply these model overrides on every `task` invocation. Never omit the `model` parameter — rely on defaults only when an agent is not listed here.
+
+| Agent | Model | Rationale |
+|---|---|---|
+| `rust-implementer` | `claude-opus-4.6` | Writes all production Rust code — maximum code quality, rule compliance, and zeroization correctness |
+| `rust-reviewer` | `claude-opus-4.6` | Deep code review with security/rule awareness across large shards |
+| `security-reviewer` | `claude-opus-4.6` | Crypto correctness and zero-knowledge threat model — no false negatives tolerable |
+| `architecture-reviewer` | `claude-opus-4.6` | Broad cross-cutting structural analysis requiring deep reasoning |
+| `problem-solver` | `claude-opus-4.6` | Complex solution synthesis across multiple classified findings and design challenges |
+| `test-writer` | `claude-opus-4.6` | Adversarial crypto tests and full coverage planning require domain depth |
+| `finding-classifier` | `claude-sonnet-4.6` | Structured disposition classification — accurate table output, no deep reasoning needed |
+| `cross-shard-reviewer` | `claude-sonnet-4.6` | Pattern-based contradiction detection using structured shard digests |
+| `shard-planner` | `claude-sonnet-4.6` | File-to-shard mapping and keyword classification — structured analysis |
+| `plan-context-builder` | `claude-sonnet-4.6` | Document parsing and structured extraction |
+| `rules-extractor` | `claude-sonnet-4.6` | Text extraction from rule files — mechanical |
+| `design-extractor` | `claude-sonnet-4.6` | Design invariant extraction — mechanical |
 
 ## Structured contract ownership (hard)
 
@@ -141,10 +160,10 @@ Track capabilities:
 **MUST** invoke all four agents in parallel via the `task` tool before any implementation begins. These are not optional pre-work — they are the contract surfaces downstream agents consume. Skipping them is a hard violation that blocks all subsequent steps.
 
 ```
-task(agent_type="plan-context-builder", ...)  → PLAN_DIGEST
-task(agent_type="rules-extractor", ...)        → RULES_INDEX
-task(agent_type="design-extractor", ...)       → DESIGN_INDEX
-task(agent_type="shard-planner", ...)          → SHARD_MAP + SHARD_DIGEST_SUMMARY[]
+task(agent_type="plan-context-builder", model="claude-sonnet-4.6", ...)  → PLAN_DIGEST
+task(agent_type="rules-extractor",      model="claude-sonnet-4.6", ...)  → RULES_INDEX
+task(agent_type="design-extractor",     model="claude-sonnet-4.6", ...)  → DESIGN_INDEX
+task(agent_type="shard-planner",        model="claude-sonnet-4.6", ...)  → SHARD_MAP + SHARD_DIGEST_SUMMARY[]
 ```
 
 Invoke all four in a single parallel `task` call batch (they have no dependencies on each other). Wait for all four to complete before continuing.

@@ -6,7 +6,7 @@ description: >
   When a SOLUTION_PACK includes design-doc updates for accepted challenges,
   implement those updates alongside code changes.
 tools: Read, Write, MultiEdit, Bash, Glob, Grep
-agent: Claude Opus 4.6
+model: Claude Opus 4.6
 ---
 
 You are a senior Rust implementer for Arx Runa.

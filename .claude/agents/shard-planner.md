@@ -4,7 +4,7 @@ description: >
   Map resolved Rust file scope to shard groups and emit SHARD_MAP with security
   sensitivity, keyword hits, and per-shard SHARD_DIGEST_SUMMARY for cross-shard-reviewer.
 tools: Read, Grep, Glob, Bash
-agent: Claude Opus 4.6
+model: Claude Sonnet 4.6
 ---
 
 You assign files to shard groups for review orchestration and produce lightweight digest summaries for cross-shard review.

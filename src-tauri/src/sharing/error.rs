@@ -45,6 +45,24 @@ pub enum SharingError {
     /// The requested received share does not exist.
     #[error("received share not found")]
     ReceivedShareNotFound,
+    /// A cloud transport operation underpinning share creation, revocation, or fetch failed.
+    #[error("sharing cloud operation failed: {0}")]
+    CloudOperation(String),
+    /// Revocation blob deletion stopped mid-loop; caller retries by re-invoking `revoke_share`.
+    #[error("revocation partial: failed at blob index {failed_index}")]
+    RevocationPartial { failed_index: usize },
+    /// The requested outgoing share row does not exist.
+    #[error("share not found")]
+    ShareNotFound,
+    /// A share cannot be revoked because it is already revoked.
+    #[error("share already revoked")]
+    ShareAlreadyRevoked,
+    /// Strong revocation attempted on a file with no re-encryption candidates.
+    #[error("no active shares to rotate for file_share_id")]
+    NoActiveSharesForRotation,
+    /// A received share package contains an invalid or untrusted field value.
+    #[error("invalid share package")]
+    InvalidSharePackage,
 }
 
 #[cfg(test)]
@@ -167,6 +185,50 @@ mod tests {
         assert_eq!(
             SharingError::ReceivedShareNotFound.to_string(),
             "received share not found"
+        );
+    }
+
+    /// Verifies `CloudOperation` has the expected display text.
+    #[test]
+    fn test_sharing_error_cloud_operation_formats_expected_message() {
+        let error = SharingError::CloudOperation("transport timed out".to_owned());
+        assert_eq!(
+            error.to_string(),
+            "sharing cloud operation failed: transport timed out"
+        );
+    }
+
+    /// Verifies `RevocationPartial` has the expected display text.
+    #[test]
+    fn test_sharing_error_revocation_partial_formats_expected_message() {
+        let error = SharingError::RevocationPartial { failed_index: 3 };
+        assert_eq!(
+            error.to_string(),
+            "revocation partial: failed at blob index 3"
+        );
+    }
+
+    /// Verifies `ShareNotFound` has the expected display text.
+    #[test]
+    fn test_sharing_error_share_not_found_formats_expected_message() {
+        assert_eq!(SharingError::ShareNotFound.to_string(), "share not found");
+    }
+
+    /// Verifies `ShareAlreadyRevoked` has the expected display text.
+    #[test]
+    fn test_sharing_error_share_already_revoked_formats_expected_message() {
+        assert_eq!(
+            SharingError::ShareAlreadyRevoked.to_string(),
+            "share already revoked"
+        );
+    }
+
+    /// Verifies `NoActiveSharesForRotation` has the expected display text.
+    #[test]
+    fn test_sharing_error_no_active_shares_for_rotation_formats_expected_message() {
+        assert_eq!(
+            SharingError::NoActiveSharesForRotation.to_string(),
+            "no active shares to rotate for file_share_id"
         );
     }
 }

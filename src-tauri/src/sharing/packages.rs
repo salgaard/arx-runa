@@ -153,6 +153,7 @@ pub(crate) async fn import_share_package(
         share_id: payload.share_id,
         sender_contact_id: None,
         sender_public_key: X25519PublicKey::new(sender_public_key_bytes),
+        file_id: payload.file_id,
         file_name: payload.file_name,
         file_key_wrapped: wrapped.0,
         chunk_count: payload.chunk_count,
@@ -247,7 +248,7 @@ mod tests {
 
     use crate::crypto::types::KeyEncryptionKey;
     use crate::sharing::error::SharingError;
-    use crate::sharing::store::{Contact, ReceivedShare, SharingStore};
+    use crate::sharing::store::{Contact, ReceivedShare, ShareRecord, SharingStore};
     use crate::sharing::types::{ContactId, X25519PublicKey};
     use crate::storage::error::StorageError;
     use crate::storage::metadata_store::MetadataStore;
@@ -361,6 +362,43 @@ mod tests {
         }
         async fn list_received_shares(&self) -> Result<Vec<ReceivedShare>, SharingError> {
             Ok(self.received_shares.lock().await.clone())
+        }
+
+        async fn insert_share(&self, _share: &ShareRecord) -> Result<(), SharingError> {
+            unimplemented!()
+        }
+
+        async fn get_share(&self, _share_id: &str) -> Result<ShareRecord, SharingError> {
+            unimplemented!()
+        }
+
+        async fn list_shares_by_file(
+            &self,
+            _file_id: &str,
+        ) -> Result<Vec<ShareRecord>, SharingError> {
+            unimplemented!()
+        }
+
+        async fn list_active_shares_by_file(
+            &self,
+            _file_id: &str,
+        ) -> Result<Vec<ShareRecord>, SharingError> {
+            unimplemented!()
+        }
+
+        async fn list_active_shares_by_file_share_id(
+            &self,
+            _file_share_id: &str,
+        ) -> Result<Vec<ShareRecord>, SharingError> {
+            unimplemented!()
+        }
+
+        async fn set_share_revoked_at(
+            &self,
+            _share_id: &str,
+            _revoked_at: i64,
+        ) -> Result<(), SharingError> {
+            unimplemented!()
         }
     }
 

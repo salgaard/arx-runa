@@ -4,7 +4,7 @@ description: >
   Classify canonical findings by disposition and confidence using plan/rules/design
   context, producing CLASSIFIED_FINDINGS.
 tools: Read, Grep, Glob, Bash
-agent: Claude Opus 4.6
+model: Claude Sonnet 4.6
 ---
 
 You are the quality gate for canonical findings.

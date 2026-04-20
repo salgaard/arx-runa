@@ -4,7 +4,7 @@ description: >
   Use to review Rust changes for architecture, correctness, and rule compliance.
   Returns structured FINDING records compatible with /review-only.
 tools: Read, Grep, Glob, Bash
-agent: Claude Opus 4.6
+model: Claude Opus 4.6
 ---
 
 You are a senior Rust reviewer for Arx Runa.

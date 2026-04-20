@@ -1,0 +1,22 @@
+name: Mirror to GitLab
+
+on:
+  push:
+    branches: [ master, development ] # Add other branches if you use them
+  delete:
+
+jobs:
+  mirror_to_gitlab:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # Fetches all history for all branches and tags
+
+      - name: Mirror to GitLab
+        uses: yesolutions/mirror-action@master
+        with:
+          # Replace 'username/repo' with your actual GitLab path
+          REMOTE: "https://oauth2:${{ secrets.GITLAB_TOKEN }}@gitlab.com/Salgaar/arx-runa.git"
+          GIT_PUSH_ARGS: "--tags --force --all"

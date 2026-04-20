@@ -175,9 +175,7 @@ fn kem_decap(
 /// Derives a 32-byte encryption key and a 24-byte nonce from the KEM shared
 /// secret. The nonce is 24 bytes (XChaCha20) rather than the standard 12
 /// bytes, matching our CTX-ChaCha20-Poly1305 construction.
-fn key_schedule(
-    shared_secret: &[u8; 32],
-) -> Result<KeyScheduleOutput, SharingError> {
+fn key_schedule(shared_secret: &[u8; 32]) -> Result<KeyScheduleOutput, SharingError> {
     let (psk_id_hash, _) = labeled_extract(SUITE_ID, &[], b"psk_id_hash", &[]);
     let (info_hash, _) = labeled_extract(SUITE_ID, &[], b"info_hash", HPKE_SHARE_INFO);
 

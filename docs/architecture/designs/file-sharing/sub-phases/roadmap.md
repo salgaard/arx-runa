@@ -3,7 +3,7 @@
 **Parent design**: [`design.md`](../design.md)  
 **Contract anchor**: [`design.md#contract-surface`](../design.md#contract-surface) is canonical for interface/data/invariant/dependency contracts; roadmap and sub-phases should reference it instead of duplicating full contract payloads.  
 **Created**: 2026-04-04  
-**Status**: Draft  
+**Status**: Phase 5.3 implemented — all sub-phases complete  
 **Implementation order**: 5.1 → 5.2 → 5.3 (strict dependencies)
 
 ---
@@ -57,13 +57,13 @@ This sub-phase roadmap decomposes the file sharing design (282 lines) into 3 ind
    - Snapshot semantics: static `chunk_uuids` at time of sharing
    - **Estimated**: ~200 lines production code, ~140 lines tests
 
-3. **[Phase 5.3: Cloud Layout and Revocation](5.3-cloud-layout-and-revocation.md)**
+3. **[Phase 5.3: Cloud Layout and Revocation](5.3-cloud-layout-and-revocation.md)** ✅
    - Blob copy from `vault/` to `shared/<file_share_id>/` via CloudTransport
    - `shares` table management with file_share_id and cloud_path
    - Revocation by blob deletion and revoked_at timestamp
-   - Optional re-encryption flow for stronger revocation guarantees
-   - `received_shares` blob fetching via Rclone
-   - **Estimated**: ~150 lines production code, ~100 lines tests
+   - Strong re-encryption flow: rotate `file_key` + `file_share_id`, dual-namespace upload (`vault/` + `shared/`), reissue packages for remaining recipients
+   - UUID v4 validation of chunk paths in `fetch_received_share_to_local`
+   - **Implemented**: ~350 lines production code, ~180 lines tests; 605 tests pass
 
 ---
 
@@ -154,6 +154,21 @@ cargo test sharing::revocation
 | Ephemeral private key retained in memory after ECDH | Wrap in `zeroize::Zeroizing` and drop immediately; verified by code review and security-reviewer agent |
 | Revocation perceived as complete when recipient has already fetched | Explicit report statement in design (lines 165-169); limitation must surface in UI and report log |
 | Public blob discovery reveals share existence | Accepted per threat model (design lines 349-355); mitigated by fixed-size padding and UUID v4 blob names |
+
+---
+
+## Implementation Decisions
+
+Recorded during Phase 5.3 implementation:
+
+| Decision | Alternatives considered | Rationale |
+|---|---|---|
+| Dual-namespace upload in `strong_revoke_share` (`vault/<uuid>.blob` AND `shared/<new_fsid>/<uuid>.blob`) | Upload to `shared/` only; upload to `vault/` only | Owner's file must survive fresh-device sync (vault path) and new recipients must be able to fetch (shared path). Single-namespace left one path permanently broken. |
+| Remove `metadata_store: &dyn MetadataStore` param from `strong_revoke_share`, use single `&SqlCipherMetadataStore` upcast | Retain both params; pass `&dyn MetadataStore` only | Two params with no enforcement that they refer to the same store was a latent bug. Single concrete type with safe upcast matches the `rollback_snapshot_counter` precedent (GS-002). |
+| Collect all `set_share_revoked_at` errors and return `Err` if any fail | Silent best-effort (original `let _ = ...`) | Active share rows after a successful key rotation would leak access to recipients whose revocation DB write silently failed. Error surfacing required for correctness. |
+| HPKE package generated before `insert_share` in reissue loop | Insert row first, then generate package | HPKE failure left orphaned active share rows pointing to a non-existent key package. Generate-first eliminates the orphan-row class of bug. |
+| `cloud_endpoint = { "path_prefix": "shared/<fsid>/" }` in `create_share` | Empty object stub (original) | Recipient-side `fetch_received_share_to_local` reads `path_prefix` from the stored endpoint to construct the remote download path. Empty stub broke all real-transport fetches. |
+| UUID v4 validation + `starts_with(staging_directory)` in `fetch_received_share_to_local` | Trust the stored `chunk_uuids` | Adversarial input (e.g. `"../../../etc/passwd"`) in `chunk_uuids` could escape the staging directory. Defense-in-depth at the call site before any filesystem or cloud operation. |
 
 ---
 

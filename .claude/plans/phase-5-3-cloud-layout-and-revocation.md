@@ -1,7 +1,7 @@
 ---
 title: "Phase 5.3 — Cloud Layout and Revocation"
 created: "2026-04-20T16:10:00Z"
-status: approved
+status: implemented
 roadmap-phase: 5
 sub-phase: "5.3"
 design-document: docs/architecture/designs/file-sharing/design.md
@@ -390,6 +390,38 @@ cargo clippy --all-targets --all-features -- -D warnings
 | GS-004 | S-8 schema gap: `received_shares` needs `file_id` to support recipient-side AAD reconstruction during `decrypt_chunk`. | `C:\Users\chris\source\repos\arx-runa\src-tauri\src\storage\schema.rs`, `C:\Users\chris\source\repos\arx-runa\src-tauri\src\sharing\store.rs`, `C:\Users\chris\source\repos\arx-runa\src-tauri\src\sharing\packages.rs`, `C:\Users\chris\source\repos\arx-runa\src-tauri\src\storage\sharing.rs`, `C:\Users\chris\source\repos\arx-runa\docs\architecture\designs\file-sharing\design.md` §Database Schema | Add `file_id TEXT NOT NULL` column to `received_shares` DDL. Add `file_id: String` field to `ReceivedShare` struct. Populate it from `payload.file_id` in `import_share_package`. Update INSERT/SELECT/mapping in `storage::sharing`. Update design doc `received_shares` table to list `file_id TEXT NOT NULL` (place after `share_id` / `sender_contact_id`). Update Phase 5.2 round-trip tests to assert `received.file_id == payload.file_id`. | Run `cargo test --workspace --all-targets --all-features` — Phase 5.2 round-trip tests must pass with the new field. Grep `received_shares` in `schema.rs` to confirm the new column. |
 | GS-005 | Fan out rule edits from GS-001/GS-002/GS-003 to Copilot instruction mirrors. | N/A | Run `/copilot-sync` **after** GS-001–GS-003 complete and **before** Rust code. | `.github/instructions/sharing.instructions.md` and `.github/instructions/storage.instructions.md` diffs match the new rules. |
 
-## 9. Handoff Notes for Implementer
+## 10. Implementation Log
+
+**Run ID**: `phase-5-3-cloud-layout-and-revocation-20260420-161943`  
+**Completed**: 2026-04-20  
+**Final status**: 605 tests pass; `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test --workspace` all green.
+
+### Review cycle findings resolved (13 total)
+
+| ID | Priority | Finding | Resolution |
+|---|---|---|---|
+| F-001 | P0 | `mem::take` on `Zeroizing` defeated zeroize in `reencrypt_file.rs` | Removed `Zeroizing` wrapper on ciphertext path; pass plaintext directly to `encrypt_chunk` which zeroizes on both success/error paths |
+| F-002 | P0 | Silent `let _ = ...` swallowed `set_share_revoked_at` errors | Collect errors in loop; return `Err(SharingError::Backend(...))` if any revocation mark fails |
+| F-003 | P0 | `insert_share` called before `create_share_package` in reissue loop (orphan rows) | Swapped order: HPKE package generated first, row inserted only on success |
+| F-004 | P0 | `shared-copy-<uuid>` blob names in manifest violated UUID v4 invariant; re-encrypted blobs not uploaded to `vault/` | Fixed to plain UUID v4 names; dual-namespace upload (both `vault/<uuid>.blob` and `shared/<fsid>/<uuid>.blob`) |
+| F-005 | P0 | `cloud_endpoint` always empty `{}`; fetch constructed wrong remote path | Set `path_prefix` field; fetch reads `cloud_endpoint["path_prefix"]` and prepends to chunk UUID |
+| F-006 | P1 | `strong_revoke_share` took duplicate `&dyn MetadataStore` + `&SqlCipherMetadataStore` params | Removed `metadata_store` param; single `sqlcipher_store` upcast where needed |
+| F-007 | P1 | No UUID v4 validation of `chunk_uuids` — path traversal risk | Added `is_uuid_v4_str` validator + `starts_with(staging_directory)` check; returns `InvalidSharePackage` |
+| F-009 | P2 | Error messages leaked blob paths/UUIDs | Replaced with opaque indexed messages `"(chunk {i})"` |
+| F-010 | P1 | No tests in `cloud.rs` | Added 3 tests: UUID v4 validation, non-v4 rejection, path-traversal rejection via mock |
+| F-011 | P1 | `list_blobs` failure silently treated as "no blobs" | Changed to `match`; `Err` arm adds explanatory comment documenting best-effort design |
+| F-012 | P2 | Missing `// TODO(phase-6)` markers on `cloud_endpoint` stubs | Added in `create_share` and `strong_revoke_share` |
+| F-013 | P2 | Module doc said "no decryption" but `create_share` calls HPKE encryption | Updated to accurately describe HPKE encryption and opaque blob copy |
+| F-008 | deferred | No `expires_at` check — requires `now_unix_seconds` from IPC session layer | Deferred to Phase 6 per plan §4.17 |
+
+### Design challenge resolutions
+- **DCL-001**: `shared-copy-<uuid>` staging files in `create_share` are transient-only (deleted before function return); they are never committed to the manifest. Concern 8 text accurately describes this intent. No plan amendment needed.
+- **DCL-002**: Architecture reviewer confirmed `strong_revoke_share` holding `&SqlCipherMetadataStore` directly is an authorised exception per the `rollback_snapshot_counter`/`list_sync_chunks` precedent (GS-002 rule anchor). Inline comment added in `revocation.rs` citing plan S-10.
+
+### Incidental fixes
+- Added `use crate::storage::CloudTransport;` import to `revocation.rs` test module (trait must be in scope for `MockCloudTransport` method calls)
+- Added 6 share CRUD stub implementations to `FakeSharingStore` in `packages.rs` (new `SharingStore` methods were not yet implemented in existing test double)
+- Added `ShareRecord` to test module imports in `packages.rs`
+
 
 Working directory: `C:\Users\chris\source\repos\arx-runa`. Execute governance-sync actions in order: GS-001 → GS-002 → GS-003 → GS-004 (schema + code touch points) → GS-005 (`/copilot-sync`). Then implement Section 5 Steps in order S-1 → S-2 → S-3 → S-4 → S-5 → S-6 → S-7 → S-8 (if not already covered by GS-004) → S-9 → S-10 → S-11 → S-12 (tests interleaved per file). The plan is self-contained — do not re-read the sub-phase unless contract ambiguity arises. Platform traps: staging directory path uses `storage::staging` helpers which already handle Windows/macOS/Linux parity; do not introduce new path-manipulation primitives. `MockCloudTransport` (feature `test-utils`) is required in tests; import via `use crate::storage::cloud::mock::MockCloudTransport;`. Never log `blob_name`s, `file_share_id`, `file_key`, or `cloud_endpoint` contents in any path. The strong-revocation test must verify that decrypting a new blob with the old `FileKey` fails with an AEAD auth error — this is the acceptance-criterion test for re-encryption correctness. Recipient-side `CloudTransport` construction against the owner's foreign bucket is deferred to Phase 6 UI wiring; tests exercise only `MockCloudTransport`. Invoke `security-reviewer` agent after `cargo test --workspace --all-targets --all-features` and `cargo clippy --all-targets --all-features -- -D warnings` both pass.

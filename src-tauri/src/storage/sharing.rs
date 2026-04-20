@@ -5,7 +5,8 @@ use rusqlite::{OptionalExtension, Row, params};
 use uuid::Uuid;
 
 use crate::sharing::{
-    Contact, ContactId, DisplayName, ReceivedShare, SharingError, SharingStore, X25519PublicKey,
+    Contact, ContactId, DisplayName, ReceivedShare, ShareRecord, SharingError, SharingStore,
+    X25519PublicKey,
 };
 use crate::storage::{SqlCipherMetadataStore, StorageError};
 
@@ -193,6 +194,7 @@ impl SharingStore for SqlCipherMetadataStore {
             .sender_contact_id
             .map(|contact_id| contact_id.to_uuid().hyphenated().to_string());
         let sender_public_key_blob = row.sender_public_key.as_bytes().to_vec();
+        let file_id = row.file_id.clone();
         let file_name = row.file_name.clone();
         let file_key_wrapped_blob = row.file_key_wrapped.to_vec();
         let chunk_count = row.chunk_count as i64;
@@ -207,11 +209,12 @@ impl SharingStore for SqlCipherMetadataStore {
         self.with_connection_blocking(move |connection| {
             connection
                 .execute(
-                    "INSERT INTO received_shares (share_id, sender_contact_id, sender_public_key, file_name, file_key_wrapped, chunk_count, chunk_size, chunk_uuids, cloud_endpoint, expires_at, imported_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    "INSERT INTO received_shares (share_id, sender_contact_id, sender_public_key, file_id, file_name, file_key_wrapped, chunk_count, chunk_size, chunk_uuids, cloud_endpoint, expires_at, imported_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                     params![
                         share_id,
                         sender_contact_id,
                         sender_public_key_blob,
+                        file_id,
                         file_name,
                         file_key_wrapped_blob,
                         chunk_count,
@@ -236,7 +239,7 @@ impl SharingStore for SqlCipherMetadataStore {
             .with_connection_blocking(move |connection| {
                 connection
                     .query_row(
-                        "SELECT share_id, sender_contact_id, sender_public_key, file_name, file_key_wrapped, chunk_count, chunk_size, chunk_uuids, cloud_endpoint, expires_at, imported_at FROM received_shares WHERE share_id = ?1",
+                        "SELECT share_id, sender_contact_id, sender_public_key, file_id, file_name, file_key_wrapped, chunk_count, chunk_size, chunk_uuids, cloud_endpoint, expires_at, imported_at FROM received_shares WHERE share_id = ?1",
                         params![share_id_owned],
                         map_received_share_row,
                     )
@@ -255,7 +258,7 @@ impl SharingStore for SqlCipherMetadataStore {
             .with_connection_blocking(move |connection| {
                 let mut statement = connection
                     .prepare(
-                        "SELECT share_id, sender_contact_id, sender_public_key, file_name, file_key_wrapped, chunk_count, chunk_size, chunk_uuids, cloud_endpoint, expires_at, imported_at FROM received_shares ORDER BY imported_at DESC, share_id ASC",
+                        "SELECT share_id, sender_contact_id, sender_public_key, file_id, file_name, file_key_wrapped, chunk_count, chunk_size, chunk_uuids, cloud_endpoint, expires_at, imported_at FROM received_shares ORDER BY imported_at DESC, share_id ASC",
                     )
                     .map_err(StorageError::from_rusqlite)?;
                 let mapped_rows = statement
@@ -271,6 +274,172 @@ impl SharingStore for SqlCipherMetadataStore {
             .map_err(map_received_share_error)?;
         rows.into_iter().map(parse_received_share_row).collect()
     }
+
+    /// Inserts one outgoing share row.
+    async fn insert_share(&self, share: &ShareRecord) -> Result<(), SharingError> {
+        let share_id = share.share_id.clone();
+        let file_id = share.file_id.clone();
+        let contact_id_text = share.contact_id.to_uuid().hyphenated().to_string();
+        let file_share_id = share.file_share_id.clone();
+        let cloud_path = share.cloud_path.clone();
+        let created_at = share.created_at;
+        let expires_at = share.expires_at;
+        let revoked_at = share.revoked_at;
+
+        self.with_connection_blocking(move |connection| {
+            connection
+                .execute(
+                    "INSERT INTO shares (share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![share_id, file_id, contact_id_text, file_share_id, cloud_path, created_at, expires_at, revoked_at],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+        .map_err(map_share_error)
+    }
+
+    /// Fetches one outgoing share row by share identifier.
+    async fn get_share(&self, share_id: &str) -> Result<ShareRecord, SharingError> {
+        let share_id_owned = share_id.to_owned();
+        let row = self
+            .with_connection_blocking(move |connection| {
+                connection
+                    .query_row(
+                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at FROM shares WHERE share_id = ?1",
+                        params![share_id_owned],
+                        map_share_row,
+                    )
+                    .optional()
+                    .map_err(StorageError::from_rusqlite)?
+                    .ok_or(StorageError::NotFound)
+            })
+            .await
+            .map_err(map_share_error)?;
+        parse_share_row(row)
+    }
+
+    /// Lists all share rows for a given file in deterministic order.
+    async fn list_shares_by_file(&self, file_id: &str) -> Result<Vec<ShareRecord>, SharingError> {
+        let file_id_owned = file_id.to_owned();
+        let rows = self
+            .with_connection_blocking(move |connection| {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at FROM shares WHERE file_id = ?1 ORDER BY created_at ASC, share_id ASC",
+                    )
+                    .map_err(StorageError::from_rusqlite)?;
+                let mapped_rows = statement
+                    .query_map(params![file_id_owned], map_share_row)
+                    .map_err(StorageError::from_rusqlite)?;
+                let mut rows = Vec::new();
+                for row in mapped_rows {
+                    rows.push(row.map_err(StorageError::from_rusqlite)?);
+                }
+                Ok(rows)
+            })
+            .await
+            .map_err(map_share_error)?;
+        rows.into_iter().map(parse_share_row).collect()
+    }
+
+    /// Lists only active (non-revoked) share rows for a given file.
+    async fn list_active_shares_by_file(
+        &self,
+        file_id: &str,
+    ) -> Result<Vec<ShareRecord>, SharingError> {
+        let file_id_owned = file_id.to_owned();
+        let rows = self
+            .with_connection_blocking(move |connection| {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at FROM shares WHERE file_id = ?1 AND revoked_at IS NULL ORDER BY created_at ASC, share_id ASC",
+                    )
+                    .map_err(StorageError::from_rusqlite)?;
+                let mapped_rows = statement
+                    .query_map(params![file_id_owned], map_share_row)
+                    .map_err(StorageError::from_rusqlite)?;
+                let mut rows = Vec::new();
+                for row in mapped_rows {
+                    rows.push(row.map_err(StorageError::from_rusqlite)?);
+                }
+                Ok(rows)
+            })
+            .await
+            .map_err(map_share_error)?;
+        rows.into_iter().map(parse_share_row).collect()
+    }
+
+    /// Lists only active share rows for a given `file_share_id`.
+    async fn list_active_shares_by_file_share_id(
+        &self,
+        file_share_id: &str,
+    ) -> Result<Vec<ShareRecord>, SharingError> {
+        let file_share_id_owned = file_share_id.to_owned();
+        let rows = self
+            .with_connection_blocking(move |connection| {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at FROM shares WHERE file_share_id = ?1 AND revoked_at IS NULL ORDER BY created_at ASC, share_id ASC",
+                    )
+                    .map_err(StorageError::from_rusqlite)?;
+                let mapped_rows = statement
+                    .query_map(params![file_share_id_owned], map_share_row)
+                    .map_err(StorageError::from_rusqlite)?;
+                let mut rows = Vec::new();
+                for row in mapped_rows {
+                    rows.push(row.map_err(StorageError::from_rusqlite)?);
+                }
+                Ok(rows)
+            })
+            .await
+            .map_err(map_share_error)?;
+        rows.into_iter().map(parse_share_row).collect()
+    }
+
+    /// Sets `revoked_at` timestamp on a share row (only if currently active).
+    ///
+    /// Returns `ShareNotFound` if the `share_id` does not exist, or
+    /// `ShareAlreadyRevoked` if `revoked_at IS NOT NULL`.
+    async fn set_share_revoked_at(
+        &self,
+        share_id: &str,
+        revoked_at: i64,
+    ) -> Result<(), SharingError> {
+        let share_id_owned = share_id.to_owned();
+        self.with_connection_blocking(move |connection| {
+            let tx = connection
+                .transaction()
+                .map_err(StorageError::from_rusqlite)?;
+            let existing_revoked_at = tx
+                .query_row(
+                    "SELECT revoked_at FROM shares WHERE share_id = ?1",
+                    params![share_id_owned.clone()],
+                    |row| row.get::<_, Option<i64>>(0),
+                )
+                .optional()
+                .map_err(StorageError::from_rusqlite)?
+                .ok_or(StorageError::NotFound)?;
+            if existing_revoked_at.is_some() {
+                return Err(StorageError::ConstraintViolation(
+                    "share already revoked".to_owned(),
+                ));
+            }
+            tx.execute(
+                "UPDATE shares SET revoked_at = ?1 WHERE share_id = ?2",
+                params![revoked_at, share_id_owned],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+        .map_err(|error| match error {
+            StorageError::NotFound => SharingError::ShareNotFound,
+            StorageError::ConstraintViolation(_) => SharingError::ShareAlreadyRevoked,
+            _ => SharingError::Backend("storage backend failure".to_owned()),
+        })
+    }
 }
 
 /// Checks whether a string is a valid hyphenated UUID v4.
@@ -285,6 +454,7 @@ type ReceivedShareRow = (
     String,
     Option<String>,
     Vec<u8>,
+    String,
     String,
     Vec<u8>,
     i64,
@@ -302,13 +472,14 @@ fn map_received_share_row(row: &Row<'_>) -> rusqlite::Result<ReceivedShareRow> {
         row.get::<_, Option<String>>(1)?,
         row.get::<_, Vec<u8>>(2)?,
         row.get::<_, String>(3)?,
-        row.get::<_, Vec<u8>>(4)?,
-        row.get::<_, i64>(5)?,
+        row.get::<_, String>(4)?,
+        row.get::<_, Vec<u8>>(5)?,
         row.get::<_, i64>(6)?,
-        row.get::<_, String>(7)?,
+        row.get::<_, i64>(7)?,
         row.get::<_, String>(8)?,
-        row.get::<_, Option<i64>>(9)?,
-        row.get::<_, i64>(10)?,
+        row.get::<_, String>(9)?,
+        row.get::<_, Option<i64>>(10)?,
+        row.get::<_, i64>(11)?,
     ))
 }
 
@@ -318,6 +489,7 @@ fn parse_received_share_row(row: ReceivedShareRow) -> Result<ReceivedShare, Shar
         share_id,
         sender_contact_id_text,
         sender_public_key_blob,
+        file_id,
         file_name,
         file_key_wrapped_blob,
         chunk_count,
@@ -354,6 +526,7 @@ fn parse_received_share_row(row: ReceivedShareRow) -> Result<ReceivedShare, Shar
         share_id,
         sender_contact_id,
         sender_public_key: X25519PublicKey::new(sender_public_key_bytes),
+        file_id,
         file_name,
         file_key_wrapped,
         chunk_count: chunk_count as u32,
@@ -374,6 +547,67 @@ fn map_received_share_error(error: StorageError) -> SharingError {
     }
 }
 
+/// Raw row tuple from a `shares` SELECT.
+type ShareRow = (
+    String,      // share_id
+    String,      // file_id
+    String,      // contact_id
+    String,      // file_share_id
+    String,      // cloud_path
+    i64,         // created_at
+    Option<i64>, // expires_at
+    Option<i64>, // revoked_at
+);
+
+/// Maps a single rusqlite row into the raw `ShareRow` tuple.
+fn map_share_row(row: &Row<'_>) -> rusqlite::Result<ShareRow> {
+    Ok((
+        row.get::<_, String>(0)?,
+        row.get::<_, String>(1)?,
+        row.get::<_, String>(2)?,
+        row.get::<_, String>(3)?,
+        row.get::<_, String>(4)?,
+        row.get::<_, i64>(5)?,
+        row.get::<_, Option<i64>>(6)?,
+        row.get::<_, Option<i64>>(7)?,
+    ))
+}
+
+/// Converts a raw `ShareRow` tuple into the domain `ShareRecord`.
+fn parse_share_row(row: ShareRow) -> Result<ShareRecord, SharingError> {
+    let (
+        share_id,
+        file_id,
+        contact_id_text,
+        file_share_id,
+        cloud_path,
+        created_at,
+        expires_at,
+        revoked_at,
+    ) = row;
+    let contact_uuid = Uuid::parse_str(&contact_id_text)
+        .map_err(|_| SharingError::InvalidContactId(contact_id_text.clone()))?;
+    Ok(ShareRecord {
+        share_id,
+        file_id,
+        contact_id: ContactId::from_uuid(contact_uuid),
+        file_share_id,
+        cloud_path,
+        created_at,
+        expires_at,
+        revoked_at,
+    })
+}
+
+/// Converts storage-domain failures into sharing-domain errors for outgoing shares.
+fn map_share_error(error: StorageError) -> SharingError {
+    match error {
+        StorageError::NotFound => SharingError::ShareNotFound,
+        StorageError::ConstraintViolation(message) => SharingError::ConstraintViolation(message),
+        _ => SharingError::Backend("storage backend failure".to_owned()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rusqlite::params;
@@ -381,7 +615,7 @@ mod tests {
     use uuid::Uuid;
 
     use crate::sharing::{
-        Contact, ContactId, DisplayName, SharingError, SharingStore, X25519PublicKey,
+        Contact, ContactId, DisplayName, ShareRecord, SharingError, SharingStore, X25519PublicKey,
     };
     use crate::storage::{SqlCipherMetadataStore, StorageError};
 
@@ -762,6 +996,7 @@ mod tests {
             share_id: Uuid::new_v4().hyphenated().to_string(),
             sender_contact_id: None,
             sender_public_key: X25519PublicKey::new([marker; 32]),
+            file_id: Uuid::new_v4().hyphenated().to_string(),
             file_name: format!("shared-doc-{marker}.pdf"),
             file_key_wrapped: [marker; 72],
             chunk_count: 2,
@@ -857,5 +1092,221 @@ mod tests {
             .await
             .expect("get should succeed");
         assert_eq!(fetched.expires_at, None);
+    }
+
+    /// Seeds a minimal `nodes` row required for outgoing-share foreign key constraints.
+    async fn seed_node(store: &SqlCipherMetadataStore, node_id: &str) {
+        let node_id_owned = node_id.to_owned();
+        store
+            .with_connection_blocking(move |connection| {
+                connection
+                    .execute(
+                        "INSERT INTO nodes (node_id, parent_id, node_type, name, created_at, modified_at, size_bytes, file_key_wrapped) VALUES (?1, NULL, 'file', 'test.txt', 1000, 1000, 100, ?2)",
+                        params![node_id_owned, vec![0xde_u8, 0xad, 0xbe, 0xef]],
+                    )
+                    .map_err(StorageError::from_rusqlite)?;
+                Ok(())
+            })
+            .await
+            .expect("node row insert should succeed");
+    }
+
+    /// Creates one outgoing `ShareRecord` test fixture with a unique share identifier.
+    fn sample_share(file_id: &str, contact_id: ContactId, marker: u8) -> ShareRecord {
+        let file_share_id = Uuid::new_v4().hyphenated().to_string();
+        let cloud_path = format!("shared/{}/", file_share_id);
+        ShareRecord {
+            share_id: Uuid::new_v4().hyphenated().to_string(),
+            file_id: file_id.to_owned(),
+            contact_id,
+            file_share_id,
+            cloud_path,
+            created_at: 1_700_000_000 + marker as i64,
+            expires_at: None,
+            revoked_at: None,
+        }
+    }
+
+    /// Verifies insert → get round-trip preserves all `ShareRecord` fields.
+    #[tokio::test]
+    async fn test_sharing_store_share_crud_round_trip_preserves_all_fields() {
+        let (_directory, store) = create_store().await;
+        let contact = sample_contact("Alice", Some("alice@example.com"), 1);
+        store
+            .insert_contact(&contact)
+            .await
+            .expect("contact insert should succeed");
+        let file_id = Uuid::new_v4().hyphenated().to_string();
+        seed_node(&store, &file_id).await;
+        let share = sample_share(&file_id, contact.contact_id, 0x01);
+
+        store
+            .insert_share(&share)
+            .await
+            .expect("insert should succeed");
+
+        let fetched = store
+            .get_share(&share.share_id)
+            .await
+            .expect("get should succeed");
+        assert_eq!(fetched.share_id, share.share_id);
+        assert_eq!(fetched.file_id, share.file_id);
+        assert_eq!(fetched.contact_id, share.contact_id);
+        assert_eq!(fetched.file_share_id, share.file_share_id);
+        assert_eq!(fetched.cloud_path, share.cloud_path);
+        assert_eq!(fetched.created_at, share.created_at);
+        assert_eq!(fetched.expires_at, share.expires_at);
+        assert_eq!(fetched.revoked_at, share.revoked_at);
+    }
+
+    /// Verifies `list_shares_by_file` returns only shares matching the given file identifier.
+    #[tokio::test]
+    async fn test_sharing_store_list_shares_by_file_returns_only_matching_file() {
+        let (_directory, store) = create_store().await;
+        let contact = sample_contact("Bob", None, 2);
+        store
+            .insert_contact(&contact)
+            .await
+            .expect("contact insert should succeed");
+        let file_id_a = Uuid::new_v4().hyphenated().to_string();
+        let file_id_b = Uuid::new_v4().hyphenated().to_string();
+        seed_node(&store, &file_id_a).await;
+        seed_node(&store, &file_id_b).await;
+        let share_a = sample_share(&file_id_a, contact.contact_id, 0x01);
+        let share_b = sample_share(&file_id_b, contact.contact_id, 0x02);
+        store
+            .insert_share(&share_a)
+            .await
+            .expect("insert share_a should succeed");
+        store
+            .insert_share(&share_b)
+            .await
+            .expect("insert share_b should succeed");
+
+        let listed = store
+            .list_shares_by_file(&file_id_a)
+            .await
+            .expect("list should succeed");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].share_id, share_a.share_id);
+    }
+
+    /// Verifies `list_active_shares_by_file` excludes rows with a non-null `revoked_at`.
+    #[tokio::test]
+    async fn test_sharing_store_list_active_shares_by_file_excludes_revoked() {
+        let (_directory, store) = create_store().await;
+        let contact = sample_contact("Carol", None, 3);
+        store
+            .insert_contact(&contact)
+            .await
+            .expect("contact insert should succeed");
+        let file_id = Uuid::new_v4().hyphenated().to_string();
+        seed_node(&store, &file_id).await;
+        let share_active = sample_share(&file_id, contact.contact_id, 0x01);
+        let share_revoked = sample_share(&file_id, contact.contact_id, 0x02);
+        store
+            .insert_share(&share_active)
+            .await
+            .expect("insert active should succeed");
+        store
+            .insert_share(&share_revoked)
+            .await
+            .expect("insert revoked should succeed");
+        store
+            .set_share_revoked_at(&share_revoked.share_id, 1_800_000_000)
+            .await
+            .expect("revoke should succeed");
+
+        let listed = store
+            .list_active_shares_by_file(&file_id)
+            .await
+            .expect("list should succeed");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].share_id, share_active.share_id);
+    }
+
+    /// Verifies `list_active_shares_by_file_share_id` filters by `file_share_id` and excludes revoked rows.
+    #[tokio::test]
+    async fn test_sharing_store_list_active_shares_by_file_share_id_returns_correct_shares() {
+        let (_directory, store) = create_store().await;
+        let contact = sample_contact("Dave", None, 4);
+        store
+            .insert_contact(&contact)
+            .await
+            .expect("contact insert should succeed");
+        let file_id = Uuid::new_v4().hyphenated().to_string();
+        seed_node(&store, &file_id).await;
+        let target_file_share_id = Uuid::new_v4().hyphenated().to_string();
+        let other_file_share_id = Uuid::new_v4().hyphenated().to_string();
+        let mut share_1 = sample_share(&file_id, contact.contact_id, 0x01);
+        share_1.file_share_id = target_file_share_id.clone();
+        share_1.cloud_path = format!("shared/{}/", target_file_share_id);
+        let mut share_2 = sample_share(&file_id, contact.contact_id, 0x02);
+        share_2.file_share_id = target_file_share_id.clone();
+        share_2.cloud_path = format!("shared/{}/", target_file_share_id);
+        let mut share_3 = sample_share(&file_id, contact.contact_id, 0x03);
+        share_3.file_share_id = other_file_share_id.clone();
+        share_3.cloud_path = format!("shared/{}/", other_file_share_id);
+        store
+            .insert_share(&share_1)
+            .await
+            .expect("insert share_1 should succeed");
+        store
+            .insert_share(&share_2)
+            .await
+            .expect("insert share_2 should succeed");
+        store
+            .insert_share(&share_3)
+            .await
+            .expect("insert share_3 should succeed");
+
+        let listed = store
+            .list_active_shares_by_file_share_id(&target_file_share_id)
+            .await
+            .expect("list should succeed");
+        assert_eq!(listed.len(), 2);
+        let returned_ids: std::collections::HashSet<&str> =
+            listed.iter().map(|share| share.share_id.as_str()).collect();
+        assert!(returned_ids.contains(share_1.share_id.as_str()));
+        assert!(returned_ids.contains(share_2.share_id.as_str()));
+    }
+
+    /// Verifies `set_share_revoked_at` on a missing share identifier returns `ShareNotFound`.
+    #[tokio::test]
+    async fn test_sharing_store_set_share_revoked_at_on_missing_share_returns_share_not_found() {
+        let (_directory, store) = create_store().await;
+
+        let result = store
+            .set_share_revoked_at(&Uuid::new_v4().hyphenated().to_string(), 1_800_000_000)
+            .await;
+        assert!(matches!(result, Err(SharingError::ShareNotFound)));
+    }
+
+    /// Verifies `set_share_revoked_at` on an already-revoked share returns `ShareAlreadyRevoked`.
+    #[tokio::test]
+    async fn test_sharing_store_set_share_revoked_at_on_already_revoked_share_returns_share_already_revoked()
+     {
+        let (_directory, store) = create_store().await;
+        let contact = sample_contact("Eve", None, 5);
+        store
+            .insert_contact(&contact)
+            .await
+            .expect("contact insert should succeed");
+        let file_id = Uuid::new_v4().hyphenated().to_string();
+        seed_node(&store, &file_id).await;
+        let share = sample_share(&file_id, contact.contact_id, 0x01);
+        store
+            .insert_share(&share)
+            .await
+            .expect("insert should succeed");
+        store
+            .set_share_revoked_at(&share.share_id, 1_800_000_000)
+            .await
+            .expect("first revoke should succeed");
+
+        let result = store
+            .set_share_revoked_at(&share.share_id, 1_900_000_000)
+            .await;
+        assert!(matches!(result, Err(SharingError::ShareAlreadyRevoked)));
     }
 }

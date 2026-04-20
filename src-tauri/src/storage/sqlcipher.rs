@@ -386,6 +386,80 @@ impl SqlCipherMetadataStore {
         .await
     }
 
+    /// Replaces a file's wrapped key and all chunk rows in a single atomic transaction,
+    /// queueing old blobs for pending deletion.
+    ///
+    /// Intentionally SQLCipher-specific; this method is not exposed on [`MetadataStore`].
+    pub(crate) async fn replace_file_key_and_chunks(
+        &self,
+        file_id: Uuid,
+        new_file_key_wrapped: [u8; 72],
+        new_chunks: Vec<ChunkRecord>,
+        queued_at: i64,
+    ) -> Result<(), StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            let file_id_text = file_id.hyphenated().to_string();
+
+            let mut stmt = tx
+                .prepare("SELECT blob_name FROM chunks WHERE node_id = ?1")
+                .map_err(StorageError::from_rusqlite)?;
+            let old_blob_names: Vec<String> =
+                stmt.query_map(params![file_id_text.clone()], |row| row.get(0))
+                    .map_err(StorageError::from_rusqlite)?
+                    .map(|r| r.map_err(StorageError::from_rusqlite))
+                    .collect::<Result<Vec<_>, _>>()?;
+            drop(stmt);
+
+            for blob_name in &old_blob_names {
+                tx.execute(
+                    "INSERT OR IGNORE INTO pending_deletions (blob_name, queued_at) VALUES (?1, ?2)",
+                    params![blob_name, queued_at],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            }
+
+            tx.execute(
+                "DELETE FROM chunks WHERE node_id = ?1",
+                params![file_id_text.clone()],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+
+            let wrapped_blob = new_file_key_wrapped.to_vec();
+            let rows_updated = tx
+                .execute(
+                    "UPDATE nodes SET file_key_wrapped = ?1 WHERE node_id = ?2",
+                    params![wrapped_blob, file_id_text.clone()],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            if rows_updated == 0 {
+                return Err(StorageError::NotFound);
+            }
+
+            for chunk in &new_chunks {
+                let chunk_id_text = chunk.chunk_id.hyphenated().to_string();
+                let node_id_text = chunk.node_id.to_string();
+                let checksum_blob = chunk.blake3_checksum.to_vec();
+                tx.execute(
+                    "INSERT INTO chunks (chunk_id, node_id, chunk_index, blob_name, size_padded, blake3_checksum) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        chunk_id_text,
+                        node_id_text,
+                        chunk.chunk_index as i64,
+                        chunk.blob_name.clone(),
+                        chunk.size_padded as i64,
+                        checksum_blob,
+                    ],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            }
+
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
     #[cfg(test)]
     pub(crate) async fn drop_manifest_meta_table_for_tests(&self) -> Result<(), StorageError> {
         self.with_connection_blocking(move |conn| {
@@ -2411,5 +2485,79 @@ mod tests {
                 .expect("meta should load"),
             Some("16".to_owned())
         );
+    }
+
+    /// Verifies `replace_file_key_and_chunks` atomically replaces chunks and queues old blobs.
+    #[tokio::test]
+    async fn test_replace_file_key_and_chunks_atomically_replaces_chunks_and_queues_deletions() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+
+        let file_id = Uuid::new_v4();
+        let old_blob_a = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        let old_blob_b = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        store
+            .insert_file_with_chunks(
+                &file_node(file_id, None, "file.txt"),
+                &[
+                    chunk_for(file_id, 0, old_blob_a),
+                    chunk_for(file_id, 1, old_blob_b),
+                ],
+            )
+            .await
+            .expect("file and chunks should insert");
+
+        let new_blob_name = format!("shared-copy-{}", Uuid::new_v4().hyphenated());
+        let new_chunk = ChunkRecord {
+            chunk_id: Uuid::new_v4(),
+            node_id: file_id.into(),
+            chunk_index: 0,
+            blob_name: new_blob_name.clone(),
+            size_padded: 4_194_304,
+            blake3_checksum: [0xAB; 32],
+        };
+        let new_key: [u8; 72] = [0x55; 72];
+
+        store
+            .replace_file_key_and_chunks(file_id, new_key, vec![new_chunk], 9999)
+            .await
+            .expect("replace_file_key_and_chunks should succeed");
+
+        let pending = store
+            .list_pending_deletions(10)
+            .await
+            .expect("pending_deletions should load");
+        assert!(pending.contains(&old_blob_a.to_owned()));
+        assert!(pending.contains(&old_blob_b.to_owned()));
+
+        let chunks = store.get_chunks(file_id).await.expect("chunks should load");
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].blob_name, new_blob_name);
+
+        let node = store.get_node(file_id).await.expect("node should load");
+        assert_eq!(node.file_key_wrapped, Some(new_key));
+    }
+
+    /// Verifies `replace_file_key_and_chunks` returns `NotFound` when the file node is absent.
+    #[tokio::test]
+    async fn test_replace_file_key_and_chunks_on_missing_node_returns_not_found() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+
+        let result = store
+            .replace_file_key_and_chunks(Uuid::new_v4(), [0x11; 72], vec![], 1234)
+            .await;
+
+        assert!(matches!(result, Err(StorageError::NotFound)));
     }
 }

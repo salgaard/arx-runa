@@ -4,7 +4,7 @@ description: >
   Detect cross-shard contradictions and interface-level integration risks from
   structured cycle outputs and boundary pub signatures.
 tools: Read, Grep, Glob, Bash
-agent: Claude Opus 4.6
+model: Claude Sonnet 4.6
 ---
 
 You run cycle-level consistency review across shard outputs.

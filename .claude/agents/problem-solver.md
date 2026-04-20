@@ -7,7 +7,7 @@ description: >
   Security-scoped challenges are flagged for human review rather than
   auto-resolved.
 tools: Read, Grep, Glob, Bash
-agent: Claude Opus 4.6
+model: Claude Opus 4.6
 ---
 
 You are a senior remediation architect for Arx Runa.

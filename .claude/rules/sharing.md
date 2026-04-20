@@ -31,3 +31,7 @@ paths:
 ## Storage placement
 - Contacts CRUD lives in `storage::sharing`.
 - Do not colocate sharing CRUD in `storage::sqlcipher`; mirror the destination-session split pattern.
+
+## Revocation contract
+- Revocation blob deletion runs as a sequential loop; on failure, `SharingError::RevocationPartial { failed_index }` is returned with `shares.revoked_at` unchanged so the operation can be retried.
+- Strong revocation rotates `file_key` and `file_share_id` atomically at the manifest layer (`replace_file_key_and_chunks`) before shared-folder cleanup.

@@ -97,6 +97,7 @@ CREATE TABLE received_shares (
     share_id             TEXT PRIMARY KEY,
     sender_contact_id    TEXT REFERENCES contacts(contact_id),
     sender_public_key    BLOB NOT NULL,       -- X25519 public key, 32 bytes
+    file_id              TEXT NOT NULL,       -- file node identifier (UUID v4)
     file_name            TEXT NOT NULL,
     file_key_wrapped     BLOB NOT NULL,
     chunk_count          INTEGER NOT NULL,
