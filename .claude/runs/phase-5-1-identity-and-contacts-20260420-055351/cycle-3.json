@@ -1,0 +1,14 @@
+{
+  "cycle": 3,
+  "findings": [
+    {
+      "id": "CF-003",
+      "severity": "MEDIUM",
+      "disposition": "ACTIONABLE_NOW",
+      "source_id": "architecture-sharing-storage-remediation-cycle-3-001"
+    }
+  ],
+  "override_records": [],
+  "cross_shard_finding_count": 0,
+  "actionable_remaining": 0
+}

@@ -2,6 +2,7 @@
 applyTo: "src-tauri/**/*.rs"
 ---
 
+
 # Rust — project-wide rules
 
 ## Structure
@@ -41,3 +42,4 @@ applyTo: "src-tauri/**/*.rs"
 
 ## Formatting
 - `cargo fmt` + `cargo clippy -- -D warnings` before commit
+

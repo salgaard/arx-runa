@@ -2,6 +2,7 @@
 applyTo: "src-tauri/src/ui/**,src-tauri/tauri.conf.json,src-tauri/capabilities/**,src-tauri/build.rs"
 ---
 
+
 # Tauri — rules
 
 **Design specification**: `docs/architecture/designs/tauri-ipc-and-frontend/design.md` — last verified against design dated 2026-04-12
@@ -41,3 +42,4 @@ applyTo: "src-tauri/src/ui/**,src-tauri/tauri.conf.json,src-tauri/capabilities/*
 ## Plugins
 - Keep plugin surface minimal and tightly scoped
 - Never: `shell` (general), `http`, `clipboard`, or unrestricted filesystem permissions. Exception: `tauri-plugin-shell` may be enabled with a scoped `shell:allow-execute` permission targeting the bundled `rclone` sidecar only (`{ "name": "rclone", "sidecar": true }`). OAuth browser launches use `tauri_plugin_opener`, never the shell plugin.
+

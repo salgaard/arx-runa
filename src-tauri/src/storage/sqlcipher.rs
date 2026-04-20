@@ -397,7 +397,10 @@ impl SqlCipherMetadataStore {
     }
 
     /// Executes a blocking SQLite closure without stalling the async runtime.
-    async fn with_connection_blocking<T, F>(&self, operation: F) -> Result<T, StorageError>
+    pub(crate) async fn with_connection_blocking<T, F>(
+        &self,
+        operation: F,
+    ) -> Result<T, StorageError>
     where
         F: FnOnce(&mut Connection) -> Result<T, StorageError> + Send + 'static,
         T: Send + 'static,

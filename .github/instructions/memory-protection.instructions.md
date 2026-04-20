@@ -2,6 +2,7 @@
 applyTo: "src-tauri/src/memory/**"
 ---
 
+
 # Memory protection — rules
 
 ## Purpose
@@ -21,3 +22,4 @@ Platform-specific unsafe code (mlock/VirtualLock). Isolate unsafe in minimal sub
 - mlock failure for session keys = **hard error** (no silent degradation)
 - Return `Result::Err` with actionable guidance, not panic
 - The mlock / VirtualLock wrapper exposes a Result<(), MemoryLockError> surface; callers map it into their own error enum (e.g., auth converts to AuthenticationError::MemoryLockFailed).
+

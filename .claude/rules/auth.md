@@ -56,6 +56,7 @@ paths:
 - `SessionManager::install_session` transitions `NoSession | Expired → Active` with pre-derived keys; `SessionManager::swap_active_session` rotates keys while staying `Active` (used by password change and key file rotation). Neither method re-runs KDF.
 - The `pending-vault-header.json` staging file is written under `dirs::config_dir() / "arx-runa/"` with owner-only permissions during password change and key rotation. The startup retry loop is Phase 4.3 territory.
 - Forward declarations: `VaultHeader` (`src-tauri/src/storage/cloud/vault_header.rs`) originates in Phase 2.4 and is extended by Phase 4.3. `CloudTransport` (`src-tauri/src/storage/cloud/mod.rs`) is replaced by the canonical 4-method surface in Phase 4.1; ceremonies call it via staging-file semantics. `MANIFEST_BACKUP_BLOB_NAME` originates in `storage::cloud::manifest_backup` in Phase 4.4; do not re-declare in `auth::ceremonies`.
+- `vault_identity` is written once during `create_vault` and re-wrapped in place during `change_password` and `rotate_key_file`; sharing code may read `vault_identity.public_key` only and must never insert, update, or delete that row.
 
 ## Recovery slots
 - Recovery is opt-in and post-creation via `setup_recovery`; users who do not configure a slot cannot recover from lost credentials.

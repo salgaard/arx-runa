@@ -2,6 +2,7 @@
 applyTo: "src-tauri/src/crypto/**"
 ---
 
+
 # Crypto module — rules
 
 **Design specification**: `docs/architecture/designs/cryptographic-primitives/design.md` — last verified against design dated 2026-04-01
@@ -41,3 +42,4 @@ applyTo: "src-tauri/src/crypto/**"
 ## Argon2id parameters
 - m = 65536 KiB, t = 3, p = 4 (RFC 9106 §4 recommended tier)
 - See `docs/architecture/designs/authentication-and-session-management/design.md` for full derivation context
+

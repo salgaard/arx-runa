@@ -8,6 +8,7 @@ pub mod error;
 pub mod metadata_store;
 pub mod pipeline;
 pub(crate) mod schema;
+pub mod sharing;
 pub mod sqlcipher;
 pub mod staging;
 pub mod types;

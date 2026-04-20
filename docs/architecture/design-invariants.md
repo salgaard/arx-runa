@@ -97,3 +97,11 @@ This reference captures cross-phase contracts that must stay consistent across a
 - [File Sharing](designs/file-sharing/design.md)
 - [Cloud Synchronisation](designs/cloud-synchronisation/design.md)
 
+### 13) Vault identity ownership and read-only sharing access
+
+**Invariant**: Exactly one `vault_identity` row exists per vault (`id = 1`). Identity creation is owned by `auth::ceremonies::create_vault`, credential rotations re-wrap the existing row in place, and sharing code may read `vault_identity.public_key` only.
+
+**Source designs**:
+- [Authentication & Session Management](designs/authentication-and-session-management/design.md)
+- [File Sharing](designs/file-sharing/design.md)
+

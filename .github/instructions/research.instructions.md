@@ -2,6 +2,7 @@
 applyTo: "docs/research/**"
 ---
 
+
 # Research documents — rules
 
 ## Required sections
@@ -62,3 +63,4 @@ Every document must open with this block immediately after the H1 title:
 ## Privacy model
 - Evaluate every proposed approach against Arx Runa's zero-knowledge threat model
 - Explicitly state whether a technique preserves fixed-size blobs and metadata privacy
+

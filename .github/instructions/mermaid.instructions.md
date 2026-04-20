@@ -2,6 +2,7 @@
 applyTo: "docs/architecture/designs/**/diagrams/**,docs/architecture/diagrams/**"
 ---
 
+
 # Mermaid Diagrams — Rules
 
 **Full syntax reference**: `.claude/reference/mermaid.md`
@@ -91,3 +92,4 @@ classDef infra    fill:#6b7280,stroke:#374151,color:#fff  %% external systems
 
 - Source files: <!-- relevant src-tauri/src/ paths -->
 ```
+

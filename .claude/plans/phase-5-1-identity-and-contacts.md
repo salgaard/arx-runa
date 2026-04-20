@@ -1,7 +1,7 @@
 ---
 title: "Phase 5.1 — Sharing Module Surface for X25519 Identity and Contacts"
 created: "2026-04-20T00:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 5
 sub-phase: "5.1"
 design-document: docs/architecture/designs/file-sharing/design.md
@@ -61,7 +61,7 @@ Introduce a new `sharing` module that exposes the already-generated X25519 ident
 - **A-4** — `SqlCipherMetadataStore` implements `SharingStore` directly; the trait lives in `sharing::store` and the impl lives in `storage::sharing`. Both traits share the same `Arc<Mutex<Connection>>` via the existing `with_connection_blocking` helper.
 - **A-5** — Public-key export produces two distinct outputs: raw 32-byte slice for file export and standard-padded base64 string for QR data. No wrapper framing, no magic bytes, no length prefix.
 - **A-6** — No private-key unwrap occurs in 5.1. The zeroization obligation stated in the sub-phase security review applies to 5.2's HPKE-open site, not to 5.1 code.
-- **A-7** — `SharingError` is a new `thiserror` enum in `src-tauri/src/sharing/error.rs`. It converts from `StorageError` via an explicit `From` impl and does not leak `rusqlite` error messages verbatim to the caller.
+- **A-7** — `SharingError` is a new `thiserror` enum in `src-tauri/src/sharing/error.rs`. Storage-to-sharing conversion is performed at the `storage::sharing` adapter boundary and does not leak raw `rusqlite` error messages verbatim to callers.
 - **A-8** — Contacts are identified by `ContactId` (UUID v4 newtype). `insert_contact` expects the caller to generate the UUID; the store does not auto-generate. `created_at` is the caller-provided Unix timestamp, matching the Phase 3 `Node::created_at` convention, to keep timestamps deterministic in tests.
 - **A-9** — `display_name` is validated as non-empty after trim; `email` is an optional nullable `TEXT` and is not syntactically validated (display-only per design lines 55–56).
 - **A-10** — `x25519-dalek` v2 `StaticSecret` / `PublicKey` are `#[cfg(test)]`-only usage inside the sharing tests. Production sharing code does **not** import `x25519-dalek` in 5.1 (no keypair handling yet).
@@ -335,3 +335,102 @@ Run order: GS-1 → GS-2 → GS-3 → GS-4 (GS-4 must be last; it depends on the
 ## 9. Handoff Notes for Implementer
 
 Working directory: `C:\Users\chris\source\repos\arx-runa\`. This plan is self-contained; do not re-derive context from the sub-phase document without reading the C-1 resolution first — the sub-phase's Deliverables §1 and §2 look like "generate a keypair" but the keypair already exists at `src-tauri/src/auth/ceremonies/create.rs:123-147`. **Do not** add a second keypair generation path. Execute Section 8 governance actions (GS-1 … GS-4) before writing any code; both rule files and the Copilot mirror must be coherent before review. Then create the `sharing` module tree per Section 5 steps 1–6 and the storage impl per step 5. Ceremony-layer tests must acquire `ceremony_lock` to avoid interference with other auth tests; see `src-tauri/src/auth/ceremonies/test_support.rs` for the pattern. Platform note: no platform-gated code in 5.1 — all work is pure-Rust SQLCipher and crypto-adjacent. Validate with the user's preferred command: `cargo test --workspace --all-targets --all-features`. Security-reviewer invocation is mandatory per the sub-phase (see Section 6b for focus areas).
+
+## Implementation Log
+
+- **Date**: 2026-04-20T06:01:00+02:00
+- **Run ID**: `phase-5-1-identity-and-contacts-20260420-055351`
+- **Track**: `full`
+- **Branch**: `development`
+- **Execution mode**: Orchestrator direct implementation (fallback path used for coding steps in this run).
+
+### Agent evidence
+
+| Approach step | Agent | Agent ID | Outcome |
+|---|---|---|---|
+| Rust quality review cycle 1 | `rust-reviewer` | `phase51-rust-review2` | 1 MEDIUM finding |
+| Security review cycle 1 | `security-reviewer` | `phase51-security-review2` | 1 WARNING finding |
+| Rust quality re-review | `rust-reviewer` | `phase51-rust-review3` | No actionable findings |
+| Security re-review | `security-reviewer` | `phase51-security-review3` | 1 NOTE finding (deferred by plan) |
+| Architecture review cycle 1 | `architecture-reviewer` | `phase51-arch-review3` | 1 MEDIUM finding |
+| Test expansion audit | `test-writer` | `phase51-test-writer` | Added adversarial tests in `storage::sharing` |
+
+### Files changed
+
+- `.claude/plans/phase-5-1-identity-and-contacts.md`
+- `.claude/rules/auth.md`
+- `.claude/rules/storage.md`
+- `.claude/rules/sharing.md`
+- `.github/instructions/auth.instructions.md`
+- `.github/instructions/crypto.instructions.md`
+- `.github/instructions/leptos.instructions.md`
+- `.github/instructions/memory-protection.instructions.md`
+- `.github/instructions/mermaid.instructions.md`
+- `.github/instructions/research.instructions.md`
+- `.github/instructions/rust.instructions.md`
+- `.github/instructions/storage.instructions.md`
+- `.github/instructions/tauri.instructions.md`
+- `.github/instructions/sharing.instructions.md`
+- `docs/architecture/design-invariants.md`
+- `docs/architecture/designs/file-sharing/sub-phases/5.1-identity-and-contacts.md`
+- `src-tauri/src/lib.rs`
+- `src-tauri/src/storage/mod.rs`
+- `src-tauri/src/storage/sqlcipher.rs`
+- `src-tauri/src/storage/sharing.rs`
+- `src-tauri/src/sharing/mod.rs`
+- `src-tauri/src/sharing/error.rs`
+- `src-tauri/src/sharing/identity.rs`
+- `src-tauri/src/sharing/store.rs`
+- `src-tauri/src/sharing/types/mod.rs`
+- `src-tauri/src/sharing/types/contact_id.rs`
+- `src-tauri/src/sharing/types/display_name.rs`
+- `src-tauri/src/sharing/types/fingerprint.rs`
+- `src-tauri/src/sharing/types/x25519_public_key.rs`
+
+### Verification
+
+- **Formatting check**: `cargo fmt --all -- --check` passed (after formatting once).
+- **Clippy results**: `cargo clippy --workspace --all-targets --all-features -- -D warnings` passed.
+- **Test results**: `cargo test --workspace --all-targets --all-features` passed (`557 passed; 0 failed; 1 ignored` in the main library run).
+- **Release build**: `cargo build --workspace --release` passed.
+
+### Review outcomes
+
+- **Rust review**: MEDIUM issue for UUID v4 contract enforcement on `ContactId`; remediated.
+- **Architecture review**: MEDIUM issue for dependency direction (`sharing::error` coupled to `StorageError`); remediated by local adapter mapping in `storage::sharing`.
+- **Security review**: WARNING issue for unsanitized backend error propagation; remediated. One NOTE about `received_shares.sender_public_key` schema alignment remains deferred to later phase scope.
+- **Cross-shard review**: N/A (single shard).
+- **Findings quality gate**: `ACTIONABLE_NOW=3`, `DEFERRED_BY_PLAN=1`, `INTENTIONAL_DECISION=0`, `INSUFFICIENT_EVIDENCE=0`.
+- **Finding overrides**: None.
+- **Design challenge outcomes**: None.
+
+### Governance sync
+
+- **Actions executed**: 4 (`GS-1`..`GS-4`).
+- **Files updated**: `.claude/rules/{sharing,storage,auth}.md` and mirrored `.github/instructions/*.instructions.md`.
+- **copilot-sync outcome**: OK (no degraded state).
+
+### Sub-phase decisions sync
+
+- **Doc path**: `docs/architecture/designs/file-sharing/sub-phases/5.1-identity-and-contacts.md`
+- **Decisions added/updated**: 5 bullets under `## Implementation Decisions`.
+
+### Deviations from plan
+
+- `SharingError` no longer implements `From<StorageError>` directly; storage-to-sharing conversion moved into `storage::sharing` to preserve boundary direction.
+- Added explicit UUID v4 enforcement at storage boundary and decode paths to align with the contact ID contract.
+
+### Documentation flagged
+
+- Required this run and completed:
+  - `docs/architecture/designs/file-sharing/sub-phases/5.1-identity-and-contacts.md`
+  - `docs/architecture/design-invariants.md`
+- Deferred by plan:
+  - `docs/architecture/designs/file-sharing/design.md` Open Decisions row for contact deduplication policy.
+  - `docs/architecture/designs/file-sharing/sub-phases/roadmap.md` scope-estimate cosmetic update.
+- Not applicable:
+  - `docs/architecture/designs/file-sharing/diagrams/file-sharing-flow.md`
+
+### Run state path
+
+- `.claude/runs/phase-5-1-identity-and-contacts-20260420-055351/`

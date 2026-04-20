@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod crypto;
 pub mod memory;
+pub mod sharing;
 pub mod storage;
 pub mod sync;
 pub mod ui;
