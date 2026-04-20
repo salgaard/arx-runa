@@ -17,9 +17,9 @@ pub mod types;
 
 pub use autodetect::find_key_file;
 pub use ceremonies::{
-    ChangePasswordRequest, CreateVaultRequest, RecoverVaultRequest, RecoverWithPhraseRequest,
-    RotateKeyFileRequest, SetupRecoveryRequest, Tier, change_password, create_vault, recover_vault,
-    recover_with_phrase, rotate_key_file, setup_recovery,
+    Argon2MigrationIntent, ChangePasswordRequest, CreateVaultRequest, RecoverVaultRequest,
+    RecoverWithPhraseRequest, RotateKeyFileRequest, SetupRecoveryRequest, Tier, change_password,
+    create_vault, recover_vault, recover_with_phrase, rotate_key_file, setup_recovery,
 };
 pub use device_monitor::{DeviceEvent, DeviceMonitor};
 pub use error::{AuthenticationError, KeySourceError};

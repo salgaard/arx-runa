@@ -25,8 +25,22 @@ impl FileKey {
         Self(secret_box)
     }
 
+    /// Invokes `callback` with the key bytes for immediate cryptographic use.
+    #[allow(dead_code)]
+    pub(crate) fn with_exposed<R>(&self, callback: impl FnOnce(&[u8; 32]) -> R) -> R {
+        callback(self.0.expose_secret())
+    }
+
     /// Exposes the key bytes for cryptographic operations.
     #[allow(dead_code)]
+    #[cfg(not(test))]
+    pub(in crate::crypto) fn expose(&self) -> &[u8; 32] {
+        self.0.expose_secret()
+    }
+
+    /// Test-only raw key view helper.
+    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn expose(&self) -> &[u8; 32] {
         self.0.expose_secret()
     }
@@ -51,8 +65,22 @@ impl KeyEncryptionKey {
         Self::from_secret_box(SecretBox::new(Box::new(bytes)))
     }
 
+    /// Invokes `callback` with the key bytes for immediate cryptographic use.
+    #[allow(dead_code)]
+    pub(crate) fn with_exposed<R>(&self, callback: impl FnOnce(&[u8; 32]) -> R) -> R {
+        callback(self.0.expose_secret())
+    }
+
     /// Exposes the key bytes for cryptographic operations.
     #[allow(dead_code)]
+    #[cfg(not(test))]
+    pub(in crate::crypto) fn expose(&self) -> &[u8; 32] {
+        self.0.expose_secret()
+    }
+
+    /// Test-only raw key view helper.
+    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn expose(&self) -> &[u8; 32] {
         self.0.expose_secret()
     }
@@ -77,8 +105,22 @@ impl SqlcipherKey {
         Self::from_secret_box(SecretBox::new(Box::new(bytes)))
     }
 
+    /// Invokes `callback` with the key bytes for immediate cryptographic use.
+    #[allow(dead_code)]
+    pub(crate) fn with_exposed<R>(&self, callback: impl FnOnce(&[u8; 32]) -> R) -> R {
+        callback(self.0.expose_secret())
+    }
+
     /// Exposes the key bytes for cryptographic operations.
     #[allow(dead_code)]
+    #[cfg(not(test))]
+    pub(in crate::crypto) fn expose(&self) -> &[u8; 32] {
+        self.0.expose_secret()
+    }
+
+    /// Test-only raw key view helper.
+    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn expose(&self) -> &[u8; 32] {
         self.0.expose_secret()
     }
@@ -103,8 +145,22 @@ impl ManifestKey {
         Self::from_secret_box(SecretBox::new(Box::new(bytes)))
     }
 
+    /// Invokes `callback` with the key bytes for immediate cryptographic use.
+    #[allow(dead_code)]
+    pub(crate) fn with_exposed<R>(&self, callback: impl FnOnce(&[u8; 32]) -> R) -> R {
+        callback(self.0.expose_secret())
+    }
+
     /// Exposes the key bytes for cryptographic operations.
     #[allow(dead_code)]
+    #[cfg(not(test))]
+    pub(in crate::crypto) fn expose(&self) -> &[u8; 32] {
+        self.0.expose_secret()
+    }
+
+    /// Test-only raw key view helper.
+    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn expose(&self) -> &[u8; 32] {
         self.0.expose_secret()
     }
@@ -137,8 +193,21 @@ impl MasterKey {
         Self(secret_box)
     }
 
+    /// Invokes `callback` with the key bytes for immediate cryptographic use.
+    pub(crate) fn with_exposed<R>(&self, callback: impl FnOnce(&[u8; 32]) -> R) -> R {
+        callback(self.0.expose_secret())
+    }
+
     /// Exposes the key bytes for cryptographic operations.
     #[allow(dead_code)]
+    #[cfg(not(test))]
+    pub(in crate::crypto) fn expose(&self) -> &[u8; 32] {
+        self.0.expose_secret()
+    }
+
+    /// Test-only raw key view helper.
+    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn expose(&self) -> &[u8; 32] {
         self.0.expose_secret()
     }
@@ -168,8 +237,22 @@ impl RecoveryKey {
         Self::from_secret_box(SecretBox::new(Box::new(bytes)))
     }
 
+    /// Invokes `callback` with the key bytes for immediate cryptographic use.
+    #[allow(dead_code)]
+    pub(crate) fn with_exposed<R>(&self, callback: impl FnOnce(&[u8; 32]) -> R) -> R {
+        callback(self.0.expose_secret())
+    }
+
     /// Exposes the key bytes for cryptographic operations.
     #[allow(dead_code)]
+    #[cfg(not(test))]
+    pub(in crate::crypto) fn expose(&self) -> &[u8; 32] {
+        self.0.expose_secret()
+    }
+
+    /// Test-only raw key view helper.
+    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn expose(&self) -> &[u8; 32] {
         self.0.expose_secret()
     }

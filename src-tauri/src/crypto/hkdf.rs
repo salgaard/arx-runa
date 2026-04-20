@@ -32,7 +32,7 @@ pub struct VaultKeys {
 ///
 /// # Errors
 /// Returns `CryptoError::KeyDerivationFailed` if HKDF expansion fails.
-pub(crate) fn expand_vault_key_into(
+fn expand_vault_key_into(
     master_key_bytes: &[u8; 32],
     info: &[u8],
     output: &mut [u8; 32],

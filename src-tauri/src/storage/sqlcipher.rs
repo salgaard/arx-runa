@@ -44,6 +44,20 @@ pub struct SqlCipherMetadataStore {
     conn: Arc<Mutex<Connection>>,
 }
 
+/// Raw destination-session row shape returned by SQLCipher helper methods.
+#[derive(Debug, Clone)]
+pub(crate) struct DestinationSessionRow {
+    pub destination_id: String,
+    pub label: String,
+    pub destination_type: String,
+    pub rclone_remote_name: String,
+    pub rclone_config_blob: String,
+    pub bucket: String,
+    pub path_prefix: String,
+    pub is_primary: bool,
+    pub backup_mode: Option<String>,
+}
+
 impl SqlCipherMetadataStore {
     /// Opens an existing SQLCipher metadata store.
     pub async fn open(path: &Path, sqlcipher_key: &[u8; 32]) -> Result<Self, StorageError> {
@@ -198,6 +212,190 @@ impl SqlCipherMetadataStore {
         .await
     }
 
+    /// Inserts one destination session row.
+    ///
+    /// Intentionally SQLCipher-specific; this method is not exposed on
+    /// [`MetadataStore`].
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn insert_destination_session(
+        &self,
+        destination_id: String,
+        label: String,
+        destination_type: String,
+        rclone_remote_name: String,
+        rclone_config_blob: String,
+        bucket: String,
+        path_prefix: String,
+        is_primary: bool,
+        backup_mode: Option<String>,
+    ) -> Result<(), StorageError> {
+        let created_at = unix_timestamp_now()?;
+        self.with_connection_blocking(move |conn| {
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            if is_primary {
+                let existing_primary: Option<String> = tx
+                    .query_row(
+                        "SELECT destination_id FROM destination_sessions WHERE is_primary = 1 LIMIT 1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(StorageError::from_rusqlite)?;
+
+                if let Some(existing_primary) = existing_primary
+                    && existing_primary != destination_id
+                {
+                    return Err(StorageError::ConstraintViolation(
+                        "only one primary destination is allowed".to_owned(),
+                    ));
+                }
+            }
+            tx.execute(
+                "INSERT INTO destination_sessions (
+                    destination_id, label, destination_type, rclone_remote_name, rclone_config_blob,
+                    bucket, path_prefix, is_primary, backup_mode, created_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    destination_id,
+                    label,
+                    destination_type,
+                    rclone_remote_name,
+                    rclone_config_blob,
+                    bucket,
+                    path_prefix,
+                    if is_primary { 1 } else { 0 },
+                    backup_mode,
+                    created_at,
+                ],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Lists all destination sessions in created-at order.
+    ///
+    /// Intentionally SQLCipher-specific; this method is not exposed on
+    /// [`MetadataStore`].
+    pub(crate) async fn list_destination_sessions(
+        &self,
+    ) -> Result<Vec<DestinationSessionRow>, StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let mut statement = conn
+                .prepare(
+                    "SELECT destination_id, label, destination_type, rclone_remote_name,
+                            rclone_config_blob, bucket, path_prefix, is_primary, backup_mode
+                     FROM destination_sessions
+                     ORDER BY created_at ASC, destination_id ASC",
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok(DestinationSessionRow {
+                        destination_id: row.get(0)?,
+                        label: row.get(1)?,
+                        destination_type: row.get(2)?,
+                        rclone_remote_name: row.get(3)?,
+                        rclone_config_blob: row.get(4)?,
+                        bucket: row.get(5)?,
+                        path_prefix: row.get(6)?,
+                        is_primary: row.get::<_, i64>(7)? == 1,
+                        backup_mode: row.get(8)?,
+                    })
+                })
+                .map_err(StorageError::from_rusqlite)?;
+
+            let mut sessions = Vec::new();
+            for row in rows {
+                sessions.push(row.map_err(StorageError::from_rusqlite)?);
+            }
+            Ok(sessions)
+        })
+        .await
+    }
+
+    /// Returns the primary destination session when present.
+    ///
+    /// Intentionally SQLCipher-specific; this method is not exposed on
+    /// [`MetadataStore`].
+    pub(crate) async fn get_primary_destination(
+        &self,
+    ) -> Result<Option<DestinationSessionRow>, StorageError> {
+        self.with_connection_blocking(move |conn| {
+            conn.query_row(
+                "SELECT destination_id, label, destination_type, rclone_remote_name,
+                        rclone_config_blob, bucket, path_prefix, is_primary, backup_mode
+                 FROM destination_sessions
+                 WHERE is_primary = 1
+                 LIMIT 1",
+                [],
+                |row| {
+                    Ok(DestinationSessionRow {
+                        destination_id: row.get(0)?,
+                        label: row.get(1)?,
+                        destination_type: row.get(2)?,
+                        rclone_remote_name: row.get(3)?,
+                        rclone_config_blob: row.get(4)?,
+                        bucket: row.get(5)?,
+                        path_prefix: row.get(6)?,
+                        is_primary: row.get::<_, i64>(7)? == 1,
+                        backup_mode: row.get(8)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(StorageError::from_rusqlite)
+        })
+        .await
+    }
+
+    /// Deletes a destination session by ID.
+    ///
+    /// Intentionally SQLCipher-specific; this method is not exposed on
+    /// [`MetadataStore`].
+    pub(crate) async fn delete_destination_session(
+        &self,
+        destination_id: String,
+    ) -> Result<(), StorageError> {
+        self.with_connection_blocking(move |conn| {
+            conn.execute(
+                "DELETE FROM destination_sessions WHERE destination_id = ?1",
+                params![destination_id],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Deletes `manifest_meta.last_synced_at`.
+    ///
+    /// Intentionally SQLCipher-specific; this method is not exposed on
+    /// [`MetadataStore`].
+    pub(crate) async fn clear_last_synced_at(&self) -> Result<(), StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            tx.execute("DELETE FROM manifest_meta WHERE key = 'last_synced_at'", [])
+                .map_err(StorageError::from_rusqlite)?;
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn drop_manifest_meta_table_for_tests(&self) -> Result<(), StorageError> {
+        self.with_connection_blocking(move |conn| {
+            conn.execute_batch("DROP TABLE manifest_meta;")
+                .map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Executes a blocking SQLite closure without stalling the async runtime.
     async fn with_connection_blocking<T, F>(&self, operation: F) -> Result<T, StorageError>
     where
@@ -211,19 +409,6 @@ impl SqlCipherMetadataStore {
         })
         .await
         .map_err(|error| StorageError::Database(error.to_string()))?
-    }
-
-    /// Executes a SQLCipher-specific closure against the underlying connection.
-    ///
-    /// Intentionally not exposed on [`MetadataStore`].
-    pub(crate) async fn with_connection_mut<T>(
-        &self,
-        operation: impl FnOnce(&mut Connection) -> Result<T, StorageError> + Send + 'static,
-    ) -> Result<T, StorageError>
-    where
-        T: Send + 'static,
-    {
-        self.with_connection_blocking(operation).await
     }
 }
 
@@ -252,18 +437,17 @@ fn apply_sqlcipher_key(
     conn: &Connection,
     sqlcipher_key: &SqlcipherKey,
 ) -> Result<(), StorageError> {
-    let sqlcipher_key = sqlcipher_key.expose();
-    let rc = {
+    let rc = sqlcipher_key.with_exposed(|key_bytes| {
         // SAFETY: `conn` is open for this thread and `sqlcipher_key` points to
         // a valid 32-byte buffer for the duration of this FFI call.
         unsafe {
             rusqlite::ffi::sqlite3_key(
                 conn.handle(),
-                sqlcipher_key.as_ptr().cast(),
-                sqlcipher_key.len() as i32,
+                key_bytes.as_ptr().cast(),
+                key_bytes.len() as i32,
             )
         }
-    };
+    });
     if rc != rusqlite::ffi::SQLITE_OK {
         let message = {
             // SAFETY: SQLite owns the returned NUL-terminated error string and
@@ -283,21 +467,21 @@ fn apply_sqlcipher_key(
 /// Opens a SQLCipher database and applies a raw 32-byte key.
 pub(crate) fn open_sqlcipher(
     path: &Path,
-    sqlcipher_key: &[u8; 32],
+    sqlcipher_key: &SqlcipherKey,
 ) -> Result<Connection, SqlcipherOpenError> {
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)
         .map_err(|error| SqlcipherOpenError::Open(error.to_string()))?;
-    let rc = {
+    let rc = sqlcipher_key.with_exposed(|key_bytes| {
         // SAFETY: `conn` is open for this thread and `sqlcipher_key` points to
         // a valid 32-byte buffer for the duration of the call.
         unsafe {
             rusqlite::ffi::sqlite3_key(
                 conn.handle(),
-                sqlcipher_key.as_ptr().cast(),
-                sqlcipher_key.len() as i32,
+                key_bytes.as_ptr().cast(),
+                key_bytes.len() as i32,
             )
         }
-    };
+    });
     if rc != rusqlite::ffi::SQLITE_OK {
         return Err(SqlcipherOpenError::KeyRejected);
     }
@@ -310,7 +494,7 @@ pub(crate) fn open_sqlcipher(
 /// Reads `snapshot_counter` and optional `last_synced_at` from a SQLCipher DB.
 pub(crate) fn read_snapshot_state_from_database(
     path: &Path,
-    sqlcipher_key: &[u8; 32],
+    sqlcipher_key: &SqlcipherKey,
 ) -> Result<(u64, Option<i64>), StorageError> {
     let conn = open_sqlcipher(path, sqlcipher_key)
         .map_err(|error| StorageError::Database(error.to_string()))?;
@@ -1106,8 +1290,9 @@ mod tests {
     async fn test_open_sqlcipher_missing_path_returns_open_error() {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("missing.db");
+        let sqlcipher_key = crate::crypto::SqlcipherKey::from_bytes([5u8; 32]);
 
-        let result = super::open_sqlcipher(&db_path, &[5u8; 32]);
+        let result = super::open_sqlcipher(&db_path, &sqlcipher_key);
 
         assert!(matches!(result, Err(super::SqlcipherOpenError::Open(_))));
     }
@@ -1118,11 +1303,12 @@ mod tests {
         let db_path = temp.path().join("manifest.db");
         let create_key = [7u8; 32];
         let wrong_key = [8u8; 32];
+        let wrong_sqlcipher_key = crate::crypto::SqlcipherKey::from_bytes(wrong_key);
         SqlCipherMetadataStore::create(&db_path, &create_key, Uuid::new_v4(), 4_194_304, false)
             .await
             .expect("store should be created");
 
-        let result = super::open_sqlcipher(&db_path, &wrong_key);
+        let result = super::open_sqlcipher(&db_path, &wrong_sqlcipher_key);
 
         assert!(matches!(
             result,

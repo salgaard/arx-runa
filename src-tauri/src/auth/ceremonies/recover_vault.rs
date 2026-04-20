@@ -94,6 +94,7 @@ pub async fn recover_vault(
     )?;
     let session_keys = SessionKeys::from_master_key_bytes(&master_key)?;
     let sqlcipher_key = sqlcipher_key_from_array(session_keys.sqlcipher_key.expose());
+    let manifest_key_bytes = Zeroizing::new(*session_keys.manifest_key.expose());
     let storage_staging_dir = storage::staging::default_staging_directory()
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     storage::staging::ensure_staging_directory(&storage_staging_dir)
@@ -102,7 +103,7 @@ pub async fn recover_vault(
     download_manifest_backup(
         cloud_transport,
         &storage_staging_dir,
-        session_keys.manifest_key.expose(),
+        &manifest_key_bytes,
         &request.vault_db_path,
         &sqlcipher_key,
     )
@@ -256,7 +257,7 @@ mod tests {
             password_bytes: TEST_PASSWORD,
             target_key_file_path: None,
             vault_db_path: seed_temp.path().join("seed.db"),
-            argon2_params: test_params(),
+            argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };

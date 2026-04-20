@@ -36,8 +36,8 @@ pub use recover_with_phrase::recover_with_phrase;
 pub use rotate_key_file::rotate_key_file;
 pub use setup_recovery::setup_recovery;
 pub use types::{
-    ChangePasswordRequest, CreateVaultRequest, RecoverVaultRequest, RecoverWithPhraseRequest,
-    RotateKeyFileRequest, SetupRecoveryRequest, Tier,
+    Argon2MigrationIntent, ChangePasswordRequest, CreateVaultRequest, RecoverVaultRequest,
+    RecoverWithPhraseRequest, RotateKeyFileRequest, SetupRecoveryRequest, Tier,
 };
 
 #[cfg(test)]

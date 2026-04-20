@@ -70,7 +70,7 @@ pub async fn recover_with_phrase(
         match unwrap_master_key_from_recovery(&wrapped, &recovery_key, &vault_id) {
             Ok(master_key_typed) => {
                 let mut bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-                bytes.copy_from_slice(master_key_typed.expose());
+                master_key_typed.with_exposed(|exposed| bytes.copy_from_slice(exposed));
                 drop(master_key_typed);
                 drop(recovery_key);
                 recovered_master_key = Some(bytes);
@@ -88,6 +88,7 @@ pub async fn recover_with_phrase(
     let master_key = recovered_master_key.ok_or(AuthenticationError::InvalidCredentials)?;
     let session_keys = SessionKeys::from_master_key_bytes(&master_key)?;
     let sqlcipher_key = sqlcipher_key_from_array(session_keys.sqlcipher_key.expose());
+    let manifest_key_bytes = Zeroizing::new(*session_keys.manifest_key.expose());
     let storage_staging_dir = storage::staging::default_staging_directory()
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     storage::staging::ensure_staging_directory(&storage_staging_dir)
@@ -96,7 +97,7 @@ pub async fn recover_with_phrase(
     download_manifest_backup(
         cloud_transport,
         &storage_staging_dir,
-        session_keys.manifest_key.expose(),
+        &manifest_key_bytes,
         &request.vault_db_path,
         &sqlcipher_key,
     )
@@ -193,6 +194,7 @@ mod tests {
             current_password_bytes: TEST_PASSWORD,
             current_key_source: None,
             argon2_params: Argon2Params::DEFAULT,
+            argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
         setup_recovery(
@@ -440,7 +442,7 @@ mod tests {
             password_bytes: TEST_PASSWORD,
             target_key_file_path: None,
             vault_db_path: seed_temp.path().join("seed.db"),
-            argon2_params: test_params(),
+            argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };

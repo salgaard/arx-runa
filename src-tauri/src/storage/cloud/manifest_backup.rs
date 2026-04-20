@@ -128,9 +128,9 @@ pub async fn upload_manifest_backup(
 
     let vault_db_path = vault_db_path.to_path_buf();
     let export_path_for_task = export_path.clone();
-    let sqlcipher_key_bytes = Zeroizing::new(*sqlcipher_key.expose());
+    let sqlcipher_key = sqlcipher_key_from_array(sqlcipher_key.with_exposed(|bytes| *bytes));
     tokio::task::spawn_blocking(move || {
-        run_vacuum_into_export(&vault_db_path, &sqlcipher_key_bytes, &export_path_for_task)
+        run_vacuum_into_export(&vault_db_path, &sqlcipher_key, &export_path_for_task)
     })
     .await
     .map_err(|error| ManifestBackupSyncError::Vacuum(error.to_string()))??;
@@ -243,10 +243,10 @@ pub async fn download_manifest_backup(
     .await
     .map_err(|error| ManifestBackupSyncError::DbPersistIo(error.to_string()))??;
 
-    let sqlcipher_key_bytes = Zeroizing::new(*sqlcipher_key.expose());
+    let sqlcipher_key = sqlcipher_key_from_array(sqlcipher_key.with_exposed(|bytes| *bytes));
     let destination_for_integrity = destination_db_path.clone();
     let integrity_join = tokio::task::spawn_blocking(move || {
-        verify_manifest_database_integrity(&destination_for_integrity, &sqlcipher_key_bytes)
+        verify_manifest_database_integrity(&destination_for_integrity, &sqlcipher_key)
     })
     .await;
     let integrity_result = match integrity_join {
@@ -267,7 +267,7 @@ pub async fn download_manifest_backup(
 /// Executes a SQLCipher `VACUUM INTO` export for manifest backup upload.
 fn run_vacuum_into_export(
     vault_db_path: &Path,
-    sqlcipher_key: &[u8; 32],
+    sqlcipher_key: &SqlcipherKey,
     export_path: &Path,
 ) -> Result<(), ManifestBackupSyncError> {
     let conn = open_sqlcipher(vault_db_path, sqlcipher_key)
@@ -322,13 +322,19 @@ fn persist_manifest_database_atomically(
 /// satisfies canonical schema invariants.
 fn verify_manifest_database_integrity(
     destination_db_path: &Path,
-    sqlcipher_key: &[u8; 32],
+    sqlcipher_key: &SqlcipherKey,
 ) -> Result<(), ManifestBackupSyncError> {
     let conn = open_sqlcipher(destination_db_path, sqlcipher_key)
         .map_err(|_| ManifestBackupSyncError::IntegrityCheckFailed)?;
     validate_schema_integrity(&conn).map_err(|_| ManifestBackupSyncError::IntegrityCheckFailed)?;
     validate_manifest_meta(&conn).map_err(|_| ManifestBackupSyncError::IntegrityCheckFailed)?;
     Ok(())
+}
+
+fn sqlcipher_key_from_array(bytes: [u8; 32]) -> SqlcipherKey {
+    let mut boxed = Box::new([0u8; 32]);
+    boxed.copy_from_slice(&bytes);
+    SqlcipherKey::from_secret_box(secrecy::SecretBox::new(boxed))
 }
 
 /// Removes a file if present, tolerating missing-file races.
@@ -349,7 +355,6 @@ mod tests {
     use super::*;
     use crate::storage::SqlCipherMetadataStore;
     use crate::storage::cloud::mock::{CloudTransportErrorKind, MockCloudTransport};
-    use crate::storage::error::StorageError;
 
     /// Creates a `SqlcipherKey` from fixed test bytes.
     fn sqlcipher_key_from_bytes(bytes: [u8; 32]) -> SqlcipherKey {
@@ -534,7 +539,7 @@ mod tests {
         .await
         .expect("download must succeed");
 
-        let connection = open_sqlcipher(&recovered_db_path, &sqlcipher_key_bytes)
+        let connection = open_sqlcipher(&recovered_db_path, &sqlcipher_key)
             .expect("recovered database must open");
         let table_count: i64 = connection
             .query_row(
@@ -609,11 +614,7 @@ mod tests {
         .await
         .expect("manifest database must be created");
         store
-            .with_connection_mut(|conn| {
-                conn.execute_batch("DROP TABLE manifest_meta;")
-                    .map_err(StorageError::from_rusqlite)?;
-                Ok(())
-            })
+            .drop_manifest_meta_table_for_tests()
             .await
             .expect("manifest_meta drop must succeed");
         drop(store);

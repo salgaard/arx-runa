@@ -28,7 +28,6 @@ pub async fn setup_recovery(
     vault_header: &mut VaultHeader,
     vault_id: &VaultId,
 ) -> Result<Zeroizing<String>, AuthenticationError> {
-    enforce_argon2_policy(&request.argon2_params)?;
     let _operation_guard = session_manager.begin_operation();
 
     if session_manager.state().await != crate::auth::LifecycleState::Active {
@@ -37,6 +36,11 @@ pub async fn setup_recovery(
 
     let current_salt = decode_base64_32(&vault_header.argon2_salt)?;
     let current_params = argon2_params_from_json(&vault_header.argon2_params);
+    let resolved_argon2_params = resolve_existing_vault_argon2(
+        &current_params,
+        &request.argon2_params,
+        request.argon2_migration_intent,
+    )?;
 
     let current_key_file_bytes: Option<Zeroizing<[u8; 32]>> =
         match (vault_header.tier, request.current_key_source) {
@@ -80,7 +84,7 @@ pub async fn setup_recovery(
     derive_recovery_key_into(
         phrase_string.as_bytes(),
         &recovery_salt,
-        &request.argon2_params,
+        &resolved_argon2_params,
         &mut recovery_key_bytes,
     )?;
     let recovery_key = recovery_key_from_array(&recovery_key_bytes);
@@ -95,7 +99,7 @@ pub async fn setup_recovery(
     let slot = RecoverySlot {
         method: "bip39".into(),
         argon2_salt: encode_base64(recovery_salt.as_slice()),
-        argon2_params: argon2_params_to_json(&request.argon2_params),
+        argon2_params: argon2_params_to_json(&resolved_argon2_params),
         wrapped_master_key: encode_base64(&wrapped.0),
     };
     vault_header.recovery_slots.push(slot);
@@ -130,7 +134,8 @@ mod tests {
     use crate::auth::key_source::MockKeySource;
     use crate::auth::session::{SessionKeys, SessionManager};
     use crate::auth::{
-        CreateVaultRequest, SetupRecoveryRequest, Tier, create_vault, setup_recovery,
+        ChangePasswordRequest, CreateVaultRequest, SetupRecoveryRequest, Tier, change_password,
+        create_vault, setup_recovery,
     };
     use crate::crypto::{
         RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_master_key_from_recovery,
@@ -180,6 +185,7 @@ mod tests {
             current_password_bytes: TEST_WRONG_PASSWORD,
             current_key_source: None,
             argon2_params: test_params(),
+            argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
         let result = setup_recovery(
@@ -226,5 +232,57 @@ mod tests {
                 .any(|w| w == phrase_bytes.as_slice()),
             "recovery phrase must not appear in vault db"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_setup_recovery_preserves_trusted_non_default_argon2_params_without_migration() {
+        let _lock = ceremony_lock().await;
+        let mut vault = create_tier_one_vault().await;
+
+        let migrate_request = ChangePasswordRequest {
+            current_password_bytes: TEST_PASSWORD,
+            new_password_bytes: TEST_NEW_PASSWORD,
+            current_key_source: None,
+            recovery_phrase: None,
+            argon2_params: test_params(),
+            argon2_migration_intent: crate::auth::Argon2MigrationIntent::MigrateToRequested,
+            vault_db_path: vault.vault_db_path.clone(),
+        };
+        change_password(
+            migrate_request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await
+        .expect("explicit migration to non-default params must succeed");
+        assert_eq!(
+            argon2_params_from_json(&vault.header.argon2_params),
+            test_params()
+        );
+
+        let setup_request = SetupRecoveryRequest {
+            current_password_bytes: TEST_NEW_PASSWORD,
+            current_key_source: None,
+            argon2_params: crate::auth::Argon2Params::DEFAULT,
+            argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
+            vault_db_path: vault.vault_db_path.clone(),
+        };
+        setup_recovery(
+            setup_request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await
+        .expect("setup_recovery must preserve trusted params");
+        let slot = vault
+            .header
+            .recovery_slots
+            .last()
+            .expect("setup_recovery should append a slot");
+        assert_eq!(argon2_params_from_json(&slot.argon2_params), test_params());
     }
 }

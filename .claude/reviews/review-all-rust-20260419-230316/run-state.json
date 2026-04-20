@@ -1,0 +1,190 @@
+{
+  "scope": "src-tauri/src/**/*.rs",
+  "run_id": "review-all-rust-20260419-230316",
+  "cycles": [
+    {
+      "findings": [
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-001"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-003"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "HIGH",
+          "canonical_id": "CF-004"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-005"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-006"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-007"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "HIGH",
+          "canonical_id": "CF-009"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "LOW",
+          "canonical_id": "CF-010"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-011"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "HIGH",
+          "canonical_id": "CF-013"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-014"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "LOW",
+          "canonical_id": "CF-015"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "HIGH",
+          "canonical_id": "CF-016"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-017"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-018"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-019"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-020"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-021"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-022"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "LOW",
+          "canonical_id": "CF-023"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-024"
+        }
+      ],
+      "security_reviewer_invocations": 4,
+      "cross_shard_finding_count": 2,
+      "cycle": 1,
+      "canonical_finding_count": 21
+    },
+    {
+      "findings": [
+        {
+          "occurrence_count": 1,
+          "severity": "LOW",
+          "canonical_id": "CF-002"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "HIGH",
+          "canonical_id": "CF-008"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-012"
+        },
+        {
+          "occurrence_count": 2,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-018"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-025"
+        }
+      ],
+      "security_reviewer_invocations": 4,
+      "cross_shard_finding_count": 0,
+      "cycle": 2,
+      "canonical_finding_count": 25
+    },
+    {
+      "findings": [
+        {
+          "occurrence_count": 2,
+          "severity": "MEDIUM",
+          "canonical_id": "CF-007"
+        },
+        {
+          "occurrence_count": 2,
+          "severity": "LOW",
+          "canonical_id": "CF-015"
+        },
+        {
+          "occurrence_count": 1,
+          "severity": "HIGH",
+          "canonical_id": "CF-026"
+        }
+      ],
+      "security_reviewer_invocations": 4,
+      "cross_shard_finding_count": 0,
+      "cycle": 3,
+      "canonical_finding_count": 26
+    }
+  ],
+  "cycle_count": 3,
+  "disposition_summary": {
+    "INTENTIONAL_DECISION": 0,
+    "DEFERRED_BY_PLAN": 1,
+    "ACTIONABLE_NOW": 24,
+    "INSUFFICIENT_EVIDENCE": 1
+  },
+  "finding_summary": {
+    "MEDIUM": 16,
+    "LOW": 4,
+    "HIGH": 6,
+    "CRITICAL": 0
+  },
+  "track": "full",
+  "canonical_finding_count": 26
+}

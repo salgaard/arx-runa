@@ -1,10 +1,8 @@
 //! Destination session persistence helpers backed by SQLCipher.
 
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use regex::Regex;
-use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use tokio::io::AsyncWriteExt;
@@ -12,7 +10,7 @@ use zeroize::Zeroizing;
 
 use crate::storage::cloud::CloudTransportError;
 use crate::storage::error::StorageError;
-use crate::storage::sqlcipher::SqlCipherMetadataStore;
+use crate::storage::sqlcipher::{DestinationSessionRow, SqlCipherMetadataStore};
 use crate::storage::staging;
 
 /// Destination type persisted in `destination_sessions.destination_type`.
@@ -124,55 +122,21 @@ pub async fn insert_destination_session(
     session.rclone_config_blob =
         validate_single_remote_stanza(&session.rclone_config_blob, &session.rclone_remote_name)?;
     store
-        .with_connection_mut(move |conn| {
-            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
-            if session.is_primary {
-                let existing_primary: Option<String> = tx
-                    .query_row(
-                        "SELECT destination_id FROM destination_sessions WHERE is_primary = 1 LIMIT 1",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .optional()
-                    .map_err(StorageError::from_rusqlite)?;
-
-                if let Some(existing_primary) = existing_primary
-                    && existing_primary != session.destination_id
-                {
-                    return Err(StorageError::ConstraintViolation(
-                        "only one primary destination is allowed".to_owned(),
-                    ));
-                }
-            }
-
-            let created_at = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|error| StorageError::Database(error.to_string()))?
-                .as_secs() as i64;
-
-            tx.execute(
-                "INSERT INTO destination_sessions (
-                    destination_id, label, destination_type, rclone_remote_name, rclone_config_blob,
-                    bucket, path_prefix, is_primary, backup_mode, created_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![
-                    session.destination_id,
-                    session.label,
-                    session.destination_type.as_sql_tag(),
-                    session.rclone_remote_name,
-                    session.rclone_config_blob,
-                    session.bucket,
-                    session.path_prefix,
-                    if session.is_primary { 1 } else { 0 },
-                    session.backup_mode.as_ref().map(BackupSyncMode::as_sql_tag),
-                    created_at,
-                ],
-            )
-            .map_err(StorageError::from_rusqlite)?;
-
-            tx.commit().map_err(StorageError::from_rusqlite)?;
-            Ok(())
-        })
+        .insert_destination_session(
+            session.destination_id,
+            session.label,
+            session.destination_type.as_sql_tag().to_owned(),
+            session.rclone_remote_name,
+            session.rclone_config_blob,
+            session.bucket,
+            session.path_prefix,
+            session.is_primary,
+            session
+                .backup_mode
+                .as_ref()
+                .map(BackupSyncMode::as_sql_tag)
+                .map(str::to_owned),
+        )
         .await
 }
 
@@ -181,45 +145,8 @@ pub async fn insert_destination_session(
 pub async fn list_destination_sessions(
     store: &SqlCipherMetadataStore,
 ) -> Result<Vec<DestinationSession>, StorageError> {
-    store
-        .with_connection_mut(move |conn| {
-            let mut statement = conn
-                .prepare(
-                    "SELECT destination_id, label, destination_type, rclone_remote_name,
-                            rclone_config_blob, bucket, path_prefix, is_primary, backup_mode
-                     FROM destination_sessions
-                     ORDER BY created_at ASC, destination_id ASC",
-                )
-                .map_err(StorageError::from_rusqlite)?;
-
-            let rows = statement
-                .query_map([], |row| {
-                    let destination_type = DestinationType::from_sql_tag(&row.get::<_, String>(2)?)
-                        .map_err(to_rusqlite_from_storage)?;
-                    let backup_mode =
-                        BackupSyncMode::from_optional_sql_tag(row.get::<_, Option<String>>(8)?)
-                            .map_err(to_rusqlite_from_storage)?;
-                    Ok(DestinationSession {
-                        destination_id: row.get(0)?,
-                        label: row.get(1)?,
-                        destination_type,
-                        rclone_remote_name: row.get(3)?,
-                        rclone_config_blob: row.get(4)?,
-                        bucket: row.get(5)?,
-                        path_prefix: row.get(6)?,
-                        is_primary: row.get::<_, i64>(7)? == 1,
-                        backup_mode,
-                    })
-                })
-                .map_err(StorageError::from_rusqlite)?;
-
-            let mut sessions = Vec::new();
-            for row in rows {
-                sessions.push(row.map_err(StorageError::from_rusqlite)?);
-            }
-            Ok(sessions)
-        })
-        .await
+    let rows = store.list_destination_sessions().await?;
+    rows.into_iter().map(destination_session_from_row).collect()
 }
 
 /// Returns the primary destination session when present.
@@ -228,37 +155,10 @@ pub async fn get_primary_destination(
     store: &SqlCipherMetadataStore,
 ) -> Result<Option<DestinationSession>, StorageError> {
     store
-        .with_connection_mut(move |conn| {
-            conn.query_row(
-                "SELECT destination_id, label, destination_type, rclone_remote_name,
-                        rclone_config_blob, bucket, path_prefix, is_primary, backup_mode
-                 FROM destination_sessions
-                 WHERE is_primary = 1
-                 LIMIT 1",
-                [],
-                |row| {
-                    let destination_type = DestinationType::from_sql_tag(&row.get::<_, String>(2)?)
-                        .map_err(to_rusqlite_from_storage)?;
-                    let backup_mode =
-                        BackupSyncMode::from_optional_sql_tag(row.get::<_, Option<String>>(8)?)
-                            .map_err(to_rusqlite_from_storage)?;
-                    Ok(DestinationSession {
-                        destination_id: row.get(0)?,
-                        label: row.get(1)?,
-                        destination_type,
-                        rclone_remote_name: row.get(3)?,
-                        rclone_config_blob: row.get(4)?,
-                        bucket: row.get(5)?,
-                        path_prefix: row.get(6)?,
-                        is_primary: row.get::<_, i64>(7)? == 1,
-                        backup_mode,
-                    })
-                },
-            )
-            .optional()
-            .map_err(StorageError::from_rusqlite)
-        })
-        .await
+        .get_primary_destination()
+        .await?
+        .map(destination_session_from_row)
+        .transpose()
 }
 
 /// Deletes a destination session by ID.
@@ -266,16 +166,8 @@ pub async fn delete_destination_session(
     store: &SqlCipherMetadataStore,
     destination_id: &str,
 ) -> Result<(), StorageError> {
-    let destination_id = destination_id.to_owned();
     store
-        .with_connection_mut(move |conn| {
-            conn.execute(
-                "DELETE FROM destination_sessions WHERE destination_id = ?1",
-                params![destination_id],
-            )
-            .map_err(StorageError::from_rusqlite)?;
-            Ok(())
-        })
+        .delete_destination_session(destination_id.to_owned())
         .await
 }
 
@@ -346,16 +238,22 @@ fn map_storage_error(error: StorageError) -> CloudTransportError {
     CloudTransportError::Other(error.to_string())
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-fn to_rusqlite_from_storage(error: StorageError) -> rusqlite::Error {
-    rusqlite::Error::FromSqlConversionFailure(
-        0,
-        rusqlite::types::Type::Text,
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            error.to_string(),
-        )),
-    )
+fn destination_session_from_row(
+    row: DestinationSessionRow,
+) -> Result<DestinationSession, StorageError> {
+    let destination_type = DestinationType::from_sql_tag(&row.destination_type)?;
+    let backup_mode = BackupSyncMode::from_optional_sql_tag(row.backup_mode)?;
+    Ok(DestinationSession {
+        destination_id: row.destination_id,
+        label: row.label,
+        destination_type,
+        rclone_remote_name: row.rclone_remote_name,
+        rclone_config_blob: row.rclone_config_blob,
+        bucket: row.bucket,
+        path_prefix: row.path_prefix,
+        is_primary: row.is_primary,
+        backup_mode,
+    })
 }
 
 fn stanza_header_regex() -> &'static Regex {
@@ -568,28 +466,17 @@ mod tests {
     async fn test_build_session_rclone_conf_rejects_malformed_persisted_blob() {
         let (directory, _db_path, store) = create_store().await;
         store
-            .with_connection_mut(|conn| {
-                conn.execute(
-                    "INSERT INTO destination_sessions (
-                        destination_id, label, destination_type, rclone_remote_name, rclone_config_blob,
-                        bucket, path_prefix, is_primary, backup_mode, created_at
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                    rusqlite::params![
-                        "dest-malformed",
-                        "malformed",
-                        "cloud",
-                        "remote-malformed",
-                        "[wrong]\ntype = s3\n",
-                        "bucket",
-                        "vault",
-                        0i64,
-                        Option::<String>::None,
-                        1i64
-                    ],
-                )
-                .map_err(StorageError::from_rusqlite)?;
-                Ok(())
-            })
+            .insert_destination_session(
+                "dest-malformed".to_owned(),
+                "malformed".to_owned(),
+                "cloud".to_owned(),
+                "remote-malformed".to_owned(),
+                "[wrong]\ntype = s3\n".to_owned(),
+                "bucket".to_owned(),
+                "vault".to_owned(),
+                false,
+                None,
+            )
             .await
             .expect("manual insert should succeed");
 

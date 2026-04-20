@@ -33,6 +33,7 @@ use crate::storage::types::SyncChunkRecord;
 use crate::storage::validation::validate_blob_name_uuid_v4;
 
 const CONFLICT_PROBE_DB_FILE_NAME: &str = "manifest-backup-conflict-probe.db";
+const PENDING_DELETIONS_BATCH_LIMIT: usize = 128;
 
 /// Cloud snapshot state used for local/cloud conflict detection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,11 +168,12 @@ pub(crate) async fn read_cloud_snapshot_state(
 ) -> Result<Option<CloudSnapshotState>, SyncError> {
     let probe_path = staging_dir.join(CONFLICT_PROBE_DB_FILE_NAME);
     remove_file_if_present(&probe_path).await?;
+    let manifest_key_bytes = Zeroizing::new(manifest_key.with_exposed(|bytes| *bytes));
 
     let download_result = download_manifest_backup(
         cloud_transport,
         staging_dir,
-        manifest_key.expose(),
+        &manifest_key_bytes,
         &probe_path,
         sqlcipher_key,
     )
@@ -444,10 +446,11 @@ pub async fn push_vault(
         .set_meta("last_synced_at", &now_unix_seconds().to_string())
         .await?;
 
+    let manifest_key_bytes = Zeroizing::new(manifest_key.with_exposed(|bytes| *bytes));
     if let Err(source) = upload_manifest_backup(
         vault_db_path,
         sqlcipher_key,
-        manifest_key.expose(),
+        &manifest_key_bytes,
         cloud_transport,
         staging_dir,
     )
@@ -469,6 +472,7 @@ pub async fn push_vault(
     upload_vault_header(vault_header, cloud_transport, staging_dir)
         .await
         .map_err(|source| SyncError::VaultHeaderUploadFailed { source })?;
+    drain_pending_deletions(metadata_store, cloud_transport).await?;
 
     Ok(PushReport {
         blobs_uploaded: successful_uploads.len(),
@@ -523,6 +527,7 @@ pub async fn pull_vault(
             transport_failures,
         },
     )?;
+    drain_pending_deletions(metadata_store_after_import, cloud_transport).await?;
 
     Ok(PullReport {
         blobs_downloaded,
@@ -594,10 +599,10 @@ async fn read_cloud_snapshot_from_probe_db(
     sqlcipher_key: &SqlcipherKey,
 ) -> Result<Option<CloudSnapshotState>, SyncError> {
     let probe_path = probe_path.to_path_buf();
-    let sqlcipher_key_bytes = Zeroizing::new(*sqlcipher_key.expose());
+    let sqlcipher_key = sqlcipher_key_from_array(sqlcipher_key.with_exposed(|bytes| *bytes));
     tokio::task::spawn_blocking(move || -> Result<Option<CloudSnapshotState>, SyncError> {
         let (snapshot_counter, last_synced_at) =
-            read_snapshot_state_from_database(&probe_path, &sqlcipher_key_bytes)?;
+            read_snapshot_state_from_database(&probe_path, &sqlcipher_key)?;
         Ok(Some(CloudSnapshotState {
             snapshot_counter,
             last_synced_at,
@@ -607,6 +612,12 @@ async fn read_cloud_snapshot_from_probe_db(
     .map_err(|error| SyncError::Storage {
         source: StorageError::Database(error.to_string()),
     })?
+}
+
+fn sqlcipher_key_from_array(bytes: [u8; 32]) -> SqlcipherKey {
+    let mut boxed = Box::new([0u8; 32]);
+    boxed.copy_from_slice(&bytes);
+    SqlcipherKey::from_secret_box(secrecy::SecretBox::new(boxed))
 }
 
 async fn remove_file_if_present(path: &Path) -> Result<(), std::io::Error> {
@@ -635,6 +646,59 @@ async fn verify_blob_checksum(
     Ok(checksum.as_bytes() == expected_checksum)
 }
 
+async fn drain_pending_deletions(
+    metadata_store: &SqlCipherMetadataStore,
+    cloud_transport: &dyn CloudTransport,
+) -> Result<usize, SyncError> {
+    let mut completed = 0usize;
+    loop {
+        let pending = metadata_store
+            .list_pending_deletions(PENDING_DELETIONS_BATCH_LIMIT)
+            .await?;
+        if pending.is_empty() {
+            break;
+        }
+
+        let mut batch_completed = 0usize;
+        for blob_name in pending {
+            let remote_path = match build_blob_remote_path(&blob_name) {
+                Ok(path) => path,
+                Err(error) => {
+                    tracing::warn!(
+                        blob_name = %blob_name,
+                        error = %error,
+                        "failed to validate pending deletion blob name; leaving row queued"
+                    );
+                    continue;
+                }
+            };
+
+            match cloud_transport.delete_blob(&remote_path).await {
+                Ok(()) => {
+                    metadata_store.mark_deletion_complete(&blob_name).await?;
+                    completed += 1;
+                    batch_completed += 1;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        blob_name = %blob_name,
+                        remote_path = %remote_path,
+                        error = %error,
+                        "cloud delete failed for pending deletion; leaving row queued"
+                    );
+                }
+            }
+        }
+
+        if batch_completed == 0 {
+            tracing::warn!("stopping pending deletion drain after zero-progress batch");
+            break;
+        }
+    }
+
+    Ok(completed)
+}
+
 async fn restore_last_synced_at(
     metadata_store: &SqlCipherMetadataStore,
     previous_last_synced_raw: Option<String>,
@@ -645,17 +709,7 @@ async fn restore_last_synced_at(
                 .set_meta("last_synced_at", &previous_value)
                 .await
         }
-        None => {
-            metadata_store
-                .with_connection_mut(|conn| {
-                    let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
-                    tx.execute("DELETE FROM manifest_meta WHERE key = 'last_synced_at'", [])
-                        .map_err(StorageError::from_rusqlite)?;
-                    tx.commit().map_err(StorageError::from_rusqlite)?;
-                    Ok(())
-                })
-                .await
-        }
+        None => metadata_store.clear_last_synced_at().await,
     }
 }
 
@@ -731,7 +785,7 @@ mod tests {
         store: &SqlCipherMetadataStore,
         blob_name: &str,
         payload: &[u8],
-    ) -> Result<(), StorageError> {
+    ) -> Result<Uuid, StorageError> {
         let file_id = Uuid::new_v4();
         let node = Node::new(
             file_id,
@@ -752,7 +806,8 @@ mod tests {
             size_padded: 4_194_304,
             blake3_checksum: compute_checksum(payload).0,
         };
-        store.insert_chunks(&[chunk]).await
+        store.insert_chunks(&[chunk]).await?;
+        Ok(file_id)
     }
 
     #[test]
@@ -875,13 +930,24 @@ mod tests {
         let store = setup_store(&db_path, &key_bytes)
             .await
             .expect("store should be created");
-        insert_single_chunk(
+        let _uploaded_file_id = insert_single_chunk(
             &store,
             "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
             b"encrypted-payload",
         )
         .await
         .expect("chunk insert should succeed");
+        let deleted_file_id = insert_single_chunk(
+            &store,
+            "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            b"queued-delete",
+        )
+        .await
+        .expect("delete candidate insert should succeed");
+        store
+            .delete_node(deleted_file_id)
+            .await
+            .expect("delete should enqueue pending deletion");
         tokio::fs::write(
             blob_staging_path(temp.path(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
             b"encrypted-payload",
@@ -904,6 +970,13 @@ mod tests {
 
         assert_eq!(report.blobs_uploaded, 1);
         assert_eq!(report.snapshot_counter_after, 1);
+        assert!(
+            store
+                .list_pending_deletions(10)
+                .await
+                .expect("pending deletions should load")
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -1054,5 +1127,119 @@ mod tests {
         assert_eq!(report.vault_blobs_failed, vec![fail_blob.to_owned()]);
         assert!(report.manifest_backup_deleted);
         assert!(report.vault_header_deleted);
+    }
+
+    #[tokio::test]
+    async fn test_pull_vault_pending_deletion_delete_failure_preserves_queue_for_retry() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key_bytes = [21u8; 32];
+        let store = setup_store(&db_path, &key_bytes)
+            .await
+            .expect("store should be created");
+        let cloud = MockCloudTransport::new();
+        let file_id = insert_single_chunk(
+            &store,
+            "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            b"pending-delete",
+        )
+        .await
+        .expect("chunk insert should succeed");
+        store
+            .delete_node(file_id)
+            .await
+            .expect("delete should enqueue pending deletion");
+        cloud
+            .inject_failure(
+                "vault/cccccccc-cccc-4ccc-8ccc-cccccccccccc.blob",
+                CloudTransportErrorKind::Timeout,
+            )
+            .await;
+
+        pull_vault(
+            temp.path(),
+            &SqlcipherKey::from_bytes([1; 32]),
+            &ManifestKey::from_bytes([2; 32]),
+            &store,
+            &cloud,
+            temp.path(),
+            &SyncConfig::default(),
+        )
+        .await
+        .expect("pull should succeed");
+
+        assert_eq!(
+            store
+                .list_pending_deletions(10)
+                .await
+                .expect("pending deletions should load"),
+            vec!["cccccccc-cccc-4ccc-8ccc-cccccccccccc".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pull_vault_pending_deletion_retries_eventually_clear_queue() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key_bytes = [22u8; 32];
+        let store = setup_store(&db_path, &key_bytes)
+            .await
+            .expect("store should be created");
+        let cloud = MockCloudTransport::new();
+        let file_id = insert_single_chunk(
+            &store,
+            "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            b"pending-delete",
+        )
+        .await
+        .expect("chunk insert should succeed");
+        store
+            .delete_node(file_id)
+            .await
+            .expect("delete should enqueue pending deletion");
+        cloud
+            .inject_failure(
+                "vault/dddddddd-dddd-4ddd-8ddd-dddddddddddd.blob",
+                CloudTransportErrorKind::Timeout,
+            )
+            .await;
+
+        pull_vault(
+            temp.path(),
+            &SqlcipherKey::from_bytes([1; 32]),
+            &ManifestKey::from_bytes([2; 32]),
+            &store,
+            &cloud,
+            temp.path(),
+            &SyncConfig::default(),
+        )
+        .await
+        .expect("first pull should succeed");
+        assert_eq!(
+            store
+                .list_pending_deletions(10)
+                .await
+                .expect("pending deletions should load"),
+            vec!["dddddddd-dddd-4ddd-8ddd-dddddddddddd".to_owned()]
+        );
+
+        pull_vault(
+            temp.path(),
+            &SqlcipherKey::from_bytes([1; 32]),
+            &ManifestKey::from_bytes([2; 32]),
+            &store,
+            &cloud,
+            temp.path(),
+            &SyncConfig::default(),
+        )
+        .await
+        .expect("second pull should succeed");
+        assert!(
+            store
+                .list_pending_deletions(10)
+                .await
+                .expect("pending deletions should load")
+                .is_empty()
+        );
     }
 }

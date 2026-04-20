@@ -4,6 +4,7 @@ use std::time::Duration;
 use zeroize::Zeroizing;
 
 use super::helpers::*;
+use super::types::Argon2MigrationIntent;
 use super::*;
 use crate::auth::Argon2Params;
 use crate::auth::kdf::derive_master_key_into;
@@ -60,7 +61,7 @@ pub(super) async fn create_tier_one_vault() -> TierOneVault {
         password_bytes: TEST_PASSWORD,
         target_key_file_path: None,
         vault_db_path: vault_db_path.clone(),
-        argon2_params: test_params(),
+        argon2_params: Argon2Params::DEFAULT,
         chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
         epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
     };
@@ -106,7 +107,7 @@ pub(super) async fn create_tier_two_vault() -> TierTwoVault {
         password_bytes: TEST_PASSWORD,
         target_key_file_path: Some(key_file_path.clone()),
         vault_db_path: vault_db_path.clone(),
-        argon2_params: test_params(),
+        argon2_params: Argon2Params::DEFAULT,
         chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
         epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
     };
@@ -139,6 +140,7 @@ pub(super) async fn add_recovery_slot_and_return_phrase(
         current_password_bytes: TEST_PASSWORD,
         current_key_source: None,
         argon2_params: test_params(),
+        argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
         vault_db_path: vault.vault_db_path.clone(),
     };
     setup_recovery(
@@ -159,11 +161,12 @@ pub(super) async fn upload_manifest_backup_for(vault: &TierOneVault) {
     derive_master_key_into(TEST_PASSWORD, None, &salt, &params, &mut master).unwrap();
     let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
     let sqlcipher_key = sqlcipher_key_from_array(keys.sqlcipher_key.expose());
+    let manifest_key: [u8; 32] = *keys.manifest_key.expose();
     let staging_root = tempfile::tempdir().expect("manifest backup staging tempdir must exist");
     upload_manifest_backup(
         &vault.vault_db_path,
         &sqlcipher_key,
-        keys.manifest_key.expose(),
+        &manifest_key,
         &vault.cloud,
         staging_root.path(),
     )

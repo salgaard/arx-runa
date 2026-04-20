@@ -24,6 +24,16 @@ impl Tier {
     }
 }
 
+/// Intent for Argon2-parameter handling in existing-vault ceremonies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Argon2MigrationIntent {
+    /// Preserve trusted parameters from the existing vault header.
+    #[default]
+    PreserveTrusted,
+    /// Explicitly migrate to the requested parameters.
+    MigrateToRequested,
+}
+
 /// Request payload for [`create_vault`].
 pub struct CreateVaultRequest<'a> {
     /// Chosen authentication tier.
@@ -82,6 +92,8 @@ pub struct ChangePasswordRequest<'a> {
     pub recovery_phrase: Option<&'a str>,
     /// Argon2id cost parameters for the new slot.
     pub argon2_params: Argon2Params,
+    /// Argon2 parameter migration intent.
+    pub argon2_migration_intent: Argon2MigrationIntent,
     /// Vault database path.
     pub vault_db_path: PathBuf,
 }
@@ -99,6 +111,8 @@ pub struct RotateKeyFileRequest<'a> {
     pub recovery_phrase: Option<&'a str>,
     /// Argon2id cost parameters.
     pub argon2_params: Argon2Params,
+    /// Argon2 parameter migration intent.
+    pub argon2_migration_intent: Argon2MigrationIntent,
     /// Vault database path.
     pub vault_db_path: PathBuf,
 }
@@ -121,6 +135,8 @@ pub struct SetupRecoveryRequest<'a> {
     pub current_key_source: Option<&'a (dyn KeySource + Send + Sync)>,
     /// Argon2id cost parameters for the recovery slot's KDF.
     pub argon2_params: Argon2Params,
+    /// Argon2 parameter migration intent.
+    pub argon2_migration_intent: Argon2MigrationIntent,
     /// Vault database path (used to verify current credentials).
     pub vault_db_path: PathBuf,
 }

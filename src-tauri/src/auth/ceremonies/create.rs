@@ -40,7 +40,7 @@ pub async fn create_vault(
     session_manager: &SessionManager,
     cloud_transport: &dyn CloudTransport,
 ) -> Result<VaultId, AuthenticationError> {
-    enforce_argon2_policy(&request.argon2_params)?;
+    validate_new_vault_argon2_defaults(&request.argon2_params)?;
     let install_reservation = session_manager.reserve_session_install().await?;
 
     match (request.tier, request.target_key_file_path.as_ref()) {
@@ -136,7 +136,7 @@ pub async fn create_vault(
     let public_key_vec: Vec<u8> = public_key_bytes.to_vec();
     let db_result: Result<(), AuthenticationError> =
         tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
-            let conn = open_sqlcipher(&vault_db_path_owned, sqlcipher_key.expose())?;
+            let conn = open_sqlcipher(&vault_db_path_owned, &sqlcipher_key)?;
             apply_canonical_schema(&conn).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
             seed_manifest_meta(&conn, vault_id_uuid, chunk_size_bytes, epoch_buffer_enabled)
                 .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
@@ -233,7 +233,7 @@ mod tests {
     use crate::auth::session::{SessionKeys, SessionManager};
     use crate::auth::staging;
     use crate::auth::{
-        CreateVaultRequest, SetupRecoveryRequest, Tier, create_vault, setup_recovery,
+        Argon2Params, CreateVaultRequest, SetupRecoveryRequest, Tier, create_vault, setup_recovery,
     };
     use crate::crypto::{
         RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_master_key_from_recovery,
@@ -315,6 +315,31 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_vault_rejects_non_default_argon2_params() {
+        let _lock = ceremony_lock().await;
+        let temp = temp_dir();
+        let vault_db_path = temp.path().join("vault.db");
+        let cloud = MockCloudTransport::new();
+        let session = test_session_manager();
+        let request = CreateVaultRequest {
+            tier: Tier::One,
+            password_bytes: TEST_PASSWORD,
+            target_key_file_path: None,
+            vault_db_path,
+            argon2_params: test_params(),
+            chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+            epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+        };
+
+        let result = create_vault(request, &session, &cloud).await;
+
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::VaultHeaderInvalid)
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_create_vault_rejects_missing_target_key_file_path_for_tier_two() {
         let _lock = ceremony_lock().await;
         let temp = temp_dir();
@@ -326,7 +351,7 @@ mod tests {
             password_bytes: TEST_PASSWORD,
             target_key_file_path: None,
             vault_db_path,
-            argon2_params: test_params(),
+            argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };
@@ -350,7 +375,7 @@ mod tests {
             password_bytes: TEST_PASSWORD,
             target_key_file_path: Some(nonexistent_parent),
             vault_db_path,
-            argon2_params: test_params(),
+            argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };
@@ -377,7 +402,7 @@ mod tests {
             password_bytes: TEST_PASSWORD,
             target_key_file_path: Some(key_file_path.clone()),
             vault_db_path,
-            argon2_params: test_params(),
+            argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };
@@ -415,7 +440,7 @@ mod tests {
             password_bytes: TEST_PASSWORD,
             target_key_file_path: Some(new_key_file_path.clone()),
             vault_db_path: new_vault_db_path.clone(),
-            argon2_params: test_params(),
+            argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };
@@ -461,7 +486,7 @@ mod tests {
             password_bytes: TEST_PASSWORD,
             target_key_file_path: Some(key_file_path.clone()),
             vault_db_path: vault_db_path.clone(),
-            argon2_params: test_params(),
+            argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };
@@ -503,7 +528,7 @@ mod tests {
             password_bytes: TEST_PASSWORD,
             target_key_file_path: Some(key_file_path.clone()),
             vault_db_path: vault_db_path.clone(),
-            argon2_params: test_params(),
+            argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };
@@ -542,7 +567,7 @@ mod tests {
             password_bytes: TEST_PASSWORD,
             target_key_file_path: None,
             vault_db_path,
-            argon2_params: test_params(),
+            argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
         };

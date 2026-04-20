@@ -2,9 +2,7 @@ use zeroize::Zeroizing;
 
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::{Argon2Params, derive_master_key_into};
-use crate::crypto::hkdf::{
-    HKDF_INFO_KEY_ENCRYPTION, HKDF_INFO_MANIFEST_BACKUP, HKDF_INFO_SQLCIPHER, expand_vault_key_into,
-};
+use crate::crypto::derive_vault_keys;
 use crate::memory::SecureBytes;
 
 /// Holds all derived keys for the duration of an authenticated session.
@@ -45,28 +43,21 @@ impl SessionKeys {
     pub(crate) fn from_master_key_bytes(
         master_key_bytes: &[u8; 32],
     ) -> Result<Self, AuthenticationError> {
+        let vault_keys = derive_vault_keys(master_key_bytes)
+            .map_err(|_| AuthenticationError::InvalidCredentials)?;
         let mut key_encryption_key = SecureBytes::<32>::new()?;
         let mut sqlcipher_key = SecureBytes::<32>::new()?;
         let mut manifest_key = SecureBytes::<32>::new()?;
 
-        expand_vault_key_into(
-            master_key_bytes,
-            HKDF_INFO_KEY_ENCRYPTION,
-            key_encryption_key.as_mut(),
-        )
-        .map_err(|_| AuthenticationError::InvalidCredentials)?;
-        expand_vault_key_into(
-            master_key_bytes,
-            HKDF_INFO_SQLCIPHER,
-            sqlcipher_key.as_mut(),
-        )
-        .map_err(|_| AuthenticationError::InvalidCredentials)?;
-        expand_vault_key_into(
-            master_key_bytes,
-            HKDF_INFO_MANIFEST_BACKUP,
-            manifest_key.as_mut(),
-        )
-        .map_err(|_| AuthenticationError::InvalidCredentials)?;
+        vault_keys
+            .key_encryption_key
+            .with_exposed(|bytes| key_encryption_key.as_mut().copy_from_slice(bytes));
+        vault_keys
+            .sqlcipher_key
+            .with_exposed(|bytes| sqlcipher_key.as_mut().copy_from_slice(bytes));
+        vault_keys
+            .manifest_key
+            .with_exposed(|bytes| manifest_key.as_mut().copy_from_slice(bytes));
 
         Ok(Self {
             key_encryption_key,

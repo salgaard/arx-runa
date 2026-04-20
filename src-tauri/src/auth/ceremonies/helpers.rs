@@ -9,6 +9,7 @@ use rusqlite::ffi;
 use secrecy::SecretBox;
 use zeroize::Zeroizing;
 
+use super::types::Argon2MigrationIntent;
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::{Argon2Params, derive_master_key_into};
 use crate::auth::session::SessionKeys;
@@ -37,21 +38,29 @@ pub(super) fn argon2_params_from_json(json: &Argon2ParamsJson) -> Argon2Params {
     }
 }
 
-/// Enforces the canonical Argon2 policy for all ceremony request payloads.
-pub(super) fn enforce_argon2_policy(params: &Argon2Params) -> Result<(), AuthenticationError> {
-    #[cfg(test)]
-    {
-        let _ = params;
+/// Enforces canonical Argon2 defaults for new-vault creation only.
+pub(super) fn validate_new_vault_argon2_defaults(
+    params: &Argon2Params,
+) -> Result<(), AuthenticationError> {
+    if *params == Argon2Params::DEFAULT {
         Ok(())
+    } else {
+        Err(AuthenticationError::VaultHeaderInvalid)
     }
+}
 
-    #[cfg(not(test))]
-    {
-        if *params == Argon2Params::DEFAULT {
-            Ok(())
-        } else {
-            Err(AuthenticationError::VaultHeaderInvalid)
-        }
+/// Resolves effective Argon2 parameters for existing-vault ceremonies.
+///
+/// Default behavior preserves trusted header parameters. Explicit migration
+/// intent is required before requested parameters are applied.
+pub(super) fn resolve_existing_vault_argon2(
+    trusted_header_params: &Argon2Params,
+    requested_params: &Argon2Params,
+    migration_intent: Argon2MigrationIntent,
+) -> Result<Argon2Params, AuthenticationError> {
+    match migration_intent {
+        Argon2MigrationIntent::PreserveTrusted => Ok(*trusted_header_params),
+        Argon2MigrationIntent::MigrateToRequested => Ok(*requested_params),
     }
 }
 
@@ -157,20 +166,20 @@ pub(super) fn decode_base64_72(input: &str) -> Result<[u8; 72], AuthenticationEr
 /// Opens a SQLCipher database and applies a raw-byte key via SQLCipher FFI.
 pub(super) fn open_sqlcipher(
     path: &Path,
-    sqlcipher_key: &[u8; 32],
+    sqlcipher_key: &SqlcipherKey,
 ) -> Result<Connection, AuthenticationError> {
     let conn = Connection::open(path).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    let rc = {
+    let rc = sqlcipher_key.with_exposed(|key_bytes| {
         // SAFETY: `conn` is open for this thread and `sqlcipher_key` points to
         // a valid 32-byte buffer for the duration of the call.
         unsafe {
             ffi::sqlite3_key(
                 conn.handle(),
-                sqlcipher_key.as_ptr().cast(),
-                sqlcipher_key.len() as i32,
+                key_bytes.as_ptr().cast(),
+                key_bytes.len() as i32,
             )
         }
-    };
+    });
     if rc != ffi::SQLITE_OK {
         let error_message = {
             // SAFETY: `conn.handle()` remains valid while `conn` is alive and
@@ -191,19 +200,19 @@ pub(super) fn open_sqlcipher(
 /// Rekeys an already-open SQLCipher connection via SQLCipher FFI.
 pub(super) fn rekey_sqlcipher(
     conn: &Connection,
-    new_sqlcipher_key: &[u8; 32],
+    new_sqlcipher_key: &SqlcipherKey,
 ) -> Result<(), AuthenticationError> {
-    let rc = {
+    let rc = new_sqlcipher_key.with_exposed(|key_bytes| {
         // SAFETY: `conn` is open for this thread and `new_sqlcipher_key` points
         // to a valid 32-byte buffer for the duration of the call.
         unsafe {
             ffi::sqlite3_rekey(
                 conn.handle(),
-                new_sqlcipher_key.as_ptr().cast(),
-                new_sqlcipher_key.len() as i32,
+                key_bytes.as_ptr().cast(),
+                key_bytes.len() as i32,
             )
         }
-    };
+    });
     if rc != ffi::SQLITE_OK {
         let error_message = {
             // SAFETY: `conn.handle()` remains valid while `conn` is alive and
@@ -283,7 +292,7 @@ pub(super) async fn verify_credentials_via_identity_row(
 ) -> Result<(), AuthenticationError> {
     let vault_db_path = vault_db_path.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
-        let conn = open_sqlcipher(&vault_db_path, sqlcipher_key.expose())?;
+        let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key)?;
         let wrapped_blob: Vec<u8> = conn
             .query_row(
                 "SELECT wrapped_private_key FROM vault_identity WHERE id = 1",
