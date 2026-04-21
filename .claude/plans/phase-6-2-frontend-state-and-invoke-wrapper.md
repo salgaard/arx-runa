@@ -1,7 +1,7 @@
 ---
 title: "Phase 6.2 — Frontend State Contexts and Tauri Invoke Wrapper"
 created: "2026-04-20T18:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 6
 sub-phase: "6.2"
 design-document: docs/architecture/designs/tauri-ipc-and-frontend/design.md
@@ -550,3 +550,145 @@ Note: if `.github/instructions/leptos.instructions.md` does not currently exist,
 ## 9. Handoff Notes for Implementer
 
 Working directory is `C:\Users\chris\source\repos\arx-runa`. This plan is self-contained — re-reading the sub-phase is not required, but the **contract snippets (CS-001…CS-009)** are the source of truth for this phase's bodies; do not improvise signatures. Execute **§8 governance-sync actions first** (GS-001, GS-002) before touching any `src/**` files. Then follow **§5 Implementation Steps 1 → 15 in order**: Cargo.toml first (it gates compilation), then library/DTO/state files in the order listed, then `main.rs` + `app.rs` last (they close the circuit). Traps: (a) Tauri v2 command arguments are deserialised as a camelCase JSON object — pass a request struct such as `ListDirectoryRequest`, not a bare `String`; (b) the `invoke` extern must carry `#[wasm_bindgen(catch)]` (design illustration is wrong); (c) the three providers must wrap `App`'s body in `Session > Vault > Sync` order or 6.3 hooks panic; (d) `VaultState::clear` is the Zero-Trace enforcement point — tests must assert field-by-field parity with `VaultState::default()`; (e) the top-level `Cargo.toml` gains a `[lib]` entry alongside the existing `[[bin]]`, so both targets compile from the same tree. Validation closure: `trunk build` must succeed with zero warnings and `cargo test --workspace --all-targets --all-features` must pass all new tests. Security review is **not required** for this sub-phase per the verified scope check in §2; if any file under `src-tauri/src/{crypto,auth,storage}/` is touched, stop and escalate — that is a Plan Deviation.
+
+---
+
+## Implementation Log
+
+**Date:** 2026-04-20T22:30:00Z
+**Run ID:** `phase-6-2-frontend-state-and-invoke-wrapper-20260420-222900`
+**Track:** `full` (governance-sync-required: true)
+**Branch:** `development`
+**Execution mode:** rust-implementer delegated (all steps); 1 direct orchestrator fix noted (compile error: `gen` keyword, Rust 2024 reserved; renamed → `nav_gen`)
+
+### Agent Evidence
+
+| Approach step | Agent | Model Requested | Model Reported | Agent ID | Outcome |
+|---|---|---|---|---|---|
+| 3B context build | plan-context-builder | claude-sonnet-4.6 | — | plan-context-builder | PLAN_DIGEST ✓ |
+| 3B context build | rules-extractor | claude-sonnet-4.6 | — | rules-extractor | RULES_INDEX ✓ |
+| 3B context build | design-extractor | claude-sonnet-4.6 | — | design-extractor | DESIGN_INDEX ✓ |
+| 3B context build | shard-planner | claude-sonnet-4.6 | — | shard-planner | SHARD_MAP (4 shards: A=IPC bridge, B=DTOs, C=state contexts, D=crate wiring) ✓ |
+| Step 4 — implement | rust-implementer | claude-sonnet-4.6 | — | implementer-phase62 | IMPLEMENTATION_RESULT ✓ (11 new + 3 modified files; inline module deviation noted) |
+| Step 4 — review C1 | rust-reviewer | claude-sonnet-4.6 | — | reviewer-cycle1 | 1 HIGH, 6 MEDIUM, 2 LOW ✓ |
+| Step 4 — review C1 | architecture-reviewer | claude-sonnet-4.6 | — | arch-reviewer-cycle1 | 1 HIGH, 4 MEDIUM, 3 LOW ✓ |
+| Step 4 — classify C1 | finding-classifier | claude-sonnet-4.6 | — | classifier-cycle1 | CLASSIFIED_FINDINGS (17 findings) ✓ |
+| Step 4 — solve C1 | problem-solver | claude-sonnet-4.6 | — | solver-high-cf001 | SOLUTION_PACK (CF-001) ✓ |
+| Step 4 — solve C1 | problem-solver | claude-sonnet-4.6 | — | solver-high-cf010 | SOLUTION_PACK (CF-010) ✓ |
+| Step 4 — solve C1 | problem-solver | claude-sonnet-4.6 | — | solver-medium-c1 | SOLUTION_PACK (CF-002/003/011/012) ✓ |
+| Step 4 — implement C1 | rust-implementer | claude-sonnet-4.6 | — | implementer-remediation | IMPLEMENTATION_RESULT (9 fixes applied) ✓ |
+| Step 4 — test-writer | test-writer | claude-sonnet-4.6 | — | test-writer-6-2 | 8 new edge-case tests added ✓ |
+| Step 4 — review C2 | rust-reviewer | claude-sonnet-4.6 | — | reviewer-cycle2 | 2 MEDIUM, 1 LOW ✓ |
+| Step 4 — review C2 | architecture-reviewer | claude-sonnet-4.6 | — | arch-reviewer-cycle2 | 1 MEDIUM, 1 LOW ✓ |
+| Step 4 — classify C2 | finding-classifier | claude-sonnet-4.6 | — | classifier-cycle2 | CLASSIFIED_FINDINGS (5 findings) ✓ |
+| Step 4 — solve C2 vault | problem-solver | claude-sonnet-4.6 | — | solver-vault | SOLUTION_PACK (CF-013/CF-016) ✓ |
+| Step 4 — solve C2 session | problem-solver | claude-sonnet-4.6 | — | solver-session | SOLUTION_PACK (CF-014) ✓ |
+| Step 4 — solve C2 docs | problem-solver | claude-sonnet-4.6 | — | solver-docs | SOLUTION_PACK (CF-015/CF-017) ✓ |
+| Step 4 — implement C2 | rust-implementer | claude-sonnet-4.6 | — | implementer-cycle2 | IMPLEMENTATION_RESULT (5 files, 7 edits) ✓ |
+
+### Files Changed
+
+**New files:**
+- `src/error.rs` — `IpcError` + `IpcErrorKind` enum + `Display` impl + tests
+- `src/invoke.rs` — WASM `invoke` extern + `invoke_command<A,R>` typed wrapper
+- `src/lib.rs` — library crate root (re-exports only)
+- `src/ipc_types/mod.rs` — re-exports only
+- `src/ipc_types/session_status.rs` — `SessionStatus` DTO
+- `src/ipc_types/file_entry.rs` — `FileEntry` DTO + `EntryType` enum + `is_directory()` + tests
+- `src/ipc_types/requests.rs` — `ListDirectoryRequest`
+- `src/state/mod.rs` — re-exports (incl. `SessionActions`, `SyncActions`)
+- `src/state/session_context.rs` — `SessionState` + `SessionActions` + `SessionProvider` (Arc<AtomicBool> poll loop) + tests
+- `src/state/vault_context.rs` — `VaultState` + `VaultActions` (nav_generation, clear) + `VaultProvider` + tests
+- `src/state/sync_context.rs` — `SyncState` + `SyncActions` + `SyncProvider`
+
+**Modified files:**
+- `Cargo.toml` — `[lib]` block, `serde`+derive, `wasm-bindgen`, `wasm-bindgen-futures`, `gloo-timers` futures feature, `serde_json` dev-dep
+- `src/main.rs` — replaced `mod app; use app::App;` with `use arx_runa::App;`; `#[cfg(debug_assertions)]` gate on `console_log`
+- `src/app.rs` — wrapped body in `SessionProvider > VaultProvider > SyncProvider`
+- `docs/architecture/designs/tauri-ipc-and-frontend/design.md` — SessionProvider polling loop updated to three-guard pattern
+- `docs/architecture/designs/tauri-ipc-and-frontend/sub-phases/6.2-frontend-state-and-invoke-wrapper.md` — D-005 deviation note (`Rc<Cell<bool>>` → `Arc<AtomicBool>`); `## Implementation Decisions` section added
+- `.claude/rules/leptos.md` — GS-001: `## State contexts` section added; Zero-Trace bullet extended to all three Actions types
+- `.github/instructions/leptos.instructions.md` — GS-002: synced from `.claude/rules/leptos.md` (added `## State contexts` section)
+
+### CI Results
+
+| Check | Result |
+|---|---|
+| `cargo fmt --all` | ✅ clean (1 mod.rs line-length fix applied before final check) |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | ✅ clean |
+| `cargo test --workspace --all-targets --all-features` | ✅ 17 frontend + 660 backend, 0 failed |
+| `cargo build --workspace --release` | ✅ clean |
+
+### Review Findings Summary
+
+**Cycle 1 (17 findings):**
+- HIGH: 2 (CF-001 console_log gate, CF-010 post-await panic)
+- MEDIUM: 10 (navigate race, poll gap, kind/entry_type enums, SyncActions/SessionActions, silent errors)
+- LOW: 5 (Display impl, field docs, doc accuracy)
+- ACTIONABLE_NOW: 7 | DEFERRED_BY_PLAN: 7 | INTENTIONAL_DECISION: 3
+
+**Cycle 2 (5 findings):**
+- MEDIUM: 3 (CF-013 stale loading, CF-014 SessionActions Zero-Trace, CF-016 nav_generation in clear)
+- LOW: 2 (CF-015 doc comment timing, CF-017 path field doc)
+- ACTIONABLE_NOW: 5 | No deferred | No overrides
+
+### Architecture Review
+Cycle 1: 1 HIGH + 4 MEDIUM + 3 LOW — all resolved or deferred with rationale.
+Cycle 2: 1 MEDIUM + 1 LOW — all resolved.
+
+### Security Review
+Skipped — no `src-tauri/src/{crypto,auth,storage}/` files touched. Zero-Trace touchpoints verified: `VaultActions::clear()`, `SessionActions::clear()`, `SyncActions::clear()`.
+
+### Cross-Shard Review
+N/A — single shard reviewed each cycle (frontend-only scope).
+
+### Findings Quality Gate
+
+| Disposition | Count (all cycles) |
+|---|---|
+| ACTIONABLE_NOW | 12 |
+| DEFERRED_BY_PLAN | 7 |
+| INTENTIONAL_DECISION | 3 |
+| INSUFFICIENT_EVIDENCE | 0 |
+
+### Finding Overrides
+None.
+
+### Design Challenge Outcomes
+
+| Finding | Challenge | Decision | Rationale | Doc updated |
+|---|---|---|---|---|
+| CF-013 (cycle 2) | D-002: stale responses must reset `loading=false` | ACCEPTED (autonomous) | D-002 as written was the bug. Stale branches must be silent no-ops; sole authority for clearing `loading` is the matching navigation's terminal branch. | `## Implementation Decisions` in sub-phase doc |
+| CF-014 (cycle 2) | Plan CS-006 vs. Assumption 8 contradiction on SessionActions | ACCEPTED (user delegated autonomously) | D-001 (Zero-Trace) is a hard invariant. Raw `WriteSignal<SessionState>` left `error`/`authenticating` uncleared on lock. `SessionActions` struct (Assumption 8) chosen over CS-006. | `## Implementation Decisions` in sub-phase doc |
+
+### Governance Sync
+
+| Action | Target | Outcome |
+|---|---|---|
+| GS-001 | `.claude/rules/leptos.md` | ✅ `## State contexts` section added; Zero-Trace bullet extended |
+| GS-002 | `.github/instructions/leptos.instructions.md` | ✅ Synced via `/copilot-sync` — DIVERGED → FIXED |
+
+### Sub-Phase Decisions Sync
+Doc: `docs/architecture/designs/tauri-ipc-and-frontend/sub-phases/6.2-frontend-state-and-invoke-wrapper.md`
+Decisions added (4):
+1. `Arc<AtomicBool>` over `Rc<Cell<bool>>` (D-005) — Leptos 0.8 `on_cleanup` requires `Send + Sync + 'static`
+2. `SessionActions`/`SyncActions` structs over raw `WriteSignal` — D-001 Zero-Trace compliance
+3. Stale `navigate()` branches are silent no-ops — D-002 amendment
+4. `nav_generation` incremented in `clear()` before state wipe — D-001 + CF-016 fix rationale
+
+### Deviations from Plan
+
+| Deviation | Expected | Actual | Impact |
+|---|---|---|---|
+| Inline modules vs. subdirectory layout | `src/ipc_types/` and `src/state/` as directory modules | Implementer initially used inline modules in `src/ipc_types.rs` and `src/state.rs` | Restructured to correct layout post-implementation; all logic preserved |
+| `Arc<AtomicBool>` stop flag (D-005) | `Rc<Cell<bool>>` per plan Assumption 6 | `Arc<AtomicBool>` — `Rc<Cell<bool>>` fails `Send + Sync + 'static` required by Leptos 0.8 `on_cleanup` | None — correct semantics on WASM single-threaded model |
+| `gen` renamed to `nav_gen` | Variable name `gen` | `gen` is reserved keyword in Rust 2024 edition — renamed at orchestrator level | None — direct fix, no logic change |
+| `SessionActions` struct (plan CS-006 contradiction) | CS-006 specified `WriteSignal<SessionState>` return type | `SessionActions` struct per Assumption 8 + D-001 Zero-Trace requirement | Plan CS-006 amended in-run; design challenge CF-014 accepted |
+
+### Documentation Flagged (Section 7 deferred items)
+- `design.md` §Tauri IPC Integration `invoke` extern snippet — illustrative block; deferred (not a contract change)
+- `design.md` §Vault Context snippet `invoke::<_, Vec<FileEntry>>` — illustrative block; deferred
+- `sub-phases/roadmap.md` status tick — post-merge bookkeeping; deferred
+
+### Run State Path
+`.claude/runs/phase-6-2-frontend-state-and-invoke-wrapper-20260420-222900/`

@@ -4,7 +4,7 @@ description: >
   Detect cross-shard contradictions and interface-level integration risks from
   structured cycle outputs and boundary pub signatures.
 tools: Read, Grep, Glob, Bash
-model: Claude Sonnet 4.6
+model: Claude Haiku 4.5
 ---
 
 You run cycle-level consistency review across shard outputs.
@@ -57,7 +57,7 @@ The `INTERFACE_SLICE` is your primary tool for detecting interface mismatches th
 
 ```text
 CROSS_SHARD_REVIEW
-model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
+model_self_reported: <your model identifier, e.g. claude-haiku-4.5>
 Cycle: <cycle_id>
 Summary: HIGH=<N>, MEDIUM=<N>, LOW=<N>
 

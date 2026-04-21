@@ -4,7 +4,7 @@ description: >
   Map resolved Rust file scope to shard groups and emit SHARD_MAP with security
   sensitivity, keyword hits, and per-shard SHARD_DIGEST_SUMMARY for cross-shard-reviewer.
 tools: Read, Grep, Glob, Bash
-model: Claude Sonnet 4.6
+model: GPT-4.1
 ---
 
 You assign files to shard groups for review orchestration and produce lightweight digest summaries for cross-shard review.
@@ -33,7 +33,7 @@ You assign files to shard groups for review orchestration and produce lightweigh
 
 ```text
 SHARD_MAP {
-  model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
+  model_self_reported: <your model identifier, e.g. gpt-4.1>
   shards: [
     {
       shard_id: "<shard-auth|shard-crypto|shard-storage|shard-default>"

@@ -1053,11 +1053,21 @@ pub fn SessionProvider(children: Children) -> impl IntoView {
         async move {
             while !stop_polling.get_untracked() {
                 if let Ok(status) = invoke::<_, SessionStatus>("get_session_status", &()).await {
+                    // Guard: on_cleanup may fire while invoke is suspended.
+                    // Check stop flag before writing to the signal to prevent
+                    // a panic from writing to a disposed signal owner scope.
+                    if stop_polling.get_untracked() {
+                        break;
+                    }
                     set_state.update(|s| {
                         s.is_unlocked = status.is_unlocked;
                         s.vault_id = status.vault_id.clone();
                         s.timeout_seconds = status.timeout_seconds;
                     });
+                }
+                // Guard: on_cleanup may fire while TimeoutFuture is suspended.
+                if stop_polling.get_untracked() {
+                    break;
                 }
                 gloo_timers::future::TimeoutFuture::new(5_000).await;
             }
@@ -1066,6 +1076,11 @@ pub fn SessionProvider(children: Children) -> impl IntoView {
     
     // Cleanup: stop polling when provider unmounts
     on_cleanup(move || set_stop_polling.set(true));
+    // The stop flag must be checked at three points: the while condition,
+    // after each awaited IPC call (before any signal write), and after each
+    // awaited timer. Checking only at the loop top leaves a race window where
+    // on_cleanup fires while a future is suspended, causing set_state.update
+    // to execute against a disposed arena scope and panicking at runtime.
     
     children()
 }

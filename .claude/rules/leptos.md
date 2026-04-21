@@ -30,3 +30,8 @@ For patterns and examples, see `.claude/reference/leptos-patterns.md`.
 - **Zero-Trace**: Zeroize password strings before clearing UI state
 - **Zero-Trace**: Clear UI state when vault locks
 - All Tauri IPC via `invoke()` — backend handles crypto
+
+## State contexts
+- Hook pairs: use_session/use_session_actions, use_vault/use_vault_actions, use_sync/use_sync_actions — panic with "<Provider> must wrap the component tree" if the provider is missing.
+- The Actions pattern (`VaultActions`, `SessionActions`, `SyncActions`) is the Zero-Trace enforcement point for each state context — every new field added to any state struct must be cleared in the corresponding `Actions::clear()` method
+- Provider hierarchy: SessionProvider > VaultProvider > SyncProvider in src/app.rs.

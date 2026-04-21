@@ -4,7 +4,7 @@ description: >
   Extract distinct rule anchors from .claude/rules into a structured
   RULES_INDEX without paraphrasing.
 tools: Read, Grep, Glob, Bash
-model: Claude Sonnet 4.6
+model: GPT-4.1
 ---
 
 You extract rule statements into a deterministic `RULES_INDEX`.
@@ -24,7 +24,7 @@ You extract rule statements into a deterministic `RULES_INDEX`.
 
 ```text
 RULES_INDEX {
-  model_self_reported: <your model identifier, e.g. claude-sonnet-4.6>
+  model_self_reported: <your model identifier, e.g. gpt-4.1>
   rules: [
     {
       id: "<rule-id or R-NNN>"

@@ -38,32 +38,58 @@ Implement the saved plan: $ARGUMENTS
 
 **How to invoke agents:** Use the `task` tool with the agent's name as `agent_type` and the `model` override from the Model Assignments table below. Example:
 ```
-task(agent_type="rust-implementer", model="claude-sonnet-4.6", prompt="<step context + SOLUTION_PACK>")
-task(agent_type="rust-reviewer", model="claude-sonnet-4.6", prompt="<shard context>")
-task(agent_type="finding-classifier", model="claude-sonnet-4.6", prompt="<canonicalized findings + PLAN_DIGEST + RULES_INDEX + DESIGN_INDEX>")
+task(agent_type="rust-implementer",    model="claude-sonnet-4.6", prompt="<step context + SOLUTION_PACK>")
+task(agent_type="rust-reviewer",       model="claude-sonnet-4.6", prompt="<shard context>")
+task(agent_type="finding-classifier",  model="gpt-4.1",           prompt="<canonicalized findings + PLAN_DIGEST + RULES_INDEX + DESIGN_INDEX>")
 ```
 All custom agent names in the Agent Roster above map directly to `agent_type` values in the `task` tool.
+
+---
 
 ## Model Assignments
 
 Apply these model overrides on every `task` invocation. Never omit the `model` parameter — rely on defaults only when an agent is not listed here.
 
-> **Note:** `claude-opus-4.6` and `claude-opus-4.5` return `CAPIError: 400 The requested model is not supported` for sub-agent task invocations in this environment (premium tier unavailable). Use `claude-sonnet-4.6` for all agents.
+> **Note:** `claude-opus-4.6` and `claude-opus-4.5` return `CAPIError: 400 The requested model is not supported` for sub-agent task invocations in this environment (premium tier unavailable). Do not use Opus models.
 
-| Agent | Model | Rationale |
-|---|---|---|
-| `rust-implementer` | `claude-sonnet-4.6` | Best available model — writes all production Rust code |
-| `rust-reviewer` | `claude-sonnet-4.6` | Best available model — deep code review with security/rule awareness |
-| `security-reviewer` | `claude-sonnet-4.6` | Best available model — crypto correctness and zero-knowledge threat model |
-| `architecture-reviewer` | `claude-sonnet-4.6` | Best available model — cross-cutting structural analysis |
-| `problem-solver` | `claude-sonnet-4.6` | Best available model — solution synthesis across classified findings |
-| `test-writer` | `claude-sonnet-4.6` | Best available model — adversarial crypto tests and coverage planning |
-| `finding-classifier` | `claude-sonnet-4.6` | Structured disposition classification — accurate table output |
-| `cross-shard-reviewer` | `claude-sonnet-4.6` | Pattern-based contradiction detection using structured shard digests |
-| `shard-planner` | `claude-sonnet-4.6` | File-to-shard mapping and keyword classification |
-| `plan-context-builder` | `claude-sonnet-4.6` | Document parsing and structured extraction |
-| `rules-extractor` | `claude-sonnet-4.6` | Text extraction from rule files — mechanical |
-| `design-extractor` | `claude-sonnet-4.6` | Design invariant extraction — mechanical |
+> **Rate-limit fallback:** If you receive a weekly token limit error during a run, switch all non-Sonnet agents to `auto` (GitHub Copilot auto model selection). Auto model selection continues to function on premium requests even when the weekly cap is hit for specific models. Sonnet 4.6 agents may be switched to `claude-haiku-4.5` as an emergency fallback; record this in the Implementation Log.
+
+### Tiered model strategy
+
+Agents are assigned to one of three cost tiers based on task complexity:
+
+| Tier | Models | Premium multiplier | When to use |
+|---|---|---|---|
+| **T0 — Free** | `gpt-4.1`, `gpt-5-mini` | 0× | Mechanical extraction, verbatim parsing, structured classification |
+| **T1 — Low** | `claude-haiku-4.5`, `grok-code-fast-1` | 0.25–0.33× | Pattern-based analysis over structured inputs, mechanical code generation |
+| **T2 — Standard** | `claude-sonnet-4.6` | 1× | Deep code review, security analysis, solution synthesis, production code writing |
+
+### Agent → Model table
+
+| Agent | Model | Tier | Rationale |
+|---|---|---|---|
+| `plan-context-builder` | `gpt-4.1` | T0 | Verbatim YAML/markdown extraction — no reasoning required |
+| `rules-extractor` | `gpt-4.1` | T0 | Verbatim rule text extraction — fully mechanical |
+| `design-extractor` | `gpt-4.1` | T0 | Verbatim invariant extraction — fully mechanical |
+| `shard-planner` | `gpt-4.1` | T0 | File-path classification and keyword grep — rule-table driven |
+| `finding-classifier` | `gpt-4.1` | T0 | Table-driven disposition classification using explicit policy rules |
+| `cross-shard-reviewer` | `claude-haiku-4.5` | T1 | Pattern-based contradiction detection over structured shard digest summaries — no raw source needed |
+| `test-writer` | `claude-haiku-4.5` | T1 | Mechanical test generation from spec; adversarial cases may be escalated to Sonnet |
+| `architecture-reviewer` | `claude-haiku-4.5` | T1 | Structural pattern detection; escalate to Sonnet if security_flag hits appear |
+| `rust-reviewer` | `claude-sonnet-4.6` | T2 | Deep code review with security/rule awareness — must be highest quality |
+| `security-reviewer` | `claude-sonnet-4.6` | T2 | Crypto correctness and zero-knowledge threat model — no quality compromise |
+| `problem-solver` | `claude-sonnet-4.6` | T2 | Solution synthesis across classified findings — requires full reasoning |
+| `rust-implementer` | `claude-sonnet-4.6` | T2 | All production Rust code — must be highest quality |
+
+### Architecture-reviewer escalation rule
+
+If `architecture-reviewer` (running as `claude-haiku-4.5`) emits any finding with `security_flag: true`, re-invoke it as `claude-sonnet-4.6` for that shard only, passing the haiku output as suppression context. Record the escalation in the Implementation Log.
+
+### Test-writer escalation rule
+
+If the plan's Section 6d requests adversarial crypto tests or the shard is `shard-auth` or `shard-crypto`, invoke `test-writer` as `claude-sonnet-4.6` instead of `claude-haiku-4.5`. Record the override in the Implementation Log.
+
+---
 
 ## Structured contract ownership (hard)
 
@@ -161,14 +187,16 @@ Track capabilities:
 
 **MUST** invoke all four agents in parallel via the `task` tool before any implementation begins. These are not optional pre-work — they are the contract surfaces downstream agents consume. Skipping them is a hard violation that blocks all subsequent steps.
 
+All four have no dependencies on each other and **MUST** be invoked in a single parallel `task` call batch:
+
 ```
-task(agent_type="plan-context-builder", model="claude-sonnet-4.6", ...)  → PLAN_DIGEST
-task(agent_type="rules-extractor",      model="claude-sonnet-4.6", ...)  → RULES_INDEX
-task(agent_type="design-extractor",     model="claude-sonnet-4.6", ...)  → DESIGN_INDEX
-task(agent_type="shard-planner",        model="claude-sonnet-4.6", ...)  → SHARD_MAP + SHARD_DIGEST_SUMMARY[]
+task(agent_type="plan-context-builder", model="gpt-4.1", ...)  → PLAN_DIGEST
+task(agent_type="rules-extractor",      model="gpt-4.1", ...)  → RULES_INDEX
+task(agent_type="design-extractor",     model="gpt-4.1", ...)  → DESIGN_INDEX
+task(agent_type="shard-planner",        model="gpt-4.1", ...)  → SHARD_MAP + SHARD_DIGEST_SUMMARY[]
 ```
 
-Invoke all four in a single parallel `task` call batch (they have no dependencies on each other). Wait for all four to complete before continuing.
+Wait for all four to complete before continuing.
 
 Required consumer fields:
 - `PLAN_DIGEST`: `highest_implemented_phase`, `in_progress_phases`, `deferred_phases`, `plans[]`, `handoffs[]`
@@ -196,6 +224,7 @@ Write `.claude/runs/<run-id>/run-state.json`:
   },
   "override_records": [],
   "governance_sync_degraded": false,
+  "model_escalations": [],
   "cycles": []
 }
 ```
@@ -239,12 +268,13 @@ Follow the **Approach** section of the plan step by step, in order.
 
 Reviewers **MUST** be invoked via the `task` tool. The orchestrator **MUST NOT** perform review, classification, or finding synthesis directly. Read plan **Section 6** for reviewer guidance.
 
-5. **Rust quality review:** if any `src-tauri/**/*.rs` files were changed, invoke `rust-reviewer` via `task` tool. Pass `DIGEST_SLICE_<shard_id>` for each touched shard. Apply output parsing protocol. Skip and record if no Rust files changed.
+5. **Rust quality review:** if any `src-tauri/**/*.rs` files were changed, invoke `rust-reviewer` via `task` tool with model `claude-sonnet-4.6`. Pass `DIGEST_SLICE_<shard_id>` for each touched shard. Apply output parsing protocol. Skip and record if no Rust files changed.
 
-6. **Security review:** if any files under `src-tauri/src/{crypto,auth,storage}/` were changed, invoke `security-reviewer` via `task` tool. Pass relevant `DIGEST_SLICE` and security concerns from plan Section 6b. Apply output parsing protocol. Skip and record if no security-path files changed.
+6. **Security review:** if any files under `src-tauri/src/{crypto,auth,storage}/` were changed, invoke `security-reviewer` via `task` tool with model `claude-sonnet-4.6`. Pass relevant `DIGEST_SLICE` and security concerns from plan Section 6b. Apply output parsing protocol. Skip and record if no security-path files changed.
    - **Drift check (always runs):** if any sensitive file was touched that plan Section 6b did not anticipate, invoke Plan-deviation protocol and halt.
 
-7. **Architecture review (`full` and `standard` tracks only):** if any `src-tauri/**/*.rs` files were changed, invoke `architecture-reviewer` via `task` tool. Pass relevant `DIGEST_SLICE`. Apply output parsing protocol. Skip and record if no Rust files changed.
+7. **Architecture review:** if any `src-tauri/**/*.rs` files were changed, invoke `architecture-reviewer` via `task` tool with model `claude-haiku-4.5`. Pass `DIGEST_SLICE_<shard_id>`. Apply output parsing protocol.
+   - **Escalation:** if any returned finding has `security_flag: true`, re-invoke `architecture-reviewer` with model `claude-sonnet-4.6` for that shard, passing haiku output as suppression context. Record escalation in Implementation Log.
 
 8. **INTERFACE_SLICE extraction (when 2+ shards have changed files):** before invoking `cross-shard-reviewer`, extract boundary pub signatures:
 
@@ -261,7 +291,7 @@ Reviewers **MUST** be invoked via the `task` tool. The orchestrator **MUST NOT**
 
 10. **Severity normalization:** security-reviewer: `CRITICAL` → `CRITICAL`, `WARNING` → `HIGH`, `NOTE` → `MEDIUM`. Rust and architecture findings use `HIGH|MEDIUM|LOW` directly.
 
-11. **Finding classification:** invoke `finding-classifier` via `task` tool with canonicalized normalized findings + `PLAN_DIGEST` + `RULES_INDEX` + `DESIGN_INDEX`. Apply output parsing protocol. Require `CLASSIFIED_FINDINGS`. The orchestrator **MUST NOT** classify findings itself.
+11. **Finding classification:** invoke `finding-classifier` via `task` tool with model `gpt-4.1` and canonicalized normalized findings + `PLAN_DIGEST` + `RULES_INDEX` + `DESIGN_INDEX`. Apply output parsing protocol. Require `CLASSIFIED_FINDINGS`. The orchestrator **MUST NOT** classify findings itself.
 
 12. **Problem-solver invocation:** if `ACTIONABLE_NOW` is empty, continue to Testing. Otherwise:
 
@@ -273,13 +303,13 @@ Reviewers **MUST** be invoked via the `task` tool. The orchestrator **MUST NOT**
     - MEDIUM findings grouped by shard (max 10 per invocation)
     - One LOW batch
 
-    Invoke `problem-solver` via `task` tool per group with scoped files, `DIGEST_SLICE`, and `design_challenge_entries`. Apply output parsing protocol. Require `SOLUTION_PACK`, `NO_ACTIONABLE_FIXES`, or `BLOCKED_SOLUTIONS`. The orchestrator **MUST NOT** synthesise solutions itself.
+    Invoke `problem-solver` via `task` tool with model `claude-sonnet-4.6` per group with scoped files, `DIGEST_SLICE`, and `design_challenge_entries`. Apply output parsing protocol. Require `SOLUTION_PACK`, `NO_ACTIONABLE_FIXES`, or `BLOCKED_SOLUTIONS`. The orchestrator **MUST NOT** synthesise solutions itself.
 
     - If `BLOCKED_SOLUTIONS`: invoke Plan-deviation protocol and halt.
     - If `NO_ACTIONABLE_FIXES`: continue.
-    - Invoke `rust-implementer` with `SOLUTION_PACK`. Apply output parsing protocol. If any item returns `BLOCKED`, orchestrator implements directly; if also infeasible, invoke Plan-deviation protocol and halt.
+    - Invoke `rust-implementer` with model `claude-sonnet-4.6` and `SOLUTION_PACK`. Apply output parsing protocol. If any item returns `BLOCKED`, orchestrator implements directly; if also infeasible, invoke Plan-deviation protocol and halt.
 
-    **Cross-shard consistency pass (`full` and `standard` tracks, when 2+ shards changed):** invoke `cross-shard-reviewer` with per-shard finding records + `SHARD_DIGEST_SUMMARY[]` + `INTERFACE_SLICE`. Apply output parsing protocol. Use stable labels (`remediation-cycle-1`, ...). CRITICAL/HIGH cross-shard findings feed into the next `finding-classifier` invocation.
+    **Cross-shard consistency pass (`full` and `standard` tracks, when 2+ shards changed):** invoke `cross-shard-reviewer` with model `claude-haiku-4.5` and per-shard finding records + `SHARD_DIGEST_SUMMARY[]` + `INTERFACE_SLICE`. Apply output parsing protocol. Use stable labels (`remediation-cycle-1`, ...). CRITICAL/HIGH cross-shard findings feed into the next `finding-classifier` invocation.
 
     **Persist cycle state to disk** (see Run-state persistence).
 
@@ -352,7 +382,7 @@ If any Approach step cannot be executed as written, or a governance sync file ed
 
 ### Testing
 
-Invoke `test-writer` with the focus from plan Section 6d. Apply output parsing protocol. Run `cargo test` after completion and report results.
+Invoke `test-writer` with model `claude-haiku-4.5` (or `claude-sonnet-4.6` for crypto/auth shards — see Test-writer escalation rule above) with the focus from plan Section 6d. Apply output parsing protocol. Run `cargo test` after completion and report results.
 
 If Section 6d says no tests are needed and no Rust files changed: skip `test-writer` and record rationale.
 
@@ -397,14 +427,14 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
    - **Track** — `minimal` / `standard` / `full`; note any mid-run escalation
    - **Branch** — from Step 2
    - **Execution mode** — rust-implementer (default) or orchestrator (fallback); note which steps fell back
-   - **Agent evidence** — table: `Approach step | Agent | Model Requested | Model Reported | Agent ID | Outcome`. Parse `Model Reported` from the `model_self_reported:` field in each agent's output block header; use `—` if the field is absent.
+   - **Agent evidence** — table: `Approach step | Agent | Model Requested | Model Reported | Agent ID | Outcome | Escalated?`. Parse `Model Reported` from the `model_self_reported:` field in each agent's output block header; use `—` if the field is absent. Record `true` in `Escalated?` for any agent invoked at a higher tier than its default.
    - **Files changed** — including any updated design docs
    - **Formatting check** — `cargo fmt --all -- --check` summary
    - **Clippy results** — `cargo clippy --workspace --all-targets --all-features -- -D warnings` summary
    - **Test results** — `cargo test --workspace --all-targets --all-features` summary
    - **Release build** — `cargo build --workspace --release` summary
    - **Rust review** — findings summary or "Skipped"
-   - **Architecture review** — findings summary or "Skipped"
+   - **Architecture review** — findings summary or "Skipped"; note model used
    - **Security review** — findings summary or "Skipped"
    - **Cross-shard review** — invocation count + findings or "N/A"
    - **Findings quality gate** — counts by disposition across all cycles
@@ -415,6 +445,7 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
    - **Deviations from plan** — small adjustments only
    - **Documentation flagged** — verbatim from plan Section 7
    - **Run state path** — `.claude/runs/<run-id>/`
+   - **Model escalations** — list of agents that ran at a higher tier than default, with reason
 
 6. **Do not commit, push, or open a pull request.** Leave the working tree dirty.
 
@@ -428,7 +459,7 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
 ✓ Branch: [branch]
 ✓ Execution mode: [rust-implementer delegated | fallback steps noted]
 ✓ Rust review: [Skipped | summary]
-✓ Architecture review: [Skipped | summary]
+✓ Architecture review: [Skipped | summary + model used]
 ✓ Security review: [Skipped | summary]
 ✓ Cross-shard review: [N/A | count + summary]
 ✓ Findings quality gate: [counts by disposition]
@@ -438,6 +469,7 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
 ✓ Clippy: [clean | failures fixed | pre-existing unrelated issues]
 ✓ Tests: [summary]
 ✓ Release build: [success | failures fixed | pre-existing unrelated issues]
+✓ Model escalations: [None | agent list with reason]
 ⚠ Governance sync: [OK | DEGRADED — run /copilot-sync manually]
 → Validation checkpoint (manual): [from sub-roadmap]
 → Acceptance criteria (manual): [from sub-roadmap]
@@ -493,3 +525,4 @@ If sub-phase plan: read the Validation checkpoint from the sub-phase roadmap. Ru
 | Any Step 5 CI-equivalent local check fails | Halt — do not set `status: implemented` |
 | Accepted design challenge missing design-doc update at Step 6 | Halt — require update before marking implemented |
 | Section 7 documentation updates left unapplied without explicit deferred/optional rationale | Halt before `status: implemented` |
+| Weekly token limit hit mid-run | Switch non-Sonnet agents to `auto`; switch Sonnet agents to `claude-haiku-4.5`; record in Implementation Log |
