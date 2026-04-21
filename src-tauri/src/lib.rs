@@ -13,6 +13,7 @@ pub mod ui;
 pub fn run() {
     if let Err(error) = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(crate::ui::AppState::construct_default())
         .invoke_handler(tauri::generate_handler![
             // Auth (7)

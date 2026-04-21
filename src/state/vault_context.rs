@@ -92,6 +92,14 @@ impl VaultActions {
         });
     }
 
+    /// Writes a user-displayable error message to `VaultState::error`.
+    ///
+    /// Call this on upload or operation failure instead of silently discarding
+    /// the error.
+    pub fn set_error(self, message: String) {
+        self.set_state.update(|s| s.error = Some(message));
+    }
+
     /// Clears all vault state fields to defaults (used on session lock).
     ///
     /// `nav_generation` is incremented first so that any `navigate()` future

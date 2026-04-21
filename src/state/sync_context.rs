@@ -1,3 +1,5 @@
+//! Sync state context: SyncState, SyncActions, SyncProvider, and accessor hooks.
+
 use leptos::prelude::*;
 
 /// Frontend-side sync status. Distinct from the wire DTO `ipc_types::SyncStatus`.

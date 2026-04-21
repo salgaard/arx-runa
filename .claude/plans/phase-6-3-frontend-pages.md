@@ -1,12 +1,12 @@
 ---
 title: "Phase 6.3 — Frontend Pages"
 created: "2026-04-21T00:00:00Z"
-status: approved
+status: implemented
 roadmap-phase: 6
 sub-phase: "6.3"
 design-document: docs/architecture/designs/tauri-ipc-and-frontend/design.md
 sub-phase-roadmap: docs/architecture/designs/tauri-ipc-and-frontend/sub-phases/roadmap.md
-governance-sync-required: false
+governance-sync-required: true
 tags: [leptos, tauri, frontend, pages, zero-trace]
 ---
 

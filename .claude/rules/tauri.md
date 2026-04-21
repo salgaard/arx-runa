@@ -48,3 +48,4 @@ paths:
 ## Plugins
 - Keep plugin surface minimal and tightly scoped
 - Never: `shell` (general), `http`, `clipboard`, or unrestricted filesystem permissions. Exception: `tauri-plugin-shell` may be enabled with a scoped `shell:allow-execute` permission targeting the bundled `rclone` sidecar only (`{ "name": "rclone", "sidecar": true }`). OAuth browser launches use `tauri_plugin_opener`, never the shell plugin.
+- `tauri-plugin-dialog` is allowed for native open/save file pickers scoped to the `dialog:allow-open` permission; `dialog:allow-save` is allowed only where a command-contracted destination path is required.

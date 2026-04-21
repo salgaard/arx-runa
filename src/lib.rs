@@ -1,13 +1,21 @@
 //! Arx Runa Leptos frontend — library crate.
 //!
-//! Re-exports the IPC wrapper, error type, mirrored DTOs, and state providers
-//! used by the binary at `src/main.rs` and by Phase 6.3 page components.
+//! Re-exports the IPC wrapper, error type, mirrored DTOs, state providers,
+//! page components, and extern shims used by the binary at `src/main.rs`.
 
 pub mod app;
+pub mod auth;
+pub mod components;
+pub mod dialog;
+pub mod drag_drop;
 pub mod error;
 pub mod invoke;
+pub mod ipc_channel;
 pub mod ipc_types;
+pub mod layout;
 pub mod state;
+pub mod transfer;
+pub mod vault;
 
 pub use app::App;
 pub use error::IpcError;
