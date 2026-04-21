@@ -71,7 +71,7 @@ extern "C" {
 ///
 /// Displays the currently detected or manually-selected key file path.
 /// In Phase 6.3, only manual selection is active; the `device-event` subscriber
-/// is wired but receives no payloads until Phase 7 adds the backend emission
+/// is wired but receives no payloads until Phase 6.5 adds the backend emission
 /// bridge (`AppHandle::emit("device-event")` from `DeviceMonitor`).
 #[component]
 pub fn KeyFileIndicator(
@@ -92,7 +92,7 @@ pub fn KeyFileIndicator(
     };
 
     // Wire the device-event subscriber — tolerates zero emissions in 6.3.
-    // Backend emission bridge (AppHandle::emit from DeviceMonitor) is Phase 7 work.
+    // Backend emission bridge (AppHandle::emit from DeviceMonitor) is Phase 6.5 work.
     //
     // `on_cleanup` requires `Send + Sync`, so the unlisten handle is stored in
     // `Arc<Mutex<...>>` (both `Send + Sync`). The `Closure` is forgotten after

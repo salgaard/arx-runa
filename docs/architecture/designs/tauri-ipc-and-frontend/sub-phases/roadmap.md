@@ -4,7 +4,7 @@
 **Contract anchor**: [`design.md#contract-surface`](../design.md#contract-surface) is canonical for command/type/error contracts; sub-phases should reference it rather than duplicate full contract payloads.  
 **Created**: 2026-04-04  
 **Status**: Draft  
-**Implementation order**: 6.1 → 6.2 → 6.3 → 6.4 (strict dependencies)
+**Implementation order**: 6.1 → 6.2 → 6.3 → 6.4 → 6.5 (strict dependencies)
 
 ---
 
@@ -12,7 +12,7 @@
 
 This sub-phase roadmap decomposes the Tauri IPC and frontend design (1016 lines — the largest design document) into 4 independently testable implementation units, establishing a secure IPC surface before building frontend state and pages on top of it.
 
-**Total sub-phases**: 4 (Phases 6.1 through 6.4)
+**Total sub-phases**: 5 (Phases 6.1 through 6.5)
 
 **Rationale for decomposition**:
 -  **Size**: Exceeds ~100-150 lines (1016 lines total)
@@ -39,6 +39,8 @@ This sub-phase roadmap decomposes the Tauri IPC and frontend design (1016 lines 
 6.3 (Frontend pages)
  ↓
 6.4 (Zero-Trace + security hardening)
+ ↓
+6.5 (Backend command wiring)
 ```
 
 **Legend**:
@@ -83,6 +85,13 @@ This sub-phase roadmap decomposes the Tauri IPC and frontend design (1016 lines 
    - Integration tests for Zero-Trace behaviour
    - **Estimated**: ~100 lines production code, ~80 lines tests
 
+5. **[Phase 6.5: Backend Command Wiring](6.5-backend-command-wiring.md)**
+   - Connect all Tauri commands to Phase 2–5 backend entry points
+   - `AppHandle::emit("device-event")` bridge from `DeviceMonitor`
+   - `tauri::ipc::Channel<ProgressUpdate>` wired for `upload_file` / `download_file`
+   - End-to-end flows functional against a real vault
+   - **Estimated**: ~300 lines production code, ~50 lines tests
+
 ---
 
 ## Testing Strategy
@@ -94,7 +103,7 @@ Each sub-phase includes its own test suite. Tests must pass before proceeding to
 - **Unit tests**: Error mapping correctness, input validation, state transitions
 - **Mock-based tests**: Frontend state tests use mock IPC responses (Phases 6.2, 6.3)
 - **Property-based tests**: Input validation rejects adversarial paths (Phase 6.1)
-- **Integration tests**: Zero-Trace compliance (no localStorage, state cleared after lock) in Phase 6.4
+- **Integration tests**: Zero-Trace compliance (no localStorage, state cleared after lock) in Phase 6.4; end-to-end command wiring in Phase 6.5
 
 ### Regression Testing
 After completing each sub-phase, run:
@@ -108,6 +117,7 @@ trunk build          # Frontend must compile (from Phase 6.2 onwards)
 - Phase 6.2: State contexts provide/consume without panic in browser
 - Phase 6.3: Login → vault browser navigation works end to end
 - Phase 6.4: Locking the vault clears all visible file data; browser DevTools show no localStorage entries
+- Phase 6.5: Full authenticate → upload → download → sync → lock → re-authenticate flow works against a real vault
 
 ---
 
@@ -117,6 +127,7 @@ trunk build          # Frontend must compile (from Phase 6.2 onwards)
 - **Phase 6.2**: No security review needed (frontend state, no crypto)
 - **Phase 6.3**: No security review needed (page components, no crypto)
 - **Phase 6.4**: Requires `security-reviewer` agent review — Zero-Trace verification, CSP completeness, brute-force protection via auth backoff
+- **Phase 6.5**: Requires `security-reviewer` agent review — backend command wiring exposes full Phase 2–5 attack surface through the IPC boundary
 
 ---
 
@@ -146,6 +157,12 @@ trunk build
 /implement-plan phase-006-4-zero-trace.md
 cargo test ui::security
 # [Manual verification — lock clears all state]
+
+# Phase 6.5
+/plan 6.5
+/implement-plan phase-006-5-backend-wiring.md
+cargo test --workspace
+# [Manual verification — full end-to-end flow against real vault]
 ```
 
 ---

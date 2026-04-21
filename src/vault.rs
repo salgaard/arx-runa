@@ -150,7 +150,7 @@ pub fn FileList(
 /// File drop zone that accepts dragged files and initiates upload.
 ///
 /// Subscribes to `onDragDropEvent` on mount and unsubscribes in `on_cleanup`.
-/// Uses `UploadFileRequest` per file; progress channel is wired in Phase 7.
+/// Uses `UploadFileRequest` per file; progress channel is wired in Phase 6.5.
 #[component]
 pub fn DropZone(children: Children) -> impl IntoView {
     let vault = use_vault();
