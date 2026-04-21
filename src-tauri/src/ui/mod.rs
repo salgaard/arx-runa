@@ -40,3 +40,6 @@ pub use sharing_commands::{
     add_contact, export_public_key, import_share, list_contacts, list_received_shares, list_shares,
     revoke_share, share_file,
 };
+
+#[cfg(test)]
+mod security_audit;

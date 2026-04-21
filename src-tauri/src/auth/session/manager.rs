@@ -1,5 +1,5 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore, broadcast, oneshot, watch};
@@ -63,6 +63,8 @@ pub struct SessionManager {
     operation_counter_sender: watch::Sender<u32>,
     operation_counter_receiver: watch::Receiver<u32>,
     operation_gate_closed: Arc<AtomicBool>,
+    failed_attempts: Arc<AtomicU32>,
+    backoff_deadline: Arc<Mutex<Option<tokio::time::Instant>>>,
     event_sender: broadcast::Sender<SessionEvent>,
 }
 
@@ -112,6 +114,8 @@ impl SessionManager {
             operation_counter_sender,
             operation_counter_receiver,
             operation_gate_closed: Arc::new(AtomicBool::new(true)),
+            failed_attempts: Arc::new(AtomicU32::new(0)),
+            backoff_deadline: Arc::new(Mutex::new(None)),
             event_sender,
         }
     }
@@ -131,6 +135,8 @@ impl SessionManager {
             operation_counter_sender,
             operation_counter_receiver,
             operation_gate_closed: Arc::new(AtomicBool::new(true)),
+            failed_attempts: Arc::new(AtomicU32::new(0)),
+            backoff_deadline: Arc::new(Mutex::new(None)),
             event_sender,
         }
     }
@@ -163,8 +169,18 @@ impl SessionManager {
                 AuthenticationError::InvalidCredentials
             })?;
 
+        // Fast-path: programming error — return immediately, no sleep.
         if self.state().await == LifecycleState::Active {
             return Err(AuthenticationError::SessionAlreadyActive);
+        }
+
+        // Backoff gate (after confirming session is not active).
+        // SAFETY: std::sync::Mutex::lock() never panics unless poisoned;
+        let deadline = *self.backoff_deadline.lock().unwrap();
+        if let Some(deadline) = deadline
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep_until(deadline).await;
         }
 
         let key_file_bytes = match key_source {
@@ -175,6 +191,7 @@ impl SessionManager {
                 }
                 Err(KeySourceError::IoFailed(error)) => {
                     tracing::warn!(?error, "key source IO failed during authenticate");
+                    self.record_failed_attempt();
                     return Err(AuthenticationError::InvalidCredentials);
                 }
             },
@@ -186,22 +203,38 @@ impl SessionManager {
         let salt_owned = *salt;
         let params_owned = *params;
 
-        let derived = tokio::task::spawn_blocking(move || {
+        let raw = tokio::task::spawn_blocking(move || {
             let key_file_ref = key_file_owned.as_deref();
             SessionKeys::derive(&password_owned, key_file_ref, &salt_owned, &params_owned)
         })
-        .await
-        .map_err(|join_error| {
-            tracing::error!(
-                ?join_error,
-                "spawn_blocking for SessionKeys::derive panicked"
-            );
-            AuthenticationError::InvalidCredentials
-        })??;
+        .await;
+
+        let derived = match raw {
+            Err(join_error) => {
+                tracing::error!(
+                    ?join_error,
+                    "spawn_blocking for SessionKeys::derive panicked"
+                );
+                self.record_failed_attempt();
+                return Err(AuthenticationError::InvalidCredentials);
+            }
+            Ok(result) => result.inspect_err(|error| {
+                if !matches!(error, AuthenticationError::MemoryLockFailed(_)) {
+                    self.record_failed_attempt();
+                }
+            })?,
+        };
+
         if !Self::derived_keys_are_initialized(&derived) {
             tracing::error!("derived session keys contain an all-zero key buffer");
+            self.record_failed_attempt();
             return Err(AuthenticationError::InvalidCredentials);
         }
+
+        self.failed_attempts.store(0, Ordering::Relaxed);
+        // SAFETY: std::sync::Mutex::lock() never panics unless poisoned;
+        // backoff_deadline is only written via this same unwrap pattern.
+        *self.backoff_deadline.lock().unwrap() = None;
 
         // TODO(phase-3.1): open SQLCipher DB with derived.sqlcipher_key here.
         {
@@ -215,7 +248,6 @@ impl SessionManager {
         self.operation_gate_closed.store(false, Ordering::SeqCst);
 
         self.restart_timer().await;
-        // TODO(phase-2.4/6.1): add per-vault exponential backoff on InvalidCredentials.
         Ok(())
     }
 
@@ -297,6 +329,14 @@ impl SessionManager {
         if self.state().await == LifecycleState::Active {
             return Err(AuthenticationError::SessionAlreadyActive);
         }
+        // Apply backoff gate (mirrors authenticate()):
+        // SAFETY: std::sync::Mutex::lock() never panics unless poisoned;
+        let deadline = *self.backoff_deadline.lock().unwrap();
+        if let Some(deadline) = deadline
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep_until(deadline).await;
+        }
         Ok(SessionInstallReservation { _permit: permit })
     }
 
@@ -319,6 +359,10 @@ impl SessionManager {
             let mut session_guard = self.session.write().await;
             *session_guard = Some(keys);
         }
+        self.failed_attempts.store(0, Ordering::Relaxed);
+        // SAFETY: std::sync::Mutex::lock() never panics unless poisoned;
+        // backoff_deadline is only written via this same unwrap pattern.
+        *self.backoff_deadline.lock().unwrap() = None;
         {
             let mut lifecycle_guard = self.lifecycle.write().await;
             *lifecycle_guard = LifecycleState::Active;
@@ -421,6 +465,18 @@ impl SessionManager {
             .as_ref()
             .ok_or(AuthenticationError::SessionNotActive)?;
         Ok(callback(keys.sqlcipher_key.expose()))
+    }
+
+    /// Records a failed authentication attempt and sets the backoff deadline.
+    ///
+    /// Delay formula: `min(30 s, 2^(attempts-1) s)` — 1, 2, 4, 8, 16, 30 s for
+    /// attempts 1–6; capped at 30 s for 7 and above. Counter is not logged.
+    fn record_failed_attempt(&self) {
+        let attempts = self.failed_attempts.fetch_add(1, Ordering::Relaxed) + 1;
+        let delay = Duration::from_millis(u64::min(30_000, 1_000u64 << u32::min(attempts - 1, 5)));
+        // SAFETY: std::sync::Mutex::lock() never panics unless poisoned;
+        // backoff_deadline is only written via this same unwrap pattern.
+        *self.backoff_deadline.lock().unwrap() = Some(tokio::time::Instant::now() + delay);
     }
 
     /// Returns `true` when all derived key buffers contain at least one non-zero byte.
@@ -529,6 +585,7 @@ impl SessionManager {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
     use std::time::Duration;
 
     use tokio::sync::broadcast;
@@ -1163,5 +1220,206 @@ mod tests {
         let result = manager.with_sqlcipher_key(|_| ()).await;
 
         assert!(matches!(result, Err(AuthenticationError::SessionNotActive)));
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_backoff_no_delay_on_first_attempt() {
+        tokio::time::pause();
+        let manager = SessionManager::with_timeout(Duration::from_secs(5));
+        let source = IoFailingKeySource;
+        let start = tokio::time::Instant::now();
+
+        let _ = manager
+            .authenticate(b"password", Some(&source), &TEST_SALT, &TEST_PARAMS)
+            .await;
+
+        assert!(
+            tokio::time::Instant::now().duration_since(start) < Duration::from_millis(50),
+            "first attempt must not sleep"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_backoff_delays_second_attempt_by_one_second() {
+        tokio::time::pause();
+        let manager = Arc::new(SessionManager::with_timeout(Duration::from_secs(5)));
+        let source = IoFailingKeySource;
+
+        let _ = manager
+            .authenticate(b"password", Some(&source), &TEST_SALT, &TEST_PARAMS)
+            .await;
+
+        let manager_clone = Arc::clone(&manager);
+        let auth_task = tokio::spawn(async move {
+            let source2 = IoFailingKeySource;
+            let _ = manager_clone
+                .authenticate(b"password", Some(&source2), &TEST_SALT, &TEST_PARAMS)
+                .await;
+        });
+
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        timeout(Duration::from_millis(100), auth_task)
+            .await
+            .expect("second attempt must complete after 1s advance")
+            .expect("task must not panic");
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_backoff_delay_doubles_each_failure() {
+        tokio::time::pause();
+        let manager = Arc::new(SessionManager::with_timeout(Duration::from_secs(5)));
+        let source = IoFailingKeySource;
+
+        let _ = manager
+            .authenticate(b"password", Some(&source), &TEST_SALT, &TEST_PARAMS)
+            .await;
+        let manager2 = Arc::clone(&manager);
+        let t1 = tokio::spawn(async move {
+            let s = IoFailingKeySource;
+            let _ = manager2
+                .authenticate(b"password", Some(&s), &TEST_SALT, &TEST_PARAMS)
+                .await;
+        });
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        timeout(Duration::from_millis(100), t1)
+            .await
+            .expect("second attempt must complete after 1s")
+            .expect("task must not panic");
+
+        let manager3 = Arc::clone(&manager);
+        let t2 = tokio::spawn(async move {
+            let s = IoFailingKeySource;
+            let _ = manager3
+                .authenticate(b"password", Some(&s), &TEST_SALT, &TEST_PARAMS)
+                .await;
+        });
+        tokio::task::yield_now().await; // let t2 reach its 2s sleep
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(
+            timeout(Duration::from_millis(50), &mut std::pin::pin!(t2))
+                .await
+                .is_err(),
+            "third attempt must still be sleeping after 1s (needs 2s)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_backoff_caps_at_30_seconds() {
+        tokio::time::pause();
+        let manager = Arc::new(SessionManager::with_timeout(Duration::from_secs(5)));
+        let source = IoFailingKeySource;
+
+        for _ in 0..6 {
+            let mgr = Arc::clone(&manager);
+            let t = tokio::spawn(async move {
+                let s = IoFailingKeySource;
+                let _ = mgr
+                    .authenticate(b"password", Some(&s), &TEST_SALT, &TEST_PARAMS)
+                    .await;
+            });
+            tokio::task::yield_now().await;
+            tokio::time::advance(Duration::from_secs(30)).await;
+            timeout(Duration::from_millis(100), t)
+                .await
+                .expect("attempt must complete after advance")
+                .expect("task must not panic");
+        }
+
+        let attempts_before = manager.failed_attempts.load(Ordering::Relaxed);
+        assert!(
+            attempts_before >= 6,
+            "must have recorded at least 6 failures"
+        );
+
+        let _ = source;
+
+        let mgr = Arc::clone(&manager);
+        let final_task = tokio::spawn(async move {
+            let s = IoFailingKeySource;
+            let _ = mgr
+                .authenticate(b"password", Some(&s), &TEST_SALT, &TEST_PARAMS)
+                .await;
+        });
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(30)).await;
+        timeout(Duration::from_millis(100), final_task)
+            .await
+            .expect("7th attempt must complete within 30s cap")
+            .expect("task must not panic");
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_backoff_resets_on_success() {
+        tokio::time::pause();
+        let manager = Arc::new(SessionManager::with_timeout(Duration::from_secs(5)));
+
+        let fail_source = IoFailingKeySource;
+        let _ = manager
+            .authenticate(b"password", Some(&fail_source), &TEST_SALT, &TEST_PARAMS)
+            .await;
+
+        assert_eq!(
+            manager.failed_attempts.load(Ordering::Relaxed),
+            1,
+            "one failure must be recorded"
+        );
+
+        let mgr = Arc::clone(&manager);
+        let success_task = tokio::spawn(async move {
+            mgr.authenticate(b"password", None, &TEST_SALT, &TEST_PARAMS)
+                .await
+                .expect("tier1 auth after backoff advance must succeed")
+        });
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        timeout(Duration::from_millis(100), success_task)
+            .await
+            .expect("success attempt must complete after 1s advance")
+            .expect("task must not panic");
+
+        assert_eq!(
+            manager.failed_attempts.load(Ordering::Relaxed),
+            0,
+            "success must reset counter to 0"
+        );
+        assert!(
+            manager.backoff_deadline.lock().unwrap().is_none(),
+            "success must reset backoff deadline to None"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_backoff_does_not_increment_on_key_file_not_found() {
+        tokio::time::pause();
+        let manager = SessionManager::with_timeout(Duration::from_secs(5));
+        let source = NotFoundKeySource;
+
+        let _ = manager
+            .authenticate(b"password", Some(&source), &TEST_SALT, &TEST_PARAMS)
+            .await;
+
+        assert_eq!(
+            manager.failed_attempts.load(Ordering::Relaxed),
+            0,
+            "KeyFileNotFound must not increment backoff counter"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_backoff_does_not_increment_on_memory_lock_failed() {
+        use crate::memory::platform::set_force_lock_failure;
+        set_force_lock_failure(true);
+        let manager = SessionManager::with_timeout(Duration::from_secs(5));
+        let _ = manager
+            .authenticate(b"password", None, &TEST_SALT, &TEST_PARAMS)
+            .await;
+        set_force_lock_failure(false);
+        assert_eq!(
+            manager.failed_attempts.load(Ordering::Relaxed),
+            0,
+            "MemoryLockFailed must not increment backoff counter"
+        );
     }
 }

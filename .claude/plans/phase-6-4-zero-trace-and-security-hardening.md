@@ -1,7 +1,7 @@
 ---
 title: "Phase 6.4 — Zero-Trace Compliance and Security Hardening"
 created: "2026-04-21T13:08:16Z"
-status: approved
+status: implemented
 roadmap-phase: 6
 sub-phase: "6.4"
 design-document: "docs/architecture/designs/tauri-ipc-and-frontend/design.md"

@@ -29,7 +29,6 @@ pub async fn authenticate(
     validate_password(std::str::from_utf8(&password_bytes).unwrap_or(""))?;
     let _ = key_file_path;
     // TODO(phase-6.5): wire vault header download + SessionManager::authenticate
-    // TODO(phase-6.4): backoff
     Err(IpcError::InternalError("command not yet wired".into()))
 }
 

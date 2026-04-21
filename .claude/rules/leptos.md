@@ -5,7 +5,7 @@ paths:
 
 # Leptos Frontend — rules
 
-**Design specification**: `docs/architecture/designs/tauri-ipc-and-frontend/design.md` — last verified against design dated 2026-04-11
+**Design specification**: `docs/architecture/designs/tauri-ipc-and-frontend/design.md` — last verified against design dated 2026-04-12
 
 For patterns and examples, see `.claude/reference/leptos-patterns.md`.
 
