@@ -55,7 +55,7 @@ pub struct UploadFileRequest {
     pub vault_path: String,
     /// Serialised `IpcChannel` handle for streaming progress updates.
     ///
-    /// Skipped during serde serialisation; the channel is wired in Phase 6.5.
+    /// Skipped during serde serialisation; the channel is wired in Phase 7.
     #[serde(skip)]
     pub progress: JsValue,
 }
