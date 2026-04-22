@@ -102,7 +102,7 @@ fn ExportKeyButton() -> impl IntoView {
                         </div>
                     }.into_any()
                 } else {
-                    view! { <></> }.into_any()
+                    ().into_any()
                 }
             }}
         </div>
@@ -127,7 +127,11 @@ fn AddContactForm() -> impl IntoView {
             return;
         }
 
-        let email_opt = email.get().trim().is_empty().then(|| email.get().trim().to_string());
+        let email_opt = email
+            .get()
+            .trim()
+            .is_empty()
+            .then(|| email.get().trim().to_string());
         let path = public_key_path.get().trim().to_string();
         if path.is_empty() {
             error_message.set(Some("Public key file path is required".to_string()));

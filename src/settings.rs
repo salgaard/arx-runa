@@ -40,7 +40,9 @@ fn ChangePasswordForm() -> impl IntoView {
         }
 
         if new != confirm {
-            error.set(Some("New password and confirmation do not match".to_string()));
+            error.set(Some(
+                "New password and confirmation do not match".to_string(),
+            ));
             return;
         }
 
@@ -52,8 +54,7 @@ fn ChangePasswordForm() -> impl IntoView {
                 new_password: new.clone(),
             };
 
-            match invoke_command::<ChangePasswordRequest, ()>("change_password", &request).await
-            {
+            match invoke_command::<ChangePasswordRequest, ()>("change_password", &request).await {
                 Ok(()) => {
                     current_pw.set(String::new());
                     new_pw.set(String::new());
@@ -415,7 +416,6 @@ pub fn SettingsPage() -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_change_password_form_rejects_mismatched_passwords() {
@@ -423,7 +423,10 @@ mod tests {
         let new = "password123".to_string();
         let confirm = "password456".to_string();
 
-        assert_ne!(new, confirm, "Test should verify form rejects mismatched passwords");
+        assert_ne!(
+            new, confirm,
+            "Test should verify form rejects mismatched passwords"
+        );
     }
 
     #[test]

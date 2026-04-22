@@ -610,18 +610,16 @@ pub async fn get_session_status(state: State<'_, AppState>) -> Result<SessionSta
     let is_unlocked = lifecycle == LifecycleState::Active;
     let vault_id = state.session_manager.active_vault_id().await;
     let timeout_seconds = state.session_manager.remaining_seconds().await;
-    
+
     // Read vault tier from vault header when session is active
     let vault_tier = if is_unlocked && vault_id.is_some() {
         match resolve_singleton_vault() {
             Ok(Some((_, _db_path, header_path))) => {
                 match tokio::fs::read_to_string(&header_path).await {
-                    Ok(header_json) => {
-                        match serde_json::from_str::<VaultHeader>(&header_json) {
-                            Ok(header) => Some(header.tier),
-                            Err(_) => None,
-                        }
-                    }
+                    Ok(header_json) => match serde_json::from_str::<VaultHeader>(&header_json) {
+                        Ok(header) => Some(header.tier),
+                        Err(_) => None,
+                    },
                     Err(_) => None,
                 }
             }
@@ -630,7 +628,7 @@ pub async fn get_session_status(state: State<'_, AppState>) -> Result<SessionSta
     } else {
         None
     };
-    
+
     Ok(SessionStatus {
         is_unlocked,
         vault_id,

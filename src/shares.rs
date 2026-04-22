@@ -151,7 +151,7 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                                 <p class="text-red-400 text-sm mt-2">"(Revoked)"</p>
                             }.into_any()
                         } else {
-                            view! { <></> }.into_any()
+                            ().into_any()
                         }
                     }}
                 </div>
@@ -167,7 +167,7 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                             </button>
                         }.into_any()
                     } else {
-                        view! { <></> }.into_any()
+                        ().into_any()
                     }
                 }}
             </div>
@@ -175,7 +175,6 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
             {move || {
                 if show_confirm.get() {
                     let share_id_for_revoke = share_id.clone();
-                    let on_revoke_for_confirm = on_revoke.clone();
                     let contact_name_for_confirm = contact_name.clone();
 
                     view! {
@@ -187,7 +186,6 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                                     on:click=move |_| {
                                         revoking.set(true);
                                         let share_id_clone = share_id_for_revoke.clone();
-                                        let on_revoke_cb = on_revoke_for_confirm.clone();
 
                                         spawn_local(async move {
                                             match invoke_command::<RevokeShareRequest, ()>(
@@ -200,7 +198,7 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                                             {
                                                 Ok(_) => {
                                                     show_confirm.set(false);
-                                                    on_revoke_cb.run(());
+                                                    on_revoke.run(());
                                                 }
                                                 Err(_e) => {
                                                     // Error handled by IPC layer
@@ -224,7 +222,7 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                         </div>
                     }.into_any()
                 } else {
-                    view! { <></> }.into_any()
+                    ().into_any()
                 }
             }}
         </div>
@@ -304,7 +302,6 @@ fn ReceivedShareItem(share: ReceivedShareEntry, #[prop(into)] on_import: Callbac
     let handle_import = move |_| {
         importing.set(true);
         let share_id = share.share_id.clone();
-        let on_import_clone = on_import.clone();
 
         spawn_local(async move {
             match invoke_command::<ImportShareRequest, ()>(
@@ -316,7 +313,7 @@ fn ReceivedShareItem(share: ReceivedShareEntry, #[prop(into)] on_import: Callbac
             .await
             {
                 Ok(_) => {
-                    on_import_clone.run(());
+                    on_import.run(());
                 }
                 Err(_e) => {
                     // Error handled by IPC layer
@@ -399,7 +396,6 @@ pub fn ShareModal(
         let contact_id = selected_contact_id.get().unwrap();
         let file_id_clone = file_id.clone();
         let expiry_opt = expiration_days.get().and_then(|s| s.parse::<u32>().ok());
-        let on_success_clone = on_success.clone();
 
         spawn_local(async move {
             match invoke_command::<ShareFileRequest, ()>(
@@ -413,7 +409,7 @@ pub fn ShareModal(
             .await
             {
                 Ok(_) => {
-                    on_success_clone.run(());
+                    on_success.run(());
                 }
                 Err(e) => {
                     error.set(Some(e.to_string()));
