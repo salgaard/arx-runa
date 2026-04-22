@@ -73,11 +73,10 @@ fn is_tauri_event_available() -> bool {
     match web_sys::window() {
         Some(window) => {
             let tauri = js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI__"));
-            if let Ok(tauri_obj) = tauri {
-                if !tauri_obj.is_undefined() && !tauri_obj.is_null() {
-                    let event_api = js_sys::Reflect::get(&tauri_obj, &JsValue::from_str("event"));
-                    return event_api.is_ok() && !event_api.unwrap().is_undefined();
-                }
+            if let Ok(tauri_obj) = tauri
+                && !tauri_obj.is_undefined() && !tauri_obj.is_null() {
+                let event_api = js_sys::Reflect::get(&tauri_obj, &JsValue::from_str("event"));
+                return event_api.is_ok() && !event_api.unwrap().is_undefined();
             }
             false
         }
