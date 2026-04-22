@@ -14,6 +14,8 @@ pub struct SessionState {
     pub vault_id: Option<String>,
     /// Idle-timeout in seconds configured for this session, or `None` if no timeout is set.
     pub timeout_seconds: Option<u64>,
+    /// Authentication tier (1 or 2) if unlocked, `None` if locked.
+    pub vault_tier: Option<u8>,
     /// `true` while an unlock/login IPC call is in-flight.
     /// UI-owned: `apply_status` does not overwrite this field.
     pub authenticating: bool,
@@ -28,6 +30,7 @@ impl SessionState {
         self.is_unlocked = status.is_unlocked;
         self.vault_id = status.vault_id;
         self.timeout_seconds = status.timeout_seconds;
+        self.vault_tier = status.vault_tier;
     }
 
     /// Marks the beginning of an `authenticate` IPC round trip.
@@ -143,7 +146,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_session_state_apply_status_updates_three_fields_only() {
+    fn test_session_state_apply_status_updates_four_fields_only() {
         let mut state = SessionState {
             authenticating: true,
             error: Some("err".to_string()),
@@ -154,12 +157,14 @@ mod tests {
             is_unlocked: true,
             vault_id: Some("vault-abc".to_string()),
             timeout_seconds: Some(300),
+            vault_tier: Some(2),
         };
         state.apply_status(status);
 
         assert!(state.is_unlocked);
         assert_eq!(state.vault_id, Some("vault-abc".to_string()));
         assert_eq!(state.timeout_seconds, Some(300));
+        assert_eq!(state.vault_tier, Some(2));
         assert!(state.authenticating);
         assert_eq!(state.error, Some("err".to_string()));
     }
@@ -247,6 +252,7 @@ mod tests {
             is_unlocked: true,
             vault_id: Some("vault-was-open".to_string()),
             timeout_seconds: Some(300),
+            vault_tier: Some(1),
             authenticating: false,
             error: None,
         };
@@ -255,12 +261,14 @@ mod tests {
             is_unlocked: false,
             vault_id: None,
             timeout_seconds: None,
+            vault_tier: None,
         };
         state.apply_status(lock_status);
 
         assert!(!state.is_unlocked);
         assert_eq!(state.vault_id, None);
         assert_eq!(state.timeout_seconds, None);
+        assert_eq!(state.vault_tier, None);
         // UI-owned fields are untouched.
         assert!(!state.authenticating);
         assert_eq!(state.error, None);

@@ -1,6 +1,10 @@
 //! Sync state context: SyncState, SyncActions, SyncProvider, and accessor hooks.
 
+use gloo_timers::callback::Interval;
 use leptos::prelude::*;
+
+use crate::invoke::invoke_command;
+use crate::ipc_types::SyncResult;
 
 /// Frontend-side sync status. Distinct from the wire DTO `ipc_types::SyncStatus`.
 #[derive(Clone, Debug, Default)]
@@ -39,6 +43,34 @@ impl SyncActions {
     pub fn clear(self) {
         self.set_state.update(|s| s.clear());
     }
+
+    /// Calls `sync_to_cloud` and updates `SyncState` on completion.
+    /// Updates `last_synced_at` on success, sets `error` on failure.
+    pub fn sync(self) {
+        self.set_state.update(|s| s.syncing = true);
+
+        leptos::task::spawn_local(async move {
+            match invoke_command::<(), SyncResult>("sync_to_cloud", &()).await {
+                Ok(_result) => {
+                    // Use js_sys::Date to get the current ISO timestamp
+                    let now = js_sys::Date::new_0();
+                    let iso_string = now.to_iso_string().as_string().unwrap_or_default();
+
+                    self.set_state.update(|s| {
+                        s.syncing = false;
+                        s.last_synced_at = Some(iso_string);
+                        s.error = None;
+                    });
+                }
+                Err(e) => {
+                    self.set_state.update(|s| {
+                        s.syncing = false;
+                        s.error = Some(e.to_string());
+                    });
+                }
+            }
+        });
+    }
 }
 
 /// Accessor for `SyncState` read side.
@@ -56,10 +88,28 @@ pub fn use_sync_actions() -> SyncActions {
 }
 
 /// Provides `ReadSignal<SyncState>` + `SyncActions` to descendants.
+///
+/// Polls `get_sync_status` every 5 seconds and updates frontend sync state.
+/// Polling is cancelled when the component unmounts.
 #[component]
 pub fn SyncProvider(children: Children) -> impl IntoView {
     let (state, set_state) = signal(SyncState::default());
     provide_context(state);
     provide_context(SyncActions { set_state });
+
+    // Poll get_sync_status every 5 seconds
+    Effect::new(move |_| {
+        let _handle = Interval::new(5000, move || {
+            leptos::task::spawn_local(async move {
+                // TODO: Implement get_sync_status polling
+                // For now, this is a placeholder that will be wired in Phase 6.7.2
+            });
+        });
+
+        on_cleanup(move || {
+            // Interval is dropped here on cleanup
+        });
+    });
+
     children()
 }

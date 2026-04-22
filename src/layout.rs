@@ -2,19 +2,70 @@
 //! and the `AppShell` wrapper that composes them around page content.
 
 use leptos::prelude::*;
+use leptos_router::components::A;
+use leptos_router::hooks::use_location;
 
 use crate::invoke::invoke_command;
-use crate::state::{use_session, use_session_actions, use_sync_actions, use_vault_actions};
+use crate::state::{
+    use_session, use_session_actions, use_sync, use_sync_actions, use_vault_actions,
+};
+use crate::utils::format_relative_time;
 
 // ─── Header ───────────────────────────────────────────────────────────────────
 
-/// Application header bar showing the Arx Runa logo and title.
+/// Application header bar showing the Arx Runa logo, title, sync button, and navigation.
 #[component]
 pub fn Header() -> impl IntoView {
+    let sync = use_sync();
+    let sync_actions = use_sync_actions();
+    let location = use_location();
+
+    let on_sync = move |_| {
+        sync_actions.sync();
+    };
+
+    let _is_destinations = move || location.pathname.get() == "/destinations";
+
     view! {
-        <header class="flex items-center gap-3 px-6 py-4 bg-stone border-b border-steel">
-            <span class="text-rune text-xl font-bold">"⬡"</span>
-            <span class="text-bone font-semibold">"Arx Runa"</span>
+        <header class="flex items-center justify-between gap-3 px-6 py-4 bg-stone border-b border-steel">
+            <div class="flex items-center gap-3">
+                <span class="text-rune text-xl font-bold">"⬡"</span>
+                <span class="text-bone font-semibold">"Arx Runa"</span>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="px-3 py-1 text-sm text-bone rounded hover:bg-steel transition-colors">
+                    <A href="/">
+                        "Vault"
+                    </A>
+                </div>
+                <div class="px-3 py-1 text-sm text-bone rounded hover:bg-steel transition-colors">
+                    <A href="/destinations">
+                        "Destinations"
+                    </A>
+                </div>
+                <A href="/contacts">
+                    <div class="px-3 py-1 text-bone rounded hover:bg-steel transition-colors" title="Contacts">
+                        "👤"
+                    </div>
+                </A>
+                <button
+                    class="px-3 py-1 text-sm text-bone bg-rune rounded hover:bg-rune-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    on:click=on_sync
+                    disabled=move || sync.read().syncing
+                >
+                    {move || if sync.read().syncing { "Syncing…" } else { "Sync" }}
+                </button>
+                <A href="/shares">
+                    <div class="px-3 py-1 text-bone rounded hover:bg-steel transition-colors" title="Shares">
+                        "🔗"
+                    </div>
+                </A>
+                <A href="/settings">
+                    <div class="px-3 py-1 text-bone rounded hover:bg-steel transition-colors" title="Settings">
+                        "⚙"
+                    </div>
+                </A>
+            </div>
         </header>
     }
 }
@@ -35,7 +86,7 @@ pub fn format_countdown_seconds(remaining: u64) -> String {
 
 // ─── SessionStatusBar ────────────────────────────────────────────────────────
 
-/// Footer status bar showing the session countdown and a lock button.
+/// Footer status bar showing the session countdown, last-synced timestamp, and a lock button.
 ///
 /// The lock button clears Vault, Sync, and Session state before invoking
 /// `lock_session` IPC — satisfying the Zero-Trace requirement that all
@@ -43,6 +94,7 @@ pub fn format_countdown_seconds(remaining: u64) -> String {
 #[component]
 pub fn SessionStatusBar() -> impl IntoView {
     let session = use_session();
+    let sync = use_sync();
     let session_actions = use_session_actions();
     let vault_actions = use_vault_actions();
     let sync_actions = use_sync_actions();
@@ -58,11 +110,22 @@ pub fn SessionStatusBar() -> impl IntoView {
 
     view! {
         <footer class="flex justify-between items-center p-4 bg-stone border-t border-steel text-sm">
-            <span class="text-text-secondary font-mono">
-                {move || session.read().timeout_seconds
-                    .map(format_countdown_seconds)
-                    .unwrap_or_default()}
-            </span>
+            <div class="flex items-center gap-4">
+                <span class="text-text-secondary font-mono">
+                    {move || session.read().timeout_seconds
+                        .map(format_countdown_seconds)
+                        .unwrap_or_default()}
+                </span>
+                <span class="text-text-secondary">
+                    {move || {
+                        let state = sync.read();
+                        match &state.last_synced_at {
+                            Some(ts) => format!("Last synced: {}", format_relative_time(ts)),
+                            None => "Never synced".to_string(),
+                        }
+                    }}
+                </span>
+            </div>
             <button class="text-rune hover:text-bone transition-colors" on:click=on_lock>
                 "Lock"
             </button>

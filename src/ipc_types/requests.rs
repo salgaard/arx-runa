@@ -90,3 +90,89 @@ pub struct GetFileContentRequest {
     /// Manifest node ID of the file to read.
     pub file_id: String,
 }
+
+/// Argument payload for the `add_destination` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddDestinationRequest {
+    /// Human-readable label for the destination.
+    pub label: String,
+    /// Destination type: `"local_path"` or `"rclone_remote"`.
+    pub destination_type: String,
+    /// Path (local) or remote name (rclone config). Treated as opaque by frontend.
+    pub path_or_remote: String,
+}
+
+/// Argument payload for the `delete_destination` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteDestinationRequest {
+    /// Unique destination identifier to delete.
+    pub destination_id: String,
+}
+
+/// Argument payload for the `change_password` Tauri command.
+#[derive(Debug, Clone, Serialize, Zeroize, ZeroizeOnDrop)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangePasswordRequest {
+    /// Current vault password (zeroise immediately after IPC call resolves).
+    pub current_password: String,
+    /// New vault password (zeroise immediately after IPC call resolves).
+    pub new_password: String,
+}
+
+/// Argument payload for the `rotate_key_file` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RotateKeyFileRequest {
+    /// Absolute destination path for the new key file.
+    pub new_key_file_destination: String,
+}
+
+/// Argument payload for the `delete_vault` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteVaultRequest {
+    /// Vault name confirmation (must match exactly for deletion to proceed).
+    pub confirmation: String,
+}
+
+/// Argument payload for the `add_contact` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddContactRequest {
+    /// Human-readable contact name.
+    pub display_name: String,
+    /// Absolute path to the contact's public key file (32 bytes).
+    pub public_key_path: String,
+    /// Optional contact email address.
+    pub email: Option<String>,
+}
+
+/// Argument payload for the `share_file` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareFileRequest {
+    /// Manifest node ID of the file to share.
+    pub file_id: String,
+    /// Unique contact ID (UUID as string) to share with.
+    pub contact_id: String,
+    /// Optional expiration period in days from now.
+    pub expiration_days: Option<u32>,
+}
+
+/// Argument payload for the `revoke_share` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevokeShareRequest {
+    /// Unique share ID to revoke.
+    pub share_id: String,
+}
+
+/// Argument payload for the `import_share` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportShareRequest {
+    /// Absolute path to the share package file (.arxshare).
+    pub share_package_path: String,
+}

@@ -1,7 +1,13 @@
 use leptos::prelude::*;
+use leptos_router::StaticSegment;
+use leptos_router::components::{Route, Router, Routes};
 
 use crate::auth::{LoginPage, VaultCreationPage};
+use crate::contacts::ContactList;
+use crate::destinations::DestinationList;
 use crate::layout::AppShell;
+use crate::settings::SettingsPage;
+use crate::shares::SharesPage;
 use crate::state::{
     SessionProvider, SyncProvider, VaultProvider, use_session, use_sync_actions, use_vault_actions,
 };
@@ -18,7 +24,7 @@ pub fn App() -> impl IntoView {
         <SessionProvider>
             <VaultProvider>
                 <SyncProvider>
-                    <Router />
+                    <AppRouter />
                 </SyncProvider>
             </VaultProvider>
         </SessionProvider>
@@ -32,7 +38,7 @@ pub fn App() -> impl IntoView {
 /// locked-transition hook for Zero-Trace compliance. Pages must not duplicate this
 /// logic.
 #[component]
-fn Router() -> impl IntoView {
+fn AppRouter() -> impl IntoView {
     let session = use_session();
     let vault_actions = use_vault_actions();
     let sync_actions = use_sync_actions();
@@ -50,7 +56,20 @@ fn Router() -> impl IntoView {
     move || {
         let is_unlocked = session.read().is_unlocked;
         if is_unlocked {
-            view! { <AppShell><VaultBrowser /></AppShell> }.into_any()
+            view! {
+                <AppShell>
+                    <Router>
+                        <Routes fallback=|| "404">
+                            <Route path=StaticSegment("") view=VaultBrowser />
+                            <Route path=StaticSegment("contacts") view=ContactList />
+                            <Route path=StaticSegment("shares") view=SharesPage />
+                            <Route path=StaticSegment("destinations") view=DestinationList />
+                            <Route path=StaticSegment("settings") view=SettingsPage />
+                        </Routes>
+                    </Router>
+                </AppShell>
+            }
+            .into_any()
         } else if create_vault_intent.get() {
             view! {
                 <VaultCreationPage on_back_to_login=move || create_vault_intent.set(false) />

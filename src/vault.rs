@@ -16,6 +16,7 @@ use crate::ipc_types::{
     DeleteFileRequest, DownloadFileRequest, FileEntry, GetFileContentRequest, ProgressUpdate,
     UploadFileRequest,
 };
+use crate::shares::ShareModal;
 use crate::state::{use_vault, use_vault_actions};
 use crate::transfer::ProgressModal;
 
@@ -220,6 +221,8 @@ pub fn FileItem(
 
     let entry_clone = entry.clone();
     let (show_delete_confirm, set_show_delete_confirm) = signal(false);
+    let (show_share_modal, set_show_share_modal) = signal(false);
+    let (share_success_msg, set_share_success_msg) = signal::<Option<String>>(None);
     let file_content = RwSignal::new(None::<String>);
     let (download_progress_channel, set_download_progress_channel) =
         signal::<Option<IpcChannel<ProgressUpdate>>>(None);
@@ -232,6 +235,7 @@ pub fn FileItem(
 
     let entry_stored = StoredValue::new(entry_clone.clone());
     let file_name_stored = StoredValue::new(file_name.clone());
+    let file_id_stored = StoredValue::new(entry.id.clone());
 
     view! {
         <>
@@ -314,6 +318,16 @@ pub fn FileItem(
                             }
                         >
                             "⬇"
+                        </button>
+                        <button
+                            class="text-text-muted hover:text-rune text-sm px-2 py-1"
+                            title="Share"
+                            on:click=move |_| {
+                                set_show_share_modal.set(true);
+                                set_share_success_msg.set(None);
+                            }
+                        >
+                            "↗"
                         </button>
                         <button
                             class="text-text-muted hover:text-danger text-sm px-2 py-1"
@@ -411,6 +425,42 @@ pub fn FileItem(
                 content=file_content
                 filename=entry_stored.get_value().name.clone()
             />
+
+            // Share modal (files only)
+            <Show
+                when=move || show_share_modal.get() && !is_dir
+                fallback=|| ()
+            >
+                <ShareModal
+                    file_id=file_id_stored.get_value()
+                    _file_name=file_name_stored.get_value()
+                    on_close=move || set_show_share_modal.set(false)
+                    on_success=move || {
+                        set_show_share_modal.set(false);
+                        set_share_success_msg.set(Some("File shared successfully!".to_string()));
+                        leptos::task::spawn_local(async move {
+                            gloo_timers::future::sleep(std::time::Duration::from_secs(3)).await;
+                            set_share_success_msg.set(None);
+                        });
+                    }
+                />
+            </Show>
+
+            // Share success message
+            <Show
+                when=move || share_success_msg.get().is_some()
+                fallback=|| ()
+            >
+                {move || {
+                    share_success_msg.get().map(|msg| {
+                        view! {
+                            <div class="fixed bottom-4 right-4 px-4 py-2 bg-rune text-bone rounded text-sm shadow-lg">
+                                {msg}
+                            </div>
+                        }
+                    })
+                }}
+            </Show>
         </>
     }
 }
