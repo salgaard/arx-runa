@@ -16,12 +16,15 @@ fn is_tauri_ipc_available() -> bool {
         Some(window) => {
             let tauri = js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI__"));
             if let Ok(tauri_obj) = tauri
-                && !tauri_obj.is_undefined() && !tauri_obj.is_null() {
+                && !tauri_obj.is_undefined()
+                && !tauri_obj.is_null()
+            {
                 let core = js_sys::Reflect::get(&tauri_obj, &JsValue::from_str("core"));
                 if let Ok(core_obj) = core
-                    && !core_obj.is_undefined() && !core_obj.is_null() {
-                    let invoke_fn =
-                        js_sys::Reflect::get(&core_obj, &JsValue::from_str("invoke"));
+                    && !core_obj.is_undefined()
+                    && !core_obj.is_null()
+                {
+                    let invoke_fn = js_sys::Reflect::get(&core_obj, &JsValue::from_str("invoke"));
                     return invoke_fn.is_ok() && !invoke_fn.unwrap().is_undefined();
                 }
             }
