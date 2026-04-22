@@ -7,12 +7,51 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsValue;
 
-use crate::components::{Button, Spinner};
-use crate::dialog::open_file_dialog;
+use crate::components::{Button, Modal, Spinner};
+use crate::dialog::{open_file_dialog, open_save_dialog};
 use crate::drag_drop::on_file_drop;
 use crate::invoke::invoke_command;
-use crate::ipc_types::{FileEntry, UploadFileRequest};
+use crate::ipc_channel::IpcChannel;
+use crate::ipc_types::{
+    DeleteFileRequest, DownloadFileRequest, FileEntry, GetFileContentRequest, ProgressUpdate,
+    UploadFileRequest,
+};
 use crate::state::{use_vault, use_vault_actions};
+use crate::transfer::ProgressModal;
+
+// ─── Preview type detection ──────────────────────────────────────────────────
+
+/// Maximum file size for preview: 50 MiB (52,428,800 bytes).
+const MAX_PREVIEW_SIZE_BYTES: u64 = 52_428_800;
+
+/// Detects if a file's size allows preview (≤ 50 MiB).
+pub fn file_size_allows_preview(size_bytes: u64) -> bool {
+    size_bytes <= MAX_PREVIEW_SIZE_BYTES
+}
+
+/// Returns the file extension in lowercase, or empty string if no extension found.
+fn get_file_extension(filename: &str) -> String {
+    filename
+        .rsplit_once('.')
+        .map(|(_, ext)| ext.to_lowercase())
+        .unwrap_or_default()
+}
+
+/// Detects if a file extension is previewable (MVP: 6 text/image types).
+pub fn extension_is_previewable(filename: &str) -> bool {
+    matches!(
+        get_file_extension(filename).as_str(),
+        "txt" | "md" | "log" | "csv" | "png" | "jpg" | "jpeg" | "gif" | "webp"
+    )
+}
+
+/// Detects if a previewable file is an image type.
+fn is_image_type(filename: &str) -> bool {
+    matches!(
+        get_file_extension(filename).as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp"
+    )
+}
 
 // ─── Path helper ─────────────────────────────────────────────────────────────
 
@@ -44,6 +83,88 @@ pub fn join_vault_path(current_path: &str, entry_name: &str) -> String {
         format!("/{entry_name}")
     } else {
         format!("{}/{entry_name}", current_path.trim_end_matches('/'))
+    }
+}
+
+// ─── Base64 decoding ─────────────────────────────────────────────────────────
+
+/// Decodes a base64 string to bytes using JavaScript's atob.
+fn base64_decode(encoded: &str) -> Option<Vec<u8>> {
+    use wasm_bindgen::prelude::*;
+
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(js_name = atob)]
+        fn atob_js(s: &str) -> String;
+    }
+
+    let decoded_str = atob_js(encoded);
+    Some(decoded_str.into_bytes())
+}
+
+// ─── ContentViewerModal ──────────────────────────────────────────────────────
+
+/// Modal component for viewing file content inline (text or image).
+///
+/// Implements Zero-Trace: clears signal state on dismiss (not just hidden).
+#[component]
+pub fn ContentViewerModal(
+    /// RwSignal holding the file content bytes (base64-encoded from backend).
+    content: RwSignal<Option<String>>,
+    /// Filename for display and type detection.
+    filename: String,
+) -> impl IntoView {
+    let is_open = Signal::derive(move || content.get().is_some());
+    let is_image = is_image_type(&filename);
+
+    view! {
+        <Modal
+            open=is_open
+            on_close=move || content.set(None)
+        >
+            <div class="w-full max-w-3xl max-h-[80vh] flex flex-col">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg text-bone truncate">{filename.clone()}</h2>
+                    <button
+                        class="text-text-muted hover:text-bone"
+                        on:click=move |_| content.set(None)
+                    >
+                        "✕"
+                    </button>
+                </div>
+                <Show
+                    when=move || is_image
+                    fallback=move || {
+                        view! {
+                            <div class="flex-1 overflow-auto bg-surface-overlay rounded p-4">
+                                <pre class="text-text-secondary text-sm font-mono whitespace-pre-wrap break-words">
+                                    {move || {
+                                        content.get().and_then(|encoded| {
+                                            let decoded = base64_decode(&encoded)?;
+                                            String::from_utf8(decoded).ok()
+                                        })
+                                    }}
+                                </pre>
+                            </div>
+                        }
+                    }
+                >
+                    <div class="flex-1 flex items-center justify-center overflow-auto bg-surface-overlay rounded">
+                        {move || {
+                            let encoded = content.get()?;
+                            let img_src = format!("data:image/png;base64,{}", &encoded);
+                            Some(view! {
+                                <img
+                                    src=img_src
+                                    alt="File preview"
+                                    class="max-w-full max-h-full object-contain"
+                                />
+                            })
+                        }}
+                    </div>
+                </Show>
+            </div>
+        </Modal>
     }
 }
 
@@ -84,10 +205,10 @@ pub fn Breadcrumbs(
 
 // ─── FileItem ────────────────────────────────────────────────────────────────
 
-/// Single row in the file list.
+/// Single row in the file list with download, delete, and preview actions.
 ///
 /// Directories are rendered with a folder icon and navigate on click.
-/// Files are rendered with a file icon and are selected on click.
+/// Files are rendered with a file icon and support download/delete/preview actions.
 #[component]
 pub fn FileItem(
     /// The file or directory entry to display.
@@ -96,33 +217,201 @@ pub fn FileItem(
     let vault = use_vault();
     let actions = use_vault_actions();
     let is_dir = entry.entry_type == "directory";
-    let name = entry.name.clone();
-    let path = entry.name.clone();
 
-    let on_click = move |_| {
-        if is_dir {
-            let current = vault.get_untracked().current_path;
-            actions.navigate(join_vault_path(&current, &path));
-        }
-    };
+    let entry_clone = entry.clone();
+    let (show_delete_confirm, set_show_delete_confirm) = signal(false);
+    let file_content = RwSignal::new(None::<String>);
+    let (download_progress_channel, set_download_progress_channel) =
+        signal::<Option<IpcChannel<ProgressUpdate>>>(None);
+    let (delete_error, set_delete_error) = signal::<Option<String>>(None);
+
+    let file_name = entry.name.clone();
+    let can_preview = !is_dir
+        && file_size_allows_preview(entry.size_bytes)
+        && extension_is_previewable(&entry.name);
+    
+    let entry_stored = StoredValue::new(entry_clone.clone());
+    let file_name_stored = StoredValue::new(file_name.clone());
 
     view! {
-        <div
-            class="flex items-center gap-3 p-2 rounded hover:bg-surface-overlay cursor-pointer"
-            on:click=on_click
-        >
-            <span class="text-rune w-4 text-center">
-                {if is_dir { "📁" } else { "📄" }}
-            </span>
-            <span class="flex-1 text-bone text-sm">{name}</span>
-            <span class="text-text-muted text-xs">
-                {if is_dir {
-                    String::new()
-                } else {
-                    format!("{} B", entry.size_bytes)
+        <>
+            <div class="flex items-center gap-3 p-2 rounded hover:bg-surface-overlay">
+                <span class="text-rune w-4 text-center">
+                    {if is_dir { "📁" } else { "📄" }}
+                </span>
+                <span
+                    class=move || {
+                        format!(
+                            "flex-1 text-bone text-sm {}",
+                            if !is_dir && can_preview {
+                                "cursor-pointer hover:underline"
+                            } else {
+                                ""
+                            }
+                        )
+                    }
+                    on:click=move |_| {
+                        if !is_dir
+                            && file_size_allows_preview(entry_clone.size_bytes)
+                            && extension_is_previewable(&entry_clone.name)
+                        {
+                            let entry = entry_clone.clone();
+                            leptos::task::spawn_local(async move {
+                                let req = GetFileContentRequest {
+                                    file_id: entry.id.clone(),
+                                };
+                                match invoke_command::<GetFileContentRequest, String>("get_file_content", &req)
+                                    .await
+                                {
+                                    Ok(content) => file_content.set(Some(content)),
+                                    Err(err) => {
+                                        leptos::logging::error!("Failed to fetch file content: {}", err.message);
+                                    }
+                                }
+                            });
+                        }
+                    }
+                >
+                    {entry.name.clone()}
+                </span>
+                <span class="text-text-muted text-xs">
+                    {if is_dir {
+                        String::new()
+                    } else {
+                        format!("{} B", entry.size_bytes)
+                    }}
+                </span>
+                <Show
+                    when=move || !is_dir
+                    fallback=|| ()
+                >
+                    <div class="flex gap-1">
+                        <button
+                            class="text-text-muted hover:text-rune text-sm px-2 py-1"
+                            title="Download"
+                            on:click=move |_| {
+                                let entry = entry_stored.get_value();
+                                let actions = actions;
+                                let set_download_progress_channel = set_download_progress_channel;
+                                leptos::task::spawn_local(async move {
+                                    let default_name = entry.name.clone();
+                                    if let Some(dest_path) = open_save_dialog(Some(&default_name)).await {
+                                        let channel = IpcChannel::<ProgressUpdate>::new();
+                                        set_download_progress_channel.set(Some(channel.clone()));
+
+                                        let req = DownloadFileRequest {
+                                            file_id: entry.id.clone(),
+                                            destination_path: dest_path,
+                                            progress: channel.inner().clone(),
+                                        };
+
+                                        match invoke_command::<DownloadFileRequest, ()>("download_file", &req).await {
+                                            Ok(()) => {}
+                                            Err(err) => actions.set_error(err.message),
+                                        }
+                                    }
+                                });
+                            }
+                        >
+                            "⬇"
+                        </button>
+                        <button
+                            class="text-text-muted hover:text-danger text-sm px-2 py-1"
+                            title="Delete"
+                            on:click=move |_| {
+                                set_show_delete_confirm.set(true);
+                                set_delete_error.set(None);
+                            }
+                        >
+                            "🗑"
+                        </button>
+                    </div>
+                </Show>
+            </div>
+
+            // Delete confirmation modal
+            <Show
+                when=move || show_delete_confirm.get()
+                fallback=|| ()
+            >
+                <Modal
+                    open=Signal::derive(move || show_delete_confirm.get())
+                    on_close=move || set_show_delete_confirm.set(false)
+                >
+                    <div class="w-80">
+                        <h2 class="text-lg text-bone mb-4">
+                            "Delete " {file_name_stored.get_value()} "?"
+                        </h2>
+                        <p class="text-text-secondary text-sm mb-6">
+                            "This action cannot be undone."
+                        </p>
+                        {move || {
+                            delete_error.get().map(|err| view! {
+                                <p class="text-danger text-sm mb-4">{err}</p>
+                            })
+                        }}
+                        <div class="flex gap-2 justify-end">
+                            <button
+                                class="px-4 py-2 rounded bg-surface-overlay hover:bg-surface-overlay-hover text-bone"
+                                on:click=move |_| set_show_delete_confirm.set(false)
+                            >
+                                "Cancel"
+                            </button>
+                            <button
+                                class="px-4 py-2 rounded bg-danger hover:bg-danger-hover text-white"
+                                on:click=move |_| {
+                                    let entry = entry_stored.get_value();
+                                    let current_path = vault.get_untracked().current_path;
+                                    let actions = actions;
+                                    let set_show_delete_confirm = set_show_delete_confirm;
+                                    let set_delete_error = set_delete_error;
+
+                                    leptos::task::spawn_local(async move {
+                                        let req = DeleteFileRequest {
+                                            file_id: entry.id.clone(),
+                                        };
+
+                                        match invoke_command::<DeleteFileRequest, ()>("delete_file", &req).await {
+                                            Ok(()) => {
+                                                set_show_delete_confirm.set(false);
+                                                actions.navigate(current_path);
+                                            }
+                                            Err(err) => set_delete_error.set(Some(err.message)),
+                                        }
+                                    });
+                                }
+                            >
+                                "Delete"
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
+            </Show>
+
+            // Download progress modal
+            <Show
+                when=move || download_progress_channel.get().is_some()
+                fallback=|| ()
+            >
+                {move || {
+                    download_progress_channel.get().map(|channel| {
+                        view! {
+                            <ProgressModal
+                                channel=channel
+                                title="Downloading file"
+                                on_close=move || set_download_progress_channel.set(None)
+                            />
+                        }
+                    })
                 }}
-            </span>
-        </div>
+            </Show>
+
+            // File content viewer modal
+            <ContentViewerModal
+                content=file_content
+                filename=entry_stored.get_value().name.clone()
+            />
+        </>
     }
 }
 
@@ -312,5 +601,46 @@ mod tests {
         assert_eq!(segs.len(), 2);
         assert_eq!(segs[1].0, "docs");
         assert_eq!(segs[1].1, "/docs");
+    }
+
+    #[test]
+    fn test_file_size_allows_preview_returns_true_at_limit() {
+        assert!(file_size_allows_preview(MAX_PREVIEW_SIZE_BYTES));
+    }
+
+    #[test]
+    fn test_file_size_allows_preview_returns_false_above_limit() {
+        assert!(!file_size_allows_preview(MAX_PREVIEW_SIZE_BYTES + 1));
+    }
+
+    #[test]
+    fn test_extension_is_previewable_text_types() {
+        assert!(extension_is_previewable("file.txt"));
+        assert!(extension_is_previewable("README.md"));
+        assert!(extension_is_previewable("debug.log"));
+        assert!(extension_is_previewable("data.csv"));
+    }
+
+    #[test]
+    fn test_extension_is_previewable_image_types() {
+        assert!(extension_is_previewable("photo.png"));
+        assert!(extension_is_previewable("image.jpg"));
+        assert!(extension_is_previewable("picture.jpeg"));
+        assert!(extension_is_previewable("animation.gif"));
+        assert!(extension_is_previewable("vector.webp"));
+    }
+
+    #[test]
+    fn test_extension_is_previewable_returns_false_for_unsupported() {
+        assert!(!extension_is_previewable("archive.zip"));
+        assert!(!extension_is_previewable("document.pdf"));
+        assert!(!extension_is_previewable("video.mp4"));
+    }
+
+    #[test]
+    fn test_extension_is_previewable_case_insensitive() {
+        assert!(extension_is_previewable("FILE.TXT"));
+        assert!(extension_is_previewable("Photo.PNG"));
+        assert!(extension_is_previewable("readme.MD"));
     }
 }

@@ -4,7 +4,7 @@
 **Contract anchor**: [`design.md#contract-surface`](../design.md#contract-surface) is canonical for command/type/error contracts; sub-phases should reference it rather than duplicate full contract payloads.  
 **Created**: 2026-04-04  
 **Status**: Draft  
-**Implementation order**: 6.1 → 6.2 → 6.3 → 6.4 → 6.5 (strict dependencies)
+**Implementation order**: 6.1 → 6.2 → 6.3 → 6.4 → 6.5 → 6.6 → 6.7 → 6.8 → 6.9 (strict dependencies)
 
 ---
 
@@ -12,7 +12,7 @@
 
 This sub-phase roadmap decomposes the Tauri IPC and frontend design (1016 lines — the largest design document) into 4 independently testable implementation units, establishing a secure IPC surface before building frontend state and pages on top of it.
 
-**Total sub-phases**: 5 (Phases 6.1 through 6.5)
+**Total sub-phases**: 9 (Phases 6.1 through 6.9)
 
 **Rationale for decomposition**:
 -  **Size**: Exceeds ~100-150 lines (1016 lines total)
@@ -41,6 +41,14 @@ This sub-phase roadmap decomposes the Tauri IPC and frontend design (1016 lines 
 6.4 (Zero-Trace + security hardening)
  ↓
 6.5 (Backend command wiring)
+ ↓
+6.6 (File operations UI)
+ ↓
+6.7 (Sync & destination management UI)
+ ↓
+6.8 (Vault settings UI)
+ ↓
+6.9 (Sharing UI)
 ```
 
 **Legend**:
@@ -92,6 +100,31 @@ This sub-phase roadmap decomposes the Tauri IPC and frontend design (1016 lines 
    - End-to-end flows functional against a real vault
    - **Estimated**: ~300 lines production code, ~50 lines tests
 
+6. **[Phase 6.6: File Operations UI](6.6-file-operations-ui.md)**
+   - Download button on `FileItem` with native save dialog and `ProgressModal`
+   - Delete button on `FileItem` with confirmation modal and listing refresh
+   - In-app file content viewer (`ContentViewerModal`) for MVP types (text, images) via `get_file_content`
+   - **Estimated**: ~200 lines production code, ~30 lines tests
+
+7. **[Phase 6.7: Sync and Destination Management UI](6.7-sync-destination-ui.md)**
+   - Sync button in `AppShell` wired to `sync_to_cloud` with `ProgressModal`
+   - `SyncProvider` polling `get_sync_status`; last-synced timestamp in `SessionStatusBar`
+   - `/destinations` page: `DestinationList`, `AddDestinationForm`, `DestinationItem` with delete
+   - **Estimated**: ~350 lines production code, ~30 lines tests
+
+8. **[Phase 6.8: Vault Settings UI](6.8-vault-settings-ui.md)**
+   - `/settings` page with change-password, rotate-key-file (Tier 2 only), and delete-vault cards
+   - `ChangePasswordRequest` with `Zeroize, ZeroizeOnDrop` on both password fields
+   - Delete vault clears all state contexts before navigating to login
+   - **Requires security review** (password strings at IPC boundary)
+   - **Estimated**: ~220 lines production code, ~35 lines tests
+
+9. **[Phase 6.9: Sharing UI](6.9-sharing-ui.md)**
+   - `/contacts` page: contact list, add-contact form, export-public-key button
+   - Share action on `FileItem`: `ShareModal` with contact picker and expiry date
+   - `/shares` page: sent shares (with revoke) and received shares (with import) tabs
+   - **Estimated**: ~420 lines production code, ~50 lines tests
+
 ---
 
 ## Testing Strategy
@@ -118,6 +151,10 @@ trunk build          # Frontend must compile (from Phase 6.2 onwards)
 - Phase 6.3: Login → vault browser navigation works end to end
 - Phase 6.4: Locking the vault clears all visible file data; browser DevTools show no localStorage entries
 - Phase 6.5: Full authenticate → upload → download → sync → lock → re-authenticate flow works against a real vault
+- Phase 6.6: Download, delete, and inline preview all work against a running backend; `ContentViewerModal` holds no state after dismiss
+- Phase 6.7: Sync button triggers progress modal; destination add/delete round-trip works; last-synced timestamp updates
+- Phase 6.8: Change password, rotate key file (Tier 2), and delete vault all complete successfully; delete navigates to login
+- Phase 6.9: Contact add/list, file share, received share import, and share revocation all work end to end
 
 ---
 
@@ -128,6 +165,10 @@ trunk build          # Frontend must compile (from Phase 6.2 onwards)
 - **Phase 6.3**: No security review needed (page components, no crypto)
 - **Phase 6.4**: Requires `security-reviewer` agent review — Zero-Trace verification, CSP completeness, brute-force protection via auth backoff
 - **Phase 6.5**: Requires `security-reviewer` agent review — backend command wiring exposes full Phase 2–5 attack surface through the IPC boundary
+- **Phase 6.6**: No security review needed (page components; Zero-Trace for file content covered by Phase 6.4 audit)
+- **Phase 6.7**: No security review needed (sync/destination UI; destination credentials are opaque to the frontend)
+- **Phase 6.8**: Requires `security-reviewer` agent review — `change_password` passes two password strings through the IPC boundary; zeroization must be verified
+- **Phase 6.9**: No security review needed (sharing crypto is fully in Phase 5 backend; frontend passes opaque IDs only)
 
 ---
 

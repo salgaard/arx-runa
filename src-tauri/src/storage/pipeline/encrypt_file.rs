@@ -12,12 +12,17 @@ use crate::storage::pipeline::read_chunk_size_bytes;
 use crate::storage::types::{ChunkRecord, NodeId};
 
 /// Encrypts a source file into fixed-size encrypted chunk blobs in staging.
+///
+/// The optional `progress` callback is invoked after each chunk write with
+/// `(bytes_processed, file_size_total)`.  Pass `None` to suppress progress
+/// reporting.  The callback MUST NOT import or depend on `tauri::`.
 pub async fn encrypt_file(
     source: &Path,
     file_id: Uuid,
     file_key: &FileKey,
     metadata_store: &dyn MetadataStore,
     staging_directory: &Path,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<Vec<ChunkRecord>, StorageError> {
     let mut staged_blob_names = Vec::new();
     let result = encrypt_file_inner(
@@ -27,6 +32,7 @@ pub async fn encrypt_file(
         metadata_store,
         staging_directory,
         &mut staged_blob_names,
+        progress,
     )
     .await;
     if result.is_err() {
@@ -36,6 +42,9 @@ pub async fn encrypt_file(
 }
 
 /// Performs chunked encryption and records staged blob names for cleanup on failure.
+///
+/// Invokes `progress(bytes_processed, file_size)` after each successful chunk
+/// write, where `file_size` is read from filesystem metadata at entry.
 async fn encrypt_file_inner(
     source: &Path,
     file_id: Uuid,
@@ -43,16 +52,22 @@ async fn encrypt_file_inner(
     metadata_store: &dyn MetadataStore,
     staging_directory: &Path,
     staged_blob_names: &mut Vec<String>,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<Vec<ChunkRecord>, StorageError> {
     let chunk_size_bytes = read_chunk_size_bytes(metadata_store).await?;
     let chunk_size_usize = usize::try_from(chunk_size_bytes)
         .map_err(|error| StorageError::Database(error.to_string()))?;
+    let file_size = tokio::fs::metadata(source)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
     let source_file = File::open(source)
         .await
         .map_err(|error| StorageError::Io(error.to_string()))?;
     let mut source_reader = BufReader::new(source_file);
     let mut chunk_records = Vec::new();
     let mut chunk_index = 0u32;
+    let mut bytes_processed: u64 = 0;
     let crypto_file_id = FileId::from_uuid(file_id);
 
     loop {
@@ -77,6 +92,10 @@ async fn encrypt_file_inner(
         let blob_name = Uuid::new_v4().hyphenated().to_string();
         staged_blob_names.push(blob_name.clone());
         write_blob_file(staging_directory, &blob_name, &wire_blob).await?;
+        bytes_processed += bytes_read as u64;
+        if let Some(cb) = progress {
+            cb(bytes_processed, file_size);
+        }
         chunk_records.push(ChunkRecord {
             chunk_id: Uuid::new_v4(),
             node_id: NodeId::new(Uuid::nil()),
@@ -319,6 +338,7 @@ mod tests {
             &file_key,
             &metadata_store,
             &staging_directory,
+            None,
         )
         .await
         .expect("encrypt_file should succeed");
@@ -355,6 +375,7 @@ mod tests {
             &file_key,
             &metadata_store,
             &staging_directory,
+            None,
         )
         .await
         .expect("encrypt_file should succeed");
@@ -394,6 +415,7 @@ mod tests {
             &file_key,
             &metadata_store,
             &staging_directory,
+            None,
         )
         .await
         .expect("encrypt_file should succeed");

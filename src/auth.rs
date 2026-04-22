@@ -67,6 +67,24 @@ extern "C" {
     async fn listen(event: &str, handler: &js_sys::Function) -> Result<JsValue, JsValue>;
 }
 
+/// Checks if Tauri event API is available.
+fn is_tauri_event_available() -> bool {
+    use wasm_bindgen::JsValue;
+    match web_sys::window() {
+        Some(window) => {
+            let tauri = js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI__"));
+            if let Ok(tauri_obj) = tauri {
+                if !tauri_obj.is_undefined() && !tauri_obj.is_null() {
+                    let event_api = js_sys::Reflect::get(&tauri_obj, &JsValue::from_str("event"));
+                    return event_api.is_ok() && !event_api.unwrap().is_undefined();
+                }
+            }
+            false
+        }
+        None => false,
+    }
+}
+
 /// Key-file selector indicator.
 ///
 /// Displays the currently detected or manually-selected key file path.
@@ -94,12 +112,17 @@ pub fn KeyFileIndicator(
     // Wire the device-event subscriber — tolerates zero emissions in 6.3.
     // Backend emission bridge (AppHandle::emit from DeviceMonitor) is Phase 6.5 work.
     //
+    // Skip subscription in browser dev mode when Tauri event API is unavailable.
     // `on_cleanup` requires `Send + Sync`, so the unlisten handle is stored in
     // `Arc<Mutex<...>>` (both `Send + Sync`). The `Closure` is forgotten after
     // registration — Tauri's JS side holds the reference; once `unlisten` is
     // called in `on_cleanup`, Tauri drops the reference and the JS GC reclaims
     // the closure backing data.
     Effect::new(move |_| {
+        if !is_tauri_event_available() {
+            return;
+        }
+
         let on_device = on_manual_select.clone();
         let unlisten_fn: Arc<Mutex<Option<js_sys::Function>>> = Arc::new(Mutex::new(None));
         let unlisten_for_cleanup = Arc::clone(&unlisten_fn);

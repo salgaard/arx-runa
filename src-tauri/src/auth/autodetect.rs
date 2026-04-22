@@ -3,6 +3,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use subtle::ConstantTimeEq;
 use walkdir::WalkDir;
 use zeroize::Zeroizing;
 
@@ -70,7 +71,7 @@ fn scan_blocking(
         }
 
         let hash = blake3::hash(buffer.as_ref());
-        if hash.as_bytes() == &reference_hash.0 {
+        if hash.as_bytes().ct_eq(&reference_hash.0).into() {
             return Ok(Some(entry.into_path()));
         }
     }

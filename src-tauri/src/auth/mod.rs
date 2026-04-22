@@ -13,9 +13,11 @@ pub mod key_source;
 pub mod path_hint;
 pub mod session;
 pub mod staging;
+pub mod transport_provider;
 pub mod types;
 
 pub use autodetect::find_key_file;
+pub use transport_provider::TransportProvider;
 pub use ceremonies::{
     Argon2MigrationIntent, ChangePasswordRequest, CreateVaultRequest, RecoverVaultRequest,
     RecoverWithPhraseRequest, RotateKeyFileRequest, SetupRecoveryRequest, Tier, change_password,
@@ -27,6 +29,7 @@ pub use kdf::Argon2Params;
 pub use key_source::{FileKeySource, KeySource};
 pub use path_hint::{KeyHintStore, VaultHint};
 pub use session::{LifecycleState, OperationGuard, SessionEvent, SessionManager};
+pub use types::{AuthUser, AuthUserStore};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use device_monitor::MockDeviceMonitor;

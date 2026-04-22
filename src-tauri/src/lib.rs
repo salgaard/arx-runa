@@ -8,6 +8,22 @@ pub mod storage;
 pub mod sync;
 pub mod ui;
 
+use tauri::Manager as _;
+use tokio_stream::StreamExt as _;
+
+use crate::auth::DeviceEvent;
+use crate::ui::AppState;
+
+/// Payload emitted to the frontend on USB key-file device changes.
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DeviceEventPayload {
+    /// `"mounted"` or `"unmounted"`.
+    kind: &'static str,
+    /// Absolute path to the device mount point.
+    mount_path: String,
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Starts the Arx Runa Tauri runtime with all 29 registered commands.
 pub fn run() {
@@ -51,6 +67,42 @@ pub fn run() {
             ui::sharing_commands::list_shares,
             ui::sharing_commands::list_received_shares,
         ])
+        .setup(|app| {
+            use tauri::Emitter as _;
+
+            let state = app.state::<AppState>();
+            let app_handle = app.handle().clone();
+
+            // Store the AppHandle for event emission.
+            let _ = state.app_handle.set(app_handle.clone());
+
+            // Spawn the device-event subscriber task on the Tauri async runtime.
+            // `Arc<dyn DeviceMonitor>` is cloned here so the task owns it
+            // independently of the setup closure lifetime.
+            let device_monitor = state.device_monitor.clone();
+            app.manage(tauri::async_runtime::spawn(async move {
+                // `watch()` returns `Pin<Box<dyn Stream<...>>>`, which is Unpin
+                // (Box<T>: Unpin always), so `.next()` works without pin_mut!.
+                let mut stream = device_monitor.watch();
+                while let Some(event) = stream.next().await {
+                    let payload = match event {
+                        DeviceEvent::Mounted { mount_path } => DeviceEventPayload {
+                            kind: "mounted",
+                            mount_path: mount_path.to_string_lossy().into_owned(),
+                        },
+                        DeviceEvent::Unmounted { mount_path } => DeviceEventPayload {
+                            kind: "unmounted",
+                            mount_path: mount_path.to_string_lossy().into_owned(),
+                        },
+                    };
+                    if let Err(emit_error) = app_handle.emit("device-event", &payload) {
+                        tracing::warn!("device-event emit failed: {emit_error}");
+                    }
+                }
+            }));
+
+            Ok(())
+        })
         .run(tauri::generate_context!())
     {
         eprintln!("error while running tauri application: {error}");

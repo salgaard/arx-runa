@@ -9,12 +9,18 @@ use crate::storage::pipeline::decrypt_file;
 use crate::storage::types::NodeType;
 
 /// Downloads a file node from staged encrypted chunks into a destination file.
+///
+/// The optional `progress` callback is forwarded to the decryption pipeline and
+/// invoked after each chunk write with `(bytes_decrypted, file_size_total)`.
+/// Pass `None` to suppress progress reporting.  The callback MUST NOT import
+/// or depend on `tauri::`.
 pub async fn download_file(
     destination: &Path,
     node_id: Uuid,
     metadata_store: &dyn MetadataStore,
     key_encryption_key: &KeyEncryptionKey,
     blob_directory: &Path,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<(), StorageError> {
     let node = metadata_store.get_node(node_id).await?;
     if !matches!(node.node_type, NodeType::File) {
@@ -37,6 +43,7 @@ pub async fn download_file(
         &chunks,
         blob_directory,
         metadata_store,
+        progress,
     )
     .await
 }
@@ -202,6 +209,7 @@ mod tests {
             &store,
             &key_encryption_key,
             &staging_directory,
+            None,
         )
         .await
         .expect("upload_file should succeed");
@@ -211,6 +219,7 @@ mod tests {
             &store,
             &key_encryption_key,
             &staging_directory,
+            None,
         )
         .await
         .expect("download_file should succeed");
@@ -250,6 +259,7 @@ mod tests {
             &store,
             &key_encryption_key,
             &staging_directory,
+            None,
         )
         .await
         .expect("upload_file should succeed");
@@ -259,6 +269,7 @@ mod tests {
             &store,
             &key_encryption_key,
             &staging_directory,
+            None,
         )
         .await
         .expect("download_file should succeed");
@@ -298,6 +309,7 @@ mod tests {
             &store,
             &upload_key,
             &staging_directory,
+            None,
         )
         .await
         .expect("upload_file should succeed");
@@ -308,6 +320,7 @@ mod tests {
             &store,
             &wrong_key,
             &staging_directory,
+            None,
         )
         .await;
 

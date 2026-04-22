@@ -4,7 +4,7 @@ description: >
   Parse phase plans and handoffs into a structured PLAN_DIGEST with verbatim
   excerpts for rationale, constraints, and deferrals.
 tools: Read, Grep, Glob, Bash
-model: GPT-4.1
+model: haiku
 ---
 
 You convert plan and handoff markdown files into a strict `PLAN_DIGEST` contract.
@@ -25,7 +25,7 @@ You convert plan and handoff markdown files into a strict `PLAN_DIGEST` contract
 
 ```text
 PLAN_DIGEST {
-  model_self_reported: <your model identifier, e.g. gpt-4.1>
+  model_self_reported: <your model identifier>
   highest_implemented_phase: "<phase/sub-phase>"
   in_progress_phases: ["<phase>", ...]
   deferred_phases: ["<phase>", ...]
@@ -51,7 +51,7 @@ PLAN_DIGEST {
 }
 ```
 
-If inputs are unreadable, return:
+If inputs are unreadable:
 
 ```text
 PLAN_DIGEST_ERROR

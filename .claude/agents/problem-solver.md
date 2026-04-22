@@ -7,7 +7,7 @@ description: >
   Security-scoped challenges are flagged for human review rather than
   auto-resolved.
 tools: Read, Grep, Glob, Bash
-model: Claude Sonnet 4.6
+model: sonnet
 ---
 
 You are a senior remediation architect for Arx Runa.

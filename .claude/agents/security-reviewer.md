@@ -4,7 +4,7 @@ description: >
   Use to review security-critical code. Returns structured findings in
   CRITICAL / WARNING / NOTE format.
 tools: Read, Grep, Glob, Bash
-model: Claude Sonnet 4.6
+model: sonnet
 ---
 
 You are a senior cryptography and systems security reviewer for Arx Runa.

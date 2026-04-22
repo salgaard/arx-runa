@@ -16,6 +16,7 @@ use crate::storage::sqlcipher::SqlCipherMetadataStore;
 use crate::storage::vault_ops::reencrypt_file;
 
 /// Output of a successful [`strong_revoke_share`] call.
+#[allow(dead_code)] // Phase 7: strong revocation re-keying
 pub(crate) struct StrongRevocationOutput {
     /// The new `file_share_id` assigned to the re-encrypted file version.
     pub new_file_share_id: String,
@@ -24,6 +25,7 @@ pub(crate) struct StrongRevocationOutput {
 }
 
 /// A re-issued share package for one recipient after strong revocation.
+#[allow(dead_code)] // Phase 7: strong revocation re-keying
 pub(crate) struct ReissuedPackage {
     /// The new share identifier for this recipient.
     pub share_id: String,
@@ -100,6 +102,7 @@ pub(crate) async fn revoke_share(
 ///
 /// Returns `NoActiveSharesForRotation` if the file has no active shares to
 /// rotate.
+#[allow(dead_code)] // Phase 7: strong revocation re-keying
 pub(crate) async fn strong_revoke_share(
     share_id: &str,
     now_unix_seconds: i64,
@@ -304,6 +307,7 @@ mod tests {
         }
 
         /// Seeds a contact row directly into the store.
+        #[allow(dead_code)]
         fn seed_contact(&self, contact: Contact) {
             self.state
                 .lock()

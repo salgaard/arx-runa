@@ -95,6 +95,18 @@ Implement the file sharing layer: local X25519 identity, contact management, enc
 
 Expose backend functionality through Tauri commands with error sanitisation, and build the user-facing UI for authentication, vault browsing, file transfer, sync, and sharing workflows.
 
+| Sub-phase | What gets built | Commands covered |
+|-----------|----------------|-----------------|
+| 6.1 — IPC Core & Types | Command registration, error sanitisation, IPC types | all 29 (stubbed) |
+| 6.2 — Frontend State & Invoke | `SessionProvider`, `VaultProvider`, `SyncProvider`, type-safe `invoke_command` | `get_session_status`, `list_directory` |
+| 6.3 — Frontend Pages | `LoginPage`, `VaultCreationPage`, `VaultBrowser`, `DropZone`, `ProgressModal`, `AppShell` | `authenticate`, `create_vault`, `upload_file`, `lock_session` |
+| 6.4 — Zero-Trace Hardening | CSP, password zeroization, state clearing on lock, auth backoff | — |
+| 6.5 — Backend Command Wiring | Connect all stubs to Phase 2–5 implementations, progress channels | all 29 (wired) |
+| 6.6 — File Operations UI | Download, delete, and inline file preview | `download_file`, `delete_file`, `get_file_content` |
+| 6.7 — Sync & Destination UI | Sync button, destination manager, sync status polling | `sync_to_cloud`, `get_sync_status`, `add_destination`, `list_destinations`, `delete_destination` |
+| 6.8 — Vault Settings UI | Change password, rotate key file, delete vault | `change_password`, `rotate_key_file`, `delete_vault` |
+| 6.9 — Sharing UI | Contacts, share file, received/sent share panels | `export_public_key`, `add_contact`, `list_contacts`, `share_file`, `import_share`, `revoke_share`, `list_shares`, `list_received_shares` |
+
 ---
 
 ## Phase 7 — End-to-End Integration Testing

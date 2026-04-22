@@ -222,6 +222,7 @@ mod tests {
             &store,
             &KeyEncryptionKey::from_bytes([1; 32]),
             &staging_directory,
+            None,
         )
         .await
         .expect("upload should succeed");
@@ -308,6 +309,7 @@ mod tests {
             &store,
             &KeyEncryptionKey::from_bytes([2; 32]),
             &staging_directory,
+            None,
         )
         .await
         .expect("upload should succeed");
@@ -355,6 +357,7 @@ mod tests {
             &store,
             &KeyEncryptionKey::from_bytes([4; 32]),
             &staging_directory,
+            None,
         )
         .await
         .expect("upload should succeed");
@@ -444,6 +447,7 @@ mod tests {
             &store,
             &KeyEncryptionKey::from_bytes([3; 32]),
             &staging_directory,
+            None,
         )
         .await
         .expect("child upload should succeed");

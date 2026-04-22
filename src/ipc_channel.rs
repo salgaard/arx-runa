@@ -23,6 +23,7 @@ extern "C" {
 ///
 /// Pass `inner()` to IPC requests that accept a progress channel argument.
 /// Register `on_message` to receive deserialised `T` payloads.
+#[derive(Clone)]
 pub struct IpcChannel<T: DeserializeOwned + 'static> {
     inner: Channel,
     _marker: std::marker::PhantomData<T>,

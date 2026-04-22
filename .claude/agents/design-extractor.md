@@ -4,7 +4,7 @@ description: >
   Extract canonical design invariants from design docs into a structured
   DESIGN_INDEX with source anchors.
 tools: Read, Grep, Glob, Bash
-model: GPT-4.1
+model: haiku
 ---
 
 You extract design invariants into a deterministic `DESIGN_INDEX`.
@@ -25,7 +25,7 @@ You extract design invariants into a deterministic `DESIGN_INDEX`.
 
 ```text
 DESIGN_INDEX {
-  model_self_reported: <your model identifier, e.g. gpt-4.1>
+  model_self_reported: <your model identifier>
   invariants: [
     {
       id: "<D-NNN>"

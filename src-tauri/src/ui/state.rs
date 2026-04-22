@@ -1,6 +1,7 @@
 //! Shared application state for Tauri IPC commands.
 
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 #[cfg(not(any(test, feature = "test-utils")))]
 use async_trait::async_trait;
@@ -17,19 +18,25 @@ use crate::ui::types::SyncStatus;
 ///
 /// Contains only IPC and runtime orchestration handles — no key material,
 /// no passwords, and no file-content buffers.
-// Fields wired in Phase 6.5; present here as scaffolding.
-#[allow(dead_code)]
 pub struct AppState {
     /// Encrypted manifest database. `None` until a vault is opened.
     pub(crate) database: Arc<RwLock<Option<SqlCipherMetadataStore>>>,
-    /// Cloud transport implementation (rclone-backed in production).
-    pub(crate) cloud_transport: Arc<dyn CloudTransport>,
+    /// Cloud transport implementation; swappable post-authenticate.
+    ///
+    /// Default is `NoOpCloudTransport`. After authenticate/create_vault,
+    /// the inner `Arc<dyn CloudTransport>` is replaced with `RcloneTransport`.
+    /// On lock/delete it is reset to `NoOpCloudTransport`.
+    pub(crate) cloud_transport: Arc<RwLock<Arc<dyn CloudTransport>>>,
     /// Platform device monitor for USB key-file autodetection.
     pub(crate) device_monitor: Arc<dyn DeviceMonitor>,
     /// Session lifecycle manager (timeout, state machine, key zeroization).
     pub(crate) session_manager: Arc<SessionManager>,
     /// Cached sync status updated by sync commands.
     pub(crate) sync_status: Arc<RwLock<SyncStatus>>,
+    /// Tauri app handle for emitting window events (populated in setup hook).
+    pub(crate) app_handle: OnceLock<tauri::AppHandle>,
+    /// Active vault identifier, mirrors SessionManager for quick IPC reads.
+    pub(crate) active_vault_id: Arc<RwLock<Option<String>>>,
 }
 
 /// No-op cloud transport used until Phase 6.5 wires a real `RcloneTransport`.
@@ -87,10 +94,11 @@ impl AppState {
     /// `NoOpCloudTransport`.
     pub fn construct_default() -> Self {
         #[cfg(any(test, feature = "test-utils"))]
-        let cloud_transport: Arc<dyn CloudTransport> =
-            Arc::new(crate::storage::cloud::mock::MockCloudTransport::default());
+        let cloud_transport: Arc<RwLock<Arc<dyn CloudTransport>>> =
+            Arc::new(RwLock::new(Arc::new(crate::storage::cloud::mock::MockCloudTransport::default())));
         #[cfg(not(any(test, feature = "test-utils")))]
-        let cloud_transport: Arc<dyn CloudTransport> = Arc::new(NoOpCloudTransport);
+        let cloud_transport: Arc<RwLock<Arc<dyn CloudTransport>>> =
+            Arc::new(RwLock::new(Arc::new(NoOpCloudTransport)));
 
         #[cfg(target_os = "windows")]
         let device_monitor: Arc<dyn DeviceMonitor> =
@@ -108,6 +116,27 @@ impl AppState {
             device_monitor,
             session_manager: Arc::new(SessionManager::from_config()),
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
+            app_handle: OnceLock::new(),
+            active_vault_id: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Replaces the active cloud transport with a new implementation.
+    ///
+    /// Called after authenticate/create_vault to install an `RcloneTransport`.
+    pub(crate) async fn swap_cloud_transport(&self, transport: Arc<dyn CloudTransport>) {
+        *self.cloud_transport.write().await = transport;
+    }
+
+    /// Resets the cloud transport back to the no-op default.
+    ///
+    /// Called on lock or vault deletion.
+    pub(crate) async fn reset_cloud_transport(&self) {
+        #[cfg(any(test, feature = "test-utils"))]
+        let noop: Arc<dyn CloudTransport> =
+            Arc::new(crate::storage::cloud::mock::MockCloudTransport::default());
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let noop: Arc<dyn CloudTransport> = Arc::new(NoOpCloudTransport);
+        *self.cloud_transport.write().await = noop;
     }
 }

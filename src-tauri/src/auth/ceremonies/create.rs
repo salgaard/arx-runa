@@ -11,10 +11,11 @@ use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
+use crate::auth::TransportProvider;
 use crate::crypto::VaultId;
 use crate::storage::cloud::vault_header::VaultHeader;
 use crate::storage::cloud::{
-    CloudTransport, VAULT_HEADER_UPLOAD_STAGING_FILE_NAME, upload_vault_header,
+    VAULT_HEADER_UPLOAD_STAGING_FILE_NAME, upload_vault_header,
 };
 use crate::storage::schema::{apply_canonical_schema, seed_manifest_meta};
 use std::path::Path;
@@ -38,7 +39,7 @@ use super::{STAGING_FILE_NAME, VAULT_HEADER_BLOB_NAME};
 pub async fn create_vault(
     request: CreateVaultRequest<'_>,
     session_manager: &SessionManager,
-    cloud_transport: &dyn CloudTransport,
+    cloud_transport: &dyn TransportProvider,
 ) -> Result<VaultId, AuthenticationError> {
     validate_new_vault_argon2_defaults(&request.argon2_params)?;
     let install_reservation = session_manager.reserve_session_install().await?;
@@ -183,7 +184,7 @@ pub async fn create_vault(
         return Err(map_vault_header_sync_error(error));
     }
     session_manager
-        .finalize_session_install(install_reservation, session_keys)
+        .finalize_session_install(install_reservation, session_keys, vault_id.to_uuid().to_string())
         .await?;
 
     drop(master_key);

@@ -22,6 +22,8 @@ paths:
 - `From<StorageError>` maps the real variants (`Database`, `NotFound`, `ChecksumMismatch`, `Io`, `WrongKey`, `ConstraintViolation`); design §Error Sanitisation code block is illustrative and out of date.
 - `storage::SyncError` (re-export of `storage::cloud::sync::SyncError`) and `storage::CloudTransportError` are the canonical cloud-error inputs for IPC sanitisation.
 - `AppState.database` is `Arc<RwLock<Option<SqlCipherMetadataStore>>>`; there is no separate `DatabaseConnection` type.
+- `AppState.cloud_transport` is `Arc<RwLock<Arc<dyn CloudTransport>>>`. `NoOpCloudTransport` is the default; `RcloneTransport` is installed on `authenticate`/`create_vault` and reset on `lock`/`delete_vault`. The write lock is held only during the swap — never across long operations.
+- The `"device-event"` Tauri event carries `{ kind: "mounted" | "unmounted", mountPath: String }` with camelCase serde; emitted from the `DeviceMonitor::watch()` stream via the `Builder::setup()` subscriber task. The task lives for the process lifetime; `emit` errors are logged at `warn!` level and do not terminate the loop.
 - Zero-Trace audit tests live in `src-tauri/src/ui/security_audit.rs` as `#[cfg(test)] mod security_audit`, reachable via the `cargo test ui::security` prefix filter. Audit tests MUST NOT embed real secret data; they only reference forbidden-identifier string literals.
 
 ## Config (`tauri.conf.json`)

@@ -8,10 +8,11 @@ use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
+use crate::auth::TransportProvider;
 use crate::crypto::VaultId;
 use crate::storage;
 use crate::storage::cloud::vault_header::{VaultHeader, VaultHeaderTrustPolicy};
-use crate::storage::cloud::{CloudTransport, ManifestBackupSyncError, download_manifest_backup};
+use crate::storage::cloud::{ManifestBackupSyncError, download_manifest_backup};
 
 /// Recovers a vault onto a new device by downloading its header and
 /// manifest backup, re-deriving the session keys, and importing the
@@ -19,7 +20,7 @@ use crate::storage::cloud::{CloudTransport, ManifestBackupSyncError, download_ma
 pub async fn recover_vault(
     request: RecoverVaultRequest<'_>,
     session_manager: &SessionManager,
-    cloud_transport: &dyn CloudTransport,
+    cloud_transport: &dyn TransportProvider,
 ) -> Result<VaultId, AuthenticationError> {
     let install_reservation = session_manager.reserve_session_install().await?;
     precheck_recovery_destination(&request.vault_db_path).await?;
@@ -111,7 +112,7 @@ pub async fn recover_vault(
     .map_err(map_manifest_backup_sync_error)?;
 
     session_manager
-        .finalize_session_install(install_reservation, session_keys)
+        .finalize_session_install(install_reservation, session_keys, vault_id.to_uuid().to_string())
         .await?;
 
     drop(master_key);

@@ -12,6 +12,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use crate::auth::types::user::{AuthUser, AuthUserStore};
 use crate::crypto::SqlcipherKey;
 use crate::storage::error::StorageError;
 use crate::storage::metadata_store::MetadataStore;
@@ -1298,6 +1299,107 @@ impl MetadataStore for SqlCipherMetadataStore {
     }
 }
 
+/// AuthUserStore trait implementation for SqlCipherMetadataStore.
+///
+/// Converts `AuthUser` adapter types into storage schema mutations, managing
+/// the boundary between auth ceremonies and storage implementation.
+#[async_trait]
+impl AuthUserStore for SqlCipherMetadataStore {
+    /// Create a new vault user entry (post-authentication).
+    ///
+    /// This is called after `create_vault` successfully uploads the vault header
+    /// and initializes the manifest database. For now, this is a placeholder
+    /// that validates the vault exists (via manifest_meta) without storing
+    /// additional user metadata.
+    ///
+    /// # Future enhancement
+    /// When a dedicated user metadata table is added to the schema, this method
+    /// will persist the vault ID, salt, and key file hash for faster authentication.
+    async fn create_vault_user(&self, _user: AuthUser) -> Result<(), StorageError> {
+        // Current implementation: vault metadata is stored in manifest_meta during
+        // create_vault ceremony and vault_identity row is created in the ceremony itself.
+        // AuthUser creation is validated implicitly by the ceremony's successful
+        // database initialization.
+        Ok(())
+    }
+
+    /// Update password hash and salt (after re-authentication).
+    ///
+    /// Called during `change_password` ceremony to persist the new salt.
+    /// For now, this is a placeholder as the salt is stored in the vault header
+    /// (cloud-stored and managed separately).
+    ///
+    /// # Future enhancement
+    /// When user metadata is stored in the manifest database, this will update
+    /// the salt for faster future authentications.
+    async fn update_password(
+        &self,
+        _vault_id: &crate::crypto::VaultId,
+        _salt: [u8; 16],
+    ) -> Result<(), StorageError> {
+        // Current implementation: salt is maintained in vault_header (cloud storage)
+        // This method is available for future use when user metadata tables are added.
+        Ok(())
+    }
+
+    /// Rotate key file hash (post-authentication).
+    ///
+    /// Called during `rotate_key_file` ceremony to update the stored USB key file
+    /// hash. For now, this is a placeholder as key_file_blake3 is stored in the
+    /// vault header (cloud-stored and managed separately).
+    ///
+    /// # Future enhancement
+    /// When user metadata is stored in the manifest database, this will update
+    /// the key file hash for Tier 2 vaults.
+    async fn rotate_key_file(
+        &self,
+        _vault_id: &crate::crypto::VaultId,
+        _key_file_hash: [u8; 32],
+    ) -> Result<(), StorageError> {
+        // Current implementation: key_file_blake3 is maintained in vault_header (cloud storage)
+        // This method is available for future use when user metadata tables are added.
+        Ok(())
+    }
+
+    /// Look up user by vault ID (for session establishment).
+    ///
+    /// Retrieves minimal user data needed to validate credentials during authentication.
+    /// For now, this reads the vault ID from manifest_meta to validate the vault exists.
+    ///
+    /// # Errors
+    /// - `StorageError::NotFound` if vault_id is not found in manifest_meta
+    ///
+    /// # Future enhancement
+    /// When user metadata is stored in the manifest database, this will return
+    /// the full AuthUser (vault_id, salt, key_file_hash) for authentication.
+    async fn get_user(&self, vault_id: &crate::crypto::VaultId) -> Result<AuthUser, StorageError> {
+        let vault_id_string = vault_id.to_uuid().hyphenated().to_string();
+        let vault_id_copy = *vault_id;
+        self.with_connection_blocking(move |conn| {
+            conn.query_row(
+                "SELECT value FROM manifest_meta WHERE key = 'vault_id'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(StorageError::from_rusqlite)?
+            .ok_or(StorageError::NotFound)
+            .and_then(|stored_vault_id| {
+                if stored_vault_id == vault_id_string {
+                    Ok(AuthUser {
+                        vault_id: vault_id_copy,
+                        salt: [0u8; 16],          // Placeholder: from vault_header in practice
+                        key_file_hash: None,      // Placeholder: from vault_header in practice
+                    })
+                } else {
+                    Err(StorageError::NotFound)
+                }
+            })
+        })
+        .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -2559,5 +2661,108 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(StorageError::NotFound)));
+    }
+
+    /// Verifies AuthUserStore::get_user returns vault when vault exists in manifest_meta.
+    #[tokio::test]
+    async fn test_auth_user_store_get_user_returns_vault_when_exists() {
+        use crate::auth::AuthUserStore;
+
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let vault_id_uuid = Uuid::new_v4();
+        let vault_id = crate::crypto::VaultId::from_uuid(vault_id_uuid);
+        let store = SqlCipherMetadataStore::create(&db_path, &key, vault_id_uuid, 4_194_304, false)
+            .await
+            .expect("store should be created");
+
+        let result = store.get_user(&vault_id).await;
+
+        assert!(result.is_ok());
+        let auth_user = result.expect("get_user should succeed");
+        assert_eq!(auth_user.vault_id, vault_id);
+    }
+
+    /// Verifies AuthUserStore::get_user returns NotFound when vault_id is wrong.
+    #[tokio::test]
+    async fn test_auth_user_store_get_user_returns_not_found_on_wrong_vault_id() {
+        use crate::auth::AuthUserStore;
+
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let vault_id_uuid = Uuid::new_v4();
+        let wrong_vault_id = crate::crypto::VaultId::from_uuid(Uuid::new_v4());
+        let store = SqlCipherMetadataStore::create(&db_path, &key, vault_id_uuid, 4_194_304, false)
+            .await
+            .expect("store should be created");
+
+        let result = store.get_user(&wrong_vault_id).await;
+
+        assert!(matches!(result, Err(StorageError::NotFound)));
+    }
+
+    /// Verifies AuthUserStore::create_vault_user succeeds (placeholder implementation).
+    #[tokio::test]
+    async fn test_auth_user_store_create_vault_user_succeeds() {
+        use crate::auth::{AuthUser, AuthUserStore};
+
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let vault_id_uuid = Uuid::new_v4();
+        let vault_id = crate::crypto::VaultId::from_uuid(vault_id_uuid);
+        let store = SqlCipherMetadataStore::create(&db_path, &key, vault_id_uuid, 4_194_304, false)
+            .await
+            .expect("store should be created");
+
+        let auth_user = AuthUser {
+            vault_id,
+            salt: [0x11; 16],
+            key_file_hash: Some([0x22; 32]),
+        };
+
+        let result = store.create_vault_user(auth_user).await;
+
+        assert!(result.is_ok());
+    }
+
+    /// Verifies AuthUserStore::update_password succeeds (placeholder implementation).
+    #[tokio::test]
+    async fn test_auth_user_store_update_password_succeeds() {
+        use crate::auth::AuthUserStore;
+
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let vault_id_uuid = Uuid::new_v4();
+        let vault_id = crate::crypto::VaultId::from_uuid(vault_id_uuid);
+        let store = SqlCipherMetadataStore::create(&db_path, &key, vault_id_uuid, 4_194_304, false)
+            .await
+            .expect("store should be created");
+
+        let result = store.update_password(&vault_id, [0x33; 16]).await;
+
+        assert!(result.is_ok());
+    }
+
+    /// Verifies AuthUserStore::rotate_key_file succeeds (placeholder implementation).
+    #[tokio::test]
+    async fn test_auth_user_store_rotate_key_file_succeeds() {
+        use crate::auth::AuthUserStore;
+
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let vault_id_uuid = Uuid::new_v4();
+        let vault_id = crate::crypto::VaultId::from_uuid(vault_id_uuid);
+        let store = SqlCipherMetadataStore::create(&db_path, &key, vault_id_uuid, 4_194_304, false)
+            .await
+            .expect("store should be created");
+
+        let result = store.rotate_key_file(&vault_id, [0x44; 32]).await;
+
+        assert!(result.is_ok());
     }
 }

@@ -37,6 +37,8 @@ applyTo: "src-tauri/src/auth/**"
 - The session timeout is loaded from `dirs::config_dir() / "arx-runa/config.json"` (schema `{ "schema_version": 1, "session_timeout_secs": u64 }`); default 900 s; clamp to `[60, 86400]`.
 - Session events are broadcast on an internal `tokio::sync::broadcast::Sender<SessionEvent>` (`TimeoutWarning { seconds_remaining }` 60 s before expiry, `Locked` after zeroize). Never add secret material to this enum.
 - Authentication backoff: SessionManager applies delay = min(30s, 2^(attempts-1) s) before returning InvalidCredentials, where attempts counts consecutive failures of credential verification after KDF derivation. KeyFileNotFound, MemoryLockFailed, and SessionAlreadyActive do not increment the counter. Counter resets on any successful session installation — whether via `authenticate()` or the ceremony install path (`install_session` / `finalize_session_install`). The backoff gate is applied at the SessionManager level on all paths that acquire the `authenticate_gate` semaphore. Counter is not persisted across process restarts.
+- `SessionManager::with_key_encryption_key`, `with_sqlcipher_key`, `with_manifest_key` invoke a closure with the active key bytes under the session read lock; no buffer escapes. `with_manifest_key` mirrors `with_sqlcipher_key` and is needed by sync commands.
+- `SessionManager::remaining_seconds()` returns `None` outside `Active`; `active_vault_id()` is cleared in `lock()` after zeroization. The `vault_id` is set on `authenticate`, `install_session`, `finalize_session_install`, and `swap_active_session`.
 
 ## Errors
 - `InvalidCredentials` for wrong password, wrong key file, or both — caller cannot distinguish the cases

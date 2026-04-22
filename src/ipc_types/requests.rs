@@ -68,6 +68,21 @@ pub struct DeleteFileRequest {
     pub file_id: String,
 }
 
+/// Argument payload for the `download_file` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadFileRequest {
+    /// Manifest node ID of the file to download.
+    pub file_id: String,
+    /// Absolute path to the destination file on the local filesystem.
+    pub destination_path: String,
+    /// Serialised `IpcChannel` handle for streaming progress updates.
+    ///
+    /// Skipped during serde serialisation; the channel is wired at the UI layer.
+    #[serde(skip)]
+    pub progress: JsValue,
+}
+
 /// Argument payload for the `get_file_content` Tauri command.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -6,7 +6,7 @@ description: >
   When a SOLUTION_PACK includes design-doc updates for accepted challenges,
   implement those updates alongside code changes.
 tools: Read, Write, MultiEdit, Bash, Glob, Grep
-model: Claude Sonnet 4.6
+model: sonnet
 ---
 
 You are a senior Rust implementer for Arx Runa.

@@ -4,7 +4,7 @@ description: >
   Use to review Rust changes for architecture, correctness, and rule compliance.
   Returns structured FINDING records compatible with /review-only.
 tools: Read, Grep, Glob, Bash
-model: Claude Sonnet 4.6
+model: sonnet
 ---
 
 You are a senior Rust reviewer for Arx Runa.

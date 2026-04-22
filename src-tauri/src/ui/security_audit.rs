@@ -1,13 +1,14 @@
-/// Zero-Trace security audit tests.
-///
-/// These tests scan the source tree at build/test time to verify that
-/// Zero-Trace invariants are enforced across the codebase. They do not
-/// exercise runtime behaviour — they assert structural properties of the
-/// source code itself.
-///
-/// Run with: `cargo test ui::security`
+//! Zero-Trace security audit tests.
+//!
+//! These tests scan the source tree at build/test time to verify that
+//! Zero-Trace invariants are enforced across the codebase. They do not
+//! exercise runtime behaviour — they assert structural properties of the
+//! source code itself.
+//!
+//! Run with: `cargo test ui::security`
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod security_audit {
     use std::fs;
     use std::path::Path;

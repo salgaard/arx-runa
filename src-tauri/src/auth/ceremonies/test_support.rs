@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use zeroize::Zeroizing;
@@ -65,7 +66,8 @@ pub(super) async fn create_tier_one_vault() -> TierOneVault {
         chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
         epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
     };
-    let vault_id = create_vault(request, &session, &cloud)
+    let cloud_arc: Arc<dyn CloudTransport> = Arc::new(cloud.clone());
+    let vault_id = create_vault(request, &session, cloud_arc.as_ref())
         .await
         .expect("create_vault tier 1 must succeed");
     let header_download_path = temp.path().join("test-support-tier1-header.json");
@@ -111,7 +113,8 @@ pub(super) async fn create_tier_two_vault() -> TierTwoVault {
         chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
         epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
     };
-    let vault_id = create_vault(request, &session, &cloud)
+    let cloud_arc: Arc<dyn CloudTransport> = Arc::new(cloud.clone());
+    let vault_id = create_vault(request, &session, cloud_arc.as_ref())
         .await
         .expect("create_vault tier 2 must succeed");
     let header_download_path = temp.path().join("test-support-tier2-header.json");
@@ -143,10 +146,11 @@ pub(super) async fn add_recovery_slot_and_return_phrase(
         argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
         vault_db_path: vault.vault_db_path.clone(),
     };
+    let cloud_arc: Arc<dyn CloudTransport> = Arc::new(vault.cloud.clone());
     setup_recovery(
         request,
         &vault.session,
-        &vault.cloud,
+        cloud_arc.as_ref(),
         &mut vault.header,
         &vault.vault_id,
     )

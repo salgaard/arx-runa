@@ -15,6 +15,12 @@ use crate::storage::validation::{
 };
 
 /// Decrypts a file from encrypted chunk blobs into a destination path.
+///
+/// The optional `progress` callback is invoked after each chunk's plaintext is
+/// written with `(bytes_decrypted, file_size)`.  Callback fires AFTER the
+/// verify+decrypt step, never before.  Pass `None` to suppress progress
+/// reporting.  The callback MUST NOT import or depend on `tauri::`.
+#[allow(clippy::too_many_arguments)]
 pub async fn decrypt_file(
     destination: &Path,
     file_id: Uuid,
@@ -23,6 +29,7 @@ pub async fn decrypt_file(
     chunks: &[ChunkRecord],
     blob_directory: &Path,
     metadata_store: &dyn MetadataStore,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<(), StorageError> {
     let chunk_size_bytes = read_chunk_size_bytes(metadata_store).await?;
     let expected_blob_len = chunk_size_bytes.checked_add(40).ok_or_else(|| {
@@ -60,6 +67,7 @@ pub async fn decrypt_file(
         .map_err(|error| StorageError::Io(error.to_string()))?;
     let mut destination_writer = BufWriter::new(destination_file);
     let crypto_file_id = FileId::from_uuid(file_id);
+    let mut bytes_decrypted: u64 = 0;
 
     let decrypt_result: Result<(), StorageError> = async {
         for (position, chunk) in sorted_chunks.iter().enumerate() {
@@ -101,6 +109,10 @@ pub async fn decrypt_file(
                 .write_all(&plaintext[..bytes_to_write_usize])
                 .await
                 .map_err(|error| StorageError::Io(error.to_string()))?;
+            bytes_decrypted += bytes_to_write_usize as u64;
+            if let Some(cb) = progress {
+                cb(bytes_decrypted, file_size);
+            }
         }
         destination_writer
             .flush()
@@ -349,6 +361,7 @@ mod tests {
             file_key,
             metadata_store,
             staging_directory,
+            None,
         )
         .await
         .expect("encrypt_file should succeed")
@@ -388,6 +401,7 @@ mod tests {
             &chunks,
             &staging_directory,
             &metadata_store,
+            None,
         )
         .await
         .expect("decrypt_file should succeed");
@@ -433,6 +447,7 @@ mod tests {
             &chunks,
             &staging_directory,
             &metadata_store,
+            None,
         )
         .await
         .expect("decrypt_file should succeed");
@@ -465,6 +480,7 @@ mod tests {
             &[],
             &staging_directory,
             &metadata_store,
+            None,
         )
         .await
         .expect("decrypt_file should succeed");
@@ -517,6 +533,7 @@ mod tests {
             &chunks,
             &staging_directory,
             &metadata_store,
+            None,
         )
         .await;
 
@@ -558,6 +575,7 @@ mod tests {
             &malformed,
             &staging_directory,
             &metadata_store,
+            None,
         )
         .await;
 
@@ -603,6 +621,7 @@ mod tests {
             &malformed,
             &staging_directory,
             &metadata_store,
+            None,
         )
         .await;
 
@@ -649,6 +668,7 @@ mod tests {
             &chunks,
             &staging_directory,
             &metadata_store,
+            None,
         )
         .await
         .expect("decrypt_file should succeed");
@@ -694,6 +714,7 @@ mod tests {
             &chunks,
             &staging_directory,
             &metadata_store,
+            None,
         )
         .await;
 

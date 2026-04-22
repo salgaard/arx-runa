@@ -10,7 +10,7 @@ pub use destination_session_config::DestinationSessionConfig;
 pub use file_entry::FileEntry;
 pub use progress_update::ProgressUpdate;
 pub use requests::{
-    AuthenticateRequest, CreateVaultRequest, DeleteFileRequest, GetFileContentRequest,
-    ListDirectoryRequest, UploadFileRequest,
+    AuthenticateRequest, CreateVaultRequest, DeleteFileRequest, DownloadFileRequest,
+    GetFileContentRequest, ListDirectoryRequest, UploadFileRequest,
 };
 pub use session_status::SessionStatus;

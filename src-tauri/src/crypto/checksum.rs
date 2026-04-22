@@ -3,6 +3,7 @@
 
 use crate::crypto::error::CryptoError;
 use crate::crypto::types::Blake3Hash;
+use subtle::ConstantTimeEq;
 
 /// Computes a BLAKE3 checksum over an encrypted blob.
 ///
@@ -20,12 +21,16 @@ pub fn compute_checksum(encrypted_blob: &[u8]) -> Blake3Hash {
 /// The `blob` is consumed so a single `Vec<u8>` allocation flows from the
 /// download boundary through verification into the decryption step.
 ///
+/// ## Security: Constant-time comparison
+/// The checksum comparison is performed using constant-time logic to prevent
+/// timing attacks that could leak information about valid checksums.
+///
 /// # Errors
 /// Returns `CryptoError::ChecksumMismatch` if the computed checksum does not
 /// match `expected`. The blob is dropped in that case.
 pub fn verify_checksum(blob: Vec<u8>, expected: &Blake3Hash) -> Result<VerifiedBlob, CryptoError> {
     let computed = compute_checksum(&blob);
-    if computed.0 == expected.0 {
+    if computed.0.ct_eq(&expected.0).into() {
         Ok(VerifiedBlob(blob))
     } else {
         Err(CryptoError::ChecksumMismatch)

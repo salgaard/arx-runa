@@ -1,0 +1,36 @@
+{
+  "finding_summary": {
+    "CRITICAL": 2,
+    "LOW": 8,
+    "HIGH": 6,
+    "MEDIUM": 12
+  },
+  "baseline_result": {
+    "status": "passed",
+    "command": "cargo check --workspace",
+    "duration_seconds": 1
+  },
+  "report_path": ".claude/reviews/review-full-20260422-035745.md",
+  "canonical_finding_count": 28,
+  "cycle_count": 1,
+  "scope": "full workspace (all src-tauri/src/** + src/**)",
+  "cycles": [
+    {
+      "cross_shard_finding_count": 5,
+      "duration_seconds": 900,
+      "status": "completed",
+      "cycle_num": 1,
+      "findings_count": 28,
+      "security_reviewer_invocations": 3
+    }
+  ],
+  "timestamp": "2026-04-22T04.17.56.141+02:00",
+  "track": "full",
+  "run_id": "review-full-20260422-035745",
+  "disposition_summary": {
+    "INSUFFICIENT_EVIDENCE": 1,
+    "DEFERRED_BY_PLAN": 6,
+    "INTENTIONAL_DECISION": 6,
+    "ACTIONABLE_NOW": 15
+  }
+}

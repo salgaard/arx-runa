@@ -30,7 +30,7 @@ serde-wasm-bindgen = "0.6"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 gloo-timers = { version = "0.3", features = ["futures"] }
-zeroize = { version = "1", features = ["alloc"] }
+zeroize = { version = "1", features = ["alloc", "derive"] }
 web-sys = { version = "0.3", features = ["Window", "HtmlInputElement", "Event", "DragEvent", "DataTransfer", "FileList", "File"] }
 js-sys = "0.3"
 

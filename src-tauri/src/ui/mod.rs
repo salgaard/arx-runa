@@ -12,6 +12,8 @@ pub mod state;
 pub mod sync_commands;
 pub mod types;
 pub mod validation;
+pub(crate) mod commands_common;
+pub(crate) mod vault_paths;
 
 pub use error::IpcError;
 pub use state::AppState;

@@ -76,7 +76,7 @@ mod tests {
         let file_key = generate_file_key();
         let node_id = Uuid::new_v4();
 
-        let chunks = encrypt_file(&source_path, node_id, &file_key, &store, &staging_directory)
+        let chunks = encrypt_file(&source_path, node_id, &file_key, &store, &staging_directory, None)
             .await
             .expect("encryption should stage blobs");
         let orphan_count = prepare_vault_storage(&store, &staging_directory)
@@ -115,6 +115,7 @@ mod tests {
             &store,
             &KeyEncryptionKey::from_bytes([7; 32]),
             &staging_directory,
+            None,
         )
         .await
         .expect("upload should succeed");

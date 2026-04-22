@@ -27,6 +27,8 @@ applyTo: "src-tauri/src/storage/**"
 - Encrypt/decrypt plaintext buffers must be `Zeroizing<Vec<u8>>` to guarantee zeroize on success, error, and cancellation
 - Decrypt flow must call `verify_checksum` before `decrypt_chunk`; `VerifiedBlob` enforces this boundary
 - Hybrid routing decision lives in `storage::vault_ops::routing::decide`
+- `upload_file` / `download_file` accept `progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>`. Pipeline invokes the callback once per chunk (args: `bytes_processed, bytes_total`). Storage must never depend on `tauri::` — the `Channel<T>` is wrapped into a `dyn Fn` closure at the IPC layer.
+- `push_vault` / `pull_vault` accept `progress: Option<&(dyn Fn(u32, u32, Option<&str>) + Send + Sync)>` (args: `files_processed, files_total, current_file_name`). Same tauri-isolation rule applies.
 
 ## BLAKE3
 - Checksum over encrypted blob (nonce + ciphertext + tag)
