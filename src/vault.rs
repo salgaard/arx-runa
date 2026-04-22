@@ -229,7 +229,7 @@ pub fn FileItem(
     let can_preview = !is_dir
         && file_size_allows_preview(entry.size_bytes)
         && extension_is_previewable(&entry.name);
-    
+
     let entry_stored = StoredValue::new(entry_clone.clone());
     let file_name_stored = StoredValue::new(file_name.clone());
 

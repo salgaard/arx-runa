@@ -15,7 +15,8 @@ use crate::storage::cloud::destination_session::{
 };
 use crate::storage::cloud::vault_header::VaultHeader;
 use crate::storage::cloud::{
-    CloudEndpoint, CloudTransport, DestinationSessionPublic, RcloneTransport, SyncConfig, pull_vault, push_vault,
+    CloudEndpoint, CloudTransport, DestinationSessionPublic, RcloneTransport, SyncConfig,
+    pull_vault, push_vault,
 };
 use crate::storage::staging::write_owner_only;
 use crate::ui::commands_common::require_active_session;
@@ -32,13 +33,21 @@ use crate::ui::vault_paths::{resolve_singleton_vault, vault_staging_dir};
 fn rclone_binary_path(handle: &tauri::AppHandle) -> PathBuf {
     use tauri::Manager;
     if let Ok(rd) = handle.path().resource_dir() {
-        let name = if cfg!(target_os = "windows") { "rclone.exe" } else { "rclone" };
+        let name = if cfg!(target_os = "windows") {
+            "rclone.exe"
+        } else {
+            "rclone"
+        };
         let candidate = rd.join("bin").join(name);
         if candidate.exists() {
             return candidate;
         }
     }
-    PathBuf::from(if cfg!(target_os = "windows") { "rclone.exe" } else { "rclone" })
+    PathBuf::from(if cfg!(target_os = "windows") {
+        "rclone.exe"
+    } else {
+        "rclone"
+    })
 }
 
 /// Formats the current instant as an ISO 8601 UTC timestamp string.
@@ -253,8 +262,11 @@ pub async fn recover_from_cloud(
     // Phase 7 will use vault_header_path for new-device bootstrap.
     let _ = vault_header_path;
 
-    let (vault_id, db_path, _) = resolve_singleton_vault()?
-        .ok_or_else(|| IpcError::InvalidInput("No local vault found; Phase 7 required for new-device recovery".into()))?;
+    let (vault_id, db_path, _) = resolve_singleton_vault()?.ok_or_else(|| {
+        IpcError::InvalidInput(
+            "No local vault found; Phase 7 required for new-device recovery".into(),
+        )
+    })?;
 
     let staging_dir = vault_staging_dir(&vault_id);
 
@@ -345,7 +357,9 @@ pub async fn migrate_vault(
     let dest = all_sessions
         .into_iter()
         .find(|d| d.destination_id == new_destination_id)
-        .ok_or_else(|| IpcError::NotFound(format!("destination '{new_destination_id}' not found")))?;
+        .ok_or_else(|| {
+            IpcError::NotFound(format!("destination '{new_destination_id}' not found"))
+        })?;
 
     // Collect blobs that are present in local staging.
     let chunks = db.list_sync_chunks().await.map_err(IpcError::from)?;
@@ -450,7 +464,9 @@ pub async fn sync_backup(
         .into_iter()
         .filter(|d| !d.is_primary)
         .filter(|d| {
-            destination_id.as_ref().is_none_or(|id| &d.destination_id == id)
+            destination_id
+                .as_ref()
+                .is_none_or(|id| &d.destination_id == id)
         })
         .collect();
 

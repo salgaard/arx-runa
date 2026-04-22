@@ -53,7 +53,8 @@ pub trait AuthUserStore: Send + Sync {
     /// # Errors
     /// - `StorageError::NotFound` if vault does not exist
     /// - Other storage errors on database failures
-    async fn update_password(&self, vault_id: &VaultId, salt: [u8; 16]) -> Result<(), StorageError>;
+    async fn update_password(&self, vault_id: &VaultId, salt: [u8; 16])
+    -> Result<(), StorageError>;
 
     /// Rotate key file hash (post-authentication).
     ///

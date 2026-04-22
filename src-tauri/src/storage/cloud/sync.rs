@@ -452,7 +452,11 @@ pub async fn push_vault(
         },
     )?;
     if let Some(cb) = progress {
-        cb(successful_uploads.len() as u32, total_upload_blobs as u32, None);
+        cb(
+            successful_uploads.len() as u32,
+            total_upload_blobs as u32,
+            None,
+        );
     }
 
     let new_counter = metadata_store.increment_snapshot_counter().await?;

@@ -3,10 +3,10 @@ use zeroize::Zeroizing;
 
 use super::helpers::*;
 use super::types::RecoverWithPhraseRequest;
+use crate::auth::TransportProvider;
 use crate::auth::error::AuthenticationError;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
-use crate::auth::TransportProvider;
 use crate::crypto::{VaultId, WrappedMasterKey, unwrap_master_key_from_recovery};
 use crate::storage;
 use crate::storage::cloud::vault_header::VaultHeaderTrustPolicy;
@@ -106,7 +106,11 @@ pub async fn recover_with_phrase(
     .map_err(map_manifest_backup_sync_error)?;
 
     session_manager
-        .finalize_session_install(install_reservation, session_keys, vault_id.to_uuid().to_string())
+        .finalize_session_install(
+            install_reservation,
+            session_keys,
+            vault_id.to_uuid().to_string(),
+        )
         .await?;
 
     drop(master_key);

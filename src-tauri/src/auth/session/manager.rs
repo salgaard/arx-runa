@@ -259,7 +259,8 @@ impl SessionManager {
             let mut lifecycle_guard = self.lifecycle.write().await;
             *lifecycle_guard = LifecycleState::Active;
         }
-        self.gate_and_counter.fetch_and(!GATE_CLOSED_FLAG, Ordering::SeqCst);
+        self.gate_and_counter
+            .fetch_and(!GATE_CLOSED_FLAG, Ordering::SeqCst);
         {
             let mut vault_id_guard = self.vault_id.write().await;
             *vault_id_guard = Some(vault_id);
@@ -274,7 +275,8 @@ impl SessionManager {
             return;
         }
 
-        self.gate_and_counter.fetch_or(GATE_CLOSED_FLAG, Ordering::SeqCst);
+        self.gate_and_counter
+            .fetch_or(GATE_CLOSED_FLAG, Ordering::SeqCst);
         self.cancel_timer().await;
 
         let mut waiter = self.operation_counter_receiver.clone();
@@ -425,7 +427,8 @@ impl SessionManager {
             let mut lifecycle_guard = self.lifecycle.write().await;
             *lifecycle_guard = LifecycleState::Active;
         }
-        self.gate_and_counter.fetch_and(!GATE_CLOSED_FLAG, Ordering::SeqCst);
+        self.gate_and_counter
+            .fetch_and(!GATE_CLOSED_FLAG, Ordering::SeqCst);
         {
             let mut vault_id_guard = self.vault_id.write().await;
             *vault_id_guard = Some(vault_id);
@@ -452,7 +455,8 @@ impl SessionManager {
         vault_id: String,
     ) -> Result<(), AuthenticationError> {
         let reservation = self.reserve_session_install().await?;
-        self.finalize_session_install(reservation, keys, vault_id).await
+        self.finalize_session_install(reservation, keys, vault_id)
+            .await
     }
 
     /// Replaces the active `SessionKeys` without disturbing lifecycle state.
@@ -540,7 +544,10 @@ impl SessionManager {
     /// # Errors
     /// Returns `AuthenticationError::SessionNotActive` if no session is currently installed.
     #[allow(dead_code)]
-    pub(crate) async fn with_manifest_key<F, R>(&self, callback: F) -> Result<R, AuthenticationError>
+    pub(crate) async fn with_manifest_key<F, R>(
+        &self,
+        callback: F,
+    ) -> Result<R, AuthenticationError>
     where
         F: FnOnce(&[u8; 32]) -> R,
     {
@@ -666,7 +673,9 @@ impl SessionManager {
             }
         }
 
-        context.gate_and_counter.fetch_or(GATE_CLOSED_FLAG, Ordering::SeqCst);
+        context
+            .gate_and_counter
+            .fetch_or(GATE_CLOSED_FLAG, Ordering::SeqCst);
         if let Err(error) = context.counter.wait_for(|count| *count == 0).await {
             tracing::error!(
                 ?error,
@@ -738,7 +747,13 @@ mod tests {
 
     async fn authenticate_tier1(manager: &SessionManager) {
         manager
-            .authenticate(b"password", None, &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+            .authenticate(
+                b"password",
+                None,
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned(),
+            )
             .await
             .expect("tier1 authentication should succeed");
     }
@@ -746,7 +761,13 @@ mod tests {
     async fn authenticate_tier2(manager: &SessionManager) {
         let key_source = MockKeySource::new([0x55u8; 32]);
         manager
-            .authenticate(b"password", Some(&key_source), &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+            .authenticate(
+                b"password",
+                Some(&key_source),
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned(),
+            )
             .await
             .expect("tier2 authentication should succeed");
     }
@@ -800,7 +821,13 @@ mod tests {
         authenticate_tier1(&manager).await;
 
         let error = manager
-            .authenticate(b"password", None, &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+            .authenticate(
+                b"password",
+                None,
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned(),
+            )
             .await
             .expect_err("re-authentication while active must fail");
 
@@ -812,8 +839,20 @@ mod tests {
         let manager = SessionManager::with_timeout(Duration::from_secs(5));
 
         let (first, second) = tokio::join!(
-            manager.authenticate(b"password", None, &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned()),
-            manager.authenticate(b"password", None, &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned()),
+            manager.authenticate(
+                b"password",
+                None,
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned()
+            ),
+            manager.authenticate(
+                b"password",
+                None,
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned()
+            ),
         );
 
         let success_count = usize::from(first.is_ok()) + usize::from(second.is_ok());
@@ -831,7 +870,13 @@ mod tests {
         let source = NotFoundKeySource;
 
         let error = manager
-            .authenticate(b"password", Some(&source), &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+            .authenticate(
+                b"password",
+                Some(&source),
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned(),
+            )
             .await
             .expect_err("missing key source must fail authentication");
 
@@ -844,7 +889,13 @@ mod tests {
         let source = InvalidSizeKeySource;
 
         let error = manager
-            .authenticate(b"password", Some(&source), &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+            .authenticate(
+                b"password",
+                Some(&source),
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned(),
+            )
             .await
             .expect_err("invalid-size key source must fail authentication");
 
@@ -857,7 +908,13 @@ mod tests {
         let source = IoFailingKeySource;
 
         let error = manager
-            .authenticate(b"password", Some(&source), &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+            .authenticate(
+                b"password",
+                Some(&source),
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned(),
+            )
             .await
             .expect_err("io-failing key source must fail authentication");
 
@@ -1206,7 +1263,13 @@ mod tests {
             let manager_for_auth = Arc::clone(&manager);
             tokio::spawn(async move {
                 manager_for_auth
-                    .authenticate(b"password", None, &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+                    .authenticate(
+                        b"password",
+                        None,
+                        &TEST_SALT,
+                        &TEST_PARAMS,
+                        "test-vault".to_owned(),
+                    )
                     .await
             })
         };
@@ -1339,7 +1402,13 @@ mod tests {
         let start = tokio::time::Instant::now();
 
         let _ = manager
-            .authenticate(b"password", Some(&source), &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+            .authenticate(
+                b"password",
+                Some(&source),
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned(),
+            )
             .await;
 
         assert!(
@@ -1355,14 +1424,26 @@ mod tests {
         let source = IoFailingKeySource;
 
         let _ = manager
-            .authenticate(b"password", Some(&source), &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+            .authenticate(
+                b"password",
+                Some(&source),
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned(),
+            )
             .await;
 
         let manager_clone = Arc::clone(&manager);
         let auth_task = tokio::spawn(async move {
             let source2 = IoFailingKeySource;
             let _ = manager_clone
-                .authenticate(b"password", Some(&source2), &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+                .authenticate(
+                    b"password",
+                    Some(&source2),
+                    &TEST_SALT,
+                    &TEST_PARAMS,
+                    "test-vault".to_owned(),
+                )
                 .await;
         });
 
@@ -1381,13 +1462,25 @@ mod tests {
         let source = IoFailingKeySource;
 
         let _ = manager
-            .authenticate(b"password", Some(&source), &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+            .authenticate(
+                b"password",
+                Some(&source),
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned(),
+            )
             .await;
         let manager2 = Arc::clone(&manager);
         let t1 = tokio::spawn(async move {
             let s = IoFailingKeySource;
             let _ = manager2
-                .authenticate(b"password", Some(&s), &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+                .authenticate(
+                    b"password",
+                    Some(&s),
+                    &TEST_SALT,
+                    &TEST_PARAMS,
+                    "test-vault".to_owned(),
+                )
                 .await;
         });
         tokio::task::yield_now().await;
@@ -1401,7 +1494,13 @@ mod tests {
         let t2 = tokio::spawn(async move {
             let s = IoFailingKeySource;
             let _ = manager3
-                .authenticate(b"password", Some(&s), &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+                .authenticate(
+                    b"password",
+                    Some(&s),
+                    &TEST_SALT,
+                    &TEST_PARAMS,
+                    "test-vault".to_owned(),
+                )
                 .await;
         });
         tokio::task::yield_now().await; // let t2 reach its 2s sleep
@@ -1425,7 +1524,13 @@ mod tests {
             let t = tokio::spawn(async move {
                 let s = IoFailingKeySource;
                 let _ = mgr
-                    .authenticate(b"password", Some(&s), &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+                    .authenticate(
+                        b"password",
+                        Some(&s),
+                        &TEST_SALT,
+                        &TEST_PARAMS,
+                        "test-vault".to_owned(),
+                    )
                     .await;
             });
             tokio::task::yield_now().await;
@@ -1448,7 +1553,13 @@ mod tests {
         let final_task = tokio::spawn(async move {
             let s = IoFailingKeySource;
             let _ = mgr
-                .authenticate(b"password", Some(&s), &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+                .authenticate(
+                    b"password",
+                    Some(&s),
+                    &TEST_SALT,
+                    &TEST_PARAMS,
+                    "test-vault".to_owned(),
+                )
                 .await;
         });
         tokio::task::yield_now().await;
@@ -1466,7 +1577,13 @@ mod tests {
 
         let fail_source = IoFailingKeySource;
         let _ = manager
-            .authenticate(b"password", Some(&fail_source), &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+            .authenticate(
+                b"password",
+                Some(&fail_source),
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned(),
+            )
             .await;
 
         assert_eq!(
@@ -1477,9 +1594,15 @@ mod tests {
 
         let mgr = Arc::clone(&manager);
         let success_task = tokio::spawn(async move {
-            mgr.authenticate(b"password", None, &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
-                .await
-                .expect("tier1 auth after backoff advance must succeed")
+            mgr.authenticate(
+                b"password",
+                None,
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned(),
+            )
+            .await
+            .expect("tier1 auth after backoff advance must succeed")
         });
         tokio::task::yield_now().await;
         tokio::time::advance(Duration::from_secs(1)).await;
@@ -1506,7 +1629,13 @@ mod tests {
         let source = NotFoundKeySource;
 
         let _ = manager
-            .authenticate(b"password", Some(&source), &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+            .authenticate(
+                b"password",
+                Some(&source),
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned(),
+            )
             .await;
 
         assert_eq!(
@@ -1522,7 +1651,13 @@ mod tests {
         set_force_lock_failure(true);
         let manager = SessionManager::with_timeout(Duration::from_secs(5));
         let _ = manager
-            .authenticate(b"password", None, &TEST_SALT, &TEST_PARAMS, "test-vault".to_owned())
+            .authenticate(
+                b"password",
+                None,
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned(),
+            )
             .await;
         set_force_lock_failure(false);
         assert_eq!(
@@ -1534,13 +1669,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_active_vault_id_populated_on_authenticate_and_cleared_on_lock() {
-        let manager = SessionManager::with_timeout_and_warning(Duration::from_secs(10), Duration::ZERO);
+        let manager =
+            SessionManager::with_timeout_and_warning(Duration::from_secs(10), Duration::ZERO);
         let salt = [0x01u8; 32];
         manager
-            .authenticate(b"password", None, &salt, &TEST_PARAMS, "vault-abc".to_owned())
+            .authenticate(
+                b"password",
+                None,
+                &salt,
+                &TEST_PARAMS,
+                "vault-abc".to_owned(),
+            )
             .await
             .expect("authenticate must succeed");
-        assert_eq!(manager.active_vault_id().await, Some("vault-abc".to_owned()));
+        assert_eq!(
+            manager.active_vault_id().await,
+            Some("vault-abc".to_owned())
+        );
         manager.lock().await;
         assert_eq!(manager.active_vault_id().await, None);
     }
@@ -1556,7 +1701,13 @@ mod tests {
         let manager = SessionManager::with_timeout(Duration::from_secs(900));
         let salt = [0x02u8; 32];
         manager
-            .authenticate(b"password", None, &salt, &TEST_PARAMS, "vault-xyz".to_owned())
+            .authenticate(
+                b"password",
+                None,
+                &salt,
+                &TEST_PARAMS,
+                "vault-xyz".to_owned(),
+            )
             .await
             .expect("authenticate must succeed");
         let remaining = manager.remaining_seconds().await;
@@ -1628,7 +1779,10 @@ mod tests {
         // This ensures the fix is working: the race condition is prevented.
         // Note: this is a statistical test; with proper synchronization, we expect
         // that some operations will observe the gate as closed after lock() is called.
-        println!("Operations started: {}, blocked: {}", operation_started_count, operation_blocked_count);
+        println!(
+            "Operations started: {}, blocked: {}",
+            operation_started_count, operation_blocked_count
+        );
         assert!(
             operation_started_count > 0 || operation_blocked_count > 0,
             "at least some operations should have been attempted"
@@ -1653,7 +1807,13 @@ mod tests {
         let manager = SessionManager::with_timeout(Duration::from_secs(10));
         let salt = [0x03u8; 32];
         manager
-            .authenticate(b"password", None, &salt, &TEST_PARAMS, "test-vault".to_owned())
+            .authenticate(
+                b"password",
+                None,
+                &salt,
+                &TEST_PARAMS,
+                "test-vault".to_owned(),
+            )
             .await
             .expect("authenticate must succeed");
         let key_bytes = manager

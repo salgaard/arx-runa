@@ -20,7 +20,8 @@ fn is_tauri_ipc_available() -> bool {
                     let core = js_sys::Reflect::get(&tauri_obj, &JsValue::from_str("core"));
                     if let Ok(core_obj) = core {
                         if !core_obj.is_undefined() && !core_obj.is_null() {
-                            let invoke_fn = js_sys::Reflect::get(&core_obj, &JsValue::from_str("invoke"));
+                            let invoke_fn =
+                                js_sys::Reflect::get(&core_obj, &JsValue::from_str("invoke"));
                             return invoke_fn.is_ok() && !invoke_fn.unwrap().is_undefined();
                         }
                     }

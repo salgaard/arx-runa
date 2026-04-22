@@ -4,6 +4,7 @@
 //! This module re-exports only.
 
 pub mod auth_commands;
+pub(crate) mod commands_common;
 pub mod destination_commands;
 pub mod error;
 pub mod file_commands;
@@ -12,7 +13,6 @@ pub mod state;
 pub mod sync_commands;
 pub mod types;
 pub mod validation;
-pub(crate) mod commands_common;
 pub(crate) mod vault_paths;
 
 pub use error::IpcError;

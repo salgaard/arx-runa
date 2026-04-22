@@ -28,12 +28,12 @@ use crate::auth::key_source::FileKeySource;
 use crate::crypto::VaultId;
 use crate::storage::SqlCipherMetadataStore;
 use crate::storage::cloud::{
-    CloudEndpoint, DestinationSessionPublic, RcloneTransport, SyncConfig, download_vault_header,
+    CloudEndpoint, DestinationSessionPublic, RcloneTransport, SyncConfig,
     destination_session::{
-        BackupSyncMode, DestinationSession, DestinationType,
-        build_session_rclone_conf, destroy_session_rclone_conf, get_primary_destination,
-        insert_destination_session,
+        BackupSyncMode, DestinationSession, DestinationType, build_session_rclone_conf,
+        destroy_session_rclone_conf, get_primary_destination, insert_destination_session,
     },
+    download_vault_header,
     vault_header::VaultHeader,
     vault_header::VaultHeaderTrustPolicy,
 };
@@ -135,7 +135,13 @@ async fn try_build_and_swap_rclone_transport(state: &AppState, db: &SqlCipherMet
         path_prefix: primary.path_prefix.clone(),
     };
     let binary_path = rclone_binary_path(state.app_handle.get());
-    match RcloneTransport::new(binary_path, conf_path, &endpoint, &public, SyncConfig::default()) {
+    match RcloneTransport::new(
+        binary_path,
+        conf_path,
+        &endpoint,
+        &public,
+        SyncConfig::default(),
+    ) {
         Ok(transport) => {
             state.swap_cloud_transport(Arc::new(transport)).await;
         }
@@ -196,15 +202,20 @@ pub async fn authenticate(
     } else {
         None
     };
-    let key_source_ref: Option<&(dyn crate::auth::KeySource + Send + Sync)> =
-        key_source_opt
-            .as_ref()
-            .map(|ks| ks as &(dyn crate::auth::KeySource + Send + Sync));
+    let key_source_ref: Option<&(dyn crate::auth::KeySource + Send + Sync)> = key_source_opt
+        .as_ref()
+        .map(|ks| ks as &(dyn crate::auth::KeySource + Send + Sync));
 
     // Authenticate — derives session keys from password + optional key file.
     state
         .session_manager
-        .authenticate(&password_bytes, key_source_ref, &salt, &params, header.vault_id.clone())
+        .authenticate(
+            &password_bytes,
+            key_source_ref,
+            &salt,
+            &params,
+            header.vault_id.clone(),
+        )
         .await
         .map_err(IpcError::from)?;
 
@@ -264,7 +275,9 @@ pub async fn create_vault(
     validate_password(std::str::from_utf8(&password_bytes).unwrap_or(""))?;
     crate::ui::validation::validate_chunk_size(chunk_size_bytes)?;
     if vault_name.is_empty() {
-        return Err(IpcError::InvalidInput("Vault name must not be empty".into()));
+        return Err(IpcError::InvalidInput(
+            "Vault name must not be empty".into(),
+        ));
     }
 
     // Pre-generate a UUID for the vault directory; we rename after the ceremony
@@ -443,7 +456,10 @@ pub async fn change_password(
     if let Ok(json) = serde_json::to_string_pretty(&header)
         && let Err(error) = tokio::fs::write(&header_path, json).await
     {
-        tracing::warn!(?error, "Failed to persist updated vault-header.json after password change");
+        tracing::warn!(
+            ?error,
+            "Failed to persist updated vault-header.json after password change"
+        );
     }
 
     Ok(())
@@ -511,7 +527,10 @@ pub async fn rotate_key_file(
     if let Ok(json) = serde_json::to_string_pretty(&header)
         && let Err(error) = tokio::fs::write(&header_path, json).await
     {
-        tracing::warn!(?error, "Failed to persist updated vault-header.json after key rotation");
+        tracing::warn!(
+            ?error,
+            "Failed to persist updated vault-header.json after key rotation"
+        );
     }
 
     Ok(())
@@ -534,8 +553,8 @@ pub async fn delete_vault(
         ));
     }
 
-    let (vault_id, _, _) = resolve_singleton_vault()?
-        .ok_or_else(|| IpcError::NotFound("No vault found".into()))?;
+    let (vault_id, _, _) =
+        resolve_singleton_vault()?.ok_or_else(|| IpcError::NotFound("No vault found".into()))?;
 
     // Lock the session (zeroizes all key material).
     state.session_manager.lock().await;

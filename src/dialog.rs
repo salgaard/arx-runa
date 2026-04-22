@@ -36,7 +36,8 @@ fn is_tauri_context() -> bool {
                     let plugin = js_sys::Reflect::get(&tauri_obj, &JsValue::from_str("plugin"));
                     if let Ok(plugin_obj) = plugin {
                         if !plugin_obj.is_undefined() && !plugin_obj.is_null() {
-                            let dialog = js_sys::Reflect::get(&plugin_obj, &JsValue::from_str("dialog"));
+                            let dialog =
+                                js_sys::Reflect::get(&plugin_obj, &JsValue::from_str("dialog"));
                             if dialog.is_ok() && !dialog.unwrap().is_undefined() {
                                 return true;
                             }

@@ -4,14 +4,14 @@ use zeroize::Zeroizing;
 
 use super::helpers::*;
 use super::types::SetupRecoveryRequest;
+use crate::auth::TransportProvider;
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
-use crate::auth::TransportProvider;
 use crate::crypto::{VaultId, wrap_master_key_for_recovery};
-use crate::storage::cloud::vault_header::{RecoverySlot, VaultHeader};
 use crate::storage::cloud::upload_vault_header;
+use crate::storage::cloud::vault_header::{RecoverySlot, VaultHeader};
 
 #[cfg(test)]
 use super::VAULT_HEADER_BLOB_NAME;

@@ -13,10 +13,7 @@ use crate::ui::state::AppState;
 ///
 /// Every IPC command must refresh the inactivity timer on entry.
 #[allow(dead_code)] // Phase 7: with_session_refresh for long-running command restart
-pub(crate) async fn with_session_refresh<F, Fut, T>(
-    state: &AppState,
-    f: F,
-) -> Result<T, IpcError>
+pub(crate) async fn with_session_refresh<F, Fut, T>(state: &AppState, f: F) -> Result<T, IpcError>
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<T, IpcError>>,

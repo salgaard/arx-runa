@@ -4,4 +4,3 @@
 //! enabling offline-first testing and alternative transport strategies.
 
 pub use crate::storage::cloud::CloudTransport as TransportProvider;
-

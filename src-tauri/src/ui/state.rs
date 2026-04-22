@@ -94,8 +94,9 @@ impl AppState {
     /// `NoOpCloudTransport`.
     pub fn construct_default() -> Self {
         #[cfg(any(test, feature = "test-utils"))]
-        let cloud_transport: Arc<RwLock<Arc<dyn CloudTransport>>> =
-            Arc::new(RwLock::new(Arc::new(crate::storage::cloud::mock::MockCloudTransport::default())));
+        let cloud_transport: Arc<RwLock<Arc<dyn CloudTransport>>> = Arc::new(RwLock::new(
+            Arc::new(crate::storage::cloud::mock::MockCloudTransport::default()),
+        ));
         #[cfg(not(any(test, feature = "test-utils")))]
         let cloud_transport: Arc<RwLock<Arc<dyn CloudTransport>>> =
             Arc::new(RwLock::new(Arc::new(NoOpCloudTransport)));

@@ -112,9 +112,9 @@ async fn extract_kek(state: &AppState) -> Result<KeyEncryptionKey, IpcError> {
         .with_key_encryption_key(|k| *k)
         .await
         .map_err(IpcError::from)?;
-    Ok(KeyEncryptionKey::from_secret_box(SecretBox::new(
-        Box::new(kek_raw),
-    )))
+    Ok(KeyEncryptionKey::from_secret_box(SecretBox::new(Box::new(
+        kek_raw,
+    ))))
 }
 
 // ─── IPC command handlers ─────────────────────────────────────────────────────
@@ -145,11 +145,7 @@ pub async fn list_directory(
     //            non-empty path → treat as a node UUID directly.
     let parent_uuid: Uuid = if normalised.is_empty() {
         // The schema seeds no "root_id"; return empty list when absent.
-        match db
-            .get_meta("root_id")
-            .await
-            .map_err(IpcError::from)?
-        {
+        match db.get_meta("root_id").await.map_err(IpcError::from)? {
             Some(id) => Uuid::parse_str(&id)
                 .map_err(|_| IpcError::InternalError("root_id is not a valid UUID".into()))?,
             None => return Ok(Vec::new()),
@@ -162,7 +158,10 @@ pub async fn list_directory(
         })?
     };
 
-    let children = db.list_children(parent_uuid).await.map_err(IpcError::from)?;
+    let children = db
+        .list_children(parent_uuid)
+        .await
+        .map_err(IpcError::from)?;
     Ok(children.iter().map(node_to_file_entry).collect())
 }
 
@@ -258,8 +257,8 @@ pub async fn download_file(
     require_active_session(&state).await?;
 
     validate_file_id(&file_id)?;
-    let node_uuid = Uuid::parse_str(&file_id)
-        .map_err(|_| IpcError::InvalidInput("Invalid file ID".into()))?;
+    let node_uuid =
+        Uuid::parse_str(&file_id).map_err(|_| IpcError::InvalidInput("Invalid file ID".into()))?;
 
     let vault_id = require_vault_id()?;
     let staging_dir = vault_staging_dir(&vault_id);
@@ -309,8 +308,8 @@ pub async fn delete_file(file_id: String, state: State<'_, AppState>) -> Result<
     require_active_session(&state).await?;
 
     validate_file_id(&file_id)?;
-    let node_uuid = Uuid::parse_str(&file_id)
-        .map_err(|_| IpcError::InvalidInput("Invalid file ID".into()))?;
+    let node_uuid =
+        Uuid::parse_str(&file_id).map_err(|_| IpcError::InvalidInput("Invalid file ID".into()))?;
 
     let vault_id = require_vault_id()?;
     let staging_dir = vault_staging_dir(&vault_id);
@@ -339,8 +338,8 @@ pub async fn get_file_content(
     require_active_session(&state).await?;
 
     validate_file_id(&file_id)?;
-    let node_uuid = Uuid::parse_str(&file_id)
-        .map_err(|_| IpcError::InvalidInput("Invalid file ID".into()))?;
+    let node_uuid =
+        Uuid::parse_str(&file_id).map_err(|_| IpcError::InvalidInput("Invalid file ID".into()))?;
 
     let db_guard = state.database.read().await;
     let db = db_guard

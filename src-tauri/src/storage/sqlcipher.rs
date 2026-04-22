@@ -1388,8 +1388,8 @@ impl AuthUserStore for SqlCipherMetadataStore {
                 if stored_vault_id == vault_id_string {
                     Ok(AuthUser {
                         vault_id: vault_id_copy,
-                        salt: [0u8; 16],          // Placeholder: from vault_header in practice
-                        key_file_hash: None,      // Placeholder: from vault_header in practice
+                        salt: [0u8; 16], // Placeholder: from vault_header in practice
+                        key_file_hash: None, // Placeholder: from vault_header in practice
                     })
                 } else {
                     Err(StorageError::NotFound)

@@ -4,17 +4,17 @@ use zeroize::Zeroizing;
 
 use super::helpers::*;
 use super::types::RotateKeyFileRequest;
+use crate::auth::TransportProvider;
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
-use crate::auth::TransportProvider;
 use crate::crypto::{
     RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
     unwrap_master_key_from_recovery, wrap_file_key, wrap_master_key_for_recovery,
 };
-use crate::storage::cloud::vault_header::VaultHeader;
 use crate::storage::cloud::upload_vault_header;
+use crate::storage::cloud::vault_header::VaultHeader;
 
 #[cfg(test)]
 use super::STAGING_FILE_NAME;

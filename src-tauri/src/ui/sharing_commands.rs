@@ -13,8 +13,8 @@ use zeroize::Zeroizing;
 
 use crate::crypto::{KeyEncryptionKey, WrappedFileKey, unwrap_file_key};
 use crate::sharing::{
-    Contact, ContactId, DisplayName, ShareRecord, SharingStore, X25519PublicKey, create_share_package,
-    export_public_key_bytes, import_share_package,
+    Contact, ContactId, DisplayName, ShareRecord, SharingStore, X25519PublicKey,
+    create_share_package, export_public_key_bytes, import_share_package,
 };
 use crate::storage::{MetadataStore, StorageError};
 use crate::ui::commands_common::require_active_session;
@@ -75,9 +75,9 @@ async fn extract_kek(state: &AppState) -> Result<KeyEncryptionKey, IpcError> {
         .with_key_encryption_key(|k| *k)
         .await
         .map_err(IpcError::from)?;
-    Ok(KeyEncryptionKey::from_secret_box(SecretBox::new(
-        Box::new(kek_raw),
-    )))
+    Ok(KeyEncryptionKey::from_secret_box(SecretBox::new(Box::new(
+        kek_raw,
+    ))))
 }
 
 // ─── IPC command handlers ─────────────────────────────────────────────────────
@@ -546,7 +546,10 @@ mod tests {
         let fp_bytes: [u8; 8] = [0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x00, 0x00, 0x01];
         let hex = hex::encode(fp_bytes);
         assert_eq!(hex.len(), 16);
-        assert!(hex.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+        assert!(
+            hex.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        );
     }
 
     #[test]
