@@ -186,6 +186,7 @@ pub async fn create_vault(
             install_reservation,
             session_keys,
             vault_id.to_uuid().to_string(),
+            &request.vault_db_path,
         )
         .await?;
 

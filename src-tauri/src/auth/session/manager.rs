@@ -78,6 +78,8 @@ pub struct SessionManager {
     timer_deadline: Arc<RwLock<Option<tokio::time::Instant>>>,
     /// Active vault identifier, populated on session install and cleared on lock.
     vault_id: Arc<RwLock<Option<String>>>,
+    /// Path to the vault database file, populated on session install and cleared on lock.
+    vault_db_path: Arc<RwLock<Option<PathBuf>>>,
 }
 
 /// RAII guard that decrements the operation counter on drop.
@@ -131,6 +133,7 @@ impl SessionManager {
             event_sender,
             timer_deadline: Arc::new(RwLock::new(None)),
             vault_id: Arc::new(RwLock::new(None)),
+            vault_db_path: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -154,6 +157,7 @@ impl SessionManager {
             event_sender,
             timer_deadline: Arc::new(RwLock::new(None)),
             vault_id: Arc::new(RwLock::new(None)),
+            vault_db_path: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -226,7 +230,7 @@ impl SessionManager {
         })
         .await;
 
-        let derived = match raw {
+        let mut derived = match raw {
             Err(join_error) => {
                 tracing::error!(
                     ?join_error,
@@ -257,24 +261,29 @@ impl SessionManager {
         let db_path = vault_db_path(&vault_id);
         let sqlcipher_key_bytes = {
             let mut key_bytes = [0u8; 32];
-            derived.sqlcipher_key.with_exposed(|bytes| key_bytes.copy_from_slice(bytes));
+            key_bytes.copy_from_slice(derived.sqlcipher_key.expose());
             key_bytes
         };
-        
-        let metadata_store = match SqlCipherMetadataStore::open(&db_path, &sqlcipher_key_bytes).await {
-            Ok(store) => {
-                tracing::info!("opened vault metadata database for vault_id={}", vault_id);
-                Some(Arc::new(store))
+
+        let metadata_store = if db_path.exists() {
+            match SqlCipherMetadataStore::open(&db_path, &sqlcipher_key_bytes).await {
+                Ok(store) => {
+                    tracing::info!("opened vault metadata database for vault_id={}", vault_id);
+                    Some(Arc::new(store))
+                }
+                Err(error) => {
+                    tracing::error!(?error, "failed to open SQLCipher database: {}", error);
+                    self.record_failed_attempt();
+                    return Err(AuthenticationError::InvalidCredentials);
+                }
             }
-            Err(error) => {
-                tracing::error!(?error, "failed to open SQLCipher database: {}", error);
-                self.record_failed_attempt();
-                return Err(AuthenticationError::InvalidCredentials);
-            }
+        } else {
+            tracing::debug!("vault database not found at {:?}, continuing without metadata store", db_path);
+            None
         };
-        
+
         derived.metadata_store = metadata_store;
-        
+
         {
             let mut session_guard = self.session.write().await;
             *session_guard = Some(derived);
@@ -288,6 +297,10 @@ impl SessionManager {
         {
             let mut vault_id_guard = self.vault_id.write().await;
             *vault_id_guard = Some(vault_id);
+        }
+        {
+            let mut vault_db_path_guard = self.vault_db_path.write().await;
+            *vault_db_path_guard = Some(db_path);
         }
         self.restart_timer().await;
         Ok(())
@@ -317,12 +330,12 @@ impl SessionManager {
                 tracing::info!("closed vault metadata database connection");
             }
         }
-        
+
         // Securely delete the temporary rclone.conf file before zeroizing session keys.
         // The file is session-lived and contains cloud provider credentials that must not
         // be left on disk. Uses overwrite-then-delete pattern to prevent recovery.
         Self::destroy_rclone_conf().await;
-        
+
         {
             let mut session_guard = self.session.write().await;
             *session_guard = None;
@@ -337,6 +350,10 @@ impl SessionManager {
         {
             let mut vault_id_guard = self.vault_id.write().await;
             *vault_id_guard = None;
+        }
+        {
+            let mut vault_db_path_guard = self.vault_db_path.write().await;
+            *vault_db_path_guard = None;
         }
 
         let _ = self.event_sender.send(SessionEvent::Locked);
@@ -444,6 +461,7 @@ impl SessionManager {
         _reservation: SessionInstallReservation,
         mut keys: SessionKeys,
         vault_id: String,
+        vault_db_path_arg: &std::path::Path,
     ) -> Result<(), AuthenticationError> {
         if !Self::derived_keys_are_initialized(&keys) {
             tracing::error!("install_session received an all-zero session key buffer");
@@ -452,28 +470,36 @@ impl SessionManager {
         if self.state().await == LifecycleState::Active {
             return Err(AuthenticationError::SessionAlreadyActive);
         }
-        
+
         // Open SQLCipher database with derived key for ceremony-created session.
-        let db_path = vault_db_path(&vault_id);
+        let db_path = vault_db_path_arg.to_path_buf();
         let sqlcipher_key_bytes = {
             let mut key_bytes = [0u8; 32];
-            keys.sqlcipher_key.with_exposed(|bytes| key_bytes.copy_from_slice(bytes));
+            key_bytes.copy_from_slice(keys.sqlcipher_key.expose());
             key_bytes
         };
-        
-        let metadata_store = match SqlCipherMetadataStore::open(&db_path, &sqlcipher_key_bytes).await {
-            Ok(store) => {
-                tracing::info!("opened vault metadata database for vault_id={} (ceremony install)", vault_id);
-                Some(Arc::new(store))
+
+        let metadata_store = if db_path.exists() {
+            match SqlCipherMetadataStore::open(&db_path, &sqlcipher_key_bytes).await {
+                Ok(store) => {
+                    tracing::info!(
+                        "opened vault metadata database for vault_id={} (ceremony install)",
+                        vault_id
+                    );
+                    Some(Arc::new(store))
+                }
+                Err(error) => {
+                    tracing::error!(?error, "failed to open SQLCipher database: {}", error);
+                    return Err(AuthenticationError::InvalidCredentials);
+                }
             }
-            Err(error) => {
-                tracing::error!(?error, "failed to open SQLCipher database: {}", error);
-                return Err(AuthenticationError::InvalidCredentials);
-            }
+        } else {
+            tracing::debug!("vault database not found at {:?}, continuing without metadata store", db_path);
+            None
         };
-        
+
         keys.metadata_store = metadata_store;
-        
+
         {
             let mut session_guard = self.session.write().await;
             *session_guard = Some(keys);
@@ -491,6 +517,10 @@ impl SessionManager {
         {
             let mut vault_id_guard = self.vault_id.write().await;
             *vault_id_guard = Some(vault_id);
+        }
+        {
+            let mut vault_db_path_guard = self.vault_db_path.write().await;
+            *vault_db_path_guard = Some(db_path);
         }
         self.restart_timer().await;
         Ok(())
@@ -512,9 +542,10 @@ impl SessionManager {
         &self,
         keys: SessionKeys,
         vault_id: String,
+        vault_db_path_arg: &std::path::Path,
     ) -> Result<(), AuthenticationError> {
         let reservation = self.reserve_session_install().await?;
-        self.finalize_session_install(reservation, keys, vault_id)
+        self.finalize_session_install(reservation, keys, vault_id, vault_db_path_arg)
             .await
     }
 
@@ -542,28 +573,50 @@ impl SessionManager {
         if self.state().await != LifecycleState::Active {
             return Err(AuthenticationError::SessionNotActive);
         }
-        
+
         // Close old database connection and open a new one with the updated key.
-        let db_path = vault_db_path(&vault_id);
+        // Use the stored vault_db_path from the current session.
+        let db_path = {
+            let vault_db_path_guard = self.vault_db_path.read().await;
+            match vault_db_path_guard.as_ref() {
+                Some(path) => path.clone(),
+                None => {
+                    tracing::error!("swap_active_session called but vault_db_path not set");
+                    return Err(AuthenticationError::SessionNotActive);
+                }
+            }
+        };
         let sqlcipher_key_bytes = {
             let mut key_bytes = [0u8; 32];
-            new_keys.sqlcipher_key.with_exposed(|bytes| key_bytes.copy_from_slice(bytes));
+            key_bytes.copy_from_slice(new_keys.sqlcipher_key.expose());
             key_bytes
         };
-        
-        let metadata_store = match SqlCipherMetadataStore::open(&db_path, &sqlcipher_key_bytes).await {
-            Ok(store) => {
-                tracing::info!("swapped vault metadata database connection for vault_id={}", vault_id);
-                Some(Arc::new(store))
+
+        let metadata_store = if db_path.exists() {
+            match SqlCipherMetadataStore::open(&db_path, &sqlcipher_key_bytes).await {
+                Ok(store) => {
+                    tracing::info!(
+                        "swapped vault metadata database connection for vault_id={}",
+                        vault_id
+                    );
+                    Some(Arc::new(store))
+                }
+                Err(error) => {
+                    tracing::error!(
+                        ?error,
+                        "failed to open SQLCipher database during key rotation: {}",
+                        error
+                    );
+                    return Err(AuthenticationError::InvalidCredentials);
+                }
             }
-            Err(error) => {
-                tracing::error!(?error, "failed to open SQLCipher database during key rotation: {}", error);
-                return Err(AuthenticationError::InvalidCredentials);
-            }
+        } else {
+            tracing::debug!("vault database not found at {:?}, continuing without metadata store", db_path);
+            None
         };
-        
+
         new_keys.metadata_store = metadata_store;
-        
+
         {
             let mut session_guard = self.session.write().await;
             // Drop the old keys (and close the old connection) before setting new ones
@@ -645,7 +698,9 @@ impl SessionManager {
     /// Returns `None` if no session is currently active or the database could not be opened.
     pub async fn get_metadata_store(&self) -> Option<Arc<SqlCipherMetadataStore>> {
         let session_guard = self.session.read().await;
-        session_guard.as_ref().and_then(|keys| keys.get_metadata_store())
+        session_guard
+            .as_ref()
+            .and_then(|keys| keys.get_metadata_store())
     }
 
     /// Returns the seconds remaining until session timeout, or `None` if not `Active`.
@@ -696,7 +751,10 @@ impl SessionManager {
     /// is not fatal (the session is already being torn down).
     async fn destroy_rclone_conf() {
         let conf_path = Self::session_rclone_conf_path();
-        if let Err(error) = crate::storage::cloud::destination_session::destroy_session_rclone_conf(&conf_path).await {
+        if let Err(error) =
+            crate::storage::cloud::destination_session::destroy_session_rclone_conf(&conf_path)
+                .await
+        {
             tracing::warn!(
                 ?error,
                 path = %conf_path.display(),
@@ -1361,7 +1419,7 @@ mod tests {
         let keys = derive_test_session_keys().await;
 
         manager
-            .install_session(keys, "test-vault".to_owned())
+            .install_session(keys, "test-vault".to_owned(), std::path::Path::new("/tmp/test-vault.db"))
             .await
             .expect("install_session must succeed from NoSession");
 
@@ -1412,11 +1470,11 @@ mod tests {
         let second = derive_test_session_keys().await;
 
         manager
-            .install_session(first, "test-vault".to_owned())
+            .install_session(first, "test-vault".to_owned(), std::path::Path::new("/tmp/test-vault.db"))
             .await
             .expect("first install must succeed");
         let error = manager
-            .install_session(second, "test-vault".to_owned())
+            .install_session(second, "test-vault".to_owned(), std::path::Path::new("/tmp/test-vault.db"))
             .await
             .expect_err("second install must be rejected");
 
@@ -1429,7 +1487,7 @@ mod tests {
         let keys = derive_test_session_keys().await;
 
         manager
-            .install_session(keys, "test-vault".to_owned())
+            .install_session(keys, "test-vault".to_owned(), std::path::Path::new("/tmp/test-vault.db"))
             .await
             .expect("first install must succeed");
         manager.lock().await;
@@ -1437,7 +1495,7 @@ mod tests {
 
         let fresh_keys = derive_test_session_keys().await;
         manager
-            .install_session(fresh_keys, "test-vault".to_owned())
+            .install_session(fresh_keys, "test-vault".to_owned(), std::path::Path::new("/tmp/test-vault.db"))
             .await
             .expect("install must succeed from Expired state");
 
@@ -1449,7 +1507,7 @@ mod tests {
         let manager = SessionManager::with_timeout(Duration::from_secs(5));
         let first = derive_test_session_keys().await;
         manager
-            .install_session(first, "test-vault".to_owned())
+            .install_session(first, "test-vault".to_owned(), std::path::Path::new("/tmp/test-vault.db"))
             .await
             .expect("install must succeed");
 
@@ -1955,7 +2013,10 @@ mod tests {
             .expect("Failed to write test rclone.conf");
 
         // Verify file exists before lock
-        assert!(test_conf_path.exists(), "test rclone.conf should exist before lock");
+        assert!(
+            test_conf_path.exists(),
+            "test rclone.conf should exist before lock"
+        );
 
         // Authenticate and lock (which should delete the file)
         let manager = SessionManager::with_timeout(Duration::from_secs(5));
@@ -1992,21 +2053,23 @@ mod tests {
     async fn test_authenticate_opens_sqlcipher_database_connection() {
         // After authentication, metadata store should be accessible
         let manager = SessionManager::with_timeout(Duration::from_secs(5));
-        
+
         // Before authentication, no store
         assert!(manager.get_metadata_store().await.is_none());
-        
+
         // Note: authenticate_tier1 will fail because test-vault database doesn't exist,
         // but that's okay - we're testing the structure and error handling.
         // For unit tests without actual DB files, we just verify the accessor works.
-        let _ = manager.authenticate(
-            b"password",
-            None,
-            &TEST_SALT,
-            &TEST_PARAMS,
-            "test-vault".to_owned(),
-        ).await;
-        
+        let _ = manager
+            .authenticate(
+                b"password",
+                None,
+                &TEST_SALT,
+                &TEST_PARAMS,
+                "test-vault".to_owned(),
+            )
+            .await;
+
         // Even if auth failed, after lock no store should be accessible
         manager.lock().await;
         let metadata_store_after_lock = manager.get_metadata_store().await;
@@ -2021,10 +2084,10 @@ mod tests {
         // This test verifies that when a session is active and a DB is available,
         // the same connection handle is returned multiple times.
         let manager = SessionManager::with_timeout(Duration::from_secs(5));
-        
+
         // Before authentication, no store
         assert!(manager.get_metadata_store().await.is_none());
-        
+
         // After lock, still no store
         manager.lock().await;
         assert!(manager.get_metadata_store().await.is_none());
