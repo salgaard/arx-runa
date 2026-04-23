@@ -7,6 +7,12 @@ applyTo: "src-tauri/src/storage/**"
 
 **Design specification**: `docs/architecture/designs/chunking-and-manifest/design.md` — last verified against design dated 2026-04-08
 
+## MVP Scope Note
+
+**Directory deletion deferred**: Phase 1–6 MVP supports file-only deletion. Recursive directory deletion is a Phase 7 candidate feature. See [Deferred Items Inventory](../../docs/architecture/deferred-items-inventory.md) §Directory Operations.
+
+**EXIF stripping**: JPEG, PNG, and TIFF are supported. MP4/QuickTime video is excluded because the moov atom is at EOF and breaks the streaming invariant. Video EXIF stripping is a Phase 7 candidate (requires two-pass seek or temporary spool).
+
 ## Manifest (SQLCipher)
 - Keyed with `sqlcipher_key` — never `master_key`, never unencrypted
 - Tables: `nodes`, `chunks`, `manifest_meta` — see design docs for schema

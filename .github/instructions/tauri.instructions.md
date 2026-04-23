@@ -7,6 +7,12 @@ applyTo: "src-tauri/src/ui/**,src-tauri/tauri.conf.json,src-tauri/capabilities/*
 
 **Design specification**: `docs/architecture/designs/tauri-ipc-and-frontend/design.md` — last verified against design dated 2026-04-12
 
+## MVP Scope Note
+
+**Single-vault per device**: The Phase 1–6 MVP assumes exactly one active vault at a time. Multi-vault support with per-device session coordination is a Phase 7+ candidate. See [Deferred Items Inventory](../../docs/architecture/deferred-items-inventory.md) §Multi-Vault Support.
+
+**Backend-implemented, UI-deferred commands**: `recover_from_cloud`, `migrate_vault`, `sync_backup` are fully wired but have no UI consumer in Phase 6.9. These are candidates for Phase 7 UI implementation.
+
 ## IPC / UI layer (`src/ui/`)
 - Sanitise before IPC: no key material, no paths, no stack traces
 - Return generic message; log details server-side (`RUST_LOG=debug`)

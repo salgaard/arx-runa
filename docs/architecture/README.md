@@ -10,7 +10,15 @@ Detailed specifications for each part of the system: authentication, encryption,
 
 ### [Global Design Invariants](design-invariants.md)
 
-Cross-phase contracts that apply across all designs, including AAD binding, nonce generation policy, HKDF constants, chunk-size contract, cloud path contract, and Zero-Trace handling rules.
+Cross-phase contracts that apply across all designs, including AAD binding, nonce generation policy, HKDF constants, chunk-size contract, cloud path contract, and Zero-Trace handling rules. Includes MVP scope note and deferred items reference.
+
+### [Deferred Items Inventory](deferred-items-inventory.md)
+
+Complete audit of all phases (0–6.9): resolved handoffs, forward declarations, architectural decisions, intentional MVP limitations, out-of-scope items, and Phase 7+ candidates. **Start here** if planning Phase 7+ features.
+
+### [Phase 7 Roadmap](phase-7-roadmap.md)
+
+Planning document for Phase 7 and beyond: prioritized feature candidates, effort estimates, design dependencies, and success criteria derived from the Deferred Items Inventory.
 
 ### [Diagrams](diagrams/INDEX.md)
 
