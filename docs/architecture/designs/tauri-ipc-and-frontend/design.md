@@ -470,6 +470,19 @@ fn main() {
 
 ---
 
+## Category C: Architectural Decisions (Finalized)
+
+These decisions are intentional MVP scope limitations that will persist through Phase 6. Phase 7+ planning may reconsider them with explicit research.
+
+| Decision | Status | Rationale | Notes |
+|----------|--------|-----------|-------|
+| **c-multi-vault-support** — Single vault per device | ✅ Finalized | Current `AppState` design holds one vault. Multi-vault support requires per-vault session coordination, UI vault switcher, and `AppState` refactor. Deferred to Phase 7+ as architectural extension. | Documented in [Deferred Items Inventory](../../deferred-items-inventory.md) Category C and Category H |
+| **c-inapp-file-viewer** — Backend ready, UI deferred | ✅ Finalized | `get_file_content` command is fully implemented with 50 MiB cap. Tauri sidecar infrastructure ready; in-app viewer UI (text, image, PDF rendering) is Phase 6.8+ feature. Backend can add viewers without command changes. | Documented in [Deferred Items Inventory](../../deferred-items-inventory.md) Category D |
+
+**Phase 7+ Planning**: See [Deferred Items Inventory](../../deferred-items-inventory.md) §Category H for multi-vault dependency graph and priority roadmap.
+
+---
+
 ## Error Sanitisation
 
 ### IpcError Enum

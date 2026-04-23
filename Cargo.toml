@@ -33,6 +33,8 @@ gloo-timers = { version = "0.3", features = ["futures"] }
 zeroize = { version = "1", features = ["alloc", "derive"] }
 web-sys = { version = "0.3", features = ["Window", "HtmlInputElement", "Event", "DragEvent", "DataTransfer", "FileList", "File"] }
 js-sys = "0.3"
+sha2 = "0.10"
+base64 = "0.22"
 
 [dev-dependencies]
 serde_json = "1"

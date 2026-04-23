@@ -6,6 +6,7 @@ use leptos_router::components::A;
 
 use crate::invoke::invoke_command;
 use crate::ipc_types::{AddContactRequest, ContactEntry};
+use crate::utils::format_fingerprint;
 
 // ─── ContactList (main component) ──────────────────────────────────────────
 
@@ -267,16 +268,28 @@ fn ContactListPanel() -> impl IntoView {
                     view! { <p class="text-text-secondary">"No contacts yet. Add one above."</p> }.into_any()
                 } else {
                     view! {
-                        <div class="grid gap-2">
+                        <div class="grid gap-4">
                             {move || {
                                 contacts.get().into_iter().map(|contact| {
+                                    let fingerprint = format_fingerprint(&contact.public_key);
                                     view! {
-                                        <div class="p-3 bg-iron border border-steel rounded flex justify-between items-center">
-                                            <div>
-                                                <p class="text-bone font-semibold">{contact.display_name.clone()}</p>
-                                                {contact.email.clone().map(|e| {
-                                                    view! { <p class="text-text-secondary text-sm">{e}</p> }
-                                                })}
+                                        <div class="p-4 bg-iron border border-steel rounded">
+                                            <div class="flex justify-between items-start">
+                                                <div class="flex-1">
+                                                    <p class="text-bone font-semibold">{contact.display_name.clone()}</p>
+                                                    {contact.email.clone().map(|e| {
+                                                        view! { <p class="text-text-secondary text-sm">{e}</p> }
+                                                    })}
+                                                    <div class="mt-3 pt-3 border-t border-steel">
+                                                        <p class="text-text-secondary text-xs mb-1">"Fingerprint (verify out-of-band)"</p>
+                                                        <div class="bg-stone p-2 rounded border border-steel-light cursor-text select-all">
+                                                            <code class="text-bone font-mono text-sm">{fingerprint.clone()}</code>
+                                                        </div>
+                                                        <p class="text-text-secondary text-xs mt-2 italic">
+                                                            "Verify this fingerprint matches what the contact sees on their device"
+                                                        </p>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     }

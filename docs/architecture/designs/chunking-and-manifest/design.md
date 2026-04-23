@@ -591,6 +591,18 @@ Implementations:
 
 ---
 
+## Category C: Architectural Decisions (Finalized)
+
+These decisions are intentional MVP scope limitations that will persist through Phase 6. Phase 7+ planning may reconsider them with explicit research.
+
+| Decision | Status | Rationale | Notes |
+|----------|--------|-----------|-------|
+| **c-uuid-nodeid-migration** — NodeId at domain, Uuid at trait | ✅ Finalized | Type safety is provided at domain layer via `NodeId` wrapper; trait boundary uses `Uuid` for persistence contract abstraction. This is intentional architectural layering, not a gap to be filled. Avoids broad API churn across Phase 3–5 contracts. | Documented in [Deferred Items Inventory](../../deferred-items-inventory.md) Category C |
+| **c-directory-deletion** — Files-only in Phase 6 | ✅ Finalized | Directory deletion requires recursive enumeration and cascade blob cleanup. MVP focuses on per-file operations. `delete_directory` is a Phase 7+ feature with separate IPC command + MetadataStore extension. | Documented in [Deferred Items Inventory](../../deferred-items-inventory.md) Category C; see `File Deletion (MVP)` section above |
+| **c-inapp-file-viewer** — Backend ready, UI deferred | ✅ Finalized | `get_file_content` command is implemented with 50 MiB cap. Infrastructure is production-ready; in-app viewer UI is Phase 6.8+ feature. Future phases can add viewers (text, image, PDF) without backend changes. | Command registered in canonical surface; UI consumer deferred per [Deferred Items Inventory](../../deferred-items-inventory.md) Category D |
+
+---
+
 ## Related Documents
 
 - [Chunk Pipeline Diagram](diagrams/chunk-pipeline.md)

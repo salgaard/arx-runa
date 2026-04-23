@@ -21,7 +21,8 @@ pub(crate) fn default_vault_root() -> PathBuf {
 }
 
 /// Returns the SQLCipher database path for a given vault identifier.
-#[allow(dead_code)] // Phase 7: used in direct vault-ID resolution
+///
+/// Used by SessionManager to determine the database path during authentication.
 pub(crate) fn vault_db_path(vault_id: &str) -> PathBuf {
     default_vault_root().join(vault_id).join("vault.db")
 }

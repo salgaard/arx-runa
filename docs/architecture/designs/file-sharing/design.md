@@ -481,3 +481,16 @@ Blobs in `shared/<file_share_id>/` are publicly readable. A party who discovers 
 | Received-share key storage | Persist `received_shares.file_key_wrapped` (not raw `file_key`) | Keeps at-rest treatment consistent with node file keys and zeroization model |
 | Single-recipient revocation | Cooperative `revoked_at` default; strong path rotates `file_key` and `file_share_id` | Makes revocation behavior explicit and implementable for both low-cost and enforced cases |
 | Share expiration query performance | Partial indexes on active rows (`file_id`, `expires_at`) | Avoids full scans during sync/push enforcement loops as share volume grows |
+
+---
+
+## Category C: Architectural Decisions (Finalized)
+
+These decisions are intentional MVP scope limitations that will persist through Phase 6. Phase 7+ planning may reconsider them with explicit research.
+
+| Decision | Status | Rationale | Notes |
+|----------|--------|-----------|-------|
+| **c-fingerprint-verification-ux** — Display-only, out-of-band verification | ✅ Implemented | Fingerprint verification is shown in UI (16-character lowercase hex from SHA-256(public_key)). Out-of-band verification (phone call, in person, QR code) is user responsibility. No UX forcing or automated trust tracking in Phase 6. | Implemented in Phase 6.8 UI; documented in [Deferred Items Inventory](../../deferred-items-inventory.md) Category C |
+
+**Phase 7+ Enhancement**: Fingerprint history tracking ("verified since date X") and automatic unverified-contact warnings are Phase 7+ features, documented in [Deferred Items Inventory](../../deferred-items-inventory.md) Category H.
+

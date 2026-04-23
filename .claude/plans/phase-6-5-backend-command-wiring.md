@@ -1,7 +1,7 @@
 ---
 title: "Phase 6.5 — Backend Command Wiring"
 created: "2026-04-21T00:00:00Z"
-status: in-progress
+status: implemented
 roadmap-phase: 6
 sub-phase: "6.5"
 design-document: "docs/architecture/designs/tauri-ipc-and-frontend/design.md"

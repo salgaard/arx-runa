@@ -14,4 +14,6 @@ pub struct ContactEntry {
     pub email: Option<String>,
     /// ISO 8601 timestamp when the contact was added.
     pub created_at: String,
+    /// Contact's X25519 public key (32 bytes, base64-encoded).
+    pub public_key: String,
 }

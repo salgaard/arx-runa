@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::Engine;
 use rusqlite::OptionalExtension;
 use secrecy::SecretBox;
 use tauri::State;
@@ -169,11 +170,14 @@ pub async fn add_contact(
         .await
         .map_err(IpcError::from)?;
 
+    let public_key_b64 = base64::engine::general_purpose::STANDARD.encode(public_key.as_bytes());
+
     Ok(ContactEntry {
         contact_id: contact_id.to_uuid().hyphenated().to_string(),
         display_name: contact.display_name.as_str().to_owned(),
         email: contact.email,
         created_at: unix_ts_to_iso8601(created_at),
+        public_key: public_key_b64,
     })
 }
 
@@ -195,11 +199,16 @@ pub async fn list_contacts(state: State<'_, AppState>) -> Result<Vec<ContactEntr
 
     Ok(contacts
         .into_iter()
-        .map(|c| ContactEntry {
-            contact_id: c.contact_id.to_uuid().hyphenated().to_string(),
-            display_name: c.display_name.as_str().to_owned(),
-            email: c.email,
-            created_at: unix_ts_to_iso8601(c.created_at),
+        .map(|c| {
+            let public_key_b64 =
+                base64::engine::general_purpose::STANDARD.encode(c.public_key.as_bytes());
+            ContactEntry {
+                contact_id: c.contact_id.to_uuid().hyphenated().to_string(),
+                display_name: c.display_name.as_str().to_owned(),
+                email: c.email,
+                created_at: unix_ts_to_iso8601(c.created_at),
+                public_key: public_key_b64,
+            }
         })
         .collect())
 }

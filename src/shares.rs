@@ -9,6 +9,7 @@ use crate::ipc_types::{
     ContactEntry, ReceivedShareEntry, RevokeShareRequest, ShareEntry, ShareFileRequest,
     ImportShareRequest,
 };
+use crate::utils::format_fingerprint;
 
 // ─── SharesPage (main component) ──────────────────────────────────────────
 
@@ -460,6 +461,25 @@ pub fn ShareModal(
                             }
                         }}
                     </div>
+
+                    {move || {
+                        selected_contact_id.get().and_then(|selected_id| {
+                            contacts.get().into_iter().find(|c| c.contact_id == selected_id).map(|selected_contact| {
+                                let fingerprint = format_fingerprint(&selected_contact.public_key);
+                                view! {
+                                    <div class="p-3 bg-stone border border-steel rounded">
+                                        <p class="text-text-secondary text-xs mb-2">"Recipient fingerprint (verify before sharing)"</p>
+                                        <div class="bg-iron p-2 rounded border border-steel-light cursor-text select-all">
+                                            <code class="text-bone font-mono text-sm">{fingerprint}</code>
+                                        </div>
+                                        <p class="text-text-secondary text-xs mt-2 italic">
+                                            "Verify this fingerprint matches what the recipient sees on their device (phone, video call, QR code, etc.)"
+                                        </p>
+                                    </div>
+                                }
+                            })
+                        })
+                    }}
 
                     <div>
                         <label class="block text-sm text-text-secondary mb-1">"Expiration (days, optional)"</label>

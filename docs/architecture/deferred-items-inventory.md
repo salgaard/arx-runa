@@ -117,15 +117,15 @@ The following items are **intentionally out of scope** for Arx Runa's architectu
 
 Items documented for future phases or post-implementation polish:
 
-| Item | Type | Phase | Effort | Priority | Notes |
-|------|------|-------|--------|----------|-------|
-| Windows DACL hardening (`write_owner_only*`) | Polish | 4.5+ | 5 pts | Medium | TODO in `storage::cloud::vault_header` for Windows-specific file permissions |
-| Startup retry orchestration diagram | Docs | 4.5+ | 3 pts | Low | Retry loop for pending vault-header sync on application start |
-| Post-Phase-6.4 design sweep | Maintenance | Design | 3 pts | Medium | Quick pass through designs to remove phase-sequencing comments |
-| Chunk-pipeline diagram update | Docs | 3.2+ | 2 pts | Low | Optional enhancement: add legend and swimlanes to `chunk-pipeline.md` |
-| ADR 011: IPC error sanitisation | Docs | 6.1+ | 4 pts | Low | Architectural Decision Record for error mapping patterns |
-| Frontend structure refactoring (src → subdirs) | Debt | 7+ | 3 pts | Low | Refactor flat `src/*.rs` to `src/{auth,vault,transfer,layout,components}/*.rs` |
-| Partial indexes on `shares` table | Optimization | 6.8+ | 2 pts | Low | Index `(sender_vault_id, revoked_at)` for efficient sent-shares queries |
+| Item | Type | Phase | Effort | Priority | Status | Notes |
+|------|------|-------|--------|----------|--------|-------|
+| Windows DACL hardening (`write_owner_only*`) | Polish | 4.5+ | 5 pts | Medium | 📋 Deferred | Documented in storage.md; current implementation uses filesystem defaults; Phase 4.5 follow-up on `vault_header_io.rs` |
+| Startup retry orchestration diagram | Docs | 4.5+ | 3 pts | Low | ✅ Complete | Staging file preservation implemented; retry loop semantics documented in deferred-items-inventory.md |
+| Post-Phase-6.4 design sweep | Maintenance | Design | 3 pts | Medium | ✅ Complete | Verified: no stale "illustrative" code blocks in active designs; design.md and sub-phases updated |
+| Chunk-pipeline diagram update | Docs | 3.2+ | 2 pts | Low | 📋 Deferred | Optional Mermaid enhancement; deferred to Phase 7 polish |
+| ADR 011: IPC error sanitisation | Docs | 6.1+ | 4 pts | Low | ✅ Complete | Written and integrated; see `docs/architecture-decisions/011-ipc-error-sanitisation.md` |
+| Frontend structure refactoring (src → subdirs) | Debt | 7+ | 3 pts | Low | 📋 Deferred | Documented as accepted technical debt; flat `src/*.rs` layout works; Phase 7 refactor candidate |
+| Partial indexes on `shares` table | Optimization | 6.8+ | 2 pts | Low | 📋 Deferred | Performance enhancement; baseline establishes need for profiling in Phase 7 |
 
 ---
 
