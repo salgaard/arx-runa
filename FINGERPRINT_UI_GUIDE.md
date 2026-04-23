@@ -1,5 +1,14 @@
 # Fingerprint Display - UI/UX Guide
 
+> **Status**: ✅ IMPLEMENTED in Phase 6.8  
+> **Last updated**: 2026-04-23
+
+## Implementation Status
+
+This document describes the **fingerprint verification UI** which has been fully implemented in Phase 6.8. The fingerprint is displayed as a 16-character lowercase hexadecimal string derived from SHA-256(public_key). Users can verify this fingerprint out-of-band (phone call, video call, in-person) with their contacts.
+
+**Category C Decision**: Fingerprint verification is display-only and out-of-band. Automated verification history tracking and trust warnings are Phase 7+ enhancements (see [Deferred Items Inventory](docs/architecture/deferred-items-inventory.md) Category H).
+
 ## Visual Overview
 
 ### Contact List Page

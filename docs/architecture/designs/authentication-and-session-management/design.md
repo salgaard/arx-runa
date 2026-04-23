@@ -618,3 +618,30 @@ Implementations:
 | Recovery checksum fast-fail timing | Keep immediate `InvalidRecoveryPhrase` | Threat model excludes remote timing attackers; fast local feedback catches transcription errors quickly |
 | Rotation crash safety | Local `pending-vault-header.json` staging + startup retry | Prevents permanent lockout if app crashes after SQLCipher re-wrap commit but before cloud header upload |
 | Session temp rclone config | Owner-only temp file, stale-file cleanup on startup, best-effort overwrite+unlink on lock | Minimises plaintext credential exposure window and handles abnormal termination safely |
+
+---
+
+## Category C: Architectural Decisions (Finalized)
+
+These decisions are intentional MVP scope limitations that will persist through Phase 6. Phase 7+ planning may reconsider them with explicit research.
+
+| Decision | Status | Rationale | Notes |
+|----------|--------|-----------|-------|
+| **c-compromised-os-threat** — Out of scope | ✅ Finalized | Arx Runa assumes the OS is trusted. Cryptography cannot be stronger than the OS itself. Threat of malicious OS/binaries is out of scope and documented as an accepted permanent limitation in the threat model. | Documented in [Deferred Items Inventory](../../deferred-items-inventory.md) Category F |
+
+**Threat Model Statement**: Arx Runa protects against:
+- Untrusted cloud providers (all blobs are encrypted, opaque ciphertext)
+- Network eavesdropping (HTTPS + AEAD + per-file key isolation)
+- Disk theft (files encrypted at rest, keys held in mlocked memory only)
+- Lost credentials (recovery slots via BIP-39 as post-creation opt-in)
+
+Arx Runa does **not** protect against:
+- Malicious or compromised OS (cryptography weaker than OS security)
+- Cold-boot attacks (kernel memory access)
+- Malware in the Arx Runa binary distribution (standard software supply-chain assumptions)
+
+This threat model is consistent with Tahoe-LAFS, Cryptomator, and other desktop zero-knowledge tools.
+
+---
+
+## Related Documents
