@@ -464,6 +464,19 @@ All manifest mutations (insert, update, delete) are wrapped in SQLCipher transac
 
 ---
 
+## File Deletion (MVP)
+
+The current design supports **file deletion only**. Directory targets are rejected with `ConstraintViolation` error.
+
+Rationale: Directory deletion requires cascading deletion of all children and their associated blobs. The current implementation focuses on per-file operations for MVP scope.
+
+**Phase 7+ Enhancement**: A dedicated `delete_directory` operation would handle:
+- Recursive child enumeration
+- Cascade blob deletion from manifest
+- Atomic transaction ensuring consistency
+
+---
+
 ## MetadataStore Trait
 
 ```rust

@@ -973,6 +973,20 @@ Arx Runa does not attempt automatic merge. When a conflict is detected:
 
 ---
 
+## Conflict Handling Strategy (MVP)
+
+The current design implements a **detect-and-block** conflict resolution strategy:
+
+- **Manifest-level conflicts** are detected via `snapshot_counter` during pull.
+- **File-level conflicts** (per-file timestamp comparison after pull) are **out of scope** for the MVP. Users experiencing conflicts must manually resolve them by:
+  1. Pulling conflicted vault state
+  2. Deleting or renaming conflicted files locally
+  3. Re-uploading corrected versions
+
+This prevents silent data loss at the cost of manual resolution. Future phases may implement automatic three-way merge with cryptographic verification.
+
+---
+
 ## Cloud Garbage Collection
 
 When a file is deleted from the vault:

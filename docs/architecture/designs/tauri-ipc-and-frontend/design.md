@@ -460,6 +460,16 @@ fn main() {
 
 ---
 
+## Out of Scope (MVP)
+
+- **Multi-vault support**: Current design manages one vault per Arx Runa instance. Each device holds one vault in a single AppState. Multi-vault support (UI switcher, session-per-vault coordination, multi-device sync) is deferred to Phase 7+.
+
+- **Advanced recovery flows**: Commands `recover_from_cloud`, `migrate_vault`, and `sync_backup` are registered in the IPC contract but do not have UI consumers in Phase 6. These are infrastructure-ready for Phase 7 implementation.
+
+- **In-app file viewer**: The `get_file_content` command is available for retrieving file contents to display in-app (with 50 MiB cap). Media preview and document rendering are future enhancements.
+
+---
+
 ## Error Sanitisation
 
 ### IpcError Enum

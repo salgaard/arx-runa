@@ -436,12 +436,28 @@ Blobs in `shared/<file_share_id>/` are publicly readable. A party who discovers 
 
 ---
 
+## Fingerprint Verification (Phase 6.5+)
+
+**Current Implementation (Phase 6.5+)**:
+- Display fingerprint as first 16 lowercase hex characters of SHA-256(public_key)
+- Show fingerprint in contact list and share initiation flow
+- Format: `0a1b2c3d4e5f6789` (16 chars, monospace font)
+
+**User Guidance**:
+> "Verify this fingerprint matches what the recipient sees before sharing sensitive files. Contact them out-of-band (phone, video call, etc.) to confirm fingerprints match."
+
+**Out of Scope (Phase 7+)**:
+- Fingerprint history tracking ("verified since date X")
+- Automatic pin/trust warnings
+- QR code fingerprint verification
+
+---
+
 ## Open Decisions
 
 | Decision | Options | Status |
 |----------|---------|--------|
 | Enterprise key distribution | IT-distributed JSON file of employee public keys vs. optional internal key directory server | Extension point, not blocking for Phase 5 |
-| Fingerprint verification UX | Display format, where in UI, whether to warn on unverified contacts | Not yet designed |
 | Folder sharing UX | How to handle files added to a shared folder after the share was created | Deferred; snapshot model applies to files, folder extension is future |
 | ~~Identity keypair on key rotation~~ | ~~Re-wrap vs. invalidate~~ | Resolved: X25519 keypair is re-wrapped under new key_encryption_key, not regenerated — sharing relationships survive key file rotation |
 
