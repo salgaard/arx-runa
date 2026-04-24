@@ -464,6 +464,19 @@ All manifest mutations (insert, update, delete) are wrapped in SQLCipher transac
 
 ---
 
+## File Deletion (MVP)
+
+The current design supports **file deletion only**. Directory targets are rejected with `ConstraintViolation` error.
+
+Rationale: Directory deletion requires cascading deletion of all children and their associated blobs. The current implementation focuses on per-file operations for MVP scope.
+
+**Phase 7+ Enhancement**: A dedicated `delete_directory` operation would handle:
+- Recursive child enumeration
+- Cascade blob deletion from manifest
+- Atomic transaction ensuring consistency
+
+---
+
 ## MetadataStore Trait
 
 ```rust
@@ -575,6 +588,18 @@ Implementations:
 | `ChunkRecord.blob_path` | Remove vs split into two structs | Removed: only used between encrypt_file and insert_chunks; staging path derived from blob_name at call site |
 | `received_shares.chunk_uuids` format | JSON array + CHECK vs normalised table vs comment-only | JSON array with `json_valid()` CHECK: consistent with share package format, enforced at write time |
 | Rename/move in MetadataStore | Two focused methods vs `update_node(NodePatch)` vs defer | Two focused methods: `rename_node` and `move_node`; consistent naming with existing trait methods |
+
+---
+
+## Category C: Architectural Decisions (Finalized)
+
+These decisions are intentional MVP scope limitations that will persist through Phase 6. Phase 7+ planning may reconsider them with explicit research.
+
+| Decision | Status | Rationale | Notes |
+|----------|--------|-----------|-------|
+| **c-uuid-nodeid-migration** — NodeId at domain, Uuid at trait | ✅ Finalized | Type safety is provided at domain layer via `NodeId` wrapper; trait boundary uses `Uuid` for persistence contract abstraction. This is intentional architectural layering, not a gap to be filled. Avoids broad API churn across Phase 3–5 contracts. | Documented in [Deferred Items Inventory](../../deferred-items-inventory.md) Category C |
+| **c-directory-deletion** — Files-only in Phase 6 | ✅ Finalized | Directory deletion requires recursive enumeration and cascade blob cleanup. MVP focuses on per-file operations. `delete_directory` is a Phase 7+ feature with separate IPC command + MetadataStore extension. | Documented in [Deferred Items Inventory](../../deferred-items-inventory.md) Category C; see `File Deletion (MVP)` section above |
+| **c-inapp-file-viewer** — Backend ready, UI deferred | ✅ Finalized | `get_file_content` command is implemented with 50 MiB cap. Infrastructure is production-ready; in-app viewer UI is Phase 6.8+ feature. Future phases can add viewers (text, image, PDF) without backend changes. | Command registered in canonical surface; UI consumer deferred per [Deferred Items Inventory](../../deferred-items-inventory.md) Category D |
 
 ---
 

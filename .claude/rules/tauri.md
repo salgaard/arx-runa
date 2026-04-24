@@ -19,6 +19,12 @@ paths:
 - Validate vault-relative paths with allowlist + explicit traversal/absolute-path rejection (not denylist-only checks)
 - For password-bearing IPC payloads, immediately convert `String` to `Zeroizing<Vec<u8>>`, scrub String backing bytes, and drop the original
 - `tauri::State<T>` for config — never for keys (those stay in mlocked memory)
+- `From<StorageError>` maps the real variants (`Database`, `NotFound`, `ChecksumMismatch`, `Io`, `WrongKey`, `ConstraintViolation`); design §Error Sanitisation code block is illustrative and out of date.
+- `storage::SyncError` (re-export of `storage::cloud::sync::SyncError`) and `storage::CloudTransportError` are the canonical cloud-error inputs for IPC sanitisation.
+- `AppState.database` is `Arc<RwLock<Option<SqlCipherMetadataStore>>>`; there is no separate `DatabaseConnection` type.
+- `AppState.cloud_transport` is `Arc<RwLock<Arc<dyn CloudTransport>>>`. `NoOpCloudTransport` is the default; `RcloneTransport` is installed on `authenticate`/`create_vault` and reset on `lock`/`delete_vault`. The write lock is held only during the swap — never across long operations.
+- The `"device-event"` Tauri event carries `{ kind: "mounted" | "unmounted", mountPath: String }` with camelCase serde; emitted from the `DeviceMonitor::watch()` stream via the `Builder::setup()` subscriber task. The task lives for the process lifetime; `emit` errors are logged at `warn!` level and do not terminate the loop.
+- Zero-Trace audit tests live in `src-tauri/src/ui/security_audit.rs` as `#[cfg(test)] mod security_audit`, reachable via the `cargo test ui::security` prefix filter. Audit tests MUST NOT embed real secret data; they only reference forbidden-identifier string literals.
 
 ## Config (`tauri.conf.json`)
 - CSP required: `default-src 'self'` with explicit local-only directives (`connect-src`, `script-src`, `style-src`, `img-src`) per design
@@ -45,3 +51,4 @@ paths:
 ## Plugins
 - Keep plugin surface minimal and tightly scoped
 - Never: `shell` (general), `http`, `clipboard`, or unrestricted filesystem permissions. Exception: `tauri-plugin-shell` may be enabled with a scoped `shell:allow-execute` permission targeting the bundled `rclone` sidecar only (`{ "name": "rclone", "sidecar": true }`). OAuth browser launches use `tauri_plugin_opener`, never the shell plugin.
+- `tauri-plugin-dialog` is allowed for native open/save file pickers scoped to the `dialog:allow-open` permission; `dialog:allow-save` is allowed only where a command-contracted destination path is required.

@@ -4,6 +4,7 @@ description: >
   Extract distinct rule anchors from .claude/rules into a structured
   RULES_INDEX without paraphrasing.
 tools: Read, Grep, Glob, Bash
+model: haiku
 ---
 
 You extract rule statements into a deterministic `RULES_INDEX`.
@@ -23,6 +24,7 @@ You extract rule statements into a deterministic `RULES_INDEX`.
 
 ```text
 RULES_INDEX {
+  model_self_reported: <your model identifier>
   rules: [
     {
       id: "<rule-id or R-NNN>"

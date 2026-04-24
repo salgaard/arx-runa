@@ -27,6 +27,8 @@ paths:
 - Encrypt/decrypt plaintext buffers must be `Zeroizing<Vec<u8>>` to guarantee zeroize on success, error, and cancellation
 - Decrypt flow must call `verify_checksum` before `decrypt_chunk`; `VerifiedBlob` enforces this boundary
 - Hybrid routing decision lives in `storage::vault_ops::routing::decide`
+- `upload_file` / `download_file` accept `progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>`. Pipeline invokes the callback once per chunk (args: `bytes_processed, bytes_total`). Storage must never depend on `tauri::` — the `Channel<T>` is wrapped into a `dyn Fn` closure at the IPC layer.
+- `push_vault` / `pull_vault` accept `progress: Option<&(dyn Fn(u32, u32, Option<&str>) + Send + Sync)>` (args: `files_processed, files_total, current_file_name`). Same tauri-isolation rule applies.
 
 ## BLAKE3
 - Checksum over encrypted blob (nonce + ciphertext + tag)
@@ -74,3 +76,5 @@ paths:
 - `MetadataStore` Phase 3.1 surface: `insert_node`, `insert_chunks`, `get_node`, `list_children`, `get_chunks`, `rename_node`, `move_node`, `delete_node`, `list_pending_deletions`, `mark_deletion_complete`, `get_meta`, `set_meta`, `increment_snapshot_counter`
 - `destination_sessions` CRUD lives in `storage::cloud::destination_session` using a SQLCipher-specific accessor and must not be added to `MetadataStore`
 - `contacts` CRUD lives in `storage::sharing` behind the `SharingStore` trait in `sharing::store`, not on `MetadataStore`; this mirrors the `destination_session` split.
+- `shares` CRUD lives in `storage::sharing` behind the `SharingStore` trait in `sharing::store`, mirroring the `contacts` + `received_shares` pattern; it must not be added to `MetadataStore`.
+- `replace_file_key_and_chunks` is a SQLCipher-specific helper on `SqlCipherMetadataStore` (not on `MetadataStore`); used by sharing re-encryption and must run in a single transaction that enqueues old `blob_name`s into `pending_deletions`.

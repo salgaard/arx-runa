@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use zeroize::Zeroizing;
 
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::{Argon2Params, derive_master_key_into};
 use crate::crypto::derive_vault_keys;
 use crate::memory::SecureBytes;
+use crate::storage::SqlCipherMetadataStore;
 
 /// Holds all derived keys for the duration of an authenticated session.
 pub(crate) struct SessionKeys {
@@ -13,6 +16,9 @@ pub(crate) struct SessionKeys {
     pub(crate) sqlcipher_key: SecureBytes<32>,
     /// Manifest key used for manifest backup encryption.
     pub(crate) manifest_key: SecureBytes<32>,
+    /// Opened vault metadata store (SQLCipher connection).
+    /// Held for the duration of the session and dropped in `lock()`.
+    pub(crate) metadata_store: Option<Arc<SqlCipherMetadataStore>>,
 }
 
 impl SessionKeys {
@@ -63,7 +69,16 @@ impl SessionKeys {
             key_encryption_key,
             sqlcipher_key,
             manifest_key,
+            metadata_store: None,
         })
+    }
+
+    /// Returns a reference to the opened metadata store, if available.
+    ///
+    /// The store is only available while the session is `Active`.
+    /// Returns `None` if the database could not be opened or the session is not active.
+    pub(crate) fn get_metadata_store(&self) -> Option<Arc<SqlCipherMetadataStore>> {
+        self.metadata_store.as_ref().map(Arc::clone)
     }
 }
 

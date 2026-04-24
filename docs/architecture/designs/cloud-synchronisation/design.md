@@ -740,10 +740,12 @@ Wire format (from Phase 2 auth design):
 
 ```
 1. Serialise VaultHeader to JSON bytes
-2. Write to temp file in the Arx Runa staging directory
+2. Write to temp file in the Arx Runa staging directory (owner-only permissions: 0o600 on Unix)
 3. upload_blob(temp_path, "vault-header.json")
 4. Delete temp file
 ```
+
+**Windows DACL hardening note (Phase 4.5 follow-up)**: Staging files are written with owner-only permissions on Unix (`0o600`). On Windows, the current implementation relies on filesystem defaults; Windows DACL hardening (explicit `DACL_ACCESS_TYPE` restrictions) is documented as a security polish step deferred to Phase 4.5. See `src-tauri/src/storage/cloud/vault_header_io.rs` for staging file write implementation and [deferred-items-inventory.md](../../deferred-items-inventory.md) Category G for planning notes.
 
 ### Download and parse flow
 
@@ -970,6 +972,20 @@ Arx Runa does not attempt automatic merge. When a conflict is detected:
 4. The user pushes again
 
 **Rationale for no auto-merge.** The manifest is a SQLCipher database. Merging two encrypted databases requires decrypting both, performing a three-way diff of the `nodes` and `chunks` tables, and resolving ambiguous cases (renamed files, deleted files, concurrent modifications). This is a significant feature with complex edge cases. Detect-and-block with manual resolution is correct, honest about scope, and avoids silent data loss.
+
+---
+
+## Conflict Handling Strategy (MVP)
+
+The current design implements a **detect-and-block** conflict resolution strategy:
+
+- **Manifest-level conflicts** are detected via `snapshot_counter` during pull.
+- **File-level conflicts** (per-file timestamp comparison after pull) are **out of scope** for the MVP. Users experiencing conflicts must manually resolve them by:
+  1. Pulling conflicted vault state
+  2. Deleting or renaming conflicted files locally
+  3. Re-uploading corrected versions
+
+This prevents silent data loss at the cost of manual resolution. Future phases may implement automatic three-way merge with cryptographic verification.
 
 ---
 
@@ -1344,3 +1360,17 @@ Cleanup:
 | Vault backup trigger | Manual ("Sync now") + optional schedule (daily/weekly/monthly) | Manual always available; optional schedule for power users; no background daemon required |
 | Cloud file browser | Manifest-linked view only (real filenames via manifest); pull and delete operations | Raw blob UUID inspection is available in the cloud provider's own UI; manifest-linked is what users actually need; AEAD tag verification is automatic and inseparable from decryption, so a standalone verify operation is redundant |
 | Credential storage authority | SQLCipher (session key-protected), not Rclone's persistent `rclone.conf` | Credentials inaccessible when session is closed and master key is zeroized; no second password; consistent with zero-knowledge key chain |
+
+---
+
+## Category C: Architectural Decisions (Finalized)
+
+These decisions are intentional MVP scope limitations that will persist through Phase 6. Phase 7+ planning may reconsider them with explicit research.
+
+| Decision | Status | Rationale | Notes |
+|----------|--------|-----------|-------|
+| **c-file-conflict-detection** — Detect-and-block MVP | ✅ Finalized | Manifest-level conflicts detected via `snapshot_counter`. File-level conflicts (same file modified on multiple devices) require manual resolution. Three-way merge out of scope. | Documented in [Deferred Items Inventory](../../deferred-items-inventory.md) Category C and Category H |
+| **c-optimistic-locking** — Out of scope | ✅ Finalized | Optimistic locking with conditional writes (AWS S3 ETags, etc.) is provider-specific and out of scope. Current detect-and-block with `snapshot_counter` is sufficient for MVP. | Documented in [Deferred Items Inventory](../../deferred-items-inventory.md) Category C as "Out of scope" |
+| **c-compromised-os-threat** — Out of scope | ✅ Finalized | Arx Runa assumes the OS is trusted. Cryptography cannot be stronger than the OS. Threat of malicious OS/binaries is out of scope and accepted as a permanent limitation. | Documented in threat model section above; [Deferred Items Inventory](../../deferred-items-inventory.md) Category F |
+
+**Phase 7+ Planning**: See [Deferred Items Inventory](../../deferred-items-inventory.md) §Category H for conflict resolution research and performance optimization candidates.

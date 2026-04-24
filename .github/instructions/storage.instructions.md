@@ -7,6 +7,12 @@ applyTo: "src-tauri/src/storage/**"
 
 **Design specification**: `docs/architecture/designs/chunking-and-manifest/design.md` — last verified against design dated 2026-04-08
 
+## MVP Scope Note
+
+**Directory deletion deferred**: Phase 1–6 MVP supports file-only deletion. Recursive directory deletion is a Phase 7 candidate feature. See [Deferred Items Inventory](../../docs/architecture/deferred-items-inventory.md) §Directory Operations.
+
+**EXIF stripping**: JPEG, PNG, and TIFF are supported. MP4/QuickTime video is excluded because the moov atom is at EOF and breaks the streaming invariant. Video EXIF stripping is a Phase 7 candidate (requires two-pass seek or temporary spool).
+
 ## Manifest (SQLCipher)
 - Keyed with `sqlcipher_key` — never `master_key`, never unencrypted
 - Tables: `nodes`, `chunks`, `manifest_meta` — see design docs for schema
@@ -27,6 +33,8 @@ applyTo: "src-tauri/src/storage/**"
 - Encrypt/decrypt plaintext buffers must be `Zeroizing<Vec<u8>>` to guarantee zeroize on success, error, and cancellation
 - Decrypt flow must call `verify_checksum` before `decrypt_chunk`; `VerifiedBlob` enforces this boundary
 - Hybrid routing decision lives in `storage::vault_ops::routing::decide`
+- `upload_file` / `download_file` accept `progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>`. Pipeline invokes the callback once per chunk (args: `bytes_processed, bytes_total`). Storage must never depend on `tauri::` — the `Channel<T>` is wrapped into a `dyn Fn` closure at the IPC layer.
+- `push_vault` / `pull_vault` accept `progress: Option<&(dyn Fn(u32, u32, Option<&str>) + Send + Sync)>` (args: `files_processed, files_total, current_file_name`). Same tauri-isolation rule applies.
 
 ## BLAKE3
 - Checksum over encrypted blob (nonce + ciphertext + tag)
@@ -74,4 +82,5 @@ applyTo: "src-tauri/src/storage/**"
 - `MetadataStore` Phase 3.1 surface: `insert_node`, `insert_chunks`, `get_node`, `list_children`, `get_chunks`, `rename_node`, `move_node`, `delete_node`, `list_pending_deletions`, `mark_deletion_complete`, `get_meta`, `set_meta`, `increment_snapshot_counter`
 - `destination_sessions` CRUD lives in `storage::cloud::destination_session` using a SQLCipher-specific accessor and must not be added to `MetadataStore`
 - `contacts` CRUD lives in `storage::sharing` behind the `SharingStore` trait in `sharing::store`, not on `MetadataStore`; this mirrors the `destination_session` split.
-
+- `shares` CRUD lives in `storage::sharing` behind the `SharingStore` trait in `sharing::store`, mirroring the `contacts` + `received_shares` pattern; it must not be added to `MetadataStore`.
+- `replace_file_key_and_chunks` is a SQLCipher-specific helper on `SqlCipherMetadataStore` (not on `MetadataStore`); used by sharing re-encryption and must run in a single transaction that enqueues old `blob_name`s into `pending_deletions`.

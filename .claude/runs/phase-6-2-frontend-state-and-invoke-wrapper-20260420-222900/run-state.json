@@ -1,0 +1,38 @@
+{
+  "run_id": "phase-6-2-frontend-state-and-invoke-wrapper-20260420-222900",
+  "plan_file": ".claude/plans/phase-6-2-frontend-state-and-invoke-wrapper.md",
+  "track": "full",
+  "branch": "development",
+  "cycle_count": 2,
+  "finding_summary": { "CRITICAL": 0, "HIGH": 2, "MEDIUM": 13, "LOW": 7 },
+  "disposition_summary": {
+    "ACTIONABLE_NOW": 12,
+    "INTENTIONAL_DECISION": 3,
+    "DEFERRED_BY_PLAN": 7,
+    "INSUFFICIENT_EVIDENCE": 0
+  },
+  "override_records": [],
+  "governance_sync_degraded": false,
+  "cycles": [
+    {
+      "cycle": 1,
+      "findings_total": 17,
+      "actionable_count": 7,
+      "deferred_count": 7,
+      "intentional_count": 3,
+      "actionable_remaining_at_close": 0,
+      "state_file": ".claude/runs/phase-6-2-frontend-state-and-invoke-wrapper-20260420-222900/cycle-1.json"
+    },
+    {
+      "cycle": 2,
+      "findings_total": 5,
+      "actionable_count": 5,
+      "deferred_count": 0,
+      "intentional_count": 0,
+      "actionable_remaining_at_close": 0,
+      "design_challenges_accepted": 2,
+      "state_file": ".claude/runs/phase-6-2-frontend-state-and-invoke-wrapper-20260420-222900/cycle-2.json"
+    }
+  ]
+}
+

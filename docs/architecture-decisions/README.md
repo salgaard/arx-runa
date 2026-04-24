@@ -10,5 +10,6 @@ This is useful for anyone trying to understand the reasoning behind the current 
 |----|-------|------|--------|
 | [001](001-code-structure-and-patterns.md) | Code Structure and Patterns | 2026-03-29 | Accepted |
 | [002](002-frontend-stack-selection.md) | Frontend Stack Selection | 2026-03-30 | Accepted |
+| [011](011-ipc-error-sanitisation.md) | IPC Error Sanitisation and Redaction | 2026-04-23 | Accepted |
 
 Each record covers: the problem being solved, the decision made, the reasons behind it, and the trade-offs accepted.

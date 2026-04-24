@@ -1,0 +1,32 @@
+{
+  "cycle": 2,
+  "findings": [
+    { "id": "CF-013", "severity": "MEDIUM", "disposition": "ACTIONABLE_NOW",     "source_id": "RR-001-c2", "security_flag": false, "summary": "Stale navigate() future resets loading=false while newer navigation in-flight — design challenge D-002 accepted" },
+    { "id": "CF-014", "severity": "MEDIUM", "disposition": "ACTIONABLE_NOW",     "source_id": "RR-002-c2", "security_flag": true,  "summary": "use_session_actions() returns WriteSignal — Zero-Trace gap on SessionState::error/authenticating; SessionActions struct added" },
+    { "id": "CF-015", "severity": "LOW",    "disposition": "ACTIONABLE_NOW",     "source_id": "RR-003-c2", "security_flag": false, "summary": "SessionProvider doc comment mislabels point 3 timing — corrected" },
+    { "id": "CF-016", "severity": "MEDIUM", "disposition": "ACTIONABLE_NOW",     "source_id": "AR-001-c2", "security_flag": true,  "summary": "VaultActions::clear() omits nav_generation increment — stale navigate() futures bypass Zero-Trace clear" },
+    { "id": "CF-017", "severity": "LOW",    "disposition": "ACTIONABLE_NOW",     "source_id": "AR-002-c2", "security_flag": false, "summary": "ListDirectoryRequest.path field missing /// doc comment — added" }
+  ],
+  "design_challenge_decisions": [
+    {
+      "finding_id": "CF-013",
+      "challenge": "D-002 as stated — stale responses must reset loading=false",
+      "decision": "ACCEPTED",
+      "rationale": "D-002 as written was itself the bug. Stale branches must be silent no-ops; only the matching generation's completion branch owns loading transitions. CF-013 + CF-016 both required for correctness.",
+      "requires_human_review": false,
+      "autonomous_decision": true
+    },
+    {
+      "finding_id": "CF-014",
+      "challenge": "SessionActions struct required by D-001; plan CS-006 says raw WriteSignal — plan internal contradiction",
+      "decision": "ACCEPTED",
+      "rationale": "D-001 (Zero-Trace) is a hard design invariant. SessionState::error and authenticating were never cleared on lock with raw WriteSignal. SessionActions struct (plan Assumption 8) chosen over CS-006 raw WriteSignal. User delegated autonomously.",
+      "requires_human_review": true,
+      "autonomous_decision": true,
+      "user_delegation": "User responded: work autonomously and make good decisions"
+    }
+  ],
+  "override_records": [],
+  "cross_shard_finding_count": 0,
+  "actionable_remaining": 0
+}

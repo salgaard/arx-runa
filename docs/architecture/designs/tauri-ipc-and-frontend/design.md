@@ -460,6 +460,29 @@ fn main() {
 
 ---
 
+## Out of Scope (MVP)
+
+- **Multi-vault support**: Current design manages one vault per Arx Runa instance. Each device holds one vault in a single AppState. Multi-vault support (UI switcher, session-per-vault coordination, multi-device sync) is deferred to Phase 7+.
+
+- **Advanced recovery flows**: Commands `recover_from_cloud`, `migrate_vault`, and `sync_backup` are registered in the IPC contract but do not have UI consumers in Phase 6. These are infrastructure-ready for Phase 7 implementation.
+
+- **In-app file viewer**: The `get_file_content` command is available for retrieving file contents to display in-app (with 50 MiB cap). Media preview and document rendering are future enhancements.
+
+---
+
+## Category C: Architectural Decisions (Finalized)
+
+These decisions are intentional MVP scope limitations that will persist through Phase 6. Phase 7+ planning may reconsider them with explicit research.
+
+| Decision | Status | Rationale | Notes |
+|----------|--------|-----------|-------|
+| **c-multi-vault-support** — Single vault per device | ✅ Finalized | Current `AppState` design holds one vault. Multi-vault support requires per-vault session coordination, UI vault switcher, and `AppState` refactor. Deferred to Phase 7+ as architectural extension. | Documented in [Deferred Items Inventory](../../deferred-items-inventory.md) Category C and Category H |
+| **c-inapp-file-viewer** — Backend ready, UI deferred | ✅ Finalized | `get_file_content` command is fully implemented with 50 MiB cap. Tauri sidecar infrastructure ready; in-app viewer UI (text, image, PDF rendering) is Phase 6.8+ feature. Backend can add viewers without command changes. | Documented in [Deferred Items Inventory](../../deferred-items-inventory.md) Category D |
+
+**Phase 7+ Planning**: See [Deferred Items Inventory](../../deferred-items-inventory.md) §Category H for multi-vault dependency graph and priority roadmap.
+
+---
+
 ## Error Sanitisation
 
 ### IpcError Enum
@@ -1053,11 +1076,21 @@ pub fn SessionProvider(children: Children) -> impl IntoView {
         async move {
             while !stop_polling.get_untracked() {
                 if let Ok(status) = invoke::<_, SessionStatus>("get_session_status", &()).await {
+                    // Guard: on_cleanup may fire while invoke is suspended.
+                    // Check stop flag before writing to the signal to prevent
+                    // a panic from writing to a disposed signal owner scope.
+                    if stop_polling.get_untracked() {
+                        break;
+                    }
                     set_state.update(|s| {
                         s.is_unlocked = status.is_unlocked;
                         s.vault_id = status.vault_id.clone();
                         s.timeout_seconds = status.timeout_seconds;
                     });
+                }
+                // Guard: on_cleanup may fire while TimeoutFuture is suspended.
+                if stop_polling.get_untracked() {
+                    break;
                 }
                 gloo_timers::future::TimeoutFuture::new(5_000).await;
             }
@@ -1066,6 +1099,11 @@ pub fn SessionProvider(children: Children) -> impl IntoView {
     
     // Cleanup: stop polling when provider unmounts
     on_cleanup(move || set_stop_polling.set(true));
+    // The stop flag must be checked at three points: the while condition,
+    // after each awaited IPC call (before any signal write), and after each
+    // awaited timer. Checking only at the loop top leaves a race window where
+    // on_cleanup fires while a future is suspended, causing set_state.update
+    // to execute against a disposed arena scope and panicking at runtime.
     
     children()
 }

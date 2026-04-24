@@ -1,7 +1,7 @@
 # Arx Runa — File Sharing Architecture Design
 
 > Status: Design complete. Implementation target: Phase 5.
-> Last updated: 2026-04-12
+> Last updated: 2026-04-20
 
 ---
 
@@ -137,7 +137,9 @@ plaintext = HPKE.Open(
 
 ### Rust implementation
 
-The `hpke` crate (v0.13.0) provides RFC 9180 primitives. `CTX-ChaCha20-Poly1305` is a thin wrapper type in the sharing crypto module that replaces the AEAD tag with a BLAKE3 commitment.
+The `hpke` crate (v0.13.0) is used only for DHKEM(X25519, HKDF-SHA256) encapsulation/decapsulation via `hpke::kem::X25519HkdfSha256`. The HPKE key schedule (RFC 9180 §5.1) is implemented manually in `sharing::hpke` so that `CTX-ChaCha20-Poly1305` can be plugged in as the AEAD without using the crate's sealed `Aead` trait, which does not support custom tag lengths. The `suite_id` used for labeled extraction/expansion is `b"HPKE" || 0x0020 || 0x0001 || 0x0003`, where AEAD ID `0x0003` is the IANA-registered identifier for ChaCha20-Poly1305; CTX is a wire-equivalent committing wrapper that does not alter the key schedule.
+
+`CTX-ChaCha20-Poly1305` is a thin wrapper type in the sharing crypto module that replaces the standard 16-byte Poly1305 tag with a 32-byte BLAKE3 commitment.
 Implementation must include adversarial tests that flip one bit in `enc`, ciphertext, and the 32-byte CTX tag; all variants must fail decryption with authentication error.
 
 ---
@@ -434,12 +436,28 @@ Blobs in `shared/<file_share_id>/` are publicly readable. A party who discovers 
 
 ---
 
+## Fingerprint Verification (Phase 6.5+)
+
+**Current Implementation (Phase 6.5+)**:
+- Display fingerprint as first 16 lowercase hex characters of SHA-256(public_key)
+- Show fingerprint in contact list and share initiation flow
+- Format: `0a1b2c3d4e5f6789` (16 chars, monospace font)
+
+**User Guidance**:
+> "Verify this fingerprint matches what the recipient sees before sharing sensitive files. Contact them out-of-band (phone, video call, etc.) to confirm fingerprints match."
+
+**Out of Scope (Phase 7+)**:
+- Fingerprint history tracking ("verified since date X")
+- Automatic pin/trust warnings
+- QR code fingerprint verification
+
+---
+
 ## Open Decisions
 
 | Decision | Options | Status |
 |----------|---------|--------|
 | Enterprise key distribution | IT-distributed JSON file of employee public keys vs. optional internal key directory server | Extension point, not blocking for Phase 5 |
-| Fingerprint verification UX | Display format, where in UI, whether to warn on unverified contacts | Not yet designed |
 | Folder sharing UX | How to handle files added to a shared folder after the share was created | Deferred; snapshot model applies to files, folder extension is future |
 | ~~Identity keypair on key rotation~~ | ~~Re-wrap vs. invalidate~~ | Resolved: X25519 keypair is re-wrapped under new key_encryption_key, not regenerated — sharing relationships survive key file rotation |
 
@@ -463,3 +481,16 @@ Blobs in `shared/<file_share_id>/` are publicly readable. A party who discovers 
 | Received-share key storage | Persist `received_shares.file_key_wrapped` (not raw `file_key`) | Keeps at-rest treatment consistent with node file keys and zeroization model |
 | Single-recipient revocation | Cooperative `revoked_at` default; strong path rotates `file_key` and `file_share_id` | Makes revocation behavior explicit and implementable for both low-cost and enforced cases |
 | Share expiration query performance | Partial indexes on active rows (`file_id`, `expires_at`) | Avoids full scans during sync/push enforcement loops as share volume grows |
+
+---
+
+## Category C: Architectural Decisions (Finalized)
+
+These decisions are intentional MVP scope limitations that will persist through Phase 6. Phase 7+ planning may reconsider them with explicit research.
+
+| Decision | Status | Rationale | Notes |
+|----------|--------|-----------|-------|
+| **c-fingerprint-verification-ux** — Display-only, out-of-band verification | ✅ Implemented | Fingerprint verification is shown in UI (16-character lowercase hex from SHA-256(public_key)). Out-of-band verification (phone call, in person, QR code) is user responsibility. No UX forcing or automated trust tracking in Phase 6. | Implemented in Phase 6.8 UI; documented in [Deferred Items Inventory](../../deferred-items-inventory.md) Category C |
+
+**Phase 7+ Enhancement**: Fingerprint history tracking ("verified since date X") and automatic unverified-contact warnings are Phase 7+ features, documented in [Deferred Items Inventory](../../deferred-items-inventory.md) Category H.
+

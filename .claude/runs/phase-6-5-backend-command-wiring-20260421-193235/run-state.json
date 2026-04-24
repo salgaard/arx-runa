@@ -1,0 +1,16 @@
+{
+  "run_id": "phase-6-5-backend-command-wiring-20260421-193235",
+  "plan_file": ".claude/plans/phase-6-5-backend-command-wiring.md",
+  "track": "full",
+  "branch": "development",
+  "cycle_count": 0,
+  "finding_summary": { "CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0 },
+  "disposition_summary": {
+    "ACTIONABLE_NOW": 0, "INTENTIONAL_DECISION": 0,
+    "DEFERRED_BY_PLAN": 0, "INSUFFICIENT_EVIDENCE": 0
+  },
+  "override_records": [],
+  "governance_sync_degraded": false,
+  "model_escalations": [],
+  "cycles": []
+}

@@ -11,6 +11,11 @@ use crate::storage::vault_ops::{RouteDecision, decide};
 use crate::storage::{MetadataStore, NodeId};
 
 /// Uploads a local file into staged encrypted chunks and persists manifest rows.
+///
+/// The optional `progress` callback is forwarded to the encryption pipeline and
+/// invoked after each chunk write with `(bytes_processed, file_size_total)`.
+/// Pass `None` to suppress progress reporting.  The callback MUST NOT import
+/// or depend on `tauri::`.
 #[allow(clippy::too_many_arguments)]
 pub async fn upload_file(
     source: &Path,
@@ -22,6 +27,7 @@ pub async fn upload_file(
     metadata_store: &dyn MetadataStore,
     key_encryption_key: &KeyEncryptionKey,
     staging_directory: &Path,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<Node, StorageError> {
     let source_metadata = fs::metadata(source)
         .await
@@ -45,6 +51,7 @@ pub async fn upload_file(
         &file_key,
         metadata_store,
         staging_directory,
+        progress,
     )
     .await?;
     pipeline::assign_node_id(&mut chunks, NodeId::new(node_id));
@@ -249,6 +256,7 @@ mod tests {
             &store,
             &key_encryption_key,
             &staging_directory,
+            None,
         )
         .await;
 
@@ -287,6 +295,7 @@ mod tests {
             &store,
             &key_encryption_key,
             &staging_directory,
+            None,
         )
         .await;
 
@@ -325,6 +334,7 @@ mod tests {
             &store,
             &key_encryption_key,
             &staging_directory,
+            None,
         )
         .await
         .expect("upload_file should succeed");

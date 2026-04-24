@@ -4,13 +4,14 @@ use zeroize::Zeroizing;
 
 use super::helpers::*;
 use super::types::SetupRecoveryRequest;
+use crate::auth::TransportProvider;
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::{VaultId, wrap_master_key_for_recovery};
+use crate::storage::cloud::upload_vault_header;
 use crate::storage::cloud::vault_header::{RecoverySlot, VaultHeader};
-use crate::storage::cloud::{CloudTransport, upload_vault_header};
 
 #[cfg(test)]
 use super::VAULT_HEADER_BLOB_NAME;
@@ -24,7 +25,7 @@ use super::VAULT_HEADER_BLOB_NAME;
 pub async fn setup_recovery(
     request: SetupRecoveryRequest<'_>,
     session_manager: &SessionManager,
-    cloud_transport: &dyn CloudTransport,
+    cloud_transport: &dyn TransportProvider,
     vault_header: &mut VaultHeader,
     vault_id: &VaultId,
 ) -> Result<Zeroizing<String>, AuthenticationError> {

@@ -8,16 +8,16 @@
 
 </div>
 
-[![CI](https://github.com/Chorizzio/arx-runa/actions/workflows/continuous-integration.yml/badge.svg)](https://github.com/Chorizzio/arx-runa/actions/workflows/continuous-integration.yml)
-[![Security Audit](https://github.com/Chorizzio/arx-runa/actions/workflows/security-audit.yml/badge.svg)](https://github.com/Chorizzio/arx-runa/actions/workflows/security-audit.yml)
-[![Docs](https://github.com/Chorizzio/arx-runa/actions/workflows/documentation-check.yml/badge.svg)](https://github.com/Chorizzio/arx-runa/actions/workflows/documentation-check.yml)
+[![CI](https://github.com/salgaard/arx-runa/actions/workflows/continuous-integration.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/continuous-integration.yml)
+[![Security Audit](https://github.com/salgaard/arx-runa/actions/workflows/security-audit.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/security-audit.yml)
+[![Docs](https://github.com/salgaard/arx-runa/actions/workflows/documentation-check.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/documentation-check.yml)
 ![Rust](https://img.shields.io/badge/rust-2024-orange?logo=rust)
 
 **Zero-knowledge file encryption tool** — files are encrypted on your device before upload. The cloud receives only opaque ciphertext. Keys never leave your machine.
 
 ---
 
-**📖 [Read the full documentation](https://chorizzio.github.io/arx-runa/)** — architecture, threat model, roadmap, and development guides.
+**📖 [Read the full documentation](https://salgaard.github.io/arx-runa/)** — architecture, threat model, roadmap, and development guides.
 
 ## Core Pillars
 
@@ -49,8 +49,8 @@
 ## Documentation
 
 Quick links:
-- [Use Cases](https://chorizzio.github.io/arx-runa/use-cases/index.html) — Real-world scenarios Arx Runa is designed for
-- [Roadmap](https://chorizzio.github.io/arx-runa/roadmap.html) — Implementation roadmap
-- [Architecture](https://chorizzio.github.io/arx-runa/architecture/index.html) — Detailed technical designs for each part of the system
-- [Glossary](https://chorizzio.github.io/arx-runa/guides/glossary.html) — Terms used consistently across Arx Runa
-- [Research](https://chorizzio.github.io/arx-runa/research/index.html) — Research to critique and explore ideas and options
+- [Use Cases](https://salgaard.github.io/arx-runa/use-cases/index.html) — Real-world scenarios Arx Runa is designed for
+- [Roadmap](https://salgaard.github.io/arx-runa/roadmap.html) — Implementation roadmap
+- [Architecture](https://salgaard.github.io/arx-runa/architecture/index.html) — Detailed technical designs for each part of the system
+- [Glossary](https://salgaard.github.io/arx-runa/guides/glossary.html) — Terms used consistently across Arx Runa
+- [Research](https://salgaard.github.io/arx-runa/research/index.html) — Research to critique and explore ideas and options

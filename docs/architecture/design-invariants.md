@@ -105,3 +105,62 @@ This reference captures cross-phase contracts that must stay consistent across a
 - [Authentication & Session Management](designs/authentication-and-session-management/design.md)
 - [File Sharing](designs/file-sharing/design.md)
 
+---
+
+## MVP Scope & Deferred Items
+
+**For complete details**, see [Deferred Items Inventory](deferred-items-inventory.md).
+
+### Single-Vault MVP
+
+**Invariant**: Arx Runa Phase 1–6 is a single-vault-per-device MVP. The session model assumes exactly one active vault at a time (`SessionManager::active_vault_id()`). Multi-vault support (Phase 7+) will require per-vault session coordination and UI switcher infrastructure.
+
+**Impact on Phase 7+**: Multi-vault support is a candidate Phase 7 feature but is not in-scope for Phase 6.
+
+### Out-of-Scope Architectural Limitations
+
+1. **Compromised OS recovery**: Arx Runa assumes the OS is trusted. Cryptography cannot be stronger than the operating system itself.
+2. **Malicious cloud provider**: The "bring-your-own-cloud" model trusts provider availability but not integrity. Detection-only via BLAKE3 checksums.
+3. **Malicious Rclone sidecar**: The Rclone binary is trusted if obtained from the official release channel. A compromised binary is equivalent to a compromised OS.
+4. **TOTP or authenticator apps**: Multi-factor auth must be deterministic for KDF derivation. Hardware keys (Tier 2 USB) satisfy this requirement; time-based codes do not.
+5. **Live sharing (always-latest files)**: Requires directory-level share agreements. Current design uses immutable snapshot packages (Phase 5). Live sharing is deferred.
+
+### Intentional MVP Limitations (Preserved in Phase 7+)
+
+| Feature | Status | Phase 7+ Consideration |
+|---------|--------|----------------------|
+| Directory deletion | Files-only MVP | Candidate for Phase 7 feature (`delete_directory`) |
+| File-level conflict detection | Detect-and-block only | Phase 7 research: three-way merge, timestamp comparison |
+| EXIF stripping | JPEG/PNG only | Phase 7 candidate: video (MP4/WebM) with two-pass seek or spool |
+| Revocation semantics | Default (future-fetch block) | Phase 7 option: strong revocation with key rotation |
+| Fingerprint verification | Display-only | Phase 7 candidate: verification history, contact trust model |
+
+### Forward Declarations (All Fulfilled)
+
+All deferred APIs and trait boundaries from Phases 1–6 are **production-ready**:
+- `CloudTransport` trait (Phase 4.1) ✅
+- `VaultHeader` upload/download (Phase 4.3) ✅
+- `destination_sessions` CRUD (Phase 4.2) ✅
+- `SharingStore` trait with contacts/shares/received_shares (Phase 5.3 + 6) ✅
+- Device monitor event emission (Phase 6.5) ✅
+
+### Backend-Implemented, UI-Deferred Commands
+
+The following IPC commands are **fully wired** but have **no UI consumer** in Phase 6.9:
+- `recover_from_cloud` — Phase 7+ recovery UI
+- `migrate_vault` — Phase 7+ cross-vault transfer UI
+- `sync_backup` — Phase 7+ backup/restore lifecycle
+- `get_file_content` — Phase 6.8+ in-app file viewer (backend ready, 50 MiB cap enforced)
+
+These are candidates for Phase 7 UI implementation without backend changes.
+
+---
+
+## Phase 7+ Planning Reference
+
+See [Phase 7 Roadmap](phase-7-roadmap.md) for:
+- Prioritized feature candidates
+- Effort estimates and design dependencies
+- Technical questions needing research
+- Success criteria
+

@@ -34,4 +34,7 @@
   --font-display: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   --font-body: Georgia, 'Times New Roman', serif;
   --font-mono: 'Courier New', Courier, monospace;
+
+  /* Status */
+  --color-danger: #E26A6A;
 }

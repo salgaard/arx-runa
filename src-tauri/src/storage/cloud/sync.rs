@@ -385,7 +385,13 @@ pub(crate) async fn drive_blob_downloads(
 }
 
 /// Pushes staged vault blobs, then uploads manifest backup and vault header.
-#[allow(clippy::too_many_arguments)]
+///
+/// The optional `progress` callback is invoked with
+/// `(blobs_done, blobs_total, None)` immediately before blob uploads begin
+/// (with `blobs_done = 0`) and again after all uploads complete
+/// (with `blobs_done = successful_count`).  Pass `None` to suppress progress
+/// reporting.  The callback MUST NOT import or depend on `tauri::`.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub async fn push_vault(
     vault_db_path: &Path,
     sqlcipher_key: &SqlcipherKey,
@@ -395,6 +401,7 @@ pub async fn push_vault(
     vault_header: &VaultHeader,
     staging_dir: &Path,
     sync_config: &SyncConfig,
+    progress: Option<&(dyn Fn(u32, u32, Option<&str>) + Send + Sync)>,
 ) -> Result<PushReport, SyncError> {
     sync_config
         .validate()
@@ -427,6 +434,10 @@ pub async fn push_vault(
     }
 
     fisher_yates_shuffle_with_system_rng(&mut upload_blobs)?;
+    let total_upload_blobs = upload_blobs.len();
+    if let Some(cb) = progress {
+        cb(0, total_upload_blobs as u32, None);
+    }
     let successful_uploads = drive_blob_uploads(
         upload_blobs,
         cloud_transport,
@@ -440,6 +451,13 @@ pub async fn push_vault(
             successful_uploads,
         },
     )?;
+    if let Some(cb) = progress {
+        cb(
+            successful_uploads.len() as u32,
+            total_upload_blobs as u32,
+            None,
+        );
+    }
 
     let new_counter = metadata_store.increment_snapshot_counter().await?;
     metadata_store
@@ -482,6 +500,13 @@ pub async fn push_vault(
 }
 
 /// Pulls vault blobs described by an already-imported local manifest.
+///
+/// The optional `progress` callback is invoked with
+/// `(blobs_done, blobs_total, None)` immediately before blob downloads begin
+/// (with `blobs_done = 0`) and again after all downloads complete.
+/// Pass `None` to suppress progress reporting.  The callback MUST NOT import
+/// or depend on `tauri::`.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub async fn pull_vault(
     _vault_db_path: &Path,
     _sqlcipher_key: &SqlcipherKey,
@@ -490,6 +515,7 @@ pub async fn pull_vault(
     cloud_transport: &dyn CloudTransport,
     staging_dir: &Path,
     sync_config: &SyncConfig,
+    progress: Option<&(dyn Fn(u32, u32, Option<&str>) + Send + Sync)>,
 ) -> Result<PullReport, SyncError> {
     sync_config
         .validate()
@@ -514,6 +540,10 @@ pub async fn pull_vault(
         }
     }
 
+    let total_to_fetch = chunks_to_fetch.len();
+    if let Some(cb) = progress {
+        cb(0, total_to_fetch as u32, None);
+    }
     let blobs_downloaded = drive_blob_downloads(
         chunks_to_fetch,
         cloud_transport,
@@ -527,6 +557,9 @@ pub async fn pull_vault(
             transport_failures,
         },
     )?;
+    if let Some(cb) = progress {
+        cb(blobs_downloaded as u32, total_to_fetch as u32, None);
+    }
     drain_pending_deletions(metadata_store_after_import, cloud_transport).await?;
 
     Ok(PullReport {
@@ -964,6 +997,7 @@ mod tests {
             &sample_header(),
             temp.path(),
             &SyncConfig::default(),
+            None,
         )
         .await
         .expect("push should succeed");
@@ -1017,6 +1051,7 @@ mod tests {
             &sample_header(),
             temp.path(),
             &SyncConfig::default(),
+            None,
         )
         .await;
 
@@ -1044,6 +1079,7 @@ mod tests {
             &sample_header(),
             temp.path(),
             &SyncConfig::default(),
+            None,
         )
         .await;
 
@@ -1164,6 +1200,7 @@ mod tests {
             &cloud,
             temp.path(),
             &SyncConfig::default(),
+            None,
         )
         .await
         .expect("pull should succeed");
@@ -1212,6 +1249,7 @@ mod tests {
             &cloud,
             temp.path(),
             &SyncConfig::default(),
+            None,
         )
         .await
         .expect("first pull should succeed");
@@ -1231,6 +1269,7 @@ mod tests {
             &cloud,
             temp.path(),
             &SyncConfig::default(),
+            None,
         )
         .await
         .expect("second pull should succeed");

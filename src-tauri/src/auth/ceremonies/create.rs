@@ -7,15 +7,14 @@ use zeroize::Zeroizing;
 
 use super::helpers::*;
 use super::types::{CreateVaultRequest, Tier};
+use crate::auth::TransportProvider;
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::VaultId;
 use crate::storage::cloud::vault_header::VaultHeader;
-use crate::storage::cloud::{
-    CloudTransport, VAULT_HEADER_UPLOAD_STAGING_FILE_NAME, upload_vault_header,
-};
+use crate::storage::cloud::{VAULT_HEADER_UPLOAD_STAGING_FILE_NAME, upload_vault_header};
 use crate::storage::schema::{apply_canonical_schema, seed_manifest_meta};
 use std::path::Path;
 
@@ -38,7 +37,7 @@ use super::{STAGING_FILE_NAME, VAULT_HEADER_BLOB_NAME};
 pub async fn create_vault(
     request: CreateVaultRequest<'_>,
     session_manager: &SessionManager,
-    cloud_transport: &dyn CloudTransport,
+    cloud_transport: &dyn TransportProvider,
 ) -> Result<VaultId, AuthenticationError> {
     validate_new_vault_argon2_defaults(&request.argon2_params)?;
     let install_reservation = session_manager.reserve_session_install().await?;
@@ -64,15 +63,31 @@ pub async fn create_vault(
             .target_key_file_path
             .as_ref()
             .ok_or(AuthenticationError::VaultHeaderInvalid)?;
-        let parent = key_file_path
-            .parent()
-            .ok_or(AuthenticationError::VaultHeaderInvalid)?;
-        if !tokio::fs::try_exists(parent)
-            .await
-            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
-        {
-            return Err(AuthenticationError::VaultHeaderInvalid);
-        }
+
+        // Check if the given path is a directory or a file location
+        match tokio::fs::metadata(key_file_path).await {
+            Ok(m) => {
+                if !m.is_dir() {
+                    // Path exists but is not a directory
+                    return Err(AuthenticationError::VaultHeaderInvalid);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Path doesn't exist; check if parent exists
+                let parent = key_file_path
+                    .parent()
+                    .ok_or(AuthenticationError::VaultHeaderInvalid)?;
+                if !tokio::fs::try_exists(parent)
+                    .await
+                    .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
+                {
+                    return Err(AuthenticationError::VaultHeaderInvalid);
+                }
+            }
+            Err(_) => {
+                return Err(AuthenticationError::VaultHeaderInvalid);
+            }
+        };
     }
 
     let vault_id = VaultId::from_uuid(Uuid::new_v4());
@@ -80,13 +95,26 @@ pub async fn create_vault(
     let mut key_file_bytes: Option<Zeroizing<[u8; 32]>> = None;
     let mut key_file_blake3_hex: Option<String> = None;
     if request.tier == Tier::Two {
-        let key_file_path = request
+        let key_file_path_input = request
             .target_key_file_path
             .as_ref()
             .ok_or(AuthenticationError::VaultHeaderInvalid)?;
+
+        // If the path is a directory, append a filename
+        let key_file_path = if let Ok(metadata) = tokio::fs::metadata(key_file_path_input).await {
+            if metadata.is_dir() {
+                key_file_path_input.join("arx-runa.key")
+            } else {
+                key_file_path_input.clone()
+            }
+        } else {
+            // Path doesn't exist; use as provided
+            key_file_path_input.clone()
+        };
+
         let mut buffer: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         rand::rng().fill_bytes(buffer.as_mut_slice());
-        staging::write_owner_only_new(key_file_path, buffer.as_slice()).await?;
+        staging::write_owner_only_new(&key_file_path, buffer.as_slice()).await?;
         let digest = blake3::hash(buffer.as_slice());
         key_file_blake3_hex = Some(hex::encode(digest.as_bytes()));
         key_file_bytes = Some(buffer);
@@ -183,7 +211,12 @@ pub async fn create_vault(
         return Err(map_vault_header_sync_error(error));
     }
     session_manager
-        .finalize_session_install(install_reservation, session_keys)
+        .finalize_session_install(
+            install_reservation,
+            session_keys,
+            vault_id.to_uuid().to_string(),
+            &request.vault_db_path,
+        )
         .await?;
 
     drop(master_key);

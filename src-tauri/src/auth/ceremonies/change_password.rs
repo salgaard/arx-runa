@@ -4,6 +4,7 @@ use zeroize::Zeroizing;
 
 use super::helpers::*;
 use super::types::ChangePasswordRequest;
+use crate::auth::TransportProvider;
 use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
@@ -12,8 +13,8 @@ use crate::crypto::{
     RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
     unwrap_master_key_from_recovery, wrap_file_key, wrap_master_key_for_recovery,
 };
+use crate::storage::cloud::upload_vault_header;
 use crate::storage::cloud::vault_header::VaultHeader;
-use crate::storage::cloud::{CloudTransport, upload_vault_header};
 
 #[cfg(test)]
 use super::STAGING_FILE_NAME;
@@ -32,7 +33,7 @@ use super::STAGING_FILE_NAME;
 pub async fn change_password(
     request: ChangePasswordRequest<'_>,
     session_manager: &SessionManager,
-    cloud_transport: &dyn CloudTransport,
+    cloud_transport: &dyn TransportProvider,
     vault_header: &mut VaultHeader,
     vault_id: &VaultId,
 ) -> Result<(), AuthenticationError> {
@@ -228,7 +229,7 @@ pub async fn change_password(
 
     let staging_dir = staging::staging_directory().await?;
     session_manager
-        .swap_active_session(new_session_keys)
+        .swap_active_session(new_session_keys, vault_id.to_uuid().to_string())
         .await?;
     let upload_result = upload_vault_header(vault_header, cloud_transport, &staging_dir).await;
     if let Err(error) = upload_result {
@@ -239,6 +240,16 @@ pub async fn change_password(
     drop(new_master_key);
     drop(new_salt);
     drop(current_key_file_bytes);
+
+    // Clean up pending vault artifact if it exists (M2)
+    let config_dir = dirs::config_dir()
+        .expect("config_dir must be available")
+        .join("arx-runa");
+    let pending_path = config_dir.join("pending-vault-header.json");
+    if pending_path.exists() {
+        let _ = tokio::fs::remove_file(&pending_path).await;
+    }
+
     Ok(())
 }
 

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recover-from-cloud"
+description = "Enables the recover_from_cloud command without any pre-configured scope."
+commands.allow = ["recover_from_cloud"]
+
+[[permission]]
+identifier = "deny-recover-from-cloud"
+description = "Denies the recover_from_cloud command without any pre-configured scope."
+commands.deny = ["recover_from_cloud"]

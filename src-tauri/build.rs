@@ -1,3 +1,36 @@
 fn main() {
-    tauri_build::build()
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
+        tauri_build::AppManifest::new().commands(&[
+            "add_contact",
+            "add_destination",
+            "authenticate",
+            "change_password",
+            "create_vault",
+            "delete_destination",
+            "delete_file",
+            "delete_vault",
+            "download_file",
+            "export_public_key",
+            "get_file_content",
+            "get_session_status",
+            "get_sync_status",
+            "import_share",
+            "list_contacts",
+            "list_destinations",
+            "list_directory",
+            "list_received_shares",
+            "list_remote",
+            "list_shares",
+            "lock_session",
+            "migrate_vault",
+            "recover_from_cloud",
+            "revoke_share",
+            "rotate_key_file",
+            "share_file",
+            "sync_backup",
+            "sync_to_cloud",
+            "upload_file",
+        ]),
+    ))
+    .expect("failed to build tauri application");
 }

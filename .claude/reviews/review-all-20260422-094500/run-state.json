@@ -1,0 +1,10 @@
+{
+  "run_id": "review-all-20260422-094500",
+  "scope": "all",
+  "track": "",
+  "cycle_count": 2,
+  "canonical_finding_count": 0,
+  "finding_summary": { "CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0 },
+  "disposition_summary": { "ACTIONABLE_NOW": 0, "INTENTIONAL_DECISION": 0, "DEFERRED_BY_PLAN": 0, "INSUFFICIENT_EVIDENCE": 0 },
+  "cycles": []
+}
