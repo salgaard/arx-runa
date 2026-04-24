@@ -17,7 +17,7 @@ use crate::storage::vault_ops::{
     delete_file as vault_delete, download_file as vault_download, upload_file as vault_upload,
 };
 use crate::storage::{MetadataStore, NodeType};
-use crate::ui::commands_common::{require_active_session, ProgressChannel};
+use crate::ui::commands_common::{ProgressChannel, require_active_session};
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
 use crate::ui::types::{FileContent, FileEntry, ProgressUpdate, RemoteFileEntry};

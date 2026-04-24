@@ -11,7 +11,7 @@ use wasm_bindgen::prelude::*;
 use zeroize::Zeroize;
 
 use crate::components::{Button, Input};
-use crate::dialog::open_file_dialog;
+use crate::dialog::{open_directory_dialog, open_file_dialog};
 use crate::invoke::invoke_command;
 use crate::ipc_types::{
     AuthResponse, AuthenticateRequest, CreateVaultRequest, DestinationSessionConfig,
@@ -301,7 +301,7 @@ pub fn VaultCreationPage(
     let on_browse_key = move |_| {
         let set_key_file_destination = set_key_file_destination;
         leptos::task::spawn_local(async move {
-            if let Some(path) = open_file_dialog().await {
+            if let Some(path) = open_directory_dialog().await {
                 set_key_file_destination.set(Some(path));
             }
         });

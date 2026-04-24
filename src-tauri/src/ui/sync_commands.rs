@@ -19,7 +19,7 @@ use crate::storage::cloud::{
     pull_vault, push_vault,
 };
 use crate::storage::staging::write_owner_only;
-use crate::ui::commands_common::{require_active_session, ProgressChannel};
+use crate::ui::commands_common::{ProgressChannel, require_active_session};
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
 use crate::ui::types::{MigrationProgress, SyncProgressUpdate, SyncResult, SyncStatus};

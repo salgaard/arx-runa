@@ -120,20 +120,43 @@ pub fn SessionProvider(children: Children) -> impl IntoView {
 
     let stop = Arc::new(AtomicBool::new(false));
     let stop_poll = Arc::clone(&stop);
+    let (is_unlocked, set_is_unlocked) = signal(false);
+    
     leptos::task::spawn_local(async move {
-        while !stop_poll.load(Ordering::Relaxed) {
+        loop {
+            if stop_poll.load(Ordering::Relaxed) {
+                break;
+            }
+            
+            // Only poll when unlocked; otherwise just wait and check again
+            if !is_unlocked.get() {
+                gloo_timers::future::TimeoutFuture::new(5_000).await;
+                continue;
+            }
+            
             if let Ok(status) = invoke_command::<(), SessionStatus>("get_session_status", &()).await
             {
                 if stop_poll.load(Ordering::Relaxed) {
                     break;
                 }
-                set_state.update(|s| s.apply_status(status));
+                // Only update signal if vault_id changed (session locked/switched)
+                set_state.update(|s| {
+                    if s.vault_id != status.vault_id {
+                        s.apply_status(status);
+                    }
+                });
             }
             if stop_poll.load(Ordering::Relaxed) {
                 break;
             }
             gloo_timers::future::TimeoutFuture::new(5_000).await;
         }
+    });
+    
+    // Watch for unlock/lock to enable/disable polling
+    Effect::new(move || {
+        let unlocked = state.read().is_unlocked;
+        set_is_unlocked.set(unlocked);
     });
 
     on_cleanup(move || stop.store(true, Ordering::Relaxed));

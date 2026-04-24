@@ -63,15 +63,31 @@ pub async fn create_vault(
             .target_key_file_path
             .as_ref()
             .ok_or(AuthenticationError::VaultHeaderInvalid)?;
-        let parent = key_file_path
-            .parent()
-            .ok_or(AuthenticationError::VaultHeaderInvalid)?;
-        if !tokio::fs::try_exists(parent)
-            .await
-            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
-        {
-            return Err(AuthenticationError::VaultHeaderInvalid);
-        }
+        
+        // Check if the given path is a directory or a file location
+        match tokio::fs::metadata(key_file_path).await {
+            Ok(m) => {
+                if !m.is_dir() {
+                    // Path exists but is not a directory
+                    return Err(AuthenticationError::VaultHeaderInvalid);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Path doesn't exist; check if parent exists
+                let parent = key_file_path
+                    .parent()
+                    .ok_or(AuthenticationError::VaultHeaderInvalid)?;
+                if !tokio::fs::try_exists(parent)
+                    .await
+                    .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
+                {
+                    return Err(AuthenticationError::VaultHeaderInvalid);
+                }
+            }
+            Err(_) => {
+                return Err(AuthenticationError::VaultHeaderInvalid);
+            }
+        };
     }
 
     let vault_id = VaultId::from_uuid(Uuid::new_v4());
@@ -79,13 +95,26 @@ pub async fn create_vault(
     let mut key_file_bytes: Option<Zeroizing<[u8; 32]>> = None;
     let mut key_file_blake3_hex: Option<String> = None;
     if request.tier == Tier::Two {
-        let key_file_path = request
+        let key_file_path_input = request
             .target_key_file_path
             .as_ref()
             .ok_or(AuthenticationError::VaultHeaderInvalid)?;
+        
+        // If the path is a directory, append a filename
+        let key_file_path = if let Ok(metadata) = tokio::fs::metadata(key_file_path_input).await {
+            if metadata.is_dir() {
+                key_file_path_input.join("arx-runa.key")
+            } else {
+                key_file_path_input.clone()
+            }
+        } else {
+            // Path doesn't exist; use as provided
+            key_file_path_input.clone()
+        };
+        
         let mut buffer: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         rand::rng().fill_bytes(buffer.as_mut_slice());
-        staging::write_owner_only_new(key_file_path, buffer.as_slice()).await?;
+        staging::write_owner_only_new(&key_file_path, buffer.as_slice()).await?;
         let digest = blake3::hash(buffer.as_slice());
         key_file_blake3_hex = Some(hex::encode(digest.as_bytes()));
         key_file_bytes = Some(buffer);

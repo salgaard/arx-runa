@@ -1,8 +1,7 @@
 //! Thin wasm-bindgen extern for the `tauri-plugin-dialog` JS surface.
 //!
-//! Exposes `open_file_dialog` (single-file open picker) and `open_save_dialog`
-//! (single-file save picker). The plugin's `window.__TAURI__.plugin.dialog` functions
-//! are called with the fully qualified namespace; do not shorten them.
+//! In Tauri 2.x, plugins are dynamically loaded and expose `window.__TAURI_PLUGIN_DIALOG__`.
+//! This module wraps those async functions for use in WASM.
 //!
 //! Note: These APIs are only available in the Tauri desktop app context. In browser
 //! development, the Tauri plugin bridge is unavailable, and these functions return None.
@@ -10,67 +9,86 @@
 use serde_json::json;
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen]
-extern "C" {
-    /// Returns `true` if we're running inside the Tauri app (not a browser).
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__"], js_name = "__TAURI_INTERNALS__")]
-    type TauriInternals;
-
-    /// Binds `window.__TAURI__.plugin.dialog.open`.
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "plugin", "dialog"], catch)]
-    async fn open(options: JsValue) -> Result<JsValue, JsValue>;
-
-    /// Binds `window.__TAURI__.plugin.dialog.save`.
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "plugin", "dialog"], catch)]
-    async fn save(options: JsValue) -> Result<JsValue, JsValue>;
-}
-
 /// Checks if the Tauri dialog plugin is available (i.e., we're in a Tauri context, not browser dev).
 fn is_tauri_context() -> bool {
     use wasm_bindgen::JsValue;
     match web_sys::window() {
         Some(window) => {
-            let tauri = js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI__"));
-            if let Ok(tauri_obj) = tauri
-                && !tauri_obj.is_undefined()
-                && !tauri_obj.is_null()
+            let dialog_plugin =
+                js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI_PLUGIN_DIALOG__"));
+            if let Ok(plugin_obj) = dialog_plugin
+                && !plugin_obj.is_undefined()
+                && !plugin_obj.is_null()
             {
-                let plugin = js_sys::Reflect::get(&tauri_obj, &JsValue::from_str("plugin"));
-                if let Ok(plugin_obj) = plugin
-                    && !plugin_obj.is_undefined()
-                    && !plugin_obj.is_null()
-                {
-                    let dialog = js_sys::Reflect::get(&plugin_obj, &JsValue::from_str("dialog"));
-                    if dialog.is_ok() && !dialog.unwrap().is_undefined() {
-                        return true;
-                    }
-                }
+                return true;
             }
-            web_sys::console::warn_1(&JsValue::from_str("Tauri dialog plugin not available"));
+            web_sys::console::warn_1(&JsValue::from_str(
+                "Tauri dialog plugin not available — running in browser or plugin not initialized",
+            ));
             false
         }
         None => false,
     }
 }
 
-/// Opens a native single-file open dialog.
+/// Opens a native directory picker dialog.
 ///
-/// Returns `Some(path)` when the user selects a file, `None` when cancelled.
+/// Returns `Some(path)` when the user selects a directory, `None` when cancelled.
 /// Returns `None` if running in browser dev mode (Tauri plugin unavailable).
 pub async fn open_file_dialog() -> Option<String> {
     if !is_tauri_context() {
         return None;
     }
+
+    let window = web_sys::window()?;
+    let dialog_plugin = js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI_PLUGIN_DIALOG__"))
+        .ok()?;
+    let open_fn = js_sys::Reflect::get(&dialog_plugin, &JsValue::from_str("open")).ok()?;
+
     let opts = serde_wasm_bindgen::to_value(&json!({
         "multiple": false,
         "directory": false,
     }))
     .ok()?;
-    let result = open(opts).await.ok()?;
-    if result.is_null() || result.is_undefined() {
+
+    let promise = open_fn.dyn_into::<js_sys::Function>().ok()?.call1(&dialog_plugin, &opts).ok()?;
+    let result = js_sys::Promise::resolve(&promise);
+    let result_val = wasm_bindgen_futures::JsFuture::from(result).await.ok()?;
+
+    if result_val.is_null() || result_val.is_undefined() {
         return None;
     }
-    result.as_string()
+    result_val.as_string()
+}
+
+/// Opens a native directory picker dialog.
+///
+/// Returns `Some(path)` when the user selects a directory, `None` when cancelled.
+/// Returns `None` if running in browser dev mode (Tauri plugin unavailable).
+pub async fn open_directory_dialog() -> Option<String> {
+    if !is_tauri_context() {
+        return None;
+    }
+
+    let window = web_sys::window()?;
+    let dialog_plugin = js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI_PLUGIN_DIALOG__"))
+        .ok()?;
+    let open_fn = js_sys::Reflect::get(&dialog_plugin, &JsValue::from_str("open")).ok()?;
+
+    let opts = serde_wasm_bindgen::to_value(&json!({
+        "multiple": false,
+        "directory": true,
+    }))
+    .ok()?;
+
+    let promise = open_fn.dyn_into::<js_sys::Function>().ok()?.call1(&dialog_plugin, &opts).ok()?;
+    let result = js_sys::Promise::resolve(&promise);
+    let result_val = wasm_bindgen_futures::JsFuture::from(result).await.ok()?;
+
+    if result_val.is_null() || result_val.is_undefined() {
+        return None;
+    }
+    result_val.as_string()
 }
 
 /// Opens a native single-file save dialog.
@@ -81,6 +99,12 @@ pub async fn open_save_dialog(default_name: Option<&str>) -> Option<String> {
     if !is_tauri_context() {
         return None;
     }
+
+    let window = web_sys::window()?;
+    let dialog_plugin = js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI_PLUGIN_DIALOG__"))
+        .ok()?;
+    let save_fn = js_sys::Reflect::get(&dialog_plugin, &JsValue::from_str("save")).ok()?;
+
     let mut opts_obj = json!({
         "directory": false,
     });
@@ -88,9 +112,13 @@ pub async fn open_save_dialog(default_name: Option<&str>) -> Option<String> {
         opts_obj["defaultPath"] = json!(name);
     }
     let opts = serde_wasm_bindgen::to_value(&opts_obj).ok()?;
-    let result = save(opts).await.ok()?;
-    if result.is_null() || result.is_undefined() {
+
+    let promise = save_fn.dyn_into::<js_sys::Function>().ok()?.call1(&dialog_plugin, &opts).ok()?;
+    let result = js_sys::Promise::resolve(&promise);
+    let result_val = wasm_bindgen_futures::JsFuture::from(result).await.ok()?;
+
+    if result_val.is_null() || result_val.is_undefined() {
         return None;
     }
-    result.as_string()
+    result_val.as_string()
 }

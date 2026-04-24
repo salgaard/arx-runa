@@ -3,8 +3,8 @@
 //! These thin wrappers enforce Zero-Trace invariants and reduce boilerplate
 //! in command handler bodies.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use zeroize::Zeroizing;
 
@@ -33,14 +33,14 @@ impl<T: Send + 'static + serde::Serialize> ProgressChannel<T> {
     }
 
     /// Attempts to send an update if this is the first attempted send in a while.
-    /// 
+    ///
     /// This provides M3 validation by checking if we should try to send at all.
     /// Returns true if we attempted the send, false if we're skipping due to channel closure tracking.
     pub fn try_send_if_open(&self, update: T) -> bool {
         // For M3 validation, we track state to avoid hammering a closed channel.
         // Mark that we've attempted at least one send so future attempts can check this.
         let _was_set = self.attempted_to_send.swap(true, Ordering::Relaxed);
-        
+
         // Always attempt to send; Tauri will handle the actual channel state.
         // Errors from closed channels will be logged by Tauri internally.
         let _ = self.tx.send(update);
