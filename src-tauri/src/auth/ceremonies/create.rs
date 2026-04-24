@@ -63,7 +63,7 @@ pub async fn create_vault(
             .target_key_file_path
             .as_ref()
             .ok_or(AuthenticationError::VaultHeaderInvalid)?;
-        
+
         // Check if the given path is a directory or a file location
         match tokio::fs::metadata(key_file_path).await {
             Ok(m) => {
@@ -99,7 +99,7 @@ pub async fn create_vault(
             .target_key_file_path
             .as_ref()
             .ok_or(AuthenticationError::VaultHeaderInvalid)?;
-        
+
         // If the path is a directory, append a filename
         let key_file_path = if let Ok(metadata) = tokio::fs::metadata(key_file_path_input).await {
             if metadata.is_dir() {
@@ -111,7 +111,7 @@ pub async fn create_vault(
             // Path doesn't exist; use as provided
             key_file_path_input.clone()
         };
-        
+
         let mut buffer: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         rand::rng().fill_bytes(buffer.as_mut_slice());
         staging::write_owner_only_new(&key_file_path, buffer.as_slice()).await?;

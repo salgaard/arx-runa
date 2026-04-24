@@ -41,8 +41,8 @@ pub async fn open_file_dialog() -> Option<String> {
     }
 
     let window = web_sys::window()?;
-    let dialog_plugin = js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI_PLUGIN_DIALOG__"))
-        .ok()?;
+    let dialog_plugin =
+        js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI_PLUGIN_DIALOG__")).ok()?;
     let open_fn = js_sys::Reflect::get(&dialog_plugin, &JsValue::from_str("open")).ok()?;
 
     let opts = serde_wasm_bindgen::to_value(&json!({
@@ -51,7 +51,11 @@ pub async fn open_file_dialog() -> Option<String> {
     }))
     .ok()?;
 
-    let promise = open_fn.dyn_into::<js_sys::Function>().ok()?.call1(&dialog_plugin, &opts).ok()?;
+    let promise = open_fn
+        .dyn_into::<js_sys::Function>()
+        .ok()?
+        .call1(&dialog_plugin, &opts)
+        .ok()?;
     let result = js_sys::Promise::resolve(&promise);
     let result_val = wasm_bindgen_futures::JsFuture::from(result).await.ok()?;
 
@@ -71,8 +75,8 @@ pub async fn open_directory_dialog() -> Option<String> {
     }
 
     let window = web_sys::window()?;
-    let dialog_plugin = js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI_PLUGIN_DIALOG__"))
-        .ok()?;
+    let dialog_plugin =
+        js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI_PLUGIN_DIALOG__")).ok()?;
     let open_fn = js_sys::Reflect::get(&dialog_plugin, &JsValue::from_str("open")).ok()?;
 
     let opts = serde_wasm_bindgen::to_value(&json!({
@@ -81,7 +85,11 @@ pub async fn open_directory_dialog() -> Option<String> {
     }))
     .ok()?;
 
-    let promise = open_fn.dyn_into::<js_sys::Function>().ok()?.call1(&dialog_plugin, &opts).ok()?;
+    let promise = open_fn
+        .dyn_into::<js_sys::Function>()
+        .ok()?
+        .call1(&dialog_plugin, &opts)
+        .ok()?;
     let result = js_sys::Promise::resolve(&promise);
     let result_val = wasm_bindgen_futures::JsFuture::from(result).await.ok()?;
 
@@ -101,8 +109,8 @@ pub async fn open_save_dialog(default_name: Option<&str>) -> Option<String> {
     }
 
     let window = web_sys::window()?;
-    let dialog_plugin = js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI_PLUGIN_DIALOG__"))
-        .ok()?;
+    let dialog_plugin =
+        js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI_PLUGIN_DIALOG__")).ok()?;
     let save_fn = js_sys::Reflect::get(&dialog_plugin, &JsValue::from_str("save")).ok()?;
 
     let mut opts_obj = json!({
@@ -113,7 +121,11 @@ pub async fn open_save_dialog(default_name: Option<&str>) -> Option<String> {
     }
     let opts = serde_wasm_bindgen::to_value(&opts_obj).ok()?;
 
-    let promise = save_fn.dyn_into::<js_sys::Function>().ok()?.call1(&dialog_plugin, &opts).ok()?;
+    let promise = save_fn
+        .dyn_into::<js_sys::Function>()
+        .ok()?
+        .call1(&dialog_plugin, &opts)
+        .ok()?;
     let result = js_sys::Promise::resolve(&promise);
     let result_val = wasm_bindgen_futures::JsFuture::from(result).await.ok()?;
 

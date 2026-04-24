@@ -121,19 +121,19 @@ pub fn SessionProvider(children: Children) -> impl IntoView {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_poll = Arc::clone(&stop);
     let (is_unlocked, set_is_unlocked) = signal(false);
-    
+
     leptos::task::spawn_local(async move {
         loop {
             if stop_poll.load(Ordering::Relaxed) {
                 break;
             }
-            
+
             // Only poll when unlocked; otherwise just wait and check again
             if !is_unlocked.get() {
                 gloo_timers::future::TimeoutFuture::new(5_000).await;
                 continue;
             }
-            
+
             if let Ok(status) = invoke_command::<(), SessionStatus>("get_session_status", &()).await
             {
                 if stop_poll.load(Ordering::Relaxed) {
@@ -152,7 +152,7 @@ pub fn SessionProvider(children: Children) -> impl IntoView {
             gloo_timers::future::TimeoutFuture::new(5_000).await;
         }
     });
-    
+
     // Watch for unlock/lock to enable/disable polling
     Effect::new(move || {
         let unlocked = state.read().is_unlocked;
