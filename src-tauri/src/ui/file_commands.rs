@@ -17,7 +17,7 @@ use crate::storage::vault_ops::{
     delete_file as vault_delete, download_file as vault_download, upload_file as vault_upload,
 };
 use crate::storage::{MetadataStore, NodeType};
-use crate::ui::commands_common::require_active_session;
+use crate::ui::commands_common::{require_active_session, ProgressChannel};
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
 use crate::ui::types::{FileContent, FileEntry, ProgressUpdate, RemoteFileEntry};
@@ -210,13 +210,14 @@ pub async fn upload_file(
         .unwrap_or_default()
         .as_secs() as i64;
 
-    // Wrap the Tauri channel in a plain closure so no `tauri::` import
-    // leaks into the storage layer.
+    // Wrap the Tauri channel in a ProgressChannel to gracefully handle
+    // closed connections (M3: Streaming Progress Channel Validation)
+    let progress_ch = ProgressChannel::new(progress);
     let progress_fn = {
-        let progress = progress.clone();
+        let progress = progress_ch.clone();
         move |bytes_processed: u64, bytes_total: u64| {
             let percent = (bytes_processed * 100 / bytes_total.max(1)) as u8;
-            let _ = progress.send(ProgressUpdate {
+            let _ = progress.try_send_if_open(ProgressUpdate {
                 percent,
                 bytes_processed,
                 bytes_total,
@@ -270,13 +271,14 @@ pub async fn download_file(
 
     let kek = extract_kek(&state).await?;
 
-    // Wrap the Tauri channel in a plain closure so no `tauri::` import
-    // leaks into the storage layer.
+    // Wrap the Tauri channel in a ProgressChannel to gracefully handle
+    // closed connections (M3: Streaming Progress Channel Validation)
+    let progress_ch = ProgressChannel::new(progress);
     let progress_fn = {
-        let progress = progress.clone();
+        let progress = progress_ch.clone();
         move |bytes_processed: u64, bytes_total: u64| {
             let percent = (bytes_processed * 100 / bytes_total.max(1)) as u8;
-            let _ = progress.send(ProgressUpdate {
+            let _ = progress.try_send_if_open(ProgressUpdate {
                 percent,
                 bytes_processed,
                 bytes_total,

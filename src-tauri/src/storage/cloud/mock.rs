@@ -137,6 +137,11 @@ impl CloudTransport for MockCloudTransport {
         matches.sort_unstable();
         Ok(matches)
     }
+
+    async fn cleanup_session_artifacts(&self) -> Result<(), CloudTransportError> {
+        // No-op for mock; in-memory storage doesn't have artifacts to clean.
+        Ok(())
+    }
 }
 
 #[cfg(test)]

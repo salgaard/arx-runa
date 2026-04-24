@@ -197,6 +197,13 @@ impl CloudTransport for RcloneTransport {
         parsed.sort_unstable();
         Ok(parsed)
     }
+
+    async fn cleanup_session_artifacts(&self) -> Result<(), CloudTransportError> {
+        // The session-lived rclone.conf file is managed by SessionManager,
+        // which calls destroy_session_rclone_conf() on session lock.
+        // This is a no-op here since the path is not owned by RcloneTransport.
+        Ok(())
+    }
 }
 
 fn build_remote_root(

@@ -278,7 +278,10 @@ impl SessionManager {
                 }
             }
         } else {
-            tracing::debug!("vault database not found at {:?}, continuing without metadata store", db_path);
+            tracing::debug!(
+                "vault database not found at {:?}, continuing without metadata store",
+                db_path
+            );
             None
         };
 
@@ -494,7 +497,10 @@ impl SessionManager {
                 }
             }
         } else {
-            tracing::debug!("vault database not found at {:?}, continuing without metadata store", db_path);
+            tracing::debug!(
+                "vault database not found at {:?}, continuing without metadata store",
+                db_path
+            );
             None
         };
 
@@ -611,7 +617,10 @@ impl SessionManager {
                 }
             }
         } else {
-            tracing::debug!("vault database not found at {:?}, continuing without metadata store", db_path);
+            tracing::debug!(
+                "vault database not found at {:?}, continuing without metadata store",
+                db_path
+            );
             None
         };
 
@@ -857,6 +866,9 @@ impl SessionManager {
             );
             return;
         }
+
+        // Securely delete rclone.conf on timeout (M1)
+        Self::destroy_rclone_conf().await;
 
         {
             let mut session_guard = context.session.write().await;
@@ -1419,7 +1431,11 @@ mod tests {
         let keys = derive_test_session_keys().await;
 
         manager
-            .install_session(keys, "test-vault".to_owned(), std::path::Path::new("/tmp/test-vault.db"))
+            .install_session(
+                keys,
+                "test-vault".to_owned(),
+                std::path::Path::new("/tmp/test-vault.db"),
+            )
             .await
             .expect("install_session must succeed from NoSession");
 
@@ -1470,11 +1486,19 @@ mod tests {
         let second = derive_test_session_keys().await;
 
         manager
-            .install_session(first, "test-vault".to_owned(), std::path::Path::new("/tmp/test-vault.db"))
+            .install_session(
+                first,
+                "test-vault".to_owned(),
+                std::path::Path::new("/tmp/test-vault.db"),
+            )
             .await
             .expect("first install must succeed");
         let error = manager
-            .install_session(second, "test-vault".to_owned(), std::path::Path::new("/tmp/test-vault.db"))
+            .install_session(
+                second,
+                "test-vault".to_owned(),
+                std::path::Path::new("/tmp/test-vault.db"),
+            )
             .await
             .expect_err("second install must be rejected");
 
@@ -1487,7 +1511,11 @@ mod tests {
         let keys = derive_test_session_keys().await;
 
         manager
-            .install_session(keys, "test-vault".to_owned(), std::path::Path::new("/tmp/test-vault.db"))
+            .install_session(
+                keys,
+                "test-vault".to_owned(),
+                std::path::Path::new("/tmp/test-vault.db"),
+            )
             .await
             .expect("first install must succeed");
         manager.lock().await;
@@ -1495,7 +1523,11 @@ mod tests {
 
         let fresh_keys = derive_test_session_keys().await;
         manager
-            .install_session(fresh_keys, "test-vault".to_owned(), std::path::Path::new("/tmp/test-vault.db"))
+            .install_session(
+                fresh_keys,
+                "test-vault".to_owned(),
+                std::path::Path::new("/tmp/test-vault.db"),
+            )
             .await
             .expect("install must succeed from Expired state");
 
@@ -1507,7 +1539,11 @@ mod tests {
         let manager = SessionManager::with_timeout(Duration::from_secs(5));
         let first = derive_test_session_keys().await;
         manager
-            .install_session(first, "test-vault".to_owned(), std::path::Path::new("/tmp/test-vault.db"))
+            .install_session(
+                first,
+                "test-vault".to_owned(),
+                std::path::Path::new("/tmp/test-vault.db"),
+            )
             .await
             .expect("install must succeed");
 

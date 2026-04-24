@@ -19,7 +19,7 @@ use crate::storage::cloud::{
     pull_vault, push_vault,
 };
 use crate::storage::staging::write_owner_only;
-use crate::ui::commands_common::require_active_session;
+use crate::ui::commands_common::{require_active_session, ProgressChannel};
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
 use crate::ui::types::{MigrationProgress, SyncProgressUpdate, SyncResult, SyncStatus};
@@ -196,13 +196,14 @@ pub async fn sync_to_cloud(
     let sqlcipher_key = extract_sqlcipher_key(&state.session_manager).await?;
     let manifest_key = extract_manifest_key(&state.session_manager).await?;
 
-    // Wrap the Tauri channel in a plain closure so no `tauri::` import
-    // leaks into the storage layer.
+    // Wrap the Tauri channel in a ProgressChannel to gracefully handle
+    // closed connections (M3: Streaming Progress Channel Validation)
+    let progress_ch = ProgressChannel::new(progress);
     let progress_fn = {
-        let progress = progress.clone();
+        let progress = progress_ch.clone();
         move |files_done: u32, files_total: u32, label: Option<&str>| {
             let percent = (files_done * 100 / files_total.max(1)) as u8;
-            let _ = progress.send(SyncProgressUpdate {
+            let _ = progress.try_send_if_open(SyncProgressUpdate {
                 percent,
                 current_file: label.map(str::to_owned),
                 files_processed: files_done,

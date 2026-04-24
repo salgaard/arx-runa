@@ -25,14 +25,14 @@ struct DeviceEventPayload {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-/// Starts the Arx Runa Tauri runtime with all 29 registered commands.
+/// Starts the Arx Runa Tauri runtime with all 31 registered commands.
 pub fn run() {
     if let Err(error) = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(crate::ui::AppState::construct_default())
         .invoke_handler(tauri::generate_handler![
-            // Auth (7)
+            // Auth (9) — added check/retry pending operations
             ui::auth_commands::authenticate,
             ui::auth_commands::create_vault,
             ui::auth_commands::change_password,
@@ -40,6 +40,8 @@ pub fn run() {
             ui::auth_commands::delete_vault,
             ui::auth_commands::lock_session,
             ui::auth_commands::get_session_status,
+            ui::auth_commands::check_pending_vault_operations,
+            ui::auth_commands::retry_pending_vault_operation,
             // Files (6)
             ui::file_commands::list_directory,
             ui::file_commands::upload_file,

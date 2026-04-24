@@ -84,4 +84,12 @@ pub trait CloudTransport: Send + Sync {
 
     /// Lists cloud-relative remote paths under a prefix.
     async fn list_blobs(&self, remote_prefix: &str) -> Result<Vec<String>, CloudTransportError>;
+
+    /// Cleans up session-scoped artifacts (e.g., rclone.conf temp files).
+    ///
+    /// Called on session lock or timeout to remove sensitive files from disk.
+    /// Implementations must be idempotent (file not found is not an error).
+    async fn cleanup_session_artifacts(&self) -> Result<(), CloudTransportError> {
+        Ok(())
+    }
 }

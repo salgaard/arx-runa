@@ -148,3 +148,29 @@ pub struct RecoverWithPhraseRequest<'a> {
     /// Destination path for the recovered vault DB.
     pub vault_db_path: PathBuf,
 }
+
+/// Type of operation that was interrupted and pending recovery.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub enum PendingOperation {
+    /// Password change operation was interrupted.
+    ChangePassword,
+    /// Key file rotation operation was interrupted.
+    RotateKeyFile,
+}
+
+/// Artifact written to disk when a vault ceremony is interrupted mid-operation.
+///
+/// This structure is serialized to `pending-vault-header.json` in the config directory.
+/// The artifact is plaintext to allow recovery even if decryption keys are lost.
+/// After recovery or manual intervention, the file must be explicitly deleted.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct PendingVaultHeader {
+    /// The vault identifier being modified.
+    pub vault_id: String,
+    /// The type of operation that was interrupted.
+    pub operation: PendingOperation,
+    /// Serialized vault header (plaintext; can be re-downloaded if lost).
+    pub vault_header_json: String,
+    /// Timestamp when this artifact was written.
+    pub created_at: std::time::SystemTime,
+}

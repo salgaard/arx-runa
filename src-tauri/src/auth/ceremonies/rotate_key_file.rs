@@ -253,6 +253,16 @@ pub async fn rotate_key_file(
     drop(new_salt);
     drop(current_key_file);
     drop(new_key_file);
+
+    // Clean up pending vault artifact if it exists (M2)
+    let config_dir = dirs::config_dir()
+        .expect("config_dir must be available")
+        .join("arx-runa");
+    let pending_path = config_dir.join("pending-vault-header.json");
+    if pending_path.exists() {
+        let _ = tokio::fs::remove_file(&pending_path).await;
+    }
+
     Ok(())
 }
 
