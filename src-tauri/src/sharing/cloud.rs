@@ -123,9 +123,9 @@ pub(crate) async fn create_share(
         }
     }
 
-    /// Path prefix for the shared blobs. All file shares use the standard namespace pattern
-    /// `shared/{file_share_id}/` per the file-sharing design contract. The recipient's cloud
-    /// configuration is used to resolve this path at download time.
+    // Path prefix for the shared blobs. All file shares use the standard namespace pattern
+    // `shared/{file_share_id}/` per the file-sharing design contract. The recipient's cloud
+    // configuration is used to resolve this path at download time.
     let cloud_endpoint = serde_json::json!({ "path_prefix": format!("shared/{}/", file_share_id) });
 
     let recipient_contact = sharing_store
@@ -193,9 +193,7 @@ pub(crate) async fn fetch_received_share_to_local(
         .cloud_endpoint
         .get("path_prefix")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            SharingError::InvalidSharePackage
-        })?;
+        .ok_or(SharingError::InvalidSharePackage)?;
 
     if path_prefix.is_empty() {
         return Err(SharingError::InvalidSharePackage);

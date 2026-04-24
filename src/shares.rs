@@ -6,8 +6,8 @@ use leptos_router::components::A;
 
 use crate::invoke::invoke_command;
 use crate::ipc_types::{
-    ContactEntry, ReceivedShareEntry, RevokeShareRequest, ShareEntry, ShareFileRequest,
-    ImportShareRequest,
+    ContactEntry, ImportShareRequest, ReceivedShareEntry, RevokeShareRequest, ShareEntry,
+    ShareFileRequest,
 };
 use crate::utils::format_fingerprint;
 
@@ -250,8 +250,7 @@ fn ReceivedSharesList() -> impl IntoView {
         spawn_local(async move {
             loading_clone.set(true);
             error_clone.set(None);
-            match invoke_command::<(), Vec<ReceivedShareEntry>>("list_received_shares", &()).await
-            {
+            match invoke_command::<(), Vec<ReceivedShareEntry>>("list_received_shares", &()).await {
                 Ok(entries) => {
                     shares_clone.set(entries);
                 }
@@ -297,7 +296,10 @@ fn ReceivedSharesList() -> impl IntoView {
 
 /// Individual received share item.
 #[component]
-fn ReceivedShareItem(share: ReceivedShareEntry, #[prop(into)] on_import: Callback<()>) -> impl IntoView {
+fn ReceivedShareItem(
+    share: ReceivedShareEntry,
+    #[prop(into)] on_import: Callback<()>,
+) -> impl IntoView {
     let importing = RwSignal::new(false);
 
     let handle_import = move |_| {

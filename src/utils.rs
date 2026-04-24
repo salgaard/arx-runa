@@ -1,7 +1,7 @@
 //! Timestamp formatting utilities for relative time display.
 
 use base64::Engine;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 /// Formats an ISO-8601 timestamp into a relative human-readable string.
 ///
@@ -78,16 +78,19 @@ mod tests {
     fn test_format_fingerprint_produces_16_hex_chars() {
         // Create a test 32-byte key (all zeros)
         let test_key = [0u8; 32];
-        let test_key_b64 = base64::engine::general_purpose::STANDARD.encode(&test_key);
+        let test_key_b64 = base64::engine::general_purpose::STANDARD.encode(test_key);
 
         let fingerprint = format_fingerprint(&test_key_b64);
 
         // Should be exactly 16 characters (2 hex digits per byte × 8 bytes)
         assert_eq!(fingerprint.len(), 16);
-        
+
         // Should be lowercase hex characters only
-        assert!(fingerprint.chars().all(|c| "0123456789abcdef".contains(c)), 
-                "Got fingerprint: {}", fingerprint);
+        assert!(
+            fingerprint.chars().all(|c| "0123456789abcdef".contains(c)),
+            "Got fingerprint: {}",
+            fingerprint
+        );
     }
 
     /// Test that fingerprint is unique for different public keys.
@@ -95,11 +98,11 @@ mod tests {
     fn test_format_fingerprint_unique_for_different_keys() {
         let mut key1 = [0u8; 32];
         key1[0] = 1;
-        let key1_b64 = base64::engine::general_purpose::STANDARD.encode(&key1);
+        let key1_b64 = base64::engine::general_purpose::STANDARD.encode(key1);
 
         let mut key2 = [0u8; 32];
         key2[0] = 2;
-        let key2_b64 = base64::engine::general_purpose::STANDARD.encode(&key2);
+        let key2_b64 = base64::engine::general_purpose::STANDARD.encode(key2);
 
         let fingerprint1 = format_fingerprint(&key1_b64);
         let fingerprint2 = format_fingerprint(&key2_b64);
@@ -119,7 +122,7 @@ mod tests {
     fn test_format_fingerprint_wrong_size_key() {
         // Base64 encode a 31-byte key instead of 32
         let test_key = [0u8; 31];
-        let test_key_b64 = base64::engine::general_purpose::STANDARD.encode(&test_key);
+        let test_key_b64 = base64::engine::general_purpose::STANDARD.encode(test_key);
 
         let fingerprint = format_fingerprint(&test_key_b64);
         assert_eq!(fingerprint, "");
