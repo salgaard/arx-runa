@@ -3,6 +3,7 @@ use leptos_router::StaticSegment;
 use leptos_router::components::{Route, Router, Routes};
 
 use crate::auth::{LoginPage, VaultCreationPage};
+use crate::components::{ToastProvider, inject_toast_styles};
 use crate::contacts::ContactList;
 use crate::destinations::DestinationList;
 use crate::layout::AppShell;
@@ -15,19 +16,22 @@ use crate::vault::VaultBrowser;
 
 /// Root frontend component — mounts the provider hierarchy and the `Router`.
 ///
-/// Provider order is canonical: `SessionProvider > VaultProvider > SyncProvider`.
-/// Every page renders inside the innermost provider to ensure all state hooks
-/// resolve.
+/// Provider order is canonical: `ToastProvider > SessionProvider > VaultProvider > SyncProvider`.
+/// Every page renders inside the innermost provider to ensure all state hooks resolve.
 #[component]
 pub fn App() -> impl IntoView {
+    inject_toast_styles();
+
     view! {
-        <SessionProvider>
-            <VaultProvider>
-                <SyncProvider>
-                    <AppRouter />
-                </SyncProvider>
-            </VaultProvider>
-        </SessionProvider>
+        <ToastProvider>
+            <SessionProvider>
+                <VaultProvider>
+                    <SyncProvider>
+                        <AppRouter />
+                    </SyncProvider>
+                </VaultProvider>
+            </SessionProvider>
+        </ToastProvider>
     }
 }
 

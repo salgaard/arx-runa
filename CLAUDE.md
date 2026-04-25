@@ -17,3 +17,9 @@ No abbreviations: `chunk_index` not `chunk_idx`, `encrypted_buffer` not `enc_buf
  - Arx Runa targets Windows, macOS, and Linux.
  - New features and refactors must preserve behavior across all three platforms.
  - Platform-specific code is allowed only with an equivalent implementation on other targets, or an explicit documented limitation in the canonical design.
+
+## After implementing new changes
+ - 1. run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+ - 2. fix issues
+ - 3. run: cargo fmt --all
+ - 4. dont git add or commit anything - user does manually

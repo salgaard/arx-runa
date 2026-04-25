@@ -107,6 +107,68 @@ fn destination_from_config(config: &DestinationSessionConfig) -> DestinationSess
     }
 }
 
+/// Validates storage destination configuration before vault creation.
+///
+/// For local destinations, this is a no-op. For cloud destinations, this tests
+/// connectivity to ensure the configured credentials are valid before running
+/// the creation ceremony. If the test fails, returns a user-friendly error message.
+async fn validate_storage_destination(
+    config: &DestinationSessionConfig,
+    cloud_transport: &Arc<dyn crate::storage::cloud::CloudTransport>,
+) -> Result<(), IpcError> {
+    // Local and external destinations don't need validation.
+    if config.destination_type != "cloud" {
+        return Ok(());
+    }
+
+    // For cloud destinations, test basic connectivity by listing blobs at the
+    // configured path prefix. This validates that:
+    // 1. The rclone remote is properly configured (credentials are present)
+    // 2. The credentials are valid (authentication succeeds)
+    // 3. The bucket/container is accessible
+    let test_path = config.path_prefix.as_str();
+    cloud_transport
+        .list_blobs(test_path)
+        .await
+        .map_err(|err| {
+            let message = match err {
+                crate::storage::cloud::CloudTransportError::AuthenticationFailed => {
+                    format!(
+                        "Cloud storage authentication failed for '{}'. Please check your credentials.",
+                        config.label
+                    )
+                }
+                crate::storage::cloud::CloudTransportError::NotFound => {
+                    format!(
+                        "Cloud storage path not found for '{}'. Please check the bucket name and path prefix.",
+                        config.label
+                    )
+                }
+                crate::storage::cloud::CloudTransportError::Timeout => {
+                    format!(
+                        "Cloud storage connection timed out for '{}'. Please check your network and try again.",
+                        config.label
+                    )
+                }
+                crate::storage::cloud::CloudTransportError::RcloneProcessFailed {
+                    exit_code,
+                    stderr_sanitised,
+                } => {
+                    format!(
+                        "Failed to connect to {} (rclone exit code {}): {}",
+                        config.label, exit_code, stderr_sanitised
+                    )
+                }
+                _ => format!(
+                    "Failed to validate cloud storage '{}': {}",
+                    config.label, err
+                ),
+            };
+            IpcError::InvalidInput(message)
+        })
+        .map(|_| ())  // Discard the list result; we only cared about testing connectivity
+}
+
 /// Best-effort: writes rclone.conf from the DB and installs an `RcloneTransport`.
 ///
 /// Failures are logged as warnings. The caller must not treat this as fatal.
@@ -281,6 +343,11 @@ pub async fn create_vault(
         ));
     }
 
+    // Validate storage destination before proceeding with ceremony.
+    // This ensures cloud credentials are valid and accessible before creating the vault.
+    let cloud_transport_arc = state.cloud_transport.read().await.clone();
+    validate_storage_destination(&primary_destination, &cloud_transport_arc).await?;
+
     // Pre-generate a UUID for the vault directory; we rename after the ceremony
     // so the directory name matches the ceremony-assigned vault_id.
     let temp_dir_id = Uuid::new_v4().hyphenated().to_string();
@@ -307,9 +374,6 @@ pub async fn create_vault(
             }
         }
     }
-
-    // Snapshot the current cloud transport for use during the ceremony.
-    let cloud_transport_arc = state.cloud_transport.read().await.clone();
 
     let request = CreateVaultRequest {
         tier: tier_enum,

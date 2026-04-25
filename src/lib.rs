@@ -5,6 +5,7 @@
 
 pub mod app;
 pub mod auth;
+pub mod auth_wizard;
 pub mod components;
 pub mod contacts;
 pub mod destinations;

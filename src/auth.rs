@@ -10,13 +10,14 @@ use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use zeroize::Zeroize;
 
-use crate::components::{Button, Input};
+use crate::components::{Button, Input, StorageProvider};
 use crate::dialog::{open_directory_dialog, open_file_dialog};
 use crate::invoke::invoke_command;
 use crate::ipc_types::{
     AuthResponse, AuthenticateRequest, CreateVaultRequest, DestinationSessionConfig,
 };
 use crate::state::{use_session, use_session_actions};
+use crate::auth_wizard::{WizardStep, ProgressIndicator, IdentityStep, StorageStep, ReviewStep};
 
 // ─── Chunk-size constants (VaultCreationPage helpers) ─────────────────────────
 
@@ -40,6 +41,68 @@ pub const PRESETS: &[(&str, u64)] = &[
 /// best-effort client-side protection against accidental out-of-range values.
 pub fn clamp_chunk_size(bytes: u64) -> u64 {
     bytes.clamp(CHUNK_MIN, CHUNK_MAX)
+}
+
+/// Converts storage provider selection to DestinationSessionConfig for IPC.
+fn storage_provider_to_destination(provider: StorageProvider) -> DestinationSessionConfig {
+    match provider {
+        StorageProvider::Local => {
+            DestinationSessionConfig {
+                label: "Local".to_string(),
+                destination_type: "local".to_string(),
+                provider: "local".to_string(),
+                bucket: String::new(),
+                region: String::new(),
+                endpoint: String::new(),
+                path_prefix: String::new(),
+                rclone_config_blob: String::new(),
+                is_primary: true,
+                backup_mode: None,
+            }
+        }
+        StorageProvider::S3 => {
+            DestinationSessionConfig {
+                label: "Amazon S3".to_string(),
+                destination_type: "s3".to_string(),
+                provider: "aws".to_string(),
+                bucket: String::new(),
+                region: String::new(),
+                endpoint: String::new(),
+                path_prefix: String::new(),
+                rclone_config_blob: String::new(),
+                is_primary: true,
+                backup_mode: None,
+            }
+        }
+        StorageProvider::B2 => {
+            DestinationSessionConfig {
+                label: "Backblaze B2".to_string(),
+                destination_type: "b2".to_string(),
+                provider: "b2".to_string(),
+                bucket: String::new(),
+                region: String::new(),
+                endpoint: String::new(),
+                path_prefix: String::new(),
+                rclone_config_blob: String::new(),
+                is_primary: true,
+                backup_mode: None,
+            }
+        }
+        StorageProvider::Rclone => {
+            DestinationSessionConfig {
+                label: "Rclone".to_string(),
+                destination_type: "rclone".to_string(),
+                provider: "rclone".to_string(),
+                bucket: String::new(),
+                region: String::new(),
+                endpoint: String::new(),
+                path_prefix: String::new(),
+                rclone_config_blob: String::new(),
+                is_primary: true,
+                backup_mode: None,
+            }
+        }
+    }
 }
 
 /// Returns the default primary destination used when no cloud backend is configured.
@@ -180,7 +243,6 @@ pub fn LoginPage(
     let (password, set_password) = signal(String::new());
     let (key_file_path, set_key_file_path) = signal::<Option<String>>(None);
     let (loading, set_loading) = signal(false);
-    let session = use_session();
     let session_actions = use_session_actions();
     let on_create = on_request_create_vault.clone();
 
@@ -189,7 +251,7 @@ pub fn LoginPage(
         let key_file = key_file_path.get();
 
         if password_value.is_empty() {
-            session_actions.complete_failure("Password is required".into());
+            crate::components::use_toast().warning("Password is required");
             return;
         }
 
@@ -213,8 +275,14 @@ pub fn LoginPage(
             set_password.update(|s| s.zeroize());
             set_loading.set(false);
             match result {
-                Ok(resp) => session_actions.complete_success(resp.vault_id),
-                Err(err) => session_actions.complete_failure(err.message),
+                Ok(resp) => {
+                    crate::components::use_toast().success(&format!("Vault unlocked: {}", resp.vault_id));
+                    session_actions.complete_success(resp.vault_id);
+                }
+                Err(err) => {
+                    crate::components::use_toast().error(&err.message);
+                    session_actions.complete_failure(err.message);
+                }
             }
         });
     };
@@ -233,9 +301,6 @@ pub fn LoginPage(
                     detected_path=key_file_path
                     on_manual_select=move |p| set_key_file_path.set(Some(p))
                 />
-                {move || session.read().error.clone().map(|e| view! {
-                    <p class="text-danger text-sm mt-2">{e}</p>
-                })}
                 <Button loading=loading on_click=on_submit>"Unlock"</Button>
                 <button
                     class="mt-4 text-rune text-sm w-full text-center"
@@ -292,20 +357,55 @@ pub fn VaultCreationPage(
     let (password, set_password) = signal(String::new());
     let (tier, set_tier) = signal::<u8>(2);
     let (key_file_destination, set_key_file_destination) = signal::<Option<String>>(None);
-    let (chunk_size_bytes, set_chunk_size_bytes) = signal::<u64>(4_194_304);
-    let (epoch_buffer_enabled, set_epoch_buffer_enabled) = signal(false);
+    let (chunk_size_bytes, _set_chunk_size_bytes) = signal::<u64>(4_194_304);
+    let (epoch_buffer_enabled, _set_epoch_buffer_enabled) = signal(false);
+    let (storage_provider, set_storage_provider) = signal(StorageProvider::Local);
     let (loading, set_loading) = signal(false);
+    let (current_step, set_current_step) = signal(WizardStep::Identity);
+    
     let session = use_session();
     let session_actions = use_session_actions();
     let on_back = on_back_to_login.clone();
 
     let on_browse_key = move |_| {
-        let set_key_file_destination = set_key_file_destination;
         leptos::task::spawn_local(async move {
             if let Some(path) = open_directory_dialog().await {
                 set_key_file_destination.set(Some(path));
+                crate::components::use_toast().info("Key file destination selected");
             }
         });
+    };
+
+    let can_proceed = move || {
+        match current_step.get() {
+            WizardStep::Identity => {
+                !vault_name.get().is_empty() && !password.get().is_empty() && 
+                (tier.get() == 1 || key_file_destination.get().is_some())
+            }
+            WizardStep::Storage => true,
+            WizardStep::Review => true,
+        }
+    };
+
+    let on_next = move |_| {
+        if !can_proceed() {
+            crate::components::use_toast().warning("Please complete all required fields");
+            return;
+        }
+        
+        match current_step.get() {
+            WizardStep::Identity => set_current_step.set(WizardStep::Storage),
+            WizardStep::Storage => set_current_step.set(WizardStep::Review),
+            WizardStep::Review => {},
+        }
+    };
+
+    let on_back_step = move |_| {
+        match current_step.get() {
+            WizardStep::Identity => on_back(),
+            WizardStep::Storage => set_current_step.set(WizardStep::Identity),
+            WizardStep::Review => set_current_step.set(WizardStep::Storage),
+        }
     };
 
     let on_submit = move |_| {
@@ -320,7 +420,7 @@ pub fn VaultCreationPage(
             tier_value,
             key_file_destination_value.as_deref(),
         ) {
-            session_actions.complete_failure(message);
+            crate::components::use_toast().warning(&message);
             return;
         }
 
@@ -332,11 +432,11 @@ pub fn VaultCreationPage(
         let set_password = set_password;
 
         let req = CreateVaultRequest {
-            vault_name: vault_name_value,
+            vault_name: vault_name_value.clone(),
             password: password_value.clone(),
             tier: tier_value,
             key_file_destination: key_file_destination_value,
-            primary_destination: default_destination(),
+            primary_destination: storage_provider_to_destination(storage_provider.get()),
             chunk_size_bytes: clamped_chunk,
             epoch_buffer_enabled: epoch_buffer_enabled.get(),
         };
@@ -348,104 +448,81 @@ pub fn VaultCreationPage(
             set_password.update(|s| s.zeroize());
             set_loading.set(false);
             match result {
-                Ok(resp) => session_actions.complete_success(resp.vault_id),
-                Err(err) => session_actions.complete_failure(err.message),
+                Ok(resp) => {
+                    crate::components::use_toast().success(&format!("Vault '{}' created successfully!", vault_name_value));
+                    session_actions.complete_success(resp.vault_id);
+                }
+                Err(err) => {
+                    crate::components::use_toast().error(&err.message);
+                    session_actions.complete_failure(err.message);
+                }
             }
         });
     };
 
     view! {
         <div class="min-h-screen bg-iron flex items-center justify-center p-4">
-            <div class="w-full max-w-md bg-stone border border-steel rounded-xl p-6 shadow-xl">
-                <h1 class="text-2xl text-bone text-center mb-6">"Create New Vault"</h1>
+            <div class="w-full max-w-lg bg-stone border border-steel rounded-xl p-6 shadow-xl">
+                <ProgressIndicator current_step=current_step.get() />
+                
+                <h1 class="text-2xl text-bone text-center mb-2">{current_step.get().title()}</h1>
+                <p class="text-sm text-text-secondary text-center mb-6">{current_step.get().description()}</p>
 
-                <Input
-                    label="Vault Name".to_string()
-                    value=vault_name
-                    on_input=move |v| set_vault_name.set(v)
-                />
-                <Input
-                    input_type="password"
-                    label="Password".to_string()
-                    value=password
-                    on_input=move |v| set_password.set(v)
-                />
-
-                <div class="mb-4">
-                    <label class="text-sm text-text-secondary block mb-1">"Authentication Tier"</label>
-                    <select
-                        class="bg-surface-overlay border border-border-default rounded-lg px-3 py-2 text-bone w-full"
-                        on:change=move |ev| {
-                            let v: u8 = event_target_value(&ev).parse().unwrap_or(2);
-                            set_tier.set(v);
-                        }
-                    >
-                        <option value="1">"Tier 1 — Password only"</option>
-                        <option value="2" selected=true>"Tier 2 — Password + Key file"</option>
-                    </select>
-                </div>
-
-                <Show when=move || tier.get() == 2>
-                    <div class="mb-4">
-                        <label class="text-sm text-text-secondary block mb-1">"Key File Destination"</label>
-                        <div class="flex gap-2 items-center">
-                            <span class="text-sm text-bone flex-1">
-                                {move || key_file_destination.read().clone().unwrap_or_else(|| "Not selected".to_string())}
-                            </span>
-                            <Button variant="secondary" on_click=on_browse_key>"Browse"</Button>
-                        </div>
-                    </div>
-                </Show>
-
-                <div class="mb-4">
-                    <label class="text-sm text-text-secondary block mb-1">"Chunk Size"</label>
-                    <select
-                        class="bg-surface-overlay border border-border-default rounded-lg px-3 py-2 text-bone w-full"
-                        on:change=move |ev| {
-                            let bytes: u64 = event_target_value(&ev).parse().unwrap_or(4_194_304);
-                            set_chunk_size_bytes.set(bytes);
-                        }
-                    >
-                        {PRESETS.iter().map(|(label, bytes)| {
-                            let is_default = *bytes == 4_194_304;
-                            view! {
-                                <option value=bytes.to_string() selected=is_default>{*label}</option>
-                            }
-                        }).collect::<Vec<_>>()}
-                    </select>
-                </div>
-
-                <div class="flex items-center gap-2 mb-6">
-                    <input
-                        type="checkbox"
-                        id="epoch-buffer"
-                        class="accent-rune"
-                        prop:checked=move || epoch_buffer_enabled.get()
-                        on:change=move |ev| {
-                            use wasm_bindgen::JsCast;
-                            let checked = ev.target()
-                                .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-                                .map(|el| el.checked())
-                                .unwrap_or(false);
-                            set_epoch_buffer_enabled.set(checked);
-                        }
-                    />
-                    <label for="epoch-buffer" class="text-sm text-text-secondary">
-                        "Opt-in: files smaller than the chunk size are packed before upload; \
-                         larger files upload immediately."
-                    </label>
-                </div>
+                {
+                    move || match current_step.get() {
+                        WizardStep::Identity => view! {
+                            <IdentityStep
+                                vault_name=vault_name
+                                set_vault_name=set_vault_name
+                                password=password
+                                set_password=set_password
+                                tier=tier
+                                set_tier=set_tier
+                                key_file_destination=key_file_destination
+                                on_browse_key=on_browse_key
+                            />
+                        }.into_any(),
+                        WizardStep::Storage => view! {
+                            <StorageStep
+                                _storage_provider=storage_provider
+                                _set_storage_provider=set_storage_provider
+                            />
+                        }.into_any(),
+                        WizardStep::Review => view! {
+                            <ReviewStep
+                                vault_name=vault_name
+                                tier=tier
+                                key_file_destination=key_file_destination
+                                storage_provider=storage_provider
+                            />
+                        }.into_any(),
+                    }
+                }
 
                 {move || session.read().error.clone().map(|e| view! {
-                    <p class="text-danger text-sm mt-2">{e}</p>
+                    <p class="text-danger text-sm mt-4 mb-4">{e}</p>
                 })}
-                <Button loading=loading on_click=on_submit>"Create Vault"</Button>
-                <button
-                    class="mt-4 text-rune text-sm w-full text-center"
-                    on:click=move |_| on_back()
-                >
-                    "Back to login"
-                </button>
+
+                <div class="flex gap-3 mt-8">
+                    <button
+                        class="flex-1 px-4 py-2 rounded-lg border border-border-default text-bone hover:bg-surface-overlay transition-colors"
+                        on:click=on_back_step
+                    >
+                        {if current_step.get() == WizardStep::Identity { "Cancel" } else { "Back" }}
+                    </button>
+                    
+                    <Show when=move || current_step.get() != WizardStep::Review>
+                        <Button loading=Signal::derive(move || false) on_click=on_next>
+                            "Next"
+                        </Button>
+                    </Show>
+
+                    <Show when=move || current_step.get() == WizardStep::Review>
+                        <Button loading=loading on_click=on_submit>
+                            "Create Vault"
+                        </Button>
+                    </Show>
+                </div>
             </div>
         </div>
     }
