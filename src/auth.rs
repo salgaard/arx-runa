@@ -295,6 +295,7 @@ pub fn VaultCreationPage(
     let (chunk_size_bytes, set_chunk_size_bytes) = signal::<u64>(4_194_304);
     let (epoch_buffer_enabled, set_epoch_buffer_enabled) = signal(false);
     let (loading, set_loading) = signal(false);
+    let session = use_session();
     let session_actions = use_session_actions();
     let on_back = on_back_to_login.clone();
 
@@ -435,6 +436,9 @@ pub fn VaultCreationPage(
                     </label>
                 </div>
 
+                {move || session.read().error.clone().map(|e| view! {
+                    <p class="text-danger text-sm mt-2">{e}</p>
+                })}
                 <Button loading=loading on_click=on_submit>"Create Vault"</Button>
                 <button
                     class="mt-4 text-rune text-sm w-full text-center"

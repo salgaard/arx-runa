@@ -292,6 +292,22 @@ pub async fn create_vault(
 
     let tier_enum = if tier == 2 { Tier::Two } else { Tier::One };
 
+    if tier_enum == Tier::Two {
+        if let Some(ref dest) = key_file_destination {
+            let key_path = if dest.is_dir() {
+                dest.join("arx-runa.key")
+            } else {
+                dest.clone()
+            };
+            if key_path.exists() {
+                return Err(IpcError::InvalidInput(
+                    "A key file already exists at that location. Choose a different directory."
+                        .into(),
+                ));
+            }
+        }
+    }
+
     // Snapshot the current cloud transport for use during the ceremony.
     let cloud_transport_arc = state.cloud_transport.read().await.clone();
 
