@@ -34,6 +34,10 @@
                 {
                     "name": "RUST_LOG",
                     "value": "debug"
+                },
+                {
+                    "name": "RUST_BACKTRACE",
+                    "value": "1"
                 }
             ],
             "args": []

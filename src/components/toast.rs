@@ -14,8 +14,8 @@
 //! ```
 
 use leptos::prelude::*;
-use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 
 /// Toast notification type, determining visual style and auto-dismiss behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,10 +62,7 @@ pub(crate) struct ToastItem {
 
 /// Single toast notification card.
 #[component]
-fn ToastNotification(
-    toast: ToastItem,
-    on_dismiss: impl Fn() + 'static,
-) -> impl IntoView {
+fn ToastNotification(toast: ToastItem, on_dismiss: impl Fn() + 'static) -> impl IntoView {
     let toast_type = toast.toast_type;
     let on_dismiss_rc = std::rc::Rc::new(on_dismiss);
     let dismissed_signal = RwSignal::new(false);
@@ -74,11 +71,13 @@ fn ToastNotification(
     if let Some(millis) = toast_type.auto_dismiss_millis() {
         let on_dismiss_for_effect = on_dismiss_rc.clone();
         Effect::new(move |_| {
-            if !dismissed_signal.get() && let Some(window) = web_sys::window() {
+            if !dismissed_signal.get()
+                && let Some(window) = web_sys::window()
+            {
                 dismissed_signal.set(true);
                 let on_dismiss_clone = on_dismiss_for_effect.clone();
                 let duration_millis = millis as i32;
-                
+
                 let closure = Closure::once(move || {
                     on_dismiss_clone();
                 });
@@ -161,6 +160,7 @@ pub(crate) fn ToastContainer(
 pub struct ToastActions {
     pub(crate) add: std::sync::Arc<dyn Fn(String, ToastType) + Send + Sync>,
     pub(crate) dismiss: std::sync::Arc<dyn Fn(u64) + Send + Sync>,
+    #[allow(dead_code)]
     pub(crate) clear_all: std::sync::Arc<dyn Fn() + Send + Sync>,
 }
 
@@ -190,8 +190,7 @@ impl ToastActions {
 type ToastContextType = (ReadSignal<Vec<ToastItem>>, ToastActions);
 
 /// Global toast context.
-pub(crate) static TOAST_CONTEXT: std::sync::OnceLock<ToastContextType> =
-    std::sync::OnceLock::new();
+pub(crate) static TOAST_CONTEXT: std::sync::OnceLock<ToastContextType> = std::sync::OnceLock::new();
 
 /// Retrieve toast actions from context.
 ///
@@ -204,14 +203,6 @@ pub fn use_toast() -> ToastActions {
         .expect("Toast context not initialized. Ensure <ToastProvider> wraps the component tree.")
         .1
         .clone()
-}
-
-/// Internal: retrieve toast signal for rendering.
-pub(crate) fn use_toast_signal() -> ReadSignal<Vec<ToastItem>> {
-    TOAST_CONTEXT
-        .get()
-        .expect("Toast context not initialized. Ensure <ToastProvider> wraps the component tree.")
-        .0
 }
 
 /// Toast provider — wraps the application and manages toast state.
@@ -235,7 +226,6 @@ pub fn ToastProvider(children: Children) -> impl IntoView {
     let (toasts, set_toasts) = signal(Vec::<ToastItem>::new());
 
     let add_toast = {
-        let set_toasts = set_toasts;
         std::sync::Arc::new(move |message: String, toast_type: ToastType| {
             set_toasts.update(|t| {
                 let id = t.len() as u64;
@@ -250,14 +240,12 @@ pub fn ToastProvider(children: Children) -> impl IntoView {
     };
 
     let dismiss_toast = {
-        let set_toasts = set_toasts;
         std::sync::Arc::new(move |id: u64| {
             set_toasts.update(|t| t.retain(|item| item.id != id));
         })
     };
 
     let clear_all_toasts = {
-        let set_toasts = set_toasts;
         std::sync::Arc::new(move || {
             set_toasts.update(|t| t.clear());
         })
@@ -332,14 +320,11 @@ pub fn inject_toast_styles() {
 }
 "#;
 
-    if let Some(document) = web_sys::window()
-        .and_then(|w| w.document())
+    if let Some(document) = web_sys::window().and_then(|w| w.document())
+        && let Ok(Some(head_element)) = document.query_selector("head")
+        && let Ok(style_element) = document.create_element("style")
     {
-        if let Ok(Some(head_element)) = document.query_selector("head") {
-            if let Ok(style_element) = document.create_element("style") {
-                style_element.set_text_content(Some(style_content));
-                let _ = head_element.append_child(&style_element);
-            }
-        }
+        style_element.set_text_content(Some(style_content));
+        let _ = head_element.append_child(&style_element);
     }
 }

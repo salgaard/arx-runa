@@ -20,6 +20,7 @@ mod sync_conflict;
 mod sync_progress_update;
 mod sync_result;
 mod sync_status;
+mod vault_summary;
 
 pub use auth_response::AuthResponse;
 pub use contact_entry::ContactEntry;
@@ -39,3 +40,4 @@ pub use sync_conflict::SyncConflict;
 pub use sync_progress_update::SyncProgressUpdate;
 pub use sync_result::SyncResult;
 pub use sync_status::SyncStatus;
+pub use vault_summary::VaultSummary;

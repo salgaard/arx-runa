@@ -804,6 +804,7 @@ mod tests {
             },
             key_file_blake3: None,
             recovery_slots: Vec::new(),
+            name: None,
         }
     }
 

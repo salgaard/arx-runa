@@ -178,6 +178,9 @@ mod tests {
             argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: None,
         };
         let vault_id = create_vault(request, &session, &cloud)
             .await
@@ -266,6 +269,9 @@ mod tests {
             argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: None,
         };
         create_vault(seed_request, &active_session, &seed_cloud)
             .await

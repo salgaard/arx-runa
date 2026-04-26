@@ -119,8 +119,12 @@ pub async fn insert_destination_session(
     session: &DestinationSession,
 ) -> Result<(), StorageError> {
     let mut session = session.clone();
-    session.rclone_config_blob =
-        validate_single_remote_stanza(&session.rclone_config_blob, &session.rclone_remote_name)?;
+    if session.destination_type == DestinationType::Cloud {
+        session.rclone_config_blob = validate_single_remote_stanza(
+            &session.rclone_config_blob,
+            &session.rclone_remote_name,
+        )?;
+    }
     store
         .insert_destination_session(
             session.destination_id,
@@ -184,8 +188,11 @@ pub async fn build_session_rclone_conf(
         .await
         .map_err(map_storage_error)?;
     let mut concatenated = Zeroizing::new(String::new());
-    for (index, session) in sessions.iter().enumerate() {
-        if index > 0 && !concatenated.ends_with('\n') {
+    for session in sessions.iter() {
+        if session.destination_type != DestinationType::Cloud {
+            continue;
+        }
+        if !concatenated.is_empty() && !concatenated.ends_with('\n') {
             concatenated.push('\n');
         }
         let validated_blob =

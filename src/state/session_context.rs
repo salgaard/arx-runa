@@ -129,7 +129,7 @@ pub fn SessionProvider(children: Children) -> impl IntoView {
             }
 
             // Only poll when unlocked; otherwise just wait and check again
-            if !is_unlocked.get() {
+            if !is_unlocked.get_untracked() {
                 gloo_timers::future::TimeoutFuture::new(5_000).await;
                 continue;
             }

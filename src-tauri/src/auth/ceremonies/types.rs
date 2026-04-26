@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use crate::auth::kdf::Argon2Params;
 use crate::auth::key_source::KeySource;
+use crate::storage::cloud::destination_session::DestinationSession;
 
 /// Authentication tier for a vault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +37,13 @@ pub enum Argon2MigrationIntent {
 
 /// Request payload for [`create_vault`].
 pub struct CreateVaultRequest<'a> {
+    /// Optional pre-allocated vault UUID.
+    ///
+    /// When `Some`, the ceremony uses this UUID as the vault identifier instead
+    /// of generating a new one. Callers that pre-create the vault directory
+    /// should supply this so the directory name always matches the vault_id and
+    /// no post-ceremony rename is required.
+    pub suggested_vault_id: Option<uuid::Uuid>,
     /// Chosen authentication tier.
     pub tier: Tier,
     /// UTF-8 password bytes entered by the user.
@@ -51,6 +59,12 @@ pub struct CreateVaultRequest<'a> {
     pub chunk_size_bytes: u64,
     /// Enables epoch buffer routing for sub-chunk files when true.
     pub epoch_buffer_enabled: bool,
+    /// Optional human-readable vault name written into the vault header.
+    pub vault_name: Option<String>,
+    /// Primary destination session to insert into the vault DB during the ceremony,
+    /// before the session is installed. When `Some`, destination insertion is atomic
+    /// with vault creation: the session becomes `Active` only if insertion succeeds.
+    pub primary_destination: Option<DestinationSession>,
 }
 
 impl<'a> CreateVaultRequest<'a> {
@@ -68,6 +82,7 @@ impl<'a> CreateVaultRequest<'a> {
         argon2_params: Argon2Params,
     ) -> Self {
         Self {
+            suggested_vault_id: None,
             tier,
             password_bytes,
             target_key_file_path,
@@ -75,6 +90,8 @@ impl<'a> CreateVaultRequest<'a> {
             argon2_params,
             chunk_size_bytes: Self::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: Self::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            primary_destination: None,
         }
     }
 }

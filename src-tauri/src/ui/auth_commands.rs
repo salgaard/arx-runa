@@ -32,7 +32,7 @@ use crate::storage::cloud::{
     CloudEndpoint, DestinationSessionPublic, RcloneTransport, SyncConfig,
     destination_session::{
         BackupSyncMode, DestinationSession, DestinationType, build_session_rclone_conf,
-        destroy_session_rclone_conf, get_primary_destination, insert_destination_session,
+        destroy_session_rclone_conf, get_primary_destination,
     },
     download_vault_header,
     vault_header::VaultHeader,
@@ -41,9 +41,11 @@ use crate::storage::cloud::{
 use crate::ui::commands_common::{require_active_session, sanitise_password};
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
-use crate::ui::types::{AuthResponse, DestinationSessionConfig, SessionStatus};
+use crate::ui::types::{AuthResponse, DestinationSessionConfig, SessionStatus, VaultSummary};
 use crate::ui::validation::validate_password;
-use crate::ui::vault_paths::{default_vault_root, resolve_singleton_vault};
+use crate::ui::vault_paths::{
+    default_vault_root, list_local_vaults, resolve_singleton_vault, resolve_vault_by_id,
+};
 
 // ─── Private helpers ────────────────────────────────────────────────────────
 
@@ -84,10 +86,10 @@ fn rclone_conf_path() -> PathBuf {
 /// Converts an IPC `DestinationSessionConfig` into a storage `DestinationSession`.
 fn destination_from_config(config: &DestinationSessionConfig) -> DestinationSession {
     let destination_type = match config.destination_type.as_str() {
-        "cloud" => DestinationType::Cloud,
+        "cloud" | "s3" | "b2" | "rclone" => DestinationType::Cloud,
         "external_drive" => DestinationType::ExternalDrive,
-        "local_path" => DestinationType::LocalPath,
-        _ => DestinationType::Cloud,
+        "local" | "local_path" => DestinationType::LocalPath,
+        _ => DestinationType::LocalPath,
     };
     let backup_mode = config.backup_mode.as_deref().and_then(|mode| match mode {
         "mirror" => Some(BackupSyncMode::Mirror),
@@ -166,7 +168,7 @@ async fn validate_storage_destination(
             };
             IpcError::InvalidInput(message)
         })
-        .map(|_| ())  // Discard the list result; we only cared about testing connectivity
+        .map(|_| ()) // Discard the list result; we only cared about testing connectivity
 }
 
 /// Best-effort: writes rclone.conf from the DB and installs an `RcloneTransport`.
@@ -216,13 +218,25 @@ async fn try_build_and_swap_rclone_transport(state: &AppState, db: &SqlCipherMet
 
 // ─── IPC command handlers ────────────────────────────────────────────────────
 
+/// Lists all locally-discoverable vaults without requiring authentication.
+///
+/// Scans the vault root for directories containing a valid `vault-header.json`.
+/// Unreadable or invalid headers are silently skipped.
+#[tauri::command]
+pub async fn list_vaults() -> Vec<VaultSummary> {
+    list_local_vaults()
+}
+
 /// Authenticate with password (Tier 1) or password + USB key file (Tier 2).
 ///
+/// When `vault_id` is `Some`, unlocks that specific vault. When `None`, falls
+/// back to singleton resolution (backward compat — errors if multiple vaults exist).
 /// Returns vault metadata on success. Does NOT return any key material.
 #[tauri::command]
 pub async fn authenticate(
     mut password: String,
     key_file_path: Option<PathBuf>,
+    vault_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<AuthResponse, IpcError> {
     state.session_manager.reset_timer().await;
@@ -230,9 +244,12 @@ pub async fn authenticate(
     let password_bytes = sanitise_password(&mut password);
     validate_password(std::str::from_utf8(&password_bytes).unwrap_or(""))?;
 
-    // Resolve the single local vault.
-    let (vault_id, db_path, header_path) = resolve_singleton_vault()?
-        .ok_or_else(|| IpcError::InvalidInput("No vault configured".into()))?;
+    // Resolve vault paths: by explicit ID or by singleton discovery.
+    let (vault_id, db_path, header_path) = match vault_id {
+        Some(ref id) => resolve_vault_by_id(id)?,
+        None => resolve_singleton_vault()?
+            .ok_or_else(|| IpcError::InvalidInput("No vault configured".into()))?,
+    };
 
     // Read and parse the vault header from local disk.
     let header_json = tokio::fs::read_to_string(&header_path)
@@ -348,66 +365,76 @@ pub async fn create_vault(
     let cloud_transport_arc = state.cloud_transport.read().await.clone();
     validate_storage_destination(&primary_destination, &cloud_transport_arc).await?;
 
-    // Pre-generate a UUID for the vault directory; we rename after the ceremony
-    // so the directory name matches the ceremony-assigned vault_id.
-    let temp_dir_id = Uuid::new_v4().hyphenated().to_string();
-    let vault_dir = default_vault_root().join(&temp_dir_id);
-    tokio::fs::create_dir_all(&vault_dir)
-        .await
-        .map_err(|e| IpcError::InternalError(e.to_string()))?;
+    // Pre-generate the vault UUID so the directory is created with the final name.
+    // This avoids a post-ceremony rename, which would fail on Windows because
+    // the session manager opens the SQLite DB during install and holds the handle.
+    let vault_uuid = Uuid::new_v4();
+    let vault_id_str = vault_uuid.hyphenated().to_string();
+    let vault_dir = default_vault_root().join(&vault_id_str);
+    tokio::fs::create_dir_all(&vault_dir).await.map_err(|e| {
+        tracing::error!(?vault_dir, error = %e, "Failed to create vault directory");
+        IpcError::InternalError(e.to_string())
+    })?;
     let db_path = vault_dir.join("vault.db");
 
     let tier_enum = if tier == 2 { Tier::Two } else { Tier::One };
 
-    if tier_enum == Tier::Two {
-        if let Some(ref dest) = key_file_destination {
-            let key_path = if dest.is_dir() {
-                dest.join("arx-runa.key")
-            } else {
-                dest.clone()
-            };
-            if key_path.exists() {
-                return Err(IpcError::InvalidInput(
-                    "A key file already exists at that location. Choose a different directory."
-                        .into(),
-                ));
-            }
+    if tier_enum == Tier::Two
+        && let Some(ref dest) = key_file_destination
+    {
+        let key_path = if dest.is_dir() {
+            dest.join("arx-runa.key")
+        } else {
+            dest.clone()
+        };
+        if key_path.exists() {
+            return Err(IpcError::InvalidInput(
+                "A key file already exists at that location. Choose a different directory.".into(),
+            ));
         }
     }
 
+    let dest_session = destination_from_config(&primary_destination);
     let request = CreateVaultRequest {
+        suggested_vault_id: Some(vault_uuid),
         tier: tier_enum,
         password_bytes: &password_bytes,
         target_key_file_path: key_file_destination,
-        vault_db_path: db_path,
+        vault_db_path: db_path.clone(),
         argon2_params: Argon2Params::DEFAULT,
         chunk_size_bytes,
         epoch_buffer_enabled,
+        vault_name: if vault_name.is_empty() {
+            None
+        } else {
+            Some(vault_name.clone())
+        },
+        primary_destination: Some(dest_session),
     };
 
-    // Run the create_vault ceremony: derives keys, creates DB, uploads vault header,
-    // and installs the session. Returns the ceremony-assigned VaultId.
-    let ceremony_vault_id = ceremony_create_vault(
+    // Run the create_vault ceremony: derives keys, creates DB, inserts destination,
+    // uploads vault header, and installs the session. The session becomes Active only
+    // if destination insertion also succeeds, so partial state cannot be left behind.
+    if let Err(err) = ceremony_create_vault(
         request,
         &state.session_manager,
         cloud_transport_arc.as_ref(),
     )
     .await
-    .map_err(IpcError::from)?;
-
-    let vault_id_str = ceremony_vault_id.to_uuid().hyphenated().to_string();
-
-    // Rename the temp vault directory to the canonical ceremony-assigned vault_id
-    // so that resolve_singleton_vault() returns a consistent identifier.
-    let final_vault_dir = default_vault_root().join(&vault_id_str);
-    if vault_dir != final_vault_dir {
-        tokio::fs::rename(&vault_dir, &final_vault_dir)
-            .await
-            .map_err(|e| IpcError::InternalError(e.to_string()))?;
+    {
+        // Ceremony failed before installing the session. Remove the vault directory
+        // that this handler pre-created — the ceremony cleans up vault.db and the
+        // key file internally, but the outer directory is owned here.
+        if let Err(cleanup_err) = tokio::fs::remove_dir_all(&vault_dir).await {
+            tracing::warn!(
+                ?cleanup_err,
+                "Failed to remove vault directory after ceremony failure"
+            );
+        }
+        return Err(IpcError::from(err));
     }
-    let db_path = final_vault_dir.join("vault.db");
 
-    // Open the vault database using the sqlcipher key from the just-installed session.
+    // Open the vault database for use in the current session.
     // SAFETY: key_copy is wrapped in Zeroizing and overwritten on drop.
     let key_copy: [u8; 32] = state
         .session_manager
@@ -417,14 +444,13 @@ pub async fn create_vault(
     let key_zeroizing = Zeroizing::new(key_copy);
     let db = SqlCipherMetadataStore::open(&db_path, &key_zeroizing)
         .await
-        .map_err(IpcError::from)?;
+        .map_err(|e| {
+            // Vault was correctly created; just lock the session. The user can re-authenticate.
+            let err = IpcError::from(e);
+            tracing::error!(?err, "Failed to open vault DB after successful creation");
+            err
+        })?;
     drop(key_zeroizing);
-
-    // Insert the primary destination session into the vault database.
-    let dest_session = destination_from_config(&primary_destination);
-    insert_destination_session(&db, &dest_session)
-        .await
-        .map_err(IpcError::from)?;
 
     // Store the open database in shared state.
     *state.database.write().await = Some(db);
@@ -440,10 +466,10 @@ pub async fn create_vault(
     // Best-effort: download vault-header.json from cloud and save locally so
     // that subsequent authenticate calls can read it from disk.
     {
-        let header_path = final_vault_dir.join("vault-header.json");
+        let header_path = vault_dir.join("vault-header.json");
         match download_vault_header(
             &*cloud_transport_arc,
-            &final_vault_dir,
+            &vault_dir,
             VaultHeaderTrustPolicy::Bootstrap,
         )
         .await
@@ -823,6 +849,42 @@ pub async fn retry_pending_vault_operation(
     }
 
     Ok(())
+}
+
+/// Returns `true` if a primary cloud endpoint has been saved to `cloud-config.json`.
+///
+/// Does not require an active session. Used at app startup to decide whether to
+/// show the cloud setup wizard.
+#[tauri::command]
+pub async fn check_cloud_configured() -> bool {
+    crate::storage::cloud::cloud_config::load_primary_cloud_endpoint()
+        .await
+        .map(|opt| opt.is_some())
+        .unwrap_or(false)
+}
+
+/// Saves the primary cloud endpoint to `cloud-config.json`.
+///
+/// Does not require an active session. Validates the endpoint before writing;
+/// returns `IpcError::InvalidInput` if validation fails.
+#[tauri::command]
+pub async fn configure_cloud(
+    provider: String,
+    bucket: String,
+    region: String,
+    endpoint: String,
+    path_prefix: String,
+) -> Result<(), IpcError> {
+    let endpoint_config = CloudEndpoint {
+        provider,
+        bucket,
+        region,
+        endpoint,
+        path_prefix,
+    };
+    crate::storage::cloud::cloud_config::save_primary_cloud_endpoint(&endpoint_config)
+        .await
+        .map_err(|e| IpcError::InvalidInput(e.to_string()))
 }
 
 #[cfg(test)]

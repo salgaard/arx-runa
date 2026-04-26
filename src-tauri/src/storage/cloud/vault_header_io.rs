@@ -216,6 +216,7 @@ mod tests {
             },
             key_file_blake3: None,
             recovery_slots: Vec::new(),
+            name: None,
         }
     }
 
@@ -241,6 +242,7 @@ mod tests {
                 },
                 wrapped_master_key: base64::engine::general_purpose::STANDARD.encode([0x55u8; 72]),
             }],
+            name: None,
         }
     }
 

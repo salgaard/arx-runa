@@ -2,8 +2,8 @@
 //!
 //! Supports Local, S3, B2, Rclone, and Custom endpoints.
 
-use leptos::prelude::*;
 use crate::ipc_types::DestinationSessionConfig;
+use leptos::prelude::*;
 
 /// Storage provider type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,7 +106,8 @@ pub fn StorageSelector() -> impl IntoView {
 
                     view! {
                         <label class="flex items-start gap-3 p-3 border border-border-default rounded-lg cursor-pointer hover:bg-surface-overlay transition-colors"
-                               class=("border-rune bg-surface-overlay", is_selected)>
+                               class=("border-rune", is_selected)
+                               class=("bg-surface-overlay", is_selected)>
                             <input
                                 type="radio"
                                 name="storage-provider"

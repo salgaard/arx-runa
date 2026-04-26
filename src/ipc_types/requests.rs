@@ -22,6 +22,9 @@ pub struct AuthenticateRequest {
     pub password: String,
     /// Absolute path to the key file, or `None` for Tier 1 (password-only) vaults.
     pub key_file_path: Option<String>,
+    /// Target vault identifier; `None` falls back to singleton discovery.
+    #[zeroize(skip)]
+    pub vault_id: Option<String>,
 }
 
 /// Argument payload for the `create_vault` Tauri command.
@@ -167,6 +170,22 @@ pub struct ShareFileRequest {
 pub struct RevokeShareRequest {
     /// Unique share ID to revoke.
     pub share_id: String,
+}
+
+/// Argument payload for the `configure_cloud` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigureCloudRequest {
+    /// Cloud provider identifier (e.g. `"s3"`, `"b2"`, `"google_drive"`).
+    pub provider: String,
+    /// Storage bucket name.
+    pub bucket: String,
+    /// Cloud region identifier.
+    pub region: String,
+    /// Custom endpoint URL, or empty string for the provider default.
+    pub endpoint: String,
+    /// Path prefix within the bucket.
+    pub path_prefix: String,
 }
 
 /// Argument payload for the `import_share` Tauri command.

@@ -1,8 +1,8 @@
-//! Authentication page components: login, vault creation, and key-file selector.
+//! Authentication page components: login and vault creation.
 //!
-//! All pages in this module interact with the `SessionProvider` context via
-//! `use_session_actions()`. Password memory is zeroed on both the local `String`
-//! and the Leptos signal immediately after each IPC call resolves.
+//! All pages interact with `SessionProvider` context via `use_session_actions()`.
+//! Password memory is zeroed on both the local `String` and the Leptos signal
+//! immediately after each IPC call resolves.
 
 use std::sync::{Arc, Mutex};
 
@@ -10,116 +10,17 @@ use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use zeroize::Zeroize;
 
-use crate::components::{Button, Input, StorageProvider};
+use crate::components::{Button, ChunkSizeSelector, DestinationSelector, EpochBufferToggle, Input};
 use crate::dialog::{open_directory_dialog, open_file_dialog};
 use crate::invoke::invoke_command;
+use crate::ipc_types::VaultSummary;
 use crate::ipc_types::{
     AuthResponse, AuthenticateRequest, CreateVaultRequest, DestinationSessionConfig,
 };
-use crate::state::{use_session, use_session_actions};
-use crate::auth_wizard::{WizardStep, ProgressIndicator, IdentityStep, StorageStep, ReviewStep};
+use crate::state::use_session_actions;
 
-// ─── Chunk-size constants (VaultCreationPage helpers) ─────────────────────────
-
-/// Minimum allowed chunk size in bytes.
-pub const CHUNK_MIN: u64 = 131_072;
-
-/// Maximum allowed chunk size in bytes.
-pub const CHUNK_MAX: u64 = 67_108_864;
-
-/// Named chunk size presets shown in the UI.
-pub const PRESETS: &[(&str, u64)] = &[
-    ("Documents (512 KiB)", 524_288),
-    ("Standard (4 MiB)", 4_194_304),
-    ("Media (16 MiB)", 16_777_216),
-    ("Paranoid (64 MiB)", 67_108_864),
-];
-
-/// Clamps `bytes` to `[CHUNK_MIN, CHUNK_MAX]`.
-///
-/// Server-side `validate_chunk_size` is the final authority; this clamp is
-/// best-effort client-side protection against accidental out-of-range values.
-pub fn clamp_chunk_size(bytes: u64) -> u64 {
-    bytes.clamp(CHUNK_MIN, CHUNK_MAX)
-}
-
-/// Converts storage provider selection to DestinationSessionConfig for IPC.
-fn storage_provider_to_destination(provider: StorageProvider) -> DestinationSessionConfig {
-    match provider {
-        StorageProvider::Local => {
-            DestinationSessionConfig {
-                label: "Local".to_string(),
-                destination_type: "local".to_string(),
-                provider: "local".to_string(),
-                bucket: String::new(),
-                region: String::new(),
-                endpoint: String::new(),
-                path_prefix: String::new(),
-                rclone_config_blob: String::new(),
-                is_primary: true,
-                backup_mode: None,
-            }
-        }
-        StorageProvider::S3 => {
-            DestinationSessionConfig {
-                label: "Amazon S3".to_string(),
-                destination_type: "s3".to_string(),
-                provider: "aws".to_string(),
-                bucket: String::new(),
-                region: String::new(),
-                endpoint: String::new(),
-                path_prefix: String::new(),
-                rclone_config_blob: String::new(),
-                is_primary: true,
-                backup_mode: None,
-            }
-        }
-        StorageProvider::B2 => {
-            DestinationSessionConfig {
-                label: "Backblaze B2".to_string(),
-                destination_type: "b2".to_string(),
-                provider: "b2".to_string(),
-                bucket: String::new(),
-                region: String::new(),
-                endpoint: String::new(),
-                path_prefix: String::new(),
-                rclone_config_blob: String::new(),
-                is_primary: true,
-                backup_mode: None,
-            }
-        }
-        StorageProvider::Rclone => {
-            DestinationSessionConfig {
-                label: "Rclone".to_string(),
-                destination_type: "rclone".to_string(),
-                provider: "rclone".to_string(),
-                bucket: String::new(),
-                region: String::new(),
-                endpoint: String::new(),
-                path_prefix: String::new(),
-                rclone_config_blob: String::new(),
-                is_primary: true,
-                backup_mode: None,
-            }
-        }
-    }
-}
-
-/// Returns the default primary destination used when no cloud backend is configured.
-fn default_destination() -> DestinationSessionConfig {
-    DestinationSessionConfig {
-        label: "Local".to_string(),
-        destination_type: "local".to_string(),
-        provider: "local".to_string(),
-        bucket: String::new(),
-        region: String::new(),
-        endpoint: String::new(),
-        path_prefix: String::new(),
-        rclone_config_blob: String::new(),
-        is_primary: true,
-        backup_mode: None,
-    }
-}
+// Re-export chunk-size primitives so existing tests via `use super::*` still compile.
+pub use crate::components::{CHUNK_MAX, CHUNK_MIN, PRESETS, clamp_chunk_size};
 
 // ─── KeyFileIndicator ─────────────────────────────────────────────────────────
 
@@ -152,9 +53,8 @@ fn is_tauri_event_available() -> bool {
 /// Key-file selector indicator.
 ///
 /// Displays the currently detected or manually-selected key file path.
-/// In Phase 6.3, only manual selection is active; the `device-event` subscriber
-/// is wired but receives no payloads until Phase 6.5 adds the backend emission
-/// bridge (`AppHandle::emit("device-event")` from `DeviceMonitor`).
+/// The `device-event` subscriber is wired but receives no payloads until Phase 6.5
+/// adds the backend emission bridge.
 #[component]
 pub fn KeyFileIndicator(
     /// Currently detected or manually-selected key file path signal.
@@ -173,15 +73,6 @@ pub fn KeyFileIndicator(
         });
     };
 
-    // Wire the device-event subscriber — tolerates zero emissions in 6.3.
-    // Backend emission bridge (AppHandle::emit from DeviceMonitor) is Phase 6.5 work.
-    //
-    // Skip subscription in browser dev mode when Tauri event API is unavailable.
-    // `on_cleanup` requires `Send + Sync`, so the unlisten handle is stored in
-    // `Arc<Mutex<...>>` (both `Send + Sync`). The `Closure` is forgotten after
-    // registration — Tauri's JS side holds the reference; once `unlisten` is
-    // called in `on_cleanup`, Tauri drops the reference and the JS GC reclaims
-    // the closure backing data.
     Effect::new(move |_| {
         if !is_tauri_event_available() {
             return;
@@ -206,7 +97,6 @@ pub fn KeyFileIndicator(
             {
                 *unlisten_fn.lock().unwrap_or_else(|e| e.into_inner()) = Some(f);
             }
-            // Tauri holds the JS reference until unlisten() is called.
             event_closure.forget();
         });
 
@@ -231,89 +121,116 @@ pub fn KeyFileIndicator(
 
 // ─── LoginPage ────────────────────────────────────────────────────────────────
 
-/// Login page — presented when no vault session is active.
-///
-/// The "Create new vault" link calls `on_request_create_vault` to trigger the
-/// routing transition to `VaultCreationPage`.
+/// Login page — presented when the user selects a vault to unlock.
 #[component]
 pub fn LoginPage(
-    /// Called when the user clicks "Create new vault".
-    on_request_create_vault: impl Fn() + 'static + Clone,
+    /// The vault the user intends to unlock.
+    vault: VaultSummary,
+    /// Called when the user clicks "Back" to return to the vault picker.
+    on_back: impl Fn() + 'static + Clone,
 ) -> impl IntoView {
     let (password, set_password) = signal(String::new());
     let (key_file_path, set_key_file_path) = signal::<Option<String>>(None);
     let (loading, set_loading) = signal(false);
     let session_actions = use_session_actions();
-    let on_create = on_request_create_vault.clone();
+    let vault_id = vault.vault_id.clone();
+    let vault_tier = vault.tier;
+    let vault_display_name = vault
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("{}…", &vault.vault_id[..8]));
 
-    let on_submit = move |_| {
-        let mut password_value = password.get();
-        let key_file = key_file_path.get();
+    let on_submit = {
+        let vault_id = vault_id.clone();
+        move |_| {
+            let mut password_value = password.get();
+            let key_file = key_file_path.get();
 
-        if password_value.is_empty() {
-            crate::components::use_toast().warning("Password is required");
-            return;
-        }
-
-        session_actions.begin_authenticating();
-        set_loading.set(true);
-
-        let session_actions = session_actions;
-        let set_loading = set_loading;
-        let set_password = set_password;
-
-        leptos::task::spawn_local(async move {
-            let result = invoke_command::<AuthenticateRequest, AuthResponse>(
-                "authenticate",
-                &AuthenticateRequest {
-                    password: password_value.clone(),
-                    key_file_path: key_file,
-                },
-            )
-            .await;
-            password_value.zeroize();
-            set_password.update(|s| s.zeroize());
-            set_loading.set(false);
-            match result {
-                Ok(resp) => {
-                    crate::components::use_toast().success(&format!("Vault unlocked: {}", resp.vault_id));
-                    session_actions.complete_success(resp.vault_id);
-                }
-                Err(err) => {
-                    crate::components::use_toast().error(&err.message);
-                    session_actions.complete_failure(err.message);
-                }
+            if password_value.is_empty() {
+                crate::components::use_toast().warning("Password is required");
+                return;
             }
-        });
+
+            session_actions.begin_authenticating();
+            set_loading.set(true);
+
+            let session_actions = session_actions;
+            let set_loading = set_loading;
+            let set_password = set_password;
+            let vault_id = vault_id.clone();
+
+            leptos::task::spawn_local(async move {
+                let result = invoke_command::<AuthenticateRequest, AuthResponse>(
+                    "authenticate",
+                    &AuthenticateRequest {
+                        password: password_value.clone(),
+                        key_file_path: key_file,
+                        vault_id: Some(vault_id),
+                    },
+                )
+                .await;
+                password_value.zeroize();
+                set_password.update(|s| s.zeroize());
+                set_loading.set(false);
+                match result {
+                    Ok(resp) => {
+                        crate::components::use_toast()
+                            .success(format!("Vault unlocked: {}", resp.vault_id));
+                        session_actions.complete_success(resp.vault_id);
+                    }
+                    Err(err) => {
+                        crate::components::use_toast().error(&err.message);
+                        session_actions.complete_failure(err.message);
+                    }
+                }
+            });
+        }
     };
 
     view! {
         <div class="min-h-screen bg-iron flex items-center justify-center p-4">
             <div class="w-full max-w-md bg-stone border border-steel rounded-xl p-6 shadow-xl">
-                <h1 class="text-2xl text-bone text-center mb-6">"Unlock Vault"</h1>
+                <h1 class="text-2xl text-bone text-center mb-2">
+                    {"Unlock "}{vault_display_name}
+                </h1>
+                {move || if vault_tier == 2 {
+                    view! {
+                        <p class="text-sm text-text-secondary text-center mb-6">
+                            "Key file required"
+                        </p>
+                    }.into_any()
+                } else {
+                    view! { <div class="mb-6"></div> }.into_any()
+                }}
                 <Input
                     input_type="password"
                     label="Password".to_string()
                     value=password
                     on_input=move |v| set_password.set(v)
                 />
-                <KeyFileIndicator
-                    detected_path=key_file_path
-                    on_manual_select=move |p| set_key_file_path.set(Some(p))
-                />
+                {move || if vault_tier == 2 {
+                    view! {
+                        <KeyFileIndicator
+                            detected_path=key_file_path
+                            on_manual_select=move |p| set_key_file_path.set(Some(p))
+                        />
+                    }.into_any()
+                } else {
+                    view! { <span></span> }.into_any()
+                }}
                 <Button loading=loading on_click=on_submit>"Unlock"</Button>
                 <button
                     class="mt-4 text-rune text-sm w-full text-center"
-                    on:click=move |_| on_create()
+                    on:click=move |_| on_back()
                 >
-                    "Create new vault"
+                    "← Back"
                 </button>
             </div>
         </div>
     }
 }
 
-// ─── Vault creation form validation ──────────────────────────────────────────
+// ─── Vault creation validation ────────────────────────────────────────────────
 
 /// Validates vault creation form inputs before the IPC call is dispatched.
 ///
@@ -342,28 +259,62 @@ pub fn validate_vault_creation_form(
     Ok(())
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+fn format_chunk_size(bytes: u64) -> String {
+    if let Some((label, _)) = PRESETS.iter().find(|(_, b)| *b == bytes) {
+        return (*label).to_string();
+    }
+    if bytes >= 1_048_576 {
+        format!("{} MiB", bytes / 1_048_576)
+    } else {
+        format!("{} KiB", bytes / 1_024)
+    }
+}
+
+fn default_local_destination() -> DestinationSessionConfig {
+    DestinationSessionConfig {
+        label: "Local Filesystem".to_string(),
+        destination_type: "local".to_string(),
+        provider: "local".to_string(),
+        bucket: String::new(),
+        region: String::new(),
+        endpoint: String::new(),
+        path_prefix: String::new(),
+        rclone_config_blob: String::new(),
+        is_primary: true,
+        backup_mode: None,
+    }
+}
+
 // ─── VaultCreationPage ────────────────────────────────────────────────────────
 
-/// Vault creation page — guides the user through naming, securing, and
-/// configuring a new vault.
+/// Vault creation page — single-page sectioned form.
 ///
-/// The "Back to login" link calls `on_back_to_login` to return to `LoginPage`.
+/// Sections: Identity → Advanced (collapsible) → Destination → Review.
+/// The "Cancel" button calls `on_back_to_login`.
 #[component]
 pub fn VaultCreationPage(
-    /// Called when the user clicks "Back to login".
+    /// Called when the user cancels vault creation.
     on_back_to_login: impl Fn() + 'static + Clone,
 ) -> impl IntoView {
+    // ── Identity signals ──────────────────────────────────────────────────────
     let (vault_name, set_vault_name) = signal(String::new());
     let (password, set_password) = signal(String::new());
     let (tier, set_tier) = signal::<u8>(2);
     let (key_file_destination, set_key_file_destination) = signal::<Option<String>>(None);
-    let (chunk_size_bytes, _set_chunk_size_bytes) = signal::<u64>(4_194_304);
-    let (epoch_buffer_enabled, _set_epoch_buffer_enabled) = signal(false);
-    let (storage_provider, set_storage_provider) = signal(StorageProvider::Local);
+
+    // ── Advanced signals ──────────────────────────────────────────────────────
+    let (show_advanced, set_show_advanced) = signal(false);
+    let (chunk_size_bytes, set_chunk_size_bytes) = signal::<u64>(4_194_304);
+    let (epoch_buffer_enabled, set_epoch_buffer_enabled) = signal(false);
+
+    // ── Destination signal (updated by DestinationSelector via callback) ──────
+    let (primary_destination, set_primary_destination) = signal(default_local_destination());
+
+    // ── Submit state ──────────────────────────────────────────────────────────
     let (loading, set_loading) = signal(false);
-    let (current_step, set_current_step) = signal(WizardStep::Identity);
-    
-    let session = use_session();
+
     let session_actions = use_session_actions();
     let on_back = on_back_to_login.clone();
 
@@ -374,38 +325,6 @@ pub fn VaultCreationPage(
                 crate::components::use_toast().info("Key file destination selected");
             }
         });
-    };
-
-    let can_proceed = move || {
-        match current_step.get() {
-            WizardStep::Identity => {
-                !vault_name.get().is_empty() && !password.get().is_empty() && 
-                (tier.get() == 1 || key_file_destination.get().is_some())
-            }
-            WizardStep::Storage => true,
-            WizardStep::Review => true,
-        }
-    };
-
-    let on_next = move |_| {
-        if !can_proceed() {
-            crate::components::use_toast().warning("Please complete all required fields");
-            return;
-        }
-        
-        match current_step.get() {
-            WizardStep::Identity => set_current_step.set(WizardStep::Storage),
-            WizardStep::Storage => set_current_step.set(WizardStep::Review),
-            WizardStep::Review => {},
-        }
-    };
-
-    let on_back_step = move |_| {
-        match current_step.get() {
-            WizardStep::Identity => on_back(),
-            WizardStep::Storage => set_current_step.set(WizardStep::Identity),
-            WizardStep::Review => set_current_step.set(WizardStep::Storage),
-        }
     };
 
     let on_submit = move |_| {
@@ -436,7 +355,7 @@ pub fn VaultCreationPage(
             password: password_value.clone(),
             tier: tier_value,
             key_file_destination: key_file_destination_value,
-            primary_destination: storage_provider_to_destination(storage_provider.get()),
+            primary_destination: primary_destination.get(),
             chunk_size_bytes: clamped_chunk,
             epoch_buffer_enabled: epoch_buffer_enabled.get(),
         };
@@ -449,79 +368,181 @@ pub fn VaultCreationPage(
             set_loading.set(false);
             match result {
                 Ok(resp) => {
-                    crate::components::use_toast().success(&format!("Vault '{}' created successfully!", vault_name_value));
+                    crate::components::use_toast().success(format!(
+                        "Vault '{}' created successfully!",
+                        vault_name_value
+                    ));
                     session_actions.complete_success(resp.vault_id);
                 }
                 Err(err) => {
                     crate::components::use_toast().error(&err.message);
-                    session_actions.complete_failure(err.message);
                 }
             }
         });
     };
 
+    let section_header = |title: &'static str| {
+        view! {
+            <h2 class="text-xs font-semibold uppercase tracking-widest text-text-secondary border-b border-border-default pb-2 mb-4">
+                {title}
+            </h2>
+        }
+    };
+
     view! {
         <div class="min-h-screen bg-iron flex items-center justify-center p-4">
-            <div class="w-full max-w-lg bg-stone border border-steel rounded-xl p-6 shadow-xl">
-                <ProgressIndicator current_step=current_step.get() />
-                
-                <h1 class="text-2xl text-bone text-center mb-2">{current_step.get().title()}</h1>
-                <p class="text-sm text-text-secondary text-center mb-6">{current_step.get().description()}</p>
+            <div class="w-full max-w-lg bg-stone border border-steel rounded-xl shadow-xl overflow-hidden">
+                <div class="p-6 overflow-y-auto max-h-screen">
+                    <h1 class="text-2xl text-bone text-center mb-8">"Create New Vault"</h1>
 
-                {
-                    move || match current_step.get() {
-                        WizardStep::Identity => view! {
-                            <IdentityStep
-                                vault_name=vault_name
-                                set_vault_name=set_vault_name
-                                password=password
-                                set_password=set_password
-                                tier=tier
-                                set_tier=set_tier
-                                key_file_destination=key_file_destination
-                                on_browse_key=on_browse_key
-                            />
-                        }.into_any(),
-                        WizardStep::Storage => view! {
-                            <StorageStep
-                                _storage_provider=storage_provider
-                                _set_storage_provider=set_storage_provider
-                            />
-                        }.into_any(),
-                        WizardStep::Review => view! {
-                            <ReviewStep
-                                vault_name=vault_name
-                                tier=tier
-                                key_file_destination=key_file_destination
-                                storage_provider=storage_provider
-                            />
-                        }.into_any(),
-                    }
-                }
+                    // ── Identity Section ──────────────────────────────────────────────
+                    <div class="mb-8">
+                        {section_header("Identity")}
+                        <Input
+                            label="Vault Name".to_string()
+                            value=vault_name
+                            on_input=move |v| set_vault_name.set(v)
+                        />
+                        <Input
+                            input_type="password"
+                            label="Password".to_string()
+                            value=password
+                            on_input=move |v| set_password.set(v)
+                        />
 
-                {move || session.read().error.clone().map(|e| view! {
-                    <p class="text-danger text-sm mt-4 mb-4">{e}</p>
-                })}
+                        <div class="mb-4">
+                            <label class="text-sm text-text-secondary block mb-1">
+                                "Authentication Tier"
+                            </label>
+                            <select
+                                class="bg-surface-overlay border border-border-default rounded-lg px-3 py-2 text-bone w-full focus:outline-none focus:border-rune"
+                                on:change=move |ev| {
+                                    use leptos::prelude::event_target_value;
+                                    let v: u8 = event_target_value(&ev).parse().unwrap_or(2);
+                                    set_tier.set(v);
+                                }
+                            >
+                                <option value="1">"Tier 1 — Password only"</option>
+                                <option value="2" selected=true>"Tier 2 — Password + Key file"</option>
+                            </select>
+                        </div>
 
-                <div class="flex gap-3 mt-8">
-                    <button
-                        class="flex-1 px-4 py-2 rounded-lg border border-border-default text-bone hover:bg-surface-overlay transition-colors"
-                        on:click=on_back_step
-                    >
-                        {if current_step.get() == WizardStep::Identity { "Cancel" } else { "Back" }}
-                    </button>
-                    
-                    <Show when=move || current_step.get() != WizardStep::Review>
-                        <Button loading=Signal::derive(move || false) on_click=on_next>
-                            "Next"
-                        </Button>
-                    </Show>
+                        <Show when=move || tier.get() == 2>
+                            <div class="mb-4">
+                                <label class="text-sm text-text-secondary block mb-1">
+                                    "Key File Destination"
+                                </label>
+                                <div class="flex gap-2 items-center">
+                                    <span class="text-sm text-bone flex-1">
+                                        {move || key_file_destination.get()
+                                            .unwrap_or_else(|| "Not selected".to_string())}
+                                    </span>
+                                    <Button variant="secondary" on_click=move |ev| on_browse_key(ev)>
+                                        "Browse"
+                                    </Button>
+                                </div>
+                            </div>
+                        </Show>
+                    </div>
 
-                    <Show when=move || current_step.get() == WizardStep::Review>
+                    // ── Advanced Section (collapsible) ────────────────────────────────
+                    <div class="mb-8">
+                        <button
+                            type="button"
+                            on:click=move |_| set_show_advanced.update(|v| *v = !*v)
+                            class="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-text-secondary border-b border-border-default pb-2 mb-4 w-full text-left hover:text-bone transition-colors"
+                        >
+                            <span class="transition-transform duration-200"
+                                  class=("rotate-90", move || show_advanced.get())>
+                                "▶"
+                            </span>
+                            "Advanced"
+                        </button>
+
+                        <Show when=move || show_advanced.get()>
+                            <div class="space-y-6 pl-2">
+                                <div>
+                                    <label class="text-sm text-text-secondary block mb-2">
+                                        "Chunk Size"
+                                    </label>
+                                    <ChunkSizeSelector
+                                        value=chunk_size_bytes
+                                        set_value=set_chunk_size_bytes
+                                    />
+                                </div>
+                                <EpochBufferToggle
+                                    enabled=epoch_buffer_enabled
+                                    set_enabled=set_epoch_buffer_enabled
+                                />
+                            </div>
+                        </Show>
+                    </div>
+
+                    // ── Destination Section ───────────────────────────────────────────
+                    <div class="mb-8">
+                        {section_header("Storage Destination")}
+                        <DestinationSelector
+                            on_change=move |config| set_primary_destination.set(config)
+                        />
+                    </div>
+
+                    // ── Review Section ────────────────────────────────────────────────
+                    <div class="mb-8">
+                        {section_header("Review")}
+                        <div class="bg-surface-overlay border border-border-default rounded-lg p-4 space-y-2 text-sm">
+                            <div class="flex justify-between">
+                                <span class="text-text-secondary">"Vault name:"</span>
+                                <span class="text-bone font-medium">
+                                    {move || {
+                                        let n = vault_name.get();
+                                        if n.is_empty() { "—".to_string() } else { n }
+                                    }}
+                                </span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-text-secondary">"Authentication:"</span>
+                                <span class="text-bone font-medium">
+                                    {move || if tier.get() == 2 {
+                                        "Tier 2 (Password + Key file)"
+                                    } else {
+                                        "Tier 1 (Password only)"
+                                    }}
+                                </span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-text-secondary">"Chunk size:"</span>
+                                <span class="text-bone font-medium">
+                                    {move || format_chunk_size(chunk_size_bytes.get())}
+                                </span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-text-secondary">"Version history:"</span>
+                                <span class="text-bone font-medium">
+                                    {move || if epoch_buffer_enabled.get() { "Enabled" } else { "Disabled" }}
+                                </span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-text-secondary">"Storage:"</span>
+                                <span class="text-bone font-medium">
+                                    {move || primary_destination.read().label.clone()}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    // ── Buttons ───────────────────────────────────────────────────────
+                    <div class="flex gap-3">
+                        <button
+                            type="button"
+                            class="flex-1 px-4 py-2 rounded-lg border border-border-default text-bone hover:bg-surface-overlay transition-colors"
+                            on:click=move |_| on_back()
+                        >
+                            "Cancel"
+                        </button>
                         <Button loading=loading on_click=on_submit>
                             "Create Vault"
                         </Button>
-                    </Show>
+                    </div>
                 </div>
             </div>
         </div>
@@ -547,9 +568,7 @@ mod tests {
 
     #[test]
     fn test_clamp_chunk_size_default_preset_unchanged() {
-        // Standard preset (4 MiB) is within bounds — must pass through unchanged.
         assert_eq!(clamp_chunk_size(4_194_304), 4_194_304);
-        // All four presets must survive clamping.
         for (_, bytes) in PRESETS {
             assert_eq!(clamp_chunk_size(*bytes), *bytes);
         }
@@ -580,5 +599,21 @@ mod tests {
     #[test]
     fn test_validate_vault_creation_form_tier1_no_key_file_returns_ok() {
         assert!(validate_vault_creation_form("MyVault", "password", 1, None).is_ok());
+    }
+
+    #[test]
+    fn test_format_chunk_size_presets_match_labels() {
+        assert_eq!(format_chunk_size(4_194_304), "Standard (4 MiB)");
+        assert_eq!(format_chunk_size(524_288), "Documents (512 KiB)");
+    }
+
+    #[test]
+    fn test_format_chunk_size_custom_mib() {
+        assert_eq!(format_chunk_size(8_388_608), "8 MiB");
+    }
+
+    #[test]
+    fn test_format_chunk_size_custom_kib() {
+        assert_eq!(format_chunk_size(262_144), "256 KiB");
     }
 }

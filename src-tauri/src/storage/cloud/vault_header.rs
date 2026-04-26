@@ -56,6 +56,9 @@ pub struct VaultHeader {
     /// Recovery slots; empty until `setup_recovery` runs.
     #[serde(default)]
     pub recovery_slots: Vec<RecoverySlot>,
+    /// Optional human-readable vault name set at creation time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// Trusted local vault-header anchor used for existing-device trust checks.
@@ -270,6 +273,7 @@ mod tests {
             argon2_params: valid_argon2_params(),
             key_file_blake3: None,
             recovery_slots: Vec::new(),
+            name: None,
         }
     }
 

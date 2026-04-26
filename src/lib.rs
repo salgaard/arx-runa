@@ -5,7 +5,7 @@
 
 pub mod app;
 pub mod auth;
-pub mod auth_wizard;
+pub mod cloud_setup;
 pub mod components;
 pub mod contacts;
 pub mod destinations;
@@ -22,6 +22,7 @@ pub mod state;
 pub mod transfer;
 pub mod utils;
 pub mod vault;
+pub mod vault_picker;
 
 pub use app::App;
 pub use error::IpcError;

@@ -12,6 +12,7 @@ mod share_entry;
 mod share_response;
 mod sync_conflict;
 mod sync_result;
+mod vault_summary;
 
 pub use auth_response::AuthResponse;
 pub use contact_entry::ContactEntry;
@@ -23,12 +24,14 @@ pub use progress_update::ProgressUpdate;
 pub use received_share_entry::ReceivedShareEntry;
 pub use requests::{
     AddContactRequest, AddDestinationRequest, AuthenticateRequest, ChangePasswordRequest,
-    CreateVaultRequest, DeleteDestinationRequest, DeleteFileRequest, DeleteVaultRequest,
-    DownloadFileRequest, GetFileContentRequest, ImportShareRequest, ListDirectoryRequest,
-    RevokeShareRequest, RotateKeyFileRequest, ShareFileRequest, UploadFileRequest,
+    ConfigureCloudRequest, CreateVaultRequest, DeleteDestinationRequest, DeleteFileRequest,
+    DeleteVaultRequest, DownloadFileRequest, GetFileContentRequest, ImportShareRequest,
+    ListDirectoryRequest, RevokeShareRequest, RotateKeyFileRequest, ShareFileRequest,
+    UploadFileRequest,
 };
 pub use session_status::SessionStatus;
 pub use share_entry::ShareEntry;
 pub use share_response::ShareResponse;
 pub use sync_conflict::SyncConflict;
 pub use sync_result::SyncResult;
+pub use vault_summary::VaultSummary;

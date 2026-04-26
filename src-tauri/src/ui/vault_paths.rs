@@ -81,7 +81,92 @@ pub(crate) fn resolve_singleton_vault() -> Result<Option<(String, PathBuf, PathB
         0 => Ok(None),
         1 => Ok(Some(found.remove(0))),
         _ => Err(IpcError::InvalidInput(
-            "Multiple vaults found; multi-vault is not supported in Phase 6".into(),
+            "Multiple vaults found; supply an explicit vault_id to authenticate".into(),
         )),
     }
+}
+
+/// Resolves a vault directory by its exact vault identifier.
+///
+/// Scans `default_vault_root()` for a sub-directory whose `vault-header.json`
+/// contains a matching `vault_id`. Returns `Ok((vault_id, db_path, header_path))`
+/// on success, or `IpcError::NotFound` if no match is found.
+pub(crate) fn resolve_vault_by_id(
+    target_vault_id: &str,
+) -> Result<(String, PathBuf, PathBuf), IpcError> {
+    let root = default_vault_root();
+    if !root.exists() {
+        return Err(IpcError::NotFound("Vault not found".into()));
+    }
+
+    let entries =
+        std::fs::read_dir(&root).map_err(|_| IpcError::NotFound("Vault not found".into()))?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let db = path.join("vault.db");
+        let header_path = path.join("vault-header.json");
+        if !db.exists() || !header_path.exists() {
+            continue;
+        }
+        // Use the directory name as a fast pre-filter before reading the file.
+        let dir_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name.to_owned(),
+            None => continue,
+        };
+        if dir_name == target_vault_id {
+            return Ok((dir_name, db, header_path));
+        }
+    }
+
+    Err(IpcError::NotFound("Vault not found".into()))
+}
+
+/// Scans the vault root and returns summaries for all discoverable vaults.
+///
+/// Each entry that contains both `vault.db` and a parseable `vault-header.json`
+/// is included. Directories with unreadable or invalid headers are silently skipped.
+pub(crate) fn list_local_vaults() -> Vec<crate::ui::types::VaultSummary> {
+    use crate::storage::cloud::vault_header::VaultHeader;
+    use crate::ui::types::VaultSummary;
+
+    let root = default_vault_root();
+    if !root.exists() {
+        return Vec::new();
+    }
+
+    let entries = match std::fs::read_dir(&root) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut summaries = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let db = path.join("vault.db");
+        let header_path = path.join("vault-header.json");
+        if !db.exists() || !header_path.exists() {
+            continue;
+        }
+        let header_bytes = match std::fs::read(&header_path) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let header: VaultHeader = match serde_json::from_slice(&header_bytes) {
+            Ok(h) => h,
+            Err(_) => continue,
+        };
+        summaries.push(VaultSummary {
+            vault_id: header.vault_id.clone(),
+            name: header.name,
+            tier: header.tier,
+        });
+    }
+    summaries
 }

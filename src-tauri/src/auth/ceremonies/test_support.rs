@@ -65,6 +65,9 @@ pub(super) async fn create_tier_one_vault() -> TierOneVault {
         argon2_params: Argon2Params::DEFAULT,
         chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
         epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+        vault_name: None,
+        suggested_vault_id: None,
+        primary_destination: None,
     };
     let cloud_arc: Arc<dyn CloudTransport> = Arc::new(cloud.clone());
     let vault_id = create_vault(request, &session, cloud_arc.as_ref())
@@ -112,6 +115,9 @@ pub(super) async fn create_tier_two_vault() -> TierTwoVault {
         argon2_params: Argon2Params::DEFAULT,
         chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
         epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+        vault_name: None,
+        suggested_vault_id: None,
+        primary_destination: None,
     };
     let cloud_arc: Arc<dyn CloudTransport> = Arc::new(cloud.clone());
     let vault_id = create_vault(request, &session, cloud_arc.as_ref())
