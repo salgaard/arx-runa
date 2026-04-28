@@ -8,8 +8,8 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 extern "C" {
-    /// Returns the current `WebviewWindow` from `window.__TAURI__.webview`.
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "webview"])]
+    /// Returns the current `WebviewWindow` from `window.__TAURI__.webviewWindow`.
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "webviewWindow"])]
     fn getCurrentWebviewWindow() -> JsValue;
 }
 
@@ -49,6 +49,10 @@ pub fn on_file_drop<F: Fn(Vec<String>) + 'static>(handler: F) -> impl FnOnce() {
     let on_drag_drop = js_sys::Reflect::get(&window, &JsValue::from_str("onDragDropEvent"))
         .unwrap_or(JsValue::undefined());
 
+    // onDragDropEvent returns Promise<UnlistenFn> in Tauri v2; we store the
+    // resolved JsValue and attempt to call it as a function in cleanup. If the
+    // Promise hasn't resolved yet the cleanup will be a no-op (harmless since
+    // DropZone lifetime matches the vault session).
     let unsub = if let Ok(func) = on_drag_drop.dyn_into::<js_sys::Function>() {
         let result = func
             .call1(&window, cb.as_ref().unchecked_ref())

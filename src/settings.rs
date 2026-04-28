@@ -339,7 +339,7 @@ fn DeleteVaultForm() -> impl IntoView {
         });
     };
 
-    let vault_name = move || session.read().vault_id.clone().unwrap_or_default();
+    let vault_name = move || session.with_untracked(|s| s.vault_id.clone().unwrap_or_default());
     let is_confirmed = move || confirmation_input.get() == vault_name();
     let delete_button_disabled = move || loading.get() || !is_confirmed();
 

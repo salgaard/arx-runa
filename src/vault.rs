@@ -5,12 +5,11 @@
 //! `use_vault_actions()` from the `VaultProvider` context.
 
 use leptos::prelude::*;
-use wasm_bindgen::JsValue;
 
 use crate::components::{Button, Modal, Spinner};
 use crate::dialog::{open_file_dialog, open_save_dialog};
 use crate::drag_drop::on_file_drop;
-use crate::invoke::invoke_command;
+use crate::invoke::{invoke_command, invoke_command_with_channel};
 use crate::ipc_channel::IpcChannel;
 use crate::ipc_types::{
     DeleteFileRequest, DownloadFileRequest, FileEntry, GetFileContentRequest, ProgressUpdate,
@@ -306,10 +305,9 @@ pub fn FileItem(
                                         let req = DownloadFileRequest {
                                             file_id: entry.id.clone(),
                                             destination_path: dest_path,
-                                            progress: channel.inner().clone(),
                                         };
 
-                                        match invoke_command::<DownloadFileRequest, ()>("download_file", &req).await {
+                                        match invoke_command_with_channel::<DownloadFileRequest, ()>("download_file", &req, "progress", channel.inner()).await {
                                             Ok(()) => {}
                                             Err(err) => actions.set_error(err.message),
                                         }
@@ -489,11 +487,12 @@ pub fn FileList(
 /// File drop zone that accepts dragged files and initiates upload.
 ///
 /// Subscribes to `onDragDropEvent` on mount and unsubscribes in `on_cleanup`.
-/// Uses `UploadFileRequest` per file; progress channel is wired in Phase 6.5.
+/// Shows a progress modal for the most-recently-started upload.
 #[component]
 pub fn DropZone(children: Children) -> impl IntoView {
     let vault = use_vault();
     let vault_actions = use_vault_actions();
+    let (upload_channel, set_upload_channel) = signal::<Option<IpcChannel<ProgressUpdate>>>(None);
 
     Effect::new(move |_| {
         let vault_actions = vault_actions;
@@ -506,12 +505,20 @@ pub fn DropZone(children: Children) -> impl IntoView {
                 let req = UploadFileRequest {
                     source_path: source_path.clone(),
                     vault_path,
-                    progress: JsValue::undefined(),
                 };
                 let va = vault_actions;
+                let channel = IpcChannel::<ProgressUpdate>::new();
+                set_upload_channel.set(Some(channel.clone()));
                 leptos::task::spawn_local(async move {
-                    match invoke_command::<UploadFileRequest, ()>("upload_file", &req).await {
-                        Ok(()) => va.navigate(upload_path),
+                    match invoke_command_with_channel::<UploadFileRequest, FileEntry>(
+                        "upload_file",
+                        &req,
+                        "progress",
+                        channel.inner(),
+                    )
+                    .await
+                    {
+                        Ok(_) => va.navigate(upload_path),
                         Err(err) => va.set_error(err.message),
                     }
                 });
@@ -521,20 +528,38 @@ pub fn DropZone(children: Children) -> impl IntoView {
     });
 
     view! {
-        <div class="relative w-full h-full">
-            {children()}
-        </div>
+        <>
+            <div class="relative w-full h-full">
+                {children()}
+            </div>
+            <Show when=move || upload_channel.get().is_some() fallback=|| ()>
+                {move || {
+                    upload_channel.get().map(|ch| {
+                        view! {
+                            <ProgressModal
+                                channel=ch
+                                title="Uploading file"
+                                on_close=move || set_upload_channel.set(None)
+                            />
+                        }
+                    })
+                }}
+            </Show>
+        </>
     }
 }
 
 // ─── UploadButton ────────────────────────────────────────────────────────────
 
 /// Upload button that opens a native file picker and uploads the selected file.
+///
+/// Shows a progress modal while the upload is in flight.
 #[component]
 pub fn UploadButton() -> impl IntoView {
     let vault = use_vault();
     let vault_actions = use_vault_actions();
     let (loading, set_loading) = signal(false);
+    let (upload_channel, set_upload_channel) = signal::<Option<IpcChannel<ProgressUpdate>>>(None);
 
     let on_click = move |_| {
         let vault_actions = vault_actions;
@@ -547,13 +572,21 @@ pub fn UploadButton() -> impl IntoView {
             let file_name = source_path.split(['/', '\\']).next_back().unwrap_or("file");
             let vault_path = join_vault_path(&current_path, file_name);
             set_loading.set(true);
+            let channel = IpcChannel::<ProgressUpdate>::new();
+            set_upload_channel.set(Some(channel.clone()));
             let req = UploadFileRequest {
                 source_path,
                 vault_path,
-                progress: JsValue::undefined(),
             };
-            match invoke_command::<UploadFileRequest, ()>("upload_file", &req).await {
-                Ok(()) => vault_actions.navigate(current_path),
+            match invoke_command_with_channel::<UploadFileRequest, FileEntry>(
+                "upload_file",
+                &req,
+                "progress",
+                channel.inner(),
+            )
+            .await
+            {
+                Ok(_) => vault_actions.navigate(current_path),
                 Err(err) => vault_actions.set_error(err.message),
             }
             set_loading.set(false);
@@ -561,7 +594,22 @@ pub fn UploadButton() -> impl IntoView {
     };
 
     view! {
-        <Button loading=loading on_click=on_click>"Upload File"</Button>
+        <>
+            <Button loading=loading on_click=on_click>"Upload File"</Button>
+            <Show when=move || upload_channel.get().is_some() fallback=|| ()>
+                {move || {
+                    upload_channel.get().map(|ch| {
+                        view! {
+                            <ProgressModal
+                                channel=ch
+                                title="Uploading file"
+                                on_close=move || set_upload_channel.set(None)
+                            />
+                        }
+                    })
+                }}
+            </Show>
+        </>
     }
 }
 

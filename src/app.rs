@@ -73,8 +73,8 @@ fn AppRouter() -> impl IntoView {
     move || {
         if is_unlocked.get() {
             view! {
-                <AppShell>
-                    <Router>
+                <Router>
+                    <AppShell>
                         <Routes fallback=|| "404">
                             <Route path=StaticSegment("") view=VaultBrowser />
                             <Route path=StaticSegment("contacts") view=ContactList />
@@ -82,8 +82,8 @@ fn AppRouter() -> impl IntoView {
                             <Route path=StaticSegment("destinations") view=DestinationList />
                             <Route path=StaticSegment("settings") view=SettingsPage />
                         </Routes>
-                    </Router>
-                </AppShell>
+                    </AppShell>
+                </Router>
             }
             .into_any()
         } else if create_vault_intent.get() {

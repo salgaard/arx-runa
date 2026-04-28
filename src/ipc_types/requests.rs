@@ -1,7 +1,6 @@
 //! IPC request payload types — serialised argument structs for every Tauri command.
 
 use serde::Serialize;
-use wasm_bindgen::JsValue;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::ipc_types::DestinationSessionConfig;
@@ -56,11 +55,6 @@ pub struct UploadFileRequest {
     pub source_path: String,
     /// Vault-relative destination path.
     pub vault_path: String,
-    /// Serialised `IpcChannel` handle for streaming progress updates.
-    ///
-    /// Skipped during serde serialisation; the channel is wired in Phase 6.5.
-    #[serde(skip)]
-    pub progress: JsValue,
 }
 
 /// Argument payload for the `delete_file` Tauri command.
@@ -79,11 +73,6 @@ pub struct DownloadFileRequest {
     pub file_id: String,
     /// Absolute path to the destination file on the local filesystem.
     pub destination_path: String,
-    /// Serialised `IpcChannel` handle for streaming progress updates.
-    ///
-    /// Skipped during serde serialisation; the channel is wired at the UI layer.
-    #[serde(skip)]
-    pub progress: JsValue,
 }
 
 /// Argument payload for the `get_file_content` Tauri command.

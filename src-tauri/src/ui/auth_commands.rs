@@ -221,8 +221,8 @@ async fn try_build_and_swap_rclone_transport(state: &AppState, db: &SqlCipherMet
 /// Scans the vault root for directories containing a valid `vault-header.json`.
 /// Unreadable or invalid headers are silently skipped.
 #[tauri::command]
-pub async fn list_vaults() -> Vec<VaultSummary> {
-    list_local_vaults()
+pub async fn list_vaults() -> Result<Vec<VaultSummary>, IpcError> {
+    Ok(list_local_vaults())
 }
 
 /// Authenticate with password (Tier 1) or password + USB key file (Tier 2).

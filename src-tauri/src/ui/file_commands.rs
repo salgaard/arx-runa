@@ -167,9 +167,8 @@ pub async fn list_directory(
 
 /// Encrypt and upload a file to the vault.
 ///
-/// Progress is streamed via the `progress` channel.  The file is placed at the
-/// vault root (`parent_id = None`) for Phase 6.5; path-based placement is
-/// deferred.
+/// Places the file at vault root (`parent_id = None`) for Phase 6.5;
+/// path-based placement and progress streaming are deferred.
 #[tauri::command]
 pub async fn upload_file(
     source_path: PathBuf,
@@ -210,8 +209,6 @@ pub async fn upload_file(
         .unwrap_or_default()
         .as_secs() as i64;
 
-    // Wrap the Tauri channel in a ProgressChannel to gracefully handle
-    // closed connections (M3: Streaming Progress Channel Validation)
     let progress_ch = ProgressChannel::new(progress);
     let progress_fn = {
         let progress = progress_ch.clone();
@@ -229,7 +226,7 @@ pub async fn upload_file(
     let node = vault_upload(
         &source_path,
         node_id,
-        None, // parent_id — root placement for Phase 6.5
+        None,
         &name,
         now,
         now,

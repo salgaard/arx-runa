@@ -34,6 +34,49 @@ fn is_tauri_ipc_available() -> bool {
     }
 }
 
+/// Variant of `invoke_command` for commands that accept a Tauri `Channel<T>` argument.
+///
+/// Serialises `args` via serde, then injects `channel_value` at `channel_key` into the
+/// resulting JS object before invoking. This bypasses serde for the channel, which is not
+/// JSON-serialisable.
+pub async fn invoke_command_with_channel<A, R>(
+    cmd: &str,
+    args: &A,
+    channel_key: &str,
+    channel_value: &JsValue,
+) -> Result<R, IpcError>
+where
+    A: Serialize,
+    R: DeserializeOwned,
+{
+    if !is_tauri_ipc_available() {
+        return Err(IpcError::internal(
+            "Tauri IPC unavailable — running in browser dev mode, not Tauri desktop app",
+        ));
+    }
+
+    let args_js = serde_wasm_bindgen::to_value(args)
+        .map_err(|_| IpcError::internal("Failed to serialise command arguments"))?;
+    let _ = js_sys::Reflect::set(&args_js, &JsValue::from_str(channel_key), channel_value);
+
+    match invoke(cmd, args_js).await {
+        Ok(result_js) => serde_wasm_bindgen::from_value(result_js)
+            .map_err(|_| IpcError::internal("Failed to deserialise command response")),
+        Err(error_js) => {
+            if let Ok(ipc_err) = serde_wasm_bindgen::from_value::<IpcError>(error_js.clone()) {
+                return Err(ipc_err);
+            }
+            if let Some(message) = js_sys::Reflect::get(&error_js, &JsValue::from_str("message"))
+                .ok()
+                .and_then(|msg| msg.as_string())
+            {
+                return Err(IpcError::internal(message));
+            }
+            Err(IpcError::internal("Unknown error"))
+        }
+    }
+}
+
 /// Type-safe wrapper around `window.__TAURI__.core.invoke`.
 ///
 /// Serialises `args` via `serde_wasm_bindgen`, invokes the Tauri command,
@@ -58,7 +101,23 @@ where
     match invoke(cmd, args_js).await {
         Ok(result_js) => serde_wasm_bindgen::from_value(result_js)
             .map_err(|_| IpcError::internal("Failed to deserialise command response")),
-        Err(error_js) => Err(serde_wasm_bindgen::from_value::<IpcError>(error_js)
-            .unwrap_or_else(|_| IpcError::internal("Unknown error"))),
+        Err(error_js) => {
+            // Tauri wraps command errors; try to extract the inner IpcError.
+            // First attempt: deserialise the error_js directly as IpcError.
+            if let Ok(ipc_err) = serde_wasm_bindgen::from_value::<IpcError>(error_js.clone()) {
+                return Err(ipc_err);
+            }
+
+            // Fallback: try to extract the error message from the JsValue if it's a JS error object.
+            if let Some(message) =
+                js_sys::Reflect::get(&error_js, &wasm_bindgen::JsValue::from_str("message"))
+                    .ok()
+                    .and_then(|msg| msg.as_string())
+            {
+                return Err(IpcError::internal(message));
+            }
+
+            Err(IpcError::internal("Unknown error"))
+        }
     }
 }
