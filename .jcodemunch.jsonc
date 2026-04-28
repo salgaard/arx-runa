@@ -1,0 +1,25 @@
+{
+  // Reduce schema footprint: standard tier (51 tools) suits Sonnet-class models.
+  // Full tier (62 tools) adds overhead with no benefit at this model tier.
+  "tool_profile": "standard",
+
+  // Strip rarely-used advanced params from exposed schemas (~1-2k token saving).
+  "compact_schemas": true,
+
+  // Arx Runa layer enforcement: crypto is the innermost layer, ui is outermost.
+  // Dependency flow: ui → auth/storage → crypto. Never the reverse.
+  "architecture": {
+    "layers": [
+      { "name": "ui",      "paths": ["src-tauri/src/ui"] },
+      { "name": "auth",    "paths": ["src-tauri/src/auth"] },
+      { "name": "storage", "paths": ["src-tauri/src/storage"] },
+      { "name": "crypto",  "paths": ["src-tauri/src/crypto"] },
+      { "name": "types",   "paths": ["src-tauri/src/types"] }
+    ],
+    "rules": [
+      { "layer": "crypto",  "may_not_import": ["ui", "auth", "storage"] },
+      { "layer": "storage", "may_not_import": ["ui", "auth"] },
+      { "layer": "auth",    "may_not_import": ["ui"] }
+    ]
+  }
+}

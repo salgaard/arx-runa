@@ -27,15 +27,6 @@ pub enum CloudProvider {
 }
 
 impl CloudProvider {
-    fn label(self) -> &'static str {
-        match self {
-            CloudProvider::S3 => "Amazon S3",
-            CloudProvider::B2 => "Backblaze B2",
-            CloudProvider::GoogleDrive => "Google Drive",
-            CloudProvider::Custom => "Other (Rclone)",
-        }
-    }
-
     fn destination_type_str(self) -> &'static str {
         match self {
             CloudProvider::S3 => "s3",
@@ -65,6 +56,11 @@ fn build_config(
     cloud_region: &str,
     cloud_endpoint: &str,
     cloud_path_prefix: &str,
+    s3_access_key_id: &str,
+    s3_secret_access_key: &str,
+    b2_account_id: &str,
+    b2_app_key: &str,
+    custom_rclone_config: &str,
 ) -> DestinationSessionConfig {
     match dest_type {
         DestinationType::Local => DestinationSessionConfig {
@@ -91,18 +87,46 @@ fn build_config(
             is_primary: true,
             backup_mode: None,
         },
-        DestinationType::Cloud => DestinationSessionConfig {
-            label: cloud_provider.label().to_string(),
-            destination_type: cloud_provider.destination_type_str().to_string(),
-            provider: cloud_provider.provider_str().to_string(),
-            bucket: cloud_bucket.to_string(),
-            region: cloud_region.to_string(),
-            endpoint: cloud_endpoint.to_string(),
-            path_prefix: cloud_path_prefix.to_string(),
-            rclone_config_blob: String::new(),
-            is_primary: true,
-            backup_mode: None,
-        },
+        DestinationType::Cloud => {
+            let (label, rclone_config_blob) = match cloud_provider {
+                CloudProvider::S3 => (
+                    "Amazon S3".to_string(),
+                    format!(
+                        "[amazon_s3]\ntype = s3\nprovider = AWS\nregion = {cloud_region}\nendpoint = {cloud_endpoint}\naccess_key_id = {s3_access_key_id}\nsecret_access_key = {s3_secret_access_key}\n"
+                    ),
+                ),
+                CloudProvider::B2 => (
+                    "Backblaze B2".to_string(),
+                    format!(
+                        "[backblaze_b2]\ntype = b2\naccount = {b2_account_id}\nkey = {b2_app_key}\n"
+                    ),
+                ),
+                CloudProvider::GoogleDrive => ("Google Drive".to_string(), String::new()),
+                CloudProvider::Custom => {
+                    let name = custom_rclone_config
+                        .lines()
+                        .find_map(|line| {
+                            let t = line.trim();
+                            t.strip_prefix('[').and_then(|s| s.strip_suffix(']'))
+                        })
+                        .unwrap_or("custom_rclone")
+                        .to_string();
+                    (name, custom_rclone_config.to_string())
+                }
+            };
+            DestinationSessionConfig {
+                label,
+                destination_type: cloud_provider.destination_type_str().to_string(),
+                provider: cloud_provider.provider_str().to_string(),
+                bucket: cloud_bucket.to_string(),
+                region: cloud_region.to_string(),
+                endpoint: cloud_endpoint.to_string(),
+                path_prefix: cloud_path_prefix.to_string(),
+                rclone_config_blob,
+                is_primary: true,
+                backup_mode: None,
+            }
+        }
     }
 }
 
@@ -122,6 +146,11 @@ pub fn DestinationSelector(
     let (cloud_region, set_cloud_region) = signal(String::new());
     let (cloud_endpoint, set_cloud_endpoint) = signal(String::new());
     let (cloud_path_prefix, set_cloud_path_prefix) = signal(String::new());
+    let (s3_access_key_id, set_s3_access_key_id) = signal(String::new());
+    let (s3_secret_access_key, set_s3_secret_access_key) = signal(String::new());
+    let (b2_account_id, set_b2_account_id) = signal(String::new());
+    let (b2_app_key, set_b2_app_key) = signal(String::new());
+    let (custom_rclone_config, set_custom_rclone_config) = signal(String::new());
 
     let notify = on_change.clone();
     Effect::new(move |_| {
@@ -134,6 +163,11 @@ pub fn DestinationSelector(
             &cloud_region.get(),
             &cloud_endpoint.get(),
             &cloud_path_prefix.get(),
+            &s3_access_key_id.get(),
+            &s3_secret_access_key.get(),
+            &b2_account_id.get(),
+            &b2_app_key.get(),
+            &custom_rclone_config.get(),
         );
         notify(config);
     });
@@ -263,11 +297,10 @@ pub fn DestinationSelector(
                         </select>
                     </div>
 
-                    <Show when=move || cloud_provider.get() != CloudProvider::GoogleDrive>
+                    // Bucket — S3 and B2 only
+                    <Show when=move || matches!(cloud_provider.get(), CloudProvider::S3 | CloudProvider::B2)>
                         <div class="space-y-1">
-                            <label class="text-xs text-text-secondary">
-                                {move || if cloud_provider.get() == CloudProvider::B2 { "Account ID / Bucket" } else { "Bucket" }}
-                            </label>
+                            <label class="text-xs text-text-secondary">"Bucket"</label>
                             <input
                                 type="text"
                                 placeholder="my-bucket"
@@ -279,37 +312,115 @@ pub fn DestinationSelector(
                                 class=field_class
                             />
                         </div>
-
-                        <Show when=move || cloud_provider.get() == CloudProvider::S3 || cloud_provider.get() == CloudProvider::Custom>
-                            <div class="space-y-1">
-                                <label class="text-xs text-text-secondary">"Region"</label>
-                                <input
-                                    type="text"
-                                    placeholder="us-east-1"
-                                    value=move || cloud_region.get()
-                                    on:input=move |ev| {
-                                        use leptos::prelude::event_target_value;
-                                        set_cloud_region.set(event_target_value(&ev));
-                                    }
-                                    class=field_class
-                                />
-                            </div>
-                            <div class="space-y-1">
-                                <label class="text-xs text-text-secondary">"Endpoint (optional, for S3-compatible providers)"</label>
-                                <input
-                                    type="text"
-                                    placeholder="https://s3.example.com"
-                                    value=move || cloud_endpoint.get()
-                                    on:input=move |ev| {
-                                        use leptos::prelude::event_target_value;
-                                        set_cloud_endpoint.set(event_target_value(&ev));
-                                    }
-                                    class=field_class
-                                />
-                            </div>
-                        </Show>
                     </Show>
 
+                    // S3: region, endpoint, credentials
+                    <Show when=move || cloud_provider.get() == CloudProvider::S3>
+                        <div class="space-y-1">
+                            <label class="text-xs text-text-secondary">"Region"</label>
+                            <input
+                                type="text"
+                                placeholder="us-east-1"
+                                value=move || cloud_region.get()
+                                on:input=move |ev| {
+                                    use leptos::prelude::event_target_value;
+                                    set_cloud_region.set(event_target_value(&ev));
+                                }
+                                class=field_class
+                            />
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-xs text-text-secondary">"Endpoint (optional, for S3-compatible providers)"</label>
+                            <input
+                                type="text"
+                                placeholder="https://s3.example.com"
+                                value=move || cloud_endpoint.get()
+                                on:input=move |ev| {
+                                    use leptos::prelude::event_target_value;
+                                    set_cloud_endpoint.set(event_target_value(&ev));
+                                }
+                                class=field_class
+                            />
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-xs text-text-secondary">"Access Key ID"</label>
+                            <input
+                                type="password"
+                                placeholder="AKIAIOSFODNN7EXAMPLE"
+                                value=move || s3_access_key_id.get()
+                                on:input=move |ev| {
+                                    use leptos::prelude::event_target_value;
+                                    set_s3_access_key_id.set(event_target_value(&ev));
+                                }
+                                class=field_class
+                            />
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-xs text-text-secondary">"Secret Access Key"</label>
+                            <input
+                                type="password"
+                                placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+                                value=move || s3_secret_access_key.get()
+                                on:input=move |ev| {
+                                    use leptos::prelude::event_target_value;
+                                    set_s3_secret_access_key.set(event_target_value(&ev));
+                                }
+                                class=field_class
+                            />
+                        </div>
+                    </Show>
+
+                    // B2: account ID and application key
+                    <Show when=move || cloud_provider.get() == CloudProvider::B2>
+                        <div class="space-y-1">
+                            <label class="text-xs text-text-secondary">"Account ID"</label>
+                            <input
+                                type="text"
+                                placeholder="123456789abcdef"
+                                value=move || b2_account_id.get()
+                                on:input=move |ev| {
+                                    use leptos::prelude::event_target_value;
+                                    set_b2_account_id.set(event_target_value(&ev));
+                                }
+                                class=field_class
+                            />
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-xs text-text-secondary">"Application Key"</label>
+                            <input
+                                type="password"
+                                placeholder="K003..."
+                                value=move || b2_app_key.get()
+                                on:input=move |ev| {
+                                    use leptos::prelude::event_target_value;
+                                    set_b2_app_key.set(event_target_value(&ev));
+                                }
+                                class=field_class
+                            />
+                        </div>
+                    </Show>
+
+                    // Custom: paste full rclone config section
+                    <Show when=move || cloud_provider.get() == CloudProvider::Custom>
+                        <div class="space-y-1">
+                            <label class="text-xs text-text-secondary">"Rclone config section"</label>
+                            <textarea
+                                placeholder="[myremote]\ntype = s3\n..."
+                                prop:value=move || custom_rclone_config.get()
+                                on:input=move |ev| {
+                                    use leptos::prelude::event_target_value;
+                                    set_custom_rclone_config.set(event_target_value(&ev));
+                                }
+                                class=format!("{field_class} h-32 font-mono resize-y")
+                                rows="6"
+                            />
+                            <p class="text-xs text-text-secondary">
+                                "Paste one complete rclone remote section. The "[name]" header sets the remote name."
+                            </p>
+                        </div>
+                    </Show>
+
+                    // Google Drive: OAuth configured post-creation
                     <Show when=move || cloud_provider.get() == CloudProvider::GoogleDrive>
                         <div class="p-3 bg-surface-overlay border border-border-default rounded-lg">
                             <p class="text-xs text-text-secondary">
@@ -332,14 +443,6 @@ pub fn DestinationSelector(
                             }
                             class=field_class
                         />
-                    </div>
-
-                    <div class="p-3 bg-surface-overlay border border-border-default rounded-lg">
-                        <p class="text-xs text-text-secondary">
-                            "Cloud credentials (access keys, OAuth tokens) are configured in "
-                            <span class="text-rune">"Settings → Destinations"</span>
-                            " after vault creation."
-                        </p>
                     </div>
                 </div>
             </Show>

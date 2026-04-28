@@ -152,15 +152,35 @@ pub(crate) fn list_local_vaults() -> Vec<crate::ui::types::VaultSummary> {
         let db = path.join("vault.db");
         let header_path = path.join("vault-header.json");
         if !db.exists() || !header_path.exists() {
+            tracing::debug!(
+                dir = ?path,
+                db_exists = db.exists(),
+                header_exists = header_path.exists(),
+                "vault directory missing required files; skipping"
+            );
             continue;
         }
         let header_bytes = match std::fs::read(&header_path) {
             Ok(b) => b,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::warn!(
+                    path = ?header_path,
+                    error = %e,
+                    "vault-header.json unreadable; skipping vault directory"
+                );
+                continue;
+            }
         };
         let header: VaultHeader = match serde_json::from_slice(&header_bytes) {
             Ok(h) => h,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::warn!(
+                    path = ?header_path,
+                    error = %e,
+                    "vault-header.json malformed; skipping vault directory"
+                );
+                continue;
+            }
         };
         summaries.push(VaultSummary {
             vault_id: header.vault_id.clone(),

@@ -1,0 +1,16 @@
+{
+  "servers": {
+    "jcodemunch": {
+      "command": "uvx",
+      "args": ["jcodemunch-mcp"]
+    },
+    "jdocmunch": {
+      "command": "uvx",
+      "args": ["jdocmunch-mcp"]
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"]
+    }
+  }
+}

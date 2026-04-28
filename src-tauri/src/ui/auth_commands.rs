@@ -34,9 +34,7 @@ use crate::storage::cloud::{
         BackupSyncMode, DestinationSession, DestinationType, build_session_rclone_conf,
         destroy_session_rclone_conf, get_primary_destination,
     },
-    download_vault_header,
     vault_header::VaultHeader,
-    vault_header::VaultHeaderTrustPolicy,
 };
 use crate::ui::commands_common::{require_active_session, sanitise_password};
 use crate::ui::error::IpcError;
@@ -460,37 +458,6 @@ pub async fn create_vault(
         let db_guard = state.database.read().await;
         if let Some(ref inner_db) = *db_guard {
             try_build_and_swap_rclone_transport(&state, inner_db).await;
-        }
-    }
-
-    // Best-effort: download vault-header.json from cloud and save locally so
-    // that subsequent authenticate calls can read it from disk.
-    {
-        let header_path = vault_dir.join("vault-header.json");
-        match download_vault_header(
-            &*cloud_transport_arc,
-            &vault_dir,
-            VaultHeaderTrustPolicy::Bootstrap,
-        )
-        .await
-        {
-            Ok(header) => match serde_json::to_string_pretty(&header) {
-                Ok(json) => {
-                    if let Err(error) = tokio::fs::write(&header_path, json).await {
-                        tracing::warn!(?error, "Failed to persist vault-header.json locally");
-                    }
-                }
-                Err(error) => {
-                    tracing::warn!(?error, "Failed to serialise vault-header.json");
-                }
-            },
-            Err(error) => {
-                tracing::warn!(
-                    ?error,
-                    "Failed to download vault-header.json after create; \
-                     subsequent authenticate calls may fail until the header is synced"
-                );
-            }
         }
     }
 

@@ -30,22 +30,14 @@ pub(crate) async fn staging_directory() -> Result<PathBuf, AuthenticationError> 
     let base = dirs::config_dir().ok_or(AuthenticationError::VaultHeaderInvalid)?;
     let staging_dir = base.join("arx-runa");
 
-    #[cfg(not(windows))]
-    {
-        tokio::fs::create_dir_all(&staging_dir)
-            .await
-            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    }
-
-    #[cfg(windows)]
-    {
-        let staging_dir_clone = staging_dir.clone();
-        tokio::task::spawn_blocking(move || {
-            ensure_windows_directory_owner_only(&staging_dir_clone)
-        })
+    // The staging directory holds plaintext vault-header JSON — not secret material.
+    // Owner-only ACL is applied to individual files that contain sensitive data;
+    // using it on the directory itself causes FILE_ADD_FILE to be denied on Windows
+    // because the Creator Owner SID (OW/S-1-3-0) is a template for child-object
+    // inheritance and is never present in a real user token.
+    tokio::fs::create_dir_all(&staging_dir)
         .await
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)??;
-    }
+        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
 
     Ok(staging_dir)
 }
@@ -126,42 +118,6 @@ pub(crate) async fn remove_if_exists(path: &Path) -> Result<(), AuthenticationEr
     match tokio::fs::remove_file(path).await {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(AuthenticationError::VaultHeaderInvalid),
-    }
-}
-
-#[cfg(windows)]
-fn ensure_windows_directory_owner_only(path: &Path) -> Result<(), AuthenticationError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    }
-
-    if !path.exists() {
-        create_owner_only_directory_windows(path)?;
-    } else if !path.is_dir() {
-        return Err(AuthenticationError::VaultHeaderInvalid);
-    }
-
-    apply_owner_only_acl_windows(path, true)
-}
-
-#[cfg(windows)]
-fn create_owner_only_directory_windows(path: &Path) -> Result<(), AuthenticationError> {
-    use windows::Win32::Storage::FileSystem::CreateDirectoryW;
-    use windows::core::PCWSTR;
-
-    let security_descriptor = WindowsSecurityDescriptor::from_sddl(owner_only_directory_sddl())?;
-    let security_attributes = security_descriptor.security_attributes();
-    let path_wide = to_wide_null(path.as_os_str());
-
-    // SAFETY: `path_wide` is null-terminated and `security_attributes`
-    // references a valid security descriptor for the duration of the call.
-    let result =
-        unsafe { CreateDirectoryW(PCWSTR(path_wide.as_ptr()), Some(&security_attributes)) };
-
-    match result {
-        Ok(()) => Ok(()),
-        Err(_) if path.is_dir() => Ok(()),
         Err(_) => Err(AuthenticationError::VaultHeaderInvalid),
     }
 }

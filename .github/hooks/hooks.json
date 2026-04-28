@@ -27,6 +27,13 @@
       },
       {
         "type": "command",
+        "bash": "./scripts/hooks/run-fmt.sh",
+        "powershell": "./scripts/hooks/run-fmt.ps1",
+        "timeoutSec": 30,
+        "comment": "Run cargo fmt on Rust file edits"
+      },
+      {
+        "type": "command",
         "bash": "./scripts/hooks/copilot-sync-reminder.sh",
         "powershell": "./scripts/hooks/copilot-sync-reminder.ps1",
         "timeoutSec": 10,

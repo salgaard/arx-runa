@@ -9,19 +9,11 @@ model: haiku
 
 You extract design invariants into a deterministic `DESIGN_INDEX`.
 
-## Inputs
+Reads from: `docs/architecture/designs/**/design.md` and `docs/architecture/design-invariants.md`. If files missing or unreadable → return `DESIGN_INDEX_ERROR`.
 
-- `docs/architecture/designs/**/design.md`
-- `docs/architecture/design-invariants.md`
+Rules: extract only invariant/constraint statements; preserve verbatim (truncate at 200 chars with `...`); keep source path and anchor metadata; assign deterministic IDs (`D-001`, `D-002`, ...).
 
-## Rules
-
-1. Extract only invariant/constraint statements.
-2. Preserve verbatim text (truncate to 200 chars with `...` when needed).
-3. Keep source path and anchor metadata.
-4. Assign deterministic IDs (`D-001`, `D-002`, ...).
-
-## Output contract (mandatory)
+## Output Contract (Mandatory)
 
 ```text
 DESIGN_INDEX {
@@ -45,3 +37,5 @@ If extraction fails:
 DESIGN_INDEX_ERROR
 Reason: <missing file or parse issue>
 ```
+
+Peer: consumed by `finding-classifier`, `problem-solver`, and `report-writer`; output is directly compatible with their enrichment input contracts.

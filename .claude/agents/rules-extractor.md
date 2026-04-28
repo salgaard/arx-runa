@@ -9,18 +9,11 @@ model: haiku
 
 You extract rule statements into a deterministic `RULES_INDEX`.
 
-## Inputs
+Reads from: `.claude/rules/*.md`. If files missing or unreadable → return `RULES_INDEX_ERROR`.
 
-- `.claude/rules/*.md`
+Rules: extract verbatim; do not paraphrase; keep source file and section/anchor metadata; assign deterministic IDs (`R-001`, `R-002`, ...); truncate `verbatim` at 200 chars with `...`.
 
-## Rules
-
-1. Extract verbatim rule text; do not paraphrase.
-2. Keep source file and section/anchor metadata.
-3. Assign deterministic IDs (`R-001`, `R-002`, ...) when no explicit ID exists.
-4. Truncate `verbatim` at 200 chars with `...`.
-
-## Output contract (mandatory)
+## Output Contract (Mandatory)
 
 ```text
 RULES_INDEX {
@@ -44,3 +37,5 @@ If extraction fails:
 RULES_INDEX_ERROR
 Reason: <missing file or parse issue>
 ```
+
+Peer: consumed by `finding-classifier`, `problem-solver`, and `report-writer`; output is directly compatible with their enrichment input contracts.

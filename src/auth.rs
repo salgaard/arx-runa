@@ -349,6 +349,7 @@ pub fn VaultCreationPage(
         let session_actions = session_actions;
         let set_loading = set_loading;
         let set_password = set_password;
+        let on_back_success = on_back_to_login.clone();
 
         let req = CreateVaultRequest {
             vault_name: vault_name_value.clone(),
@@ -372,6 +373,7 @@ pub fn VaultCreationPage(
                         "Vault '{}' created successfully!",
                         vault_name_value
                     ));
+                    on_back_success();
                     session_actions.complete_success(resp.vault_id);
                 }
                 Err(err) => {

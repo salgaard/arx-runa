@@ -85,6 +85,16 @@ pub trait CloudTransport: Send + Sync {
     /// Lists cloud-relative remote paths under a prefix.
     async fn list_blobs(&self, remote_prefix: &str) -> Result<Vec<String>, CloudTransportError>;
 
+    /// Returns `true` when this transport is backed by a real cloud backend.
+    ///
+    /// The default implementation returns `true`. `NoOpCloudTransport` overrides
+    /// this to return `false` so callers can skip cloud operations that are
+    /// meaningless for local-only vaults without attempting a round-trip that
+    /// will always fail.
+    fn is_configured(&self) -> bool {
+        true
+    }
+
     /// Cleans up session-scoped artifacts (e.g., rclone.conf temp files).
     ///
     /// Called on session lock or timeout to remove sensitive files from disk.

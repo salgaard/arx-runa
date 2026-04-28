@@ -267,14 +267,16 @@ pub async fn create_vault(
         return Err(AuthenticationError::VaultHeaderInvalid);
     }
 
-    // Best-effort cloud upload. Non-fatal: local copy is sufficient for local-only
-    // vaults; the staging file persists for retry on next startup if upload fails.
-    let staging_dir = staging::staging_directory().await?;
-    if let Err(error) = upload_vault_header(&header, cloud_transport, &staging_dir).await {
-        tracing::warn!(
-            ?error,
-            "vault header cloud upload failed; local copy written, will retry on next startup"
-        );
+    // Best-effort cloud upload. Skipped for local-only vaults (no transport configured).
+    // Non-fatal: the staging file persists for retry on next startup if the upload fails.
+    if cloud_transport.is_configured() {
+        let staging_dir = staging::staging_directory().await?;
+        if let Err(error) = upload_vault_header(&header, cloud_transport, &staging_dir).await {
+            tracing::warn!(
+                ?error,
+                "vault header cloud upload failed; local copy written, will retry on next startup"
+            );
+        }
     }
     session_manager
         .finalize_session_install(
@@ -562,8 +564,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_create_vault_upload_failure_preserves_no_session_and_cleans_staging_and_local_files()
-     {
+    async fn test_create_vault_upload_failure_non_fatal_session_installed_vault_intact() {
         let _lock = ceremony_lock().await;
         let temp = temp_dir();
         let session = test_session_manager();
@@ -590,21 +591,19 @@ mod tests {
 
         let result = create_vault(request, &session, &cloud).await;
 
-        assert!(matches!(
-            result,
-            Err(AuthenticationError::VaultHeaderInvalid)
-        ));
-        assert_eq!(
-            session.state().await,
-            crate::auth::LifecycleState::NoSession
-        );
-        assert!(!vault_db_path.exists());
-        assert!(!key_file_path.exists());
-        assert!(!tokio::fs::try_exists(&pending_path).await.unwrap_or(false));
+        // Upload failure is non-fatal: ceremony succeeds, session is active, vault intact.
+        assert!(result.is_ok());
+        assert_eq!(session.state().await, crate::auth::LifecycleState::Active);
+        assert!(vault_db_path.exists());
+        assert!(key_file_path.exists());
+        // Staging file remains because the upload failed before the remote received it.
+        assert!(tokio::fs::try_exists(&pending_path).await.unwrap_or(false));
+        let _ = staging::remove_if_exists(&pending_path).await;
+        session.lock().await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_create_vault_staging_write_failure_preserves_no_session_and_cleans_local_files() {
+    async fn test_create_vault_staging_write_failure_non_fatal_session_installed_vault_intact() {
         let _lock = ceremony_lock().await;
         let temp = temp_dir();
         let session = test_session_manager();
@@ -635,19 +634,77 @@ mod tests {
 
         let result = create_vault(request, &session, &cloud).await;
 
-        assert!(matches!(
-            result,
-            Err(AuthenticationError::VaultHeaderInvalid)
-        ));
-        assert_eq!(
-            session.state().await,
-            crate::auth::LifecycleState::NoSession
-        );
-        assert!(!vault_db_path.exists());
-        assert!(!key_file_path.exists());
+        // Staging write failure is non-fatal: ceremony succeeds, session is active, vault intact.
+        assert!(result.is_ok());
+        assert_eq!(session.state().await, crate::auth::LifecycleState::Active);
+        assert!(vault_db_path.exists());
+        assert!(key_file_path.exists());
         tokio::fs::remove_dir_all(&pending_path)
             .await
             .expect("directory at staging path must be removable");
+        session.lock().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_vault_with_primary_local_destination_inserts_destination_row() {
+        let _lock = ceremony_lock().await;
+        let temp = temp_dir();
+        let vault_db_path = temp.path().join("vault.db");
+        let cloud = MockCloudTransport::new();
+        let session = test_session_manager();
+
+        let dest = crate::storage::cloud::destination_session::DestinationSession {
+            destination_id: Uuid::new_v4().hyphenated().to_string(),
+            label: "Local Storage".to_owned(),
+            destination_type:
+                crate::storage::cloud::destination_session::DestinationType::LocalPath,
+            rclone_remote_name: "local_storage".to_owned(),
+            rclone_config_blob: String::new(),
+            bucket: String::new(),
+            path_prefix: String::new(),
+            is_primary: true,
+            backup_mode: None,
+        };
+        let request = CreateVaultRequest {
+            tier: Tier::One,
+            password_bytes: TEST_PASSWORD,
+            target_key_file_path: None,
+            vault_db_path: vault_db_path.clone(),
+            argon2_params: Argon2Params::DEFAULT,
+            chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+            epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: Some(dest),
+        };
+
+        let result = create_vault(request, &session, &cloud).await;
+
+        assert!(result.is_ok());
+        assert_eq!(session.state().await, crate::auth::LifecycleState::Active);
+
+        let sqlcipher_key: [u8; 32] = session
+            .with_sqlcipher_key(|k| *k)
+            .await
+            .expect("session must be active to read sqlcipher key");
+        let db = crate::storage::SqlCipherMetadataStore::open(&vault_db_path, &sqlcipher_key)
+            .await
+            .expect("vault DB must be openable after ceremony");
+        let destinations =
+            crate::storage::cloud::destination_session::list_destination_sessions(&db)
+                .await
+                .expect("listing destinations must succeed");
+        assert_eq!(
+            destinations.len(),
+            1,
+            "exactly one destination row must be inserted"
+        );
+        assert!(destinations[0].is_primary);
+        assert_eq!(
+            destinations[0].destination_type,
+            crate::storage::cloud::destination_session::DestinationType::LocalPath,
+        );
+        session.lock().await;
     }
 
     #[tokio::test(flavor = "multi_thread")]

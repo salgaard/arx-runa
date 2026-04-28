@@ -84,6 +84,10 @@ impl CloudTransport for NoOpCloudTransport {
             "cloud transport not configured".into(),
         ))
     }
+
+    fn is_configured(&self) -> bool {
+        false
+    }
 }
 
 impl AppState {
