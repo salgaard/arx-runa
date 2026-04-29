@@ -36,6 +36,11 @@ use crate::storage::cloud::{
     },
     vault_header::VaultHeader,
 };
+use secrecy::SecretBox;
+
+use crate::crypto::KeyEncryptionKey;
+use crate::storage::vault_ops::flush_epoch_buffer;
+use crate::storage::MetadataStore as _;
 use crate::ui::commands_common::{require_active_session, sanitise_password};
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
@@ -43,6 +48,7 @@ use crate::ui::types::{AuthResponse, DestinationSessionConfig, SessionStatus, Va
 use crate::ui::validation::validate_password;
 use crate::ui::vault_paths::{
     default_vault_root, list_local_vaults, resolve_singleton_vault, resolve_vault_by_id,
+    vault_staging_dir,
 };
 
 // ─── Private helpers ────────────────────────────────────────────────────────
@@ -655,10 +661,61 @@ pub async fn delete_vault(
     Ok(())
 }
 
+/// Attempts a best-effort epoch buffer flush before locking the vault.
+///
+/// Returns `Ok(())` silently when the session is not active, the database is not
+/// open, or the epoch buffer feature is disabled.  Any flush error is logged at
+/// `warn!` and does not block the lock.
+async fn try_flush_on_lock(
+    state: &AppState,
+    db: &crate::storage::SqlCipherMetadataStore,
+) -> Result<(), crate::storage::error::StorageError> {
+    let vault_id = match state.active_vault_id.read().await.clone() {
+        Some(id) => id,
+        None => return Ok(()),
+    };
+    let staging_dir = vault_staging_dir(&vault_id);
+    let kek_raw: [u8; 32] = match state
+        .session_manager
+        .with_key_encryption_key(|k| *k)
+        .await
+    {
+        Ok(raw) => raw,
+        Err(_) => return Ok(()),
+    };
+    let kek = KeyEncryptionKey::from_secret_box(SecretBox::new(Box::new(kek_raw)));
+    let chunk_size_bytes = match db.get_meta("chunk_size_bytes").await? {
+        Some(value) => value.parse::<u64>().map_err(|_| {
+            crate::storage::error::StorageError::Database(
+                "invalid chunk_size_bytes".to_owned(),
+            )
+        })?,
+        None => return Ok(()),
+    };
+    flush_epoch_buffer(db, &kek, &staging_dir, chunk_size_bytes).await
+}
+
 /// Zero all session keys and lock the vault.
 #[tauri::command]
 pub async fn lock_session(state: State<'_, AppState>) -> Result<(), IpcError> {
     state.session_manager.reset_timer().await;
+
+    {
+        let db_guard = state.database.read().await;
+        if let Some(db) = db_guard.as_ref() {
+            let epoch_enabled = db
+                .get_meta("epoch_buffer_enabled")
+                .await
+                .ok()
+                .flatten()
+                .map(|v| v == "true")
+                .unwrap_or(false);
+            if epoch_enabled && let Err(error) = try_flush_on_lock(&state, db).await {
+                tracing::warn!(?error, "epoch flush on lock failed; continuing lock");
+            }
+        }
+    }
+
     state.session_manager.lock().await;
     state.reset_cloud_transport().await;
 

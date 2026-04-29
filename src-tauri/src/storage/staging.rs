@@ -153,6 +153,9 @@ mod tests {
             blob_name: blob_name.to_owned(),
             size_padded: 4_194_304,
             blake3_checksum: [3; 32],
+            epoch_blob_id: None,
+            byte_offset: None,
+            byte_length: None,
         }
     }
 

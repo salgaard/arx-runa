@@ -124,6 +124,92 @@ pub(crate) fn apply_canonical_schema(conn: &Connection) -> Result<(), StorageErr
         .map_err(StorageError::from_rusqlite)
 }
 
+/// Migrates a schema-version-1 manifest to schema-version-2.
+///
+/// Idempotent: if `schema_version` is already `'2'`, commits immediately and returns `Ok`.
+/// Must be called before `validate_manifest_meta` on any vault opened from disk.
+///
+/// Migration steps (single `BEGIN IMMEDIATE` transaction):
+/// 1. Create `epoch_blobs` table.
+/// 2. Recreate `chunks` with nullable epoch-blob foreign-key columns and a CHECK constraint
+///    ensuring that a chunk belongs to exactly one of: a standalone blob or an epoch blob.
+/// 3. Create `epoch_buffer` table.
+/// 4. Bump `schema_version` to `'2'`.
+pub(crate) fn apply_epoch_v2_migration(conn: &Connection) -> Result<(), StorageError> {
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(StorageError::from_rusqlite)?;
+
+    let version = conn
+        .query_row(
+            "SELECT value FROM manifest_meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(StorageError::from_rusqlite)?
+        .ok_or_else(|| {
+            StorageError::Database("missing manifest_meta key: schema_version".to_owned())
+        })?;
+
+    if version == "2" {
+        conn.execute_batch("COMMIT")
+            .map_err(StorageError::from_rusqlite)?;
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        "
+        CREATE TABLE epoch_blobs (
+            epoch_blob_id    TEXT PRIMARY KEY,
+            blob_name        TEXT NOT NULL UNIQUE,
+            file_key_wrapped BLOB NOT NULL,
+            size_padded      INTEGER NOT NULL,
+            blake3_checksum  BLOB NOT NULL
+        );
+
+        CREATE TABLE chunks_new (
+            chunk_id         TEXT PRIMARY KEY,
+            node_id          TEXT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+            chunk_index      INTEGER NOT NULL,
+            blob_name        TEXT,
+            size_padded      INTEGER NOT NULL,
+            blake3_checksum  BLOB NOT NULL,
+            epoch_blob_id    TEXT REFERENCES epoch_blobs(epoch_blob_id),
+            byte_offset      INTEGER,
+            byte_length      INTEGER,
+            UNIQUE(node_id, chunk_index),
+            CHECK (
+                (blob_name IS NOT NULL AND epoch_blob_id IS NULL
+                     AND byte_offset IS NULL AND byte_length IS NULL) OR
+                (blob_name IS NULL AND epoch_blob_id IS NOT NULL
+                     AND byte_offset IS NOT NULL AND byte_length IS NOT NULL)
+            )
+        );
+        CREATE UNIQUE INDEX idx_chunks_blob_name ON chunks_new(blob_name) WHERE blob_name IS NOT NULL;
+        INSERT INTO chunks_new (chunk_id, node_id, chunk_index, blob_name, size_padded, blake3_checksum)
+            SELECT chunk_id, node_id, chunk_index, blob_name, size_padded, blake3_checksum FROM chunks;
+        DROP TABLE chunks;
+        ALTER TABLE chunks_new RENAME TO chunks;
+
+        CREATE TABLE IF NOT EXISTS epoch_buffer (
+            entry_id    TEXT PRIMARY KEY,
+            node_id     TEXT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+            plaintext   BLOB NOT NULL,
+            size_bytes  INTEGER NOT NULL,
+            queued_at   INTEGER NOT NULL
+        );
+
+        UPDATE manifest_meta SET value = '2' WHERE key = 'schema_version';
+        ",
+    )
+    .map_err(StorageError::from_rusqlite)?;
+
+    conn.execute_batch("COMMIT")
+        .map_err(StorageError::from_rusqlite)?;
+
+    Ok(())
+}
+
 /// Verifies the active SQLCipher key by reading `sqlite_master`.
 pub(crate) fn verify_sqlcipher_key(conn: &Connection) -> Result<(), StorageError> {
     conn.query_row("SELECT count(*) FROM sqlite_master", [], |_row| Ok(()))
@@ -209,9 +295,9 @@ pub(crate) fn seed_manifest_meta(
 /// Validates immutable `manifest_meta` constraints required by design invariants.
 pub(crate) fn validate_manifest_meta(conn: &Connection) -> Result<(), StorageError> {
     let schema_version = manifest_meta_value(conn, "schema_version")?;
-    if schema_version != "1" {
+    if schema_version != "1" && schema_version != "2" {
         return Err(StorageError::Database(
-            "invalid schema_version: expected 1".to_owned(),
+            "invalid schema_version: expected 1 or 2".to_owned(),
         ));
     }
 
@@ -255,8 +341,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        apply_canonical_schema, seed_manifest_meta, validate_manifest_meta,
-        validate_schema_integrity,
+        apply_canonical_schema, apply_epoch_v2_migration, seed_manifest_meta,
+        validate_manifest_meta, validate_schema_integrity,
     };
     use crate::storage::error::StorageError;
 
@@ -351,7 +437,7 @@ mod tests {
         apply_canonical_schema(&conn).expect("schema should apply");
         seed_manifest_meta(&conn, Uuid::new_v4(), 4_194_304, false).expect("seed should succeed");
         conn.execute(
-            "UPDATE manifest_meta SET value = '2' WHERE key = 'schema_version'",
+            "UPDATE manifest_meta SET value = '3' WHERE key = 'schema_version'",
             [],
         )
         .expect("test setup should update schema_version");
@@ -415,5 +501,72 @@ mod tests {
         assert!(
             matches!(result, Err(StorageError::Database(message)) if message.contains("missing manifest_meta key: vault_id"))
         );
+    }
+
+    /// Verifies that `apply_epoch_v2_migration` migrates a version-1 schema to version 2.
+    #[test]
+    fn test_apply_epoch_v2_migration_upgrades_version_1_to_2() {
+        let conn = Connection::open_in_memory().expect("in-memory connection should open");
+        apply_canonical_schema(&conn).expect("schema should apply");
+        seed_manifest_meta(&conn, Uuid::new_v4(), 4_194_304, false).expect("seed should succeed");
+
+        apply_epoch_v2_migration(&conn).expect("migration should succeed");
+
+        let version: String = conn
+            .query_row(
+                "SELECT value FROM manifest_meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("schema_version should be readable");
+        assert_eq!(version, "2");
+
+        let result = validate_manifest_meta(&conn);
+        assert!(result.is_ok());
+    }
+
+    /// Verifies that `apply_epoch_v2_migration` is idempotent when already at version 2.
+    #[test]
+    fn test_apply_epoch_v2_migration_is_idempotent_when_already_at_version_2() {
+        let conn = Connection::open_in_memory().expect("in-memory connection should open");
+        apply_canonical_schema(&conn).expect("schema should apply");
+        seed_manifest_meta(&conn, Uuid::new_v4(), 4_194_304, false).expect("seed should succeed");
+        apply_epoch_v2_migration(&conn).expect("first migration should succeed");
+
+        let result = apply_epoch_v2_migration(&conn);
+
+        assert!(result.is_ok());
+    }
+
+    /// Verifies that existing chunk rows survive the version-2 migration.
+    #[test]
+    fn test_apply_epoch_v2_migration_preserves_existing_chunk_rows() {
+        let conn = Connection::open_in_memory().expect("in-memory connection should open");
+        apply_canonical_schema(&conn).expect("schema should apply");
+        seed_manifest_meta(&conn, Uuid::new_v4(), 4_194_304, false).expect("seed should succeed");
+
+        let node_id = Uuid::new_v4().hyphenated().to_string();
+        conn.execute(
+            "INSERT INTO nodes (node_id, parent_id, node_type, name, created_at, modified_at, size_bytes, file_key_wrapped)
+             VALUES (?1, NULL, 'file', 'test.txt', 1, 1, 42, ?2)",
+            params![node_id, vec![0u8; 72]],
+        )
+        .expect("node should insert");
+
+        let chunk_id = Uuid::new_v4().hyphenated().to_string();
+        let blob_name = Uuid::new_v4().hyphenated().to_string();
+        conn.execute(
+            "INSERT INTO chunks (chunk_id, node_id, chunk_index, blob_name, size_padded, blake3_checksum)
+             VALUES (?1, ?2, 0, ?3, 4194304, ?4)",
+            params![chunk_id, node_id, blob_name, vec![1u8; 32]],
+        )
+        .expect("chunk should insert");
+
+        apply_epoch_v2_migration(&conn).expect("migration should succeed");
+
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM chunks", [], |row| row.get(0))
+            .expect("chunk count should be readable");
+        assert_eq!(count, 1);
     }
 }

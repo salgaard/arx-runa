@@ -163,6 +163,60 @@ mod tests {
                 "unused test helper method".to_owned(),
             ))
         }
+        /// Fails for this test helper.
+        async fn insert_file_node_only(&self, _node: &crate::storage::types::Node) -> Result<(), crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn stage_epoch_entry(
+            &self,
+            _node_id: uuid::Uuid,
+            _plaintext: Vec<u8>,
+        ) -> Result<(), crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn get_epoch_buffer_total_bytes(&self) -> Result<u64, crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn get_epoch_buffer_entries(
+            &self,
+        ) -> Result<Vec<crate::storage::types::EpochBufferEntry>, crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn commit_epoch_flush(
+            &self,
+            _record: &crate::storage::types::EpochBlobRecord,
+            _extents: &[(uuid::Uuid, u32, u64, u64)],
+        ) -> Result<(), crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn get_epoch_blob(
+            &self,
+            _epoch_blob_id: uuid::Uuid,
+        ) -> Result<crate::storage::types::EpochBlobRecord, crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
     }
 
     fn zero_byte_node(node_id: Uuid) -> Node {
@@ -404,6 +458,9 @@ mod tests {
                 blob_name: "not-a-canonical-uuid-v4".to_owned(),
                 size_padded: 4096,
                 blake3_checksum: [0; 32],
+                epoch_blob_id: None,
+                byte_offset: None,
+                byte_length: None,
             },
             delete_called: Arc::new(AtomicBool::new(false)),
         };

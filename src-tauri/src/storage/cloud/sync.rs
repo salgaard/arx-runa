@@ -839,6 +839,9 @@ mod tests {
             blob_name: blob_name.to_owned(),
             size_padded: 4_194_304,
             blake3_checksum: compute_checksum(payload).0,
+            epoch_blob_id: None,
+            byte_offset: None,
+            byte_length: None,
         };
         store.insert_chunks(&[chunk]).await?;
         Ok(file_id)

@@ -17,10 +17,10 @@ use crate::crypto::SqlcipherKey;
 use crate::storage::error::StorageError;
 use crate::storage::metadata_store::MetadataStore;
 use crate::storage::schema::{
-    apply_canonical_schema, seed_manifest_meta, validate_manifest_meta, validate_schema_integrity,
-    verify_sqlcipher_key,
+    apply_canonical_schema, apply_epoch_v2_migration, seed_manifest_meta, validate_manifest_meta,
+    validate_schema_integrity, verify_sqlcipher_key,
 };
-use crate::storage::types::{ChunkRecord, Node, NodeId, NodeType, SyncChunkRecord};
+use crate::storage::types::{ChunkRecord, EpochBlobRecord, EpochBufferEntry, Node, NodeId, NodeType, SyncChunkRecord};
 use crate::storage::validation::{
     immutable_meta_key_violation, is_immutable_manifest_meta_key, parse_chunk_size_bytes,
     validate_blob_name_uuid_v4, validate_chunk_target_node,
@@ -66,6 +66,7 @@ impl SqlCipherMetadataStore {
         let sqlcipher_key = protected_sqlcipher_key_from_slice(sqlcipher_key);
         let conn = tokio::task::spawn_blocking(move || -> Result<Connection, StorageError> {
             let conn = open_keyed_connection(&path, &sqlcipher_key)?;
+            apply_epoch_v2_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             Ok(conn)
@@ -92,6 +93,7 @@ impl SqlCipherMetadataStore {
             let conn = open_keyed_connection(&path, &sqlcipher_key)?;
             apply_canonical_schema(&conn)?;
             seed_manifest_meta(&conn, vault_id, chunk_size_bytes, epoch_buffer_enabled)?;
+            apply_epoch_v2_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             validate_create_immutable_meta_matches(
@@ -117,7 +119,9 @@ impl SqlCipherMetadataStore {
     pub(crate) async fn list_all_blob_names(&self) -> Result<HashSet<String>, StorageError> {
         self.with_connection_blocking(move |conn| {
             let mut statement = conn
-                .prepare("SELECT blob_name FROM chunks")
+                .prepare("SELECT blob_name FROM chunks WHERE blob_name IS NOT NULL
+                UNION
+                SELECT blob_name FROM epoch_blobs")
                 .map_err(StorageError::from_rusqlite)?;
             let rows = statement
                 .query_map([], |row| row.get::<_, String>(0))
@@ -138,7 +142,10 @@ impl SqlCipherMetadataStore {
     pub(crate) async fn list_sync_chunks(&self) -> Result<Vec<SyncChunkRecord>, StorageError> {
         self.with_connection_blocking(move |conn| {
             let mut statement = conn
-                .prepare("SELECT blob_name, blake3_checksum FROM chunks ORDER BY blob_name ASC")
+                .prepare("SELECT blob_name, blake3_checksum FROM chunks WHERE blob_name IS NOT NULL
+                UNION
+                SELECT blob_name, blake3_checksum FROM epoch_blobs
+                ORDER BY blob_name ASC")
                 .map_err(StorageError::from_rusqlite)?;
             let rows = statement
                 .query_map([], |row| {
@@ -835,6 +842,9 @@ fn read_chunk(row: &rusqlite::Row<'_>) -> Result<ChunkRecord, rusqlite::Error> {
     let blob_name: String = row.get(3)?;
     let size_padded_i64: i64 = row.get(4)?;
     let checksum_vec: Vec<u8> = row.get(5)?;
+    let epoch_blob_id_text: Option<String> = row.get(6)?;
+    let byte_offset_i64: Option<i64> = row.get(7)?;
+    let byte_length_i64: Option<i64> = row.get(8)?;
 
     let chunk_id = Uuid::parse_str(&chunk_id_text).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
@@ -866,6 +876,19 @@ fn read_chunk(row: &rusqlite::Row<'_>) -> Result<ChunkRecord, rusqlite::Error> {
             )),
         )
     })?;
+    let epoch_blob_id = epoch_blob_id_text
+        .map(|text| {
+            Uuid::parse_str(&text).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    6,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })
+        })
+        .transpose()?;
+    let byte_offset = byte_offset_i64.map(|v| v as u64);
+    let byte_length = byte_length_i64.map(|v| v as u64);
 
     Ok(ChunkRecord {
         chunk_id,
@@ -874,6 +897,9 @@ fn read_chunk(row: &rusqlite::Row<'_>) -> Result<ChunkRecord, rusqlite::Error> {
         blob_name,
         size_padded,
         blake3_checksum,
+        epoch_blob_id,
+        byte_offset,
+        byte_length,
     })
 }
 
@@ -1086,10 +1112,15 @@ impl MetadataStore for SqlCipherMetadataStore {
         self.with_connection_blocking(move |conn| {
             let mut statement = conn
                 .prepare(
-                    "SELECT chunk_id, node_id, chunk_index, blob_name, size_padded, blake3_checksum
-                     FROM chunks
-                     WHERE node_id = ?1
-                     ORDER BY chunk_index ASC",
+                    "SELECT c.chunk_id, c.node_id, c.chunk_index,
+                            COALESCE(c.blob_name, eb.blob_name) AS blob_name,
+                            COALESCE(c.size_padded, eb.size_padded) AS size_padded,
+                            COALESCE(c.blake3_checksum, eb.blake3_checksum) AS blake3_checksum,
+                            c.epoch_blob_id, c.byte_offset, c.byte_length
+                     FROM chunks c
+                     LEFT JOIN epoch_blobs eb ON c.epoch_blob_id = eb.epoch_blob_id
+                     WHERE c.node_id = ?1
+                     ORDER BY c.chunk_index ASC",
                 )
                 .map_err(StorageError::from_rusqlite)?;
             let rows = statement
@@ -1297,6 +1328,205 @@ impl MetadataStore for SqlCipherMetadataStore {
         })
         .await
     }
+
+    /// Inserts a file node row without any associated chunk rows.
+    async fn insert_file_node_only(&self, node: &Node) -> Result<(), StorageError> {
+        let node = node.clone();
+        self.with_connection_blocking(move |conn| {
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            ensure_parent_is_directory_for_insert(&tx, &node)?;
+            tx.execute(
+                "INSERT INTO nodes (node_id, parent_id, node_type, name, created_at, modified_at, size_bytes, file_key_wrapped)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    node.node_id.to_string(),
+                    node.parent_id.map(|id| id.to_string()),
+                    node.node_type.as_ref(),
+                    node.name,
+                    node.created_at,
+                    node.modified_at,
+                    i64::try_from(node.size_bytes).map_err(|error| StorageError::Database(error.to_string()))?,
+                    node.file_key_wrapped.map(|bytes| bytes.to_vec())
+                ],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Stages a plaintext entry in the epoch buffer for the given node.
+    async fn stage_epoch_entry(
+        &self,
+        node_id: Uuid,
+        plaintext: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let entry_id = Uuid::new_v4().hyphenated().to_string();
+            let node_id_text = node_id.hyphenated().to_string();
+            let size_bytes = plaintext.len() as i64;
+            let queued_at = unix_timestamp_now()?;
+            conn.execute(
+                "INSERT INTO epoch_buffer (entry_id, node_id, plaintext, size_bytes, queued_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![entry_id, node_id_text, plaintext, size_bytes, queued_at],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Returns the total number of bytes currently staged in the epoch buffer.
+    async fn get_epoch_buffer_total_bytes(&self) -> Result<u64, StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let total: i64 = conn
+                .query_row(
+                    "SELECT COALESCE(SUM(size_bytes), 0) FROM epoch_buffer",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            Ok(total as u64)
+        })
+        .await
+    }
+
+    /// Returns all entries currently staged in the epoch buffer.
+    async fn get_epoch_buffer_entries(&self) -> Result<Vec<EpochBufferEntry>, StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let mut statement = conn
+                .prepare(
+                    "SELECT entry_id, node_id, plaintext, size_bytes FROM epoch_buffer ORDER BY queued_at ASC",
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            let rows = statement
+                .query_map([], |row| {
+                    let entry_id_text: String = row.get(0)?;
+                    let node_id_text: String = row.get(1)?;
+                    let plaintext: Vec<u8> = row.get(2)?;
+                    let size_bytes_i64: i64 = row.get(3)?;
+                    Ok((entry_id_text, node_id_text, plaintext, size_bytes_i64))
+                })
+                .map_err(StorageError::from_rusqlite)?;
+            let mut entries = Vec::new();
+            for row in rows {
+                let (entry_id_text, node_id_text, plaintext, size_bytes_i64) =
+                    row.map_err(StorageError::from_rusqlite)?;
+                let entry_id = Uuid::parse_str(&entry_id_text).map_err(|error| {
+                    StorageError::Database(format!("invalid entry_id uuid: {error}"))
+                })?;
+                let node_id = Uuid::parse_str(&node_id_text).map_err(|error| {
+                    StorageError::Database(format!("invalid node_id uuid: {error}"))
+                })?;
+                entries.push(EpochBufferEntry {
+                    entry_id,
+                    node_id,
+                    plaintext,
+                    size_bytes: size_bytes_i64 as u64,
+                });
+            }
+            Ok(entries)
+        })
+        .await
+    }
+
+    /// Atomically inserts an epoch blob record, chunk rows, and clears the buffer.
+    async fn commit_epoch_flush(
+        &self,
+        record: &EpochBlobRecord,
+        extents: &[(Uuid, u32, u64, u64)],
+    ) -> Result<(), StorageError> {
+        let record = record.clone();
+        let extents = extents.to_vec();
+        self.with_connection_blocking(move |conn| {
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            let epoch_blob_id_text = record.epoch_blob_id.hyphenated().to_string();
+            tx.execute(
+                "INSERT INTO epoch_blobs (epoch_blob_id, blob_name, file_key_wrapped, size_padded, blake3_checksum)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    epoch_blob_id_text,
+                    record.blob_name,
+                    record.file_key_wrapped,
+                    i64::try_from(record.size_padded).map_err(|error| StorageError::Database(error.to_string()))?,
+                    record.blake3_checksum.to_vec()
+                ],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+
+            for (node_id, chunk_index, byte_offset, byte_length) in &extents {
+                let chunk_id = Uuid::new_v4().hyphenated().to_string();
+                let node_id_text = node_id.hyphenated().to_string();
+                let size_padded_i64 = i64::try_from(record.size_padded)
+                    .map_err(|error| StorageError::Database(error.to_string()))?;
+                let byte_offset_i64 = *byte_offset as i64;
+                let byte_length_i64 = *byte_length as i64;
+                tx.execute(
+                    "INSERT INTO chunks (chunk_id, node_id, chunk_index, blob_name, size_padded, blake3_checksum, epoch_blob_id, byte_offset, byte_length)
+                     VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        chunk_id,
+                        node_id_text,
+                        i64::from(*chunk_index),
+                        size_padded_i64,
+                        record.blake3_checksum.to_vec(),
+                        epoch_blob_id_text,
+                        byte_offset_i64,
+                        byte_length_i64
+                    ],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            }
+
+            tx.execute("DELETE FROM epoch_buffer", [])
+                .map_err(StorageError::from_rusqlite)?;
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Retrieves an epoch blob record by identifier.
+    async fn get_epoch_blob(&self, epoch_blob_id: Uuid) -> Result<EpochBlobRecord, StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let epoch_blob_id_text = epoch_blob_id.hyphenated().to_string();
+            conn.query_row(
+                "SELECT epoch_blob_id, blob_name, file_key_wrapped, size_padded, blake3_checksum
+                 FROM epoch_blobs WHERE epoch_blob_id = ?1",
+                params![epoch_blob_id_text],
+                |row| {
+                    let epoch_blob_id_str: String = row.get(0)?;
+                    let blob_name: String = row.get(1)?;
+                    let file_key_wrapped: Vec<u8> = row.get(2)?;
+                    let size_padded_i64: i64 = row.get(3)?;
+                    let checksum_vec: Vec<u8> = row.get(4)?;
+                    Ok((epoch_blob_id_str, blob_name, file_key_wrapped, size_padded_i64, checksum_vec))
+                },
+            )
+            .optional()
+            .map_err(StorageError::from_rusqlite)?
+            .ok_or(StorageError::NotFound)
+            .and_then(|(epoch_blob_id_str, blob_name, file_key_wrapped, size_padded_i64, checksum_vec)| {
+                let epoch_blob_id = Uuid::parse_str(&epoch_blob_id_str).map_err(|error| {
+                    StorageError::Database(format!("invalid epoch_blob_id uuid: {error}"))
+                })?;
+                let size_padded = size_padded_i64 as u64;
+                let blake3_checksum: [u8; 32] = checksum_vec.try_into().map_err(|_| {
+                    StorageError::Database("expected 32-byte checksum in epoch_blobs".to_owned())
+                })?;
+                Ok(EpochBlobRecord {
+                    epoch_blob_id,
+                    blob_name,
+                    file_key_wrapped,
+                    size_padded,
+                    blake3_checksum,
+                })
+            })
+        })
+        .await
+    }
 }
 
 /// AuthUserStore trait implementation for SqlCipherMetadataStore.
@@ -1447,6 +1677,9 @@ mod tests {
             blob_name: blob_name.to_owned(),
             size_padded: 4_194_304,
             blake3_checksum: [7; 32],
+            epoch_blob_id: None,
+            byte_offset: None,
+            byte_length: None,
         }
     }
 
@@ -2622,6 +2855,9 @@ mod tests {
             blob_name: new_blob_name.clone(),
             size_padded: 4_194_304,
             blake3_checksum: [0xAB; 32],
+            epoch_blob_id: None,
+            byte_offset: None,
+            byte_length: None,
         };
         let new_key: [u8; 72] = [0x55; 72];
 

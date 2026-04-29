@@ -5,7 +5,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::crypto::{Blake3Hash, ChunkIndex, FileId, FileKey, decrypt_chunk, verify_checksum};
+use crate::crypto::{Blake3Hash, ChunkIndex, FileId, FileKey, KeyEncryptionKey, WrappedFileKey, decrypt_chunk, unwrap_file_key, verify_checksum};
 use crate::storage::MetadataStore;
 use crate::storage::error::StorageError;
 use crate::storage::pipeline::read_chunk_size_bytes;
@@ -194,6 +194,99 @@ async fn replace_destination_with_temp(
         .map_err(|error| StorageError::Io(error.to_string()))
 }
 
+
+/// Decrypts a file packed into an epoch blob into a destination path.
+///
+/// Reads the epoch blob, verifies its BLAKE3 checksum, decrypts with the epoch key,
+/// then slices the relevant byte range for the given chunk extent.
+pub async fn decrypt_epoch_file(
+    destination: &Path,
+    chunk: &ChunkRecord,
+    kek: &KeyEncryptionKey,
+    blob_directory: &Path,
+    metadata_store: &dyn MetadataStore,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+) -> Result<(), StorageError> {
+    let epoch_blob_id = chunk.epoch_blob_id.ok_or_else(|| {
+        StorageError::ConstraintViolation(
+            "decrypt_epoch_file called on non-epoch chunk".to_owned(),
+        )
+    })?;
+    let byte_offset = chunk.byte_offset.ok_or_else(|| {
+        StorageError::ConstraintViolation("epoch chunk missing byte_offset".to_owned())
+    })?;
+    let byte_length = chunk.byte_length.ok_or_else(|| {
+        StorageError::ConstraintViolation("epoch chunk missing byte_length".to_owned())
+    })?;
+
+    let record = metadata_store.get_epoch_blob(epoch_blob_id).await?;
+
+    let blob_path = blob_directory.join(format!("{}.blob", record.blob_name));
+    let encrypted_bytes = tokio::fs::read(&blob_path)
+        .await
+        .map_err(|error| StorageError::Io(error.to_string()))?;
+
+    let expected_hash = Blake3Hash(record.blake3_checksum);
+    let verified_blob =
+        verify_checksum(encrypted_bytes, &expected_hash).map_err(StorageError::from)?;
+
+    let wrapped_file_key = WrappedFileKey(
+        record
+            .file_key_wrapped
+            .try_into()
+            .map_err(|_| StorageError::Database("epoch blob key_wrapped has wrong length".to_owned()))?,
+    );
+    let file_key = unwrap_file_key(&wrapped_file_key, kek).map_err(StorageError::from)?;
+
+    let decrypted = decrypt_chunk(
+        verified_blob,
+        &file_key,
+        &FileId::from_uuid(record.epoch_blob_id),
+        ChunkIndex::new(0),
+    )
+    .map_err(StorageError::from)?;
+
+    let start = byte_offset as usize;
+    let end = (byte_offset + byte_length) as usize;
+    if end > decrypted.len() {
+        return Err(StorageError::ConstraintViolation(
+            "epoch byte range exceeds decrypted blob length".to_owned(),
+        ));
+    }
+    let file_bytes = &decrypted[start..end];
+
+    let temporary_destination = temporary_destination_path(destination);
+    let dest_file = tokio::fs::File::create(&temporary_destination)
+        .await
+        .map_err(|error| StorageError::Io(error.to_string()))?;
+    let mut dest_writer = BufWriter::new(dest_file);
+    dest_writer
+        .write_all(file_bytes)
+        .await
+        .map_err(|error| StorageError::Io(error.to_string()))?;
+    dest_writer
+        .flush()
+        .await
+        .map_err(|error| StorageError::Io(error.to_string()))?;
+    let dest_file = dest_writer.into_inner();
+    dest_file
+        .sync_all()
+        .await
+        .map_err(|error| StorageError::Io(error.to_string()))?;
+
+    let replace_result = replace_destination_with_temp(destination, &temporary_destination).await;
+    if replace_result.is_err() {
+        let _ = tokio::fs::remove_file(&temporary_destination).await;
+        return replace_result;
+    }
+
+    if let Some(cb) = progress {
+        cb(byte_length, byte_length);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -327,6 +420,60 @@ mod tests {
         /// Fails for this test helper.
         async fn increment_snapshot_counter(&self) -> Result<u64, StorageError> {
             Err(StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+        /// Fails for this test helper.
+        async fn insert_file_node_only(&self, _node: &crate::storage::types::Node) -> Result<(), crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn stage_epoch_entry(
+            &self,
+            _node_id: uuid::Uuid,
+            _plaintext: Vec<u8>,
+        ) -> Result<(), crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn get_epoch_buffer_total_bytes(&self) -> Result<u64, crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn get_epoch_buffer_entries(
+            &self,
+        ) -> Result<Vec<crate::storage::types::EpochBufferEntry>, crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn commit_epoch_flush(
+            &self,
+            _record: &crate::storage::types::EpochBlobRecord,
+            _extents: &[(uuid::Uuid, u32, u64, u64)],
+        ) -> Result<(), crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn get_epoch_blob(
+            &self,
+            _epoch_blob_id: uuid::Uuid,
+        ) -> Result<crate::storage::types::EpochBlobRecord, crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
                 "unused test helper method".to_owned(),
             ))
         }

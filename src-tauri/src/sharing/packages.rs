@@ -324,6 +324,37 @@ mod tests {
         async fn increment_snapshot_counter(&self) -> Result<u64, StorageError> {
             unimplemented!()
         }
+        async fn insert_file_node_only(&self, _node: &Node) -> Result<(), StorageError> {
+            unimplemented!()
+        }
+        async fn stage_epoch_entry(
+            &self,
+            _node_id: Uuid,
+            _plaintext: Vec<u8>,
+        ) -> Result<(), StorageError> {
+            unimplemented!()
+        }
+        async fn get_epoch_buffer_total_bytes(&self) -> Result<u64, StorageError> {
+            unimplemented!()
+        }
+        async fn get_epoch_buffer_entries(
+            &self,
+        ) -> Result<Vec<crate::storage::types::EpochBufferEntry>, StorageError> {
+            unimplemented!()
+        }
+        async fn commit_epoch_flush(
+            &self,
+            _record: &crate::storage::types::EpochBlobRecord,
+            _extents: &[(Uuid, u32, u64, u64)],
+        ) -> Result<(), StorageError> {
+            unimplemented!()
+        }
+        async fn get_epoch_blob(
+            &self,
+            _epoch_blob_id: Uuid,
+        ) -> Result<crate::storage::types::EpochBlobRecord, StorageError> {
+            unimplemented!()
+        }
     }
 
     struct FakeSharingStore {
@@ -435,6 +466,9 @@ mod tests {
             blob_name: Uuid::new_v4().hyphenated().to_string(),
             size_padded: 4_194_304,
             blake3_checksum: [0x55; 32],
+            epoch_blob_id: None,
+            byte_offset: None,
+            byte_length: None,
         }]
     }
 

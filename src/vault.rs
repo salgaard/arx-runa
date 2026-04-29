@@ -500,7 +500,9 @@ pub fn DropZone(children: Children) -> impl IntoView {
             let current_path = vault.get_untracked().current_path;
             for source_path in paths {
                 let file_name = source_path.split(['/', '\\']).next_back().unwrap_or("file");
-                let vault_path = join_vault_path(&current_path, file_name);
+                let vault_path = join_vault_path(&current_path, file_name)
+                    .trim_start_matches('/')
+                    .to_owned();
                 let upload_path = current_path.clone();
                 let req = UploadFileRequest {
                     source_path: source_path.clone(),
@@ -570,7 +572,9 @@ pub fn UploadButton() -> impl IntoView {
             };
             let current_path = vault.get_untracked().current_path;
             let file_name = source_path.split(['/', '\\']).next_back().unwrap_or("file");
-            let vault_path = join_vault_path(&current_path, file_name);
+            let vault_path = join_vault_path(&current_path, file_name)
+                .trim_start_matches('/')
+                .to_owned();
             set_loading.set(true);
             let channel = IpcChannel::<ProgressUpdate>::new();
             set_upload_channel.set(Some(channel.clone()));

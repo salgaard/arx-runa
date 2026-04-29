@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::storage::error::StorageError;
 use crate::storage::metadata_store::MetadataStore;
-use crate::storage::types::{ChunkRecord, Node, NodeId};
+use crate::storage::types::{ChunkRecord, EpochBlobRecord, EpochBufferEntry, Node, NodeId};
 use crate::storage::validation::{
     immutable_meta_key_violation, is_immutable_manifest_meta_key, parse_chunk_size_bytes,
     validate_blob_name_uuid_v4, validate_chunk_target_node,
@@ -34,6 +34,10 @@ struct MockState {
     meta: HashMap<String, String>,
     /// Pending deletion queue entries with queued timestamp.
     pending_deletions: Vec<(String, i64)>,
+    /// Epoch buffer staged plaintext entries.
+    pub(super) epoch_buffer: Vec<EpochBufferEntry>,
+    /// Epoch blob records by primary key.
+    pub(super) epoch_blobs: HashMap<Uuid, EpochBlobRecord>,
 }
 
 impl Default for MockMetadataStore {
@@ -51,6 +55,8 @@ impl Default for MockMetadataStore {
                 chunks_by_node: HashMap::new(),
                 meta,
                 pending_deletions: Vec::new(),
+                epoch_buffer: Vec::new(),
+                epoch_blobs: HashMap::new(),
             })),
         }
     }
@@ -485,6 +491,115 @@ impl MetadataStore for MockMetadataStore {
             .insert("snapshot_counter".to_owned(), next.to_string());
         Ok(next)
     }
+
+    /// Inserts a file node row without any associated chunk rows.
+    async fn insert_file_node_only(&self, node: &Node) -> Result<(), StorageError> {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|error| StorageError::Database(error.to_string()))?;
+        let node_uuid = *node.node_id.as_uuid();
+        ensure_node_type_file_key_wrapped_parity(node)?;
+        ensure_parent_is_directory_for_insert(&guard, node)?;
+        if guard.nodes.contains_key(&node_uuid) {
+            return Err(StorageError::ConstraintViolation(
+                "duplicate node_id".to_owned(),
+            ));
+        }
+        guard.nodes.insert(node_uuid, node.clone());
+        Ok(())
+    }
+
+    /// Stages a plaintext entry in the epoch buffer for the given node.
+    async fn stage_epoch_entry(
+        &self,
+        node_id: Uuid,
+        plaintext: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|error| StorageError::Database(error.to_string()))?;
+        let size_bytes = plaintext.len() as u64;
+        guard.epoch_buffer.push(EpochBufferEntry {
+            entry_id: Uuid::new_v4(),
+            node_id,
+            plaintext,
+            size_bytes,
+        });
+        Ok(())
+    }
+
+    /// Returns the total number of bytes currently staged in the epoch buffer.
+    async fn get_epoch_buffer_total_bytes(&self) -> Result<u64, StorageError> {
+        let guard = self
+            .inner
+            .lock()
+            .map_err(|error| StorageError::Database(error.to_string()))?;
+        let total = guard
+            .epoch_buffer
+            .iter()
+            .map(|entry| entry.size_bytes)
+            .fold(0u64, u64::saturating_add);
+        Ok(total)
+    }
+
+    /// Returns all entries currently staged in the epoch buffer.
+    async fn get_epoch_buffer_entries(&self) -> Result<Vec<EpochBufferEntry>, StorageError> {
+        let guard = self
+            .inner
+            .lock()
+            .map_err(|error| StorageError::Database(error.to_string()))?;
+        Ok(guard.epoch_buffer.clone())
+    }
+
+    /// Atomically stores the epoch blob record, inserts chunk rows, and clears the buffer.
+    async fn commit_epoch_flush(
+        &self,
+        record: &EpochBlobRecord,
+        extents: &[(Uuid, u32, u64, u64)],
+    ) -> Result<(), StorageError> {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|error| StorageError::Database(error.to_string()))?;
+        guard
+            .epoch_blobs
+            .insert(record.epoch_blob_id, record.clone());
+        for &(node_id, chunk_index, byte_offset, byte_length) in extents {
+            let chunk = ChunkRecord {
+                chunk_id: Uuid::new_v4(),
+                node_id: node_id.into(),
+                chunk_index,
+                blob_name: record.blob_name.clone(),
+                size_padded: record.size_padded,
+                blake3_checksum: record.blake3_checksum,
+                epoch_blob_id: Some(record.epoch_blob_id),
+                byte_offset: Some(byte_offset),
+                byte_length: Some(byte_length),
+            };
+            guard
+                .chunks_by_node
+                .entry(node_id)
+                .or_default()
+                .push(chunk);
+        }
+        guard.epoch_buffer.clear();
+        Ok(())
+    }
+
+    /// Retrieves an epoch blob record by identifier.
+    async fn get_epoch_blob(&self, epoch_blob_id: Uuid) -> Result<EpochBlobRecord, StorageError> {
+        let guard = self
+            .inner
+            .lock()
+            .map_err(|error| StorageError::Database(error.to_string()))?;
+        guard
+            .epoch_blobs
+            .get(&epoch_blob_id)
+            .cloned()
+            .ok_or(StorageError::NotFound)
+    }
 }
 
 #[cfg(test)]
@@ -532,6 +647,9 @@ mod tests {
             blob_name: blob_name.to_owned(),
             size_padded: 4_194_304,
             blake3_checksum: [1; 32],
+            epoch_blob_id: None,
+            byte_offset: None,
+            byte_length: None,
         }
     }
 

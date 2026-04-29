@@ -24,8 +24,12 @@ pub fn on_file_drop<F: Fn(Vec<String>) + 'static>(handler: F) -> impl FnOnce() {
     let handler = std::rc::Rc::new(handler);
 
     let cb = Closure::wrap(Box::new(move |event: JsValue| {
-        // The event payload is { type: "drop", paths: [...] } | { type: "enter"/"over"/"leave" }
-        let event_type = js_sys::Reflect::get(&event, &JsValue::from_str("type"))
+        // onDragDropEvent delivers Event<DragDropPayload>:
+        // { id, event, payload: { type: "drop"|"enter"|..., paths: [...], ... } }
+        let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload"))
+            .unwrap_or(JsValue::undefined());
+
+        let event_type = js_sys::Reflect::get(&payload, &JsValue::from_str("type"))
             .ok()
             .and_then(|v| v.as_string());
 
@@ -33,7 +37,7 @@ pub fn on_file_drop<F: Fn(Vec<String>) + 'static>(handler: F) -> impl FnOnce() {
             return;
         }
 
-        let paths_val = js_sys::Reflect::get(&event, &JsValue::from_str("paths"))
+        let paths_val = js_sys::Reflect::get(&payload, &JsValue::from_str("paths"))
             .unwrap_or(JsValue::undefined());
 
         let paths = js_sys::Array::from(&paths_val)

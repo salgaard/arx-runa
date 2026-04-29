@@ -15,7 +15,7 @@ use crate::dialog::{open_directory_dialog, open_file_dialog};
 use crate::invoke::invoke_command;
 use crate::ipc_types::VaultSummary;
 use crate::ipc_types::{
-    AuthResponse, AuthenticateRequest, CreateVaultRequest, DestinationSessionConfig,
+    AuthResponse, AuthenticateRequest, CreateVaultRequest, DestinationSessionConfig, SessionStatus,
 };
 use crate::state::use_session_actions;
 
@@ -160,6 +160,7 @@ pub fn LoginPage(
             let vault_id = vault_id.clone();
 
             leptos::task::spawn_local(async move {
+                let vault_id_check = vault_id.clone();
                 let result = invoke_command::<AuthenticateRequest, AuthResponse>(
                     "authenticate",
                     &AuthenticateRequest {
@@ -179,6 +180,36 @@ pub fn LoginPage(
                         session_actions.complete_success(resp.vault_id);
                     }
                     Err(err) => {
+                        // `SessionAlreadyActive` surfaces as `invalidInput`. This can
+                        // happen on hot reload: the frontend WASM resets but the Tauri
+                        // backend session stays alive. Check the actual backend state
+                        // and sync the frontend rather than surfacing a cryptic error.
+                        if err.kind == "invalidInput" {
+                            if let Ok(status) = invoke_command::<(), SessionStatus>(
+                                "get_session_status",
+                                &(),
+                            )
+                            .await
+                            {
+                                if status.is_unlocked {
+                                    if status.vault_id.as_deref() == Some(&vault_id_check) {
+                                        // Same vault — backend is already unlocked; sync frontend.
+                                        crate::components::use_toast()
+                                            .success(format!("Vault unlocked: {}", vault_id_check));
+                                        session_actions.complete_success(vault_id_check);
+                                        return;
+                                    } else {
+                                        // A different vault is already unlocked.
+                                        let message =
+                                            "Another vault is already unlocked. Lock it first."
+                                                .to_string();
+                                        crate::components::use_toast().error(&message);
+                                        session_actions.complete_failure(message);
+                                        return;
+                                    }
+                                }
+                            }
+                        }
                         crate::components::use_toast().error(&err.message);
                         session_actions.complete_failure(err.message);
                     }

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::storage::error::StorageError;
-use crate::storage::types::{ChunkRecord, Node};
+use crate::storage::types::{ChunkRecord, EpochBlobRecord, EpochBufferEntry, Node};
 
 /// Abstraction over manifest metadata persistence.
 #[async_trait]
@@ -94,4 +94,31 @@ pub trait MetadataStore: Send + Sync {
     /// Atomically increments and returns `snapshot_counter`.
     /// This is the only supported mutation path for `snapshot_counter`.
     async fn increment_snapshot_counter(&self) -> Result<u64, StorageError>;
+
+    /// Inserts a file node row without any associated chunk rows.
+    async fn insert_file_node_only(&self, node: &Node) -> Result<(), StorageError>;
+
+    /// Stages a plaintext entry in the epoch buffer for the given node.
+    async fn stage_epoch_entry(&self, node_id: Uuid, plaintext: Vec<u8>)
+        -> Result<(), StorageError>;
+
+    /// Returns the total number of bytes currently staged in the epoch buffer.
+    async fn get_epoch_buffer_total_bytes(&self) -> Result<u64, StorageError>;
+
+    /// Returns all entries currently staged in the epoch buffer.
+    async fn get_epoch_buffer_entries(&self) -> Result<Vec<EpochBufferEntry>, StorageError>;
+
+    /// Atomically: insert epoch_blobs row, insert epoch chunk rows into chunks table,
+    /// and clear the flushed epoch_buffer entries.
+    /// extents: (node_id, chunk_index, byte_offset, byte_length)
+    async fn commit_epoch_flush(
+        &self,
+        record: &EpochBlobRecord,
+        extents: &[(Uuid, u32, u64, u64)],
+    ) -> Result<(), StorageError>;
+
+    /// Retrieves an epoch blob record by identifier.
+    ///
+    /// Returns `NotFound` when no row matches.
+    async fn get_epoch_blob(&self, epoch_blob_id: Uuid) -> Result<EpochBlobRecord, StorageError>;
 }
