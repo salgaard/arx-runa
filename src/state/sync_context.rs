@@ -3,8 +3,9 @@
 use gloo_timers::callback::Interval;
 use leptos::prelude::*;
 
-use crate::invoke::invoke_command;
-use crate::ipc_types::SyncResult;
+use crate::invoke::invoke_command_with_channel;
+use crate::ipc_channel::IpcChannel;
+use crate::ipc_types::{SyncProgressUpdate, SyncResult};
 
 /// Frontend-side sync status. Distinct from the wire DTO `ipc_types::SyncStatus`.
 #[derive(Clone, Debug, Default)]
@@ -50,9 +51,16 @@ impl SyncActions {
         self.set_state.update(|s| s.syncing = true);
 
         leptos::task::spawn_local(async move {
-            match invoke_command::<(), SyncResult>("sync_to_cloud", &()).await {
+            let channel = IpcChannel::<SyncProgressUpdate>::new();
+            match invoke_command_with_channel::<(), SyncResult>(
+                "sync_to_cloud",
+                &(),
+                "progress",
+                channel.inner(),
+            )
+            .await
+            {
                 Ok(_result) => {
-                    // Use js_sys::Date to get the current ISO timestamp
                     let now = js_sys::Date::new_0();
                     let iso_string = now.to_iso_string().as_string().unwrap_or_default();
 

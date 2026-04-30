@@ -206,6 +206,21 @@ pub async fn download_manifest_backup(
         return Err(ManifestBackupSyncError::Transport(error));
     }
 
+    // Some rclone backends exit 0 without creating the local file when the
+    // remote blob does not yet exist. Detect this and surface it as NotFound
+    // so the caller handles an absent backup the same as a transport NotFound.
+    match tokio::fs::try_exists(&download_staging_path).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(ManifestBackupSyncError::Transport(
+                CloudTransportError::NotFound,
+            ));
+        }
+        Err(error) => {
+            return Err(ManifestBackupSyncError::StagingIo(error.to_string()));
+        }
+    }
+
     let wire = match tokio::fs::read(&download_staging_path).await {
         Ok(bytes) => {
             if let Err(cleanup_error) = remove_file_if_present(&download_staging_path).await {
@@ -855,5 +870,72 @@ mod tests {
     fn test_manifest_backup_sync_error_export_read_variant_formats_expected_message() {
         let error = ManifestBackupSyncError::ExportRead("io error".to_owned());
         assert_eq!(error.to_string(), "manifest export read failed: io error");
+    }
+
+    /// A [`CloudTransport`] that returns `Ok(())` for every call without
+    /// touching the filesystem. Simulates rclone backends that exit 0 without
+    /// creating the local destination file when the remote blob is absent.
+    struct SilentOkCloudTransport;
+
+    #[async_trait::async_trait]
+    impl CloudTransport for SilentOkCloudTransport {
+        async fn upload_blob(
+            &self,
+            _local_path: &std::path::Path,
+            _remote_path: &str,
+        ) -> Result<(), CloudTransportError> {
+            Ok(())
+        }
+
+        async fn download_blob(
+            &self,
+            _remote_path: &str,
+            _local_path: &std::path::Path,
+        ) -> Result<(), CloudTransportError> {
+            Ok(())
+        }
+
+        async fn delete_blob(&self, _remote_path: &str) -> Result<(), CloudTransportError> {
+            Ok(())
+        }
+
+        async fn list_blobs(
+            &self,
+            _remote_prefix: &str,
+        ) -> Result<Vec<String>, CloudTransportError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_download_manifest_backup_download_ok_but_no_file_returns_not_found() {
+        let temp = tempdir().expect("tempdir must succeed");
+        let destination_db_path = temp.path().join("recovered.db");
+        let download_staging_dir = temp.path().join("download-staging");
+        let sqlcipher_key = sqlcipher_key_from_bytes([0x47u8; 32]);
+        let manifest_key = [0x57u8; 32];
+        let transport = SilentOkCloudTransport;
+
+        let result = download_manifest_backup(
+            &transport,
+            &download_staging_dir,
+            &manifest_key,
+            &destination_db_path,
+            &sqlcipher_key,
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(ManifestBackupSyncError::Transport(
+                CloudTransportError::NotFound
+            ))
+        ));
+        assert!(!destination_db_path.exists());
+        assert!(
+            !download_staging_dir
+                .join(MANIFEST_BACKUP_DOWNLOAD_STAGING_FILE_NAME)
+                .exists()
+        );
     }
 }

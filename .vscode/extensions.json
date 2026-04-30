@@ -2,8 +2,6 @@
     "recommendations": [
         // Rust language server.
         "rust-lang.rust-analyzer",
-        // Windows backend debugging via cppvsdbg.
-        "ms-vscode.cpptools",
         // Optional on Windows, useful for macOS/Linux backend debugging.
         "vadimcn.vscode-lldb",
         // Tauri command and config tooling.

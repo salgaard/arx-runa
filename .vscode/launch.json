@@ -19,36 +19,31 @@
         },
         {
             // Debugs native Rust backend code in src-tauri/src/** on Windows.
+            // Uses CodeLLDB (vadimcn.vscode-lldb) — Rust-aware debugger with proper enum/panic display.
+            // Starts trunk dev server via preLaunchTask before launching the debugger.
             "name": "[Debug] Backend core (Windows)",
-            "type": "cppvsdbg",
+            "type": "lldb",
             "request": "launch",
-            "program": "${workspaceFolder}\\target\\debug\\arx-runa-tauri.exe",
-            "cwd": "${workspaceFolder}",
-            "preLaunchTask": "build:tauri-debug",
-            "logging": {
-                "moduleLoad": false,
-                "programOutput": true,
-                "exceptions": true
+            "cargo": {
+                "args": [
+                    "build",
+                    "--manifest-path=./src-tauri/Cargo.toml",
+                    "--no-default-features"
+                ]
             },
-            "environment": [
-                {
-                    "name": "RUST_LOG",
-                    "value": "debug"
-                },
-                {
-                    "name": "RUST_BACKTRACE",
-                    "value": "1"
-                }
-            ],
-            "args": []
+            "preLaunchTask": "ui:dev",
+            "sourceLanguages": ["rust"],
+            "env": {
+                "RUST_LOG": "debug",
+                "RUST_BACKTRACE": "1"
+            }
         }
     ],
     "compounds": [
         {
-            // One-click developer workflow: UI server + backend debugger together.
+            // One-click developer workflow: trunk dev server starts via preLaunchTask inside the debug config.
             "name": "[One-click] Debug UI + Backend (Windows)",
             "configurations": [
-                "[Run] Frontend dev server (trunk)",
                 "[Debug] Backend core (Windows)"
             ],
             "stopAll": true

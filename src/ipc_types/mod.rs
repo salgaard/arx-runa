@@ -11,6 +11,7 @@ mod session_status;
 mod share_entry;
 mod share_response;
 mod sync_conflict;
+mod sync_progress_update;
 mod sync_result;
 mod vault_summary;
 
@@ -33,5 +34,6 @@ pub use session_status::SessionStatus;
 pub use share_entry::ShareEntry;
 pub use share_response::ShareResponse;
 pub use sync_conflict::SyncConflict;
+pub use sync_progress_update::SyncProgressUpdate;
 pub use sync_result::SyncResult;
 pub use vault_summary::VaultSummary;

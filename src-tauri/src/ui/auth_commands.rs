@@ -328,6 +328,19 @@ pub async fn authenticate(
         }
     }
 
+    // Best-effort: ensure the vault staging directory exists and clean up orphaned blobs.
+    {
+        let staging_dir = vault_staging_dir(&vault_id);
+        let db_guard = state.database.read().await;
+        if let Some(ref inner_db) = *db_guard {
+            if let Err(error) =
+                crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
+            {
+                tracing::warn!(?error, "Failed to prepare vault storage on authenticate");
+            }
+        }
+    }
+
     // Cache the active vault identifier for quick reads.
     *state.active_vault_id.write().await = Some(vault_id.clone());
 
@@ -464,6 +477,19 @@ pub async fn create_vault(
         let db_guard = state.database.read().await;
         if let Some(ref inner_db) = *db_guard {
             try_build_and_swap_rclone_transport(&state, inner_db).await;
+        }
+    }
+
+    // Best-effort: ensure the vault staging directory exists and clean up orphaned blobs.
+    {
+        let staging_dir = vault_staging_dir(&vault_id_str);
+        let db_guard = state.database.read().await;
+        if let Some(ref inner_db) = *db_guard {
+            if let Err(error) =
+                crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
+            {
+                tracing::warn!(?error, "Failed to prepare vault storage on create_vault");
+            }
         }
     }
 

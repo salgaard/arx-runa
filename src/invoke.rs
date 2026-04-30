@@ -57,9 +57,17 @@ where
 
     let args_js = serde_wasm_bindgen::to_value(args)
         .map_err(|_| IpcError::internal("Failed to serialise command arguments"))?;
-    let _ = js_sys::Reflect::set(&args_js, &JsValue::from_str(channel_key), channel_value);
 
-    match invoke(cmd, args_js).await {
+    // `()` serialises to JS `null`, on which `Reflect.set` is a no-op.
+    // Always ensure we have a plain object before injecting the channel key.
+    let args_obj: JsValue = if args_js.is_null() || args_js.is_undefined() {
+        js_sys::Object::new().into()
+    } else {
+        args_js
+    };
+    let _ = js_sys::Reflect::set(&args_obj, &JsValue::from_str(channel_key), channel_value);
+
+    match invoke(cmd, args_obj).await {
         Ok(result_js) => serde_wasm_bindgen::from_value(result_js)
             .map_err(|_| IpcError::internal("Failed to deserialise command response")),
         Err(error_js) => {
