@@ -237,7 +237,9 @@ mod tests {
         }
 
         /// Returns an empty list for this test helper.
-        async fn get_epoch_buffer_node_ids(&self) -> Result<Vec<uuid::Uuid>, crate::storage::error::StorageError> {
+        async fn get_epoch_buffer_node_ids(
+            &self,
+        ) -> Result<Vec<uuid::Uuid>, crate::storage::error::StorageError> {
             Ok(vec![])
         }
     }

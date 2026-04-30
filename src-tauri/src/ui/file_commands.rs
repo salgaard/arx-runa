@@ -174,9 +174,7 @@ pub async fn list_directory(
         .collect();
     Ok(children
         .iter()
-        .map(|node| {
-            node_to_file_entry(node, pending_ids.contains(node.node_id.as_uuid()))
-        })
+        .map(|node| node_to_file_entry(node, pending_ids.contains(node.node_id.as_uuid())))
         .collect())
 }
 

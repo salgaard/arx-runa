@@ -472,8 +472,8 @@ mod tests {
     /// Verifies that downloading a file staged in the epoch buffer (not yet flushed)
     /// returns `StorageError::EpochBufferNotFlushed`.
     #[tokio::test]
-    async fn test_download_file_returns_epoch_buffer_not_flushed_when_file_is_staged_but_not_flushed(
-    ) {
+    async fn test_download_file_returns_epoch_buffer_not_flushed_when_file_is_staged_but_not_flushed()
+     {
         let temp_dir = TempDir::new().expect("temporary directory should be created");
         let source_path = temp_dir.path().join("source.bin");
         let destination_path = temp_dir.path().join("destination.bin");

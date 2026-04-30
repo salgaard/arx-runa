@@ -3101,10 +3101,9 @@ mod tests {
         let temp = tempdir().expect("tempdir should be created");
         let db_path = temp.path().join("manifest.db");
         let key = [5; 32];
-        let store =
-            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, true)
-                .await
-                .expect("store should be created");
+        let store = SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, true)
+            .await
+            .expect("store should be created");
 
         let node_id = Uuid::new_v4();
         let node = file_node(node_id, None, "buffered.txt");

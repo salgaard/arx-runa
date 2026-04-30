@@ -84,11 +84,9 @@ impl From<crate::storage::StorageError> for IpcError {
             S::ConstraintViolation(_) => {
                 IpcError::AlreadyExists("A record with this identifier already exists".into())
             }
-            S::EpochBufferNotFlushed(_) => {
-                IpcError::PendingFlush(
-                    "File is pending encryption — flush the epoch buffer first".into(),
-                )
-            }
+            S::EpochBufferNotFlushed(_) => IpcError::PendingFlush(
+                "File is pending encryption — flush the epoch buffer first".into(),
+            ),
             S::Database(_) | S::Io(_) => IpcError::InternalError("An error occurred".into()),
             _ => IpcError::InternalError("An error occurred".into()),
         }
