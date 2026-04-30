@@ -184,27 +184,25 @@ pub fn LoginPage(
                         // happen on hot reload: the frontend WASM resets but the Tauri
                         // backend session stays alive. Check the actual backend state
                         // and sync the frontend rather than surfacing a cryptic error.
-                        if err.kind == "invalidInput" {
-                            if let Ok(status) =
+                        if err.kind == "invalidInput"
+                            && let Ok(status) =
                                 invoke_command::<(), SessionStatus>("get_session_status", &()).await
-                            {
-                                if status.is_unlocked {
-                                    if status.vault_id.as_deref() == Some(&vault_id_check) {
-                                        // Same vault — backend is already unlocked; sync frontend.
-                                        crate::components::use_toast()
-                                            .success(format!("Vault unlocked: {}", vault_id_check));
-                                        session_actions.complete_success(vault_id_check);
-                                        return;
-                                    } else {
-                                        // A different vault is already unlocked.
-                                        let message =
-                                            "Another vault is already unlocked. Lock it first."
-                                                .to_string();
-                                        crate::components::use_toast().error(&message);
-                                        session_actions.complete_failure(message);
-                                        return;
-                                    }
-                                }
+                            && status.is_unlocked
+                        {
+                            if status.vault_id.as_deref() == Some(&vault_id_check) {
+                                // Same vault — backend is already unlocked; sync frontend.
+                                crate::components::use_toast()
+                                    .success(format!("Vault unlocked: {}", vault_id_check));
+                                session_actions.complete_success(vault_id_check);
+                                return;
+                            } else {
+                                // A different vault is already unlocked.
+                                let message =
+                                    "Another vault is already unlocked. Lock it first."
+                                        .to_string();
+                                crate::components::use_toast().error(&message);
+                                session_actions.complete_failure(message);
+                                return;
                             }
                         }
                         crate::components::use_toast().error(&err.message);

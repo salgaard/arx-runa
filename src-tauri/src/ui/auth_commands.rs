@@ -332,11 +332,10 @@ pub async fn authenticate(
     {
         let staging_dir = vault_staging_dir(&vault_id);
         let db_guard = state.database.read().await;
-        if let Some(ref inner_db) = *db_guard {
-            if let Err(error) = crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
-            {
-                tracing::warn!(?error, "Failed to prepare vault storage on authenticate");
-            }
+        if let Some(ref inner_db) = *db_guard
+            && let Err(error) = crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
+        {
+            tracing::warn!(?error, "Failed to prepare vault storage on authenticate");
         }
     }
 
@@ -483,11 +482,10 @@ pub async fn create_vault(
     {
         let staging_dir = vault_staging_dir(&vault_id_str);
         let db_guard = state.database.read().await;
-        if let Some(ref inner_db) = *db_guard {
-            if let Err(error) = crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
-            {
-                tracing::warn!(?error, "Failed to prepare vault storage on create_vault");
-            }
+        if let Some(ref inner_db) = *db_guard
+            && let Err(error) = crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
+        {
+            tracing::warn!(?error, "Failed to prepare vault storage on create_vault");
         }
     }
 

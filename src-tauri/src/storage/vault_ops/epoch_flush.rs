@@ -161,8 +161,7 @@ mod tests {
 
     /// Returns a mock store with epoch enabled.
     fn epoch_store() -> MockMetadataStore {
-        let store = MockMetadataStore::new();
-        store
+        MockMetadataStore::new()
     }
 
     /// Returns a test KEK.
