@@ -1483,6 +1483,31 @@ impl MetadataStore for SqlCipherMetadataStore {
         .await
     }
 
+    /// Returns the node IDs of all entries currently staged in the epoch buffer.
+    async fn get_epoch_buffer_node_ids(&self) -> Result<Vec<Uuid>, StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let mut statement = conn
+                .prepare("SELECT node_id FROM epoch_buffer ORDER BY queued_at ASC")
+                .map_err(StorageError::from_rusqlite)?;
+            let rows = statement
+                .query_map([], |row| {
+                    let node_id_text: String = row.get(0)?;
+                    Ok(node_id_text)
+                })
+                .map_err(StorageError::from_rusqlite)?;
+            let mut ids = Vec::new();
+            for row in rows {
+                let node_id_text = row.map_err(StorageError::from_rusqlite)?;
+                let node_id = Uuid::parse_str(&node_id_text).map_err(|error| {
+                    StorageError::Database(format!("invalid node_id uuid: {error}"))
+                })?;
+                ids.push(node_id);
+            }
+            Ok(ids)
+        })
+        .await
+    }
+
     /// Atomically inserts an epoch blob record, chunk rows, and clears the buffer.
     async fn commit_epoch_flush(
         &self,

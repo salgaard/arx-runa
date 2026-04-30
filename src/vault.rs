@@ -217,6 +217,7 @@ pub fn FileItem(
     let vault = use_vault();
     let actions = use_vault_actions();
     let is_dir = entry.entry_type == "directory";
+    let is_pending_flush = entry.pending_flush;
 
     let entry_clone = entry.clone();
     let (show_delete_confirm, set_show_delete_confirm) = signal(false);
@@ -229,6 +230,7 @@ pub fn FileItem(
 
     let file_name = entry.name.clone();
     let can_preview = !is_dir
+        && !is_pending_flush
         && file_size_allows_preview(entry.size_bytes)
         && extension_is_previewable(&entry.name);
 
@@ -276,6 +278,17 @@ pub fn FileItem(
                     }
                 >
                     {entry.name.clone()}
+                    <Show
+                        when=move || is_pending_flush
+                        fallback=|| ()
+                    >
+                        <span
+                            class="ml-1 text-xs text-amber-400"
+                            title="File is queued for encryption. Flush the epoch buffer or sync to finalise."
+                        >
+                            "Encrypting…"
+                        </span>
+                    </Show>
                 </span>
                 <span class="text-text-muted text-xs">
                     {if is_dir {
@@ -290,9 +303,25 @@ pub fn FileItem(
                 >
                     <div class="flex gap-1">
                         <button
-                            class="text-text-muted hover:text-rune text-sm px-2 py-1"
-                            title="Download"
+                            class=move || {
+                                if is_pending_flush {
+                                    "text-text-muted text-sm px-2 py-1 cursor-not-allowed opacity-50"
+                                } else {
+                                    "text-text-muted hover:text-rune text-sm px-2 py-1"
+                                }
+                            }
+                            title=move || {
+                                if is_pending_flush {
+                                    "File is queued for encryption. Flush the epoch buffer or sync to finalise."
+                                } else {
+                                    "Download"
+                                }
+                            }
+                            prop:disabled=is_pending_flush
                             on:click=move |_| {
+                                if is_pending_flush {
+                                    return;
+                                }
                                 let entry = entry_stored.get_value();
                                 let actions = actions;
                                 let set_download_progress_channel = set_download_progress_channel;

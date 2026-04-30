@@ -77,7 +77,10 @@ fn detect_mime_type(bytes: &[u8]) -> &'static str {
 }
 
 /// Maps a storage [`Node`](crate::storage::Node) to a [`FileEntry`] for IPC response.
-fn node_to_file_entry(node: &crate::storage::Node) -> FileEntry {
+///
+/// Pass `pending_flush: true` when the node is staged in the epoch buffer and
+/// has not yet been encrypted into a blob.
+fn node_to_file_entry(node: &crate::storage::Node, pending_flush: bool) -> FileEntry {
     FileEntry {
         id: node.node_id.as_uuid().hyphenated().to_string(),
         name: node.name.clone(),
@@ -90,6 +93,7 @@ fn node_to_file_entry(node: &crate::storage::Node) -> FileEntry {
         parent_id: node
             .parent_id
             .map(|id| id.as_uuid().hyphenated().to_string()),
+        pending_flush,
     }
 }
 
@@ -106,7 +110,7 @@ fn require_vault_id() -> Result<String, IpcError> {
 ///
 /// The raw bytes are moved directly into the `SecretBox` heap buffer so no
 /// cleartext copy remains on the stack longer than necessary.
-async fn extract_kek(state: &AppState) -> Result<KeyEncryptionKey, IpcError> {
+pub(crate) async fn extract_kek(state: &AppState) -> Result<KeyEncryptionKey, IpcError> {
     let kek_raw: [u8; 32] = state
         .session_manager
         .with_key_encryption_key(|k| *k)
@@ -162,7 +166,18 @@ pub async fn list_directory(
         .list_children(parent_uuid)
         .await
         .map_err(IpcError::from)?;
-    Ok(children.iter().map(node_to_file_entry).collect())
+    let pending_ids: std::collections::HashSet<uuid::Uuid> = db
+        .get_epoch_buffer_node_ids()
+        .await
+        .map_err(IpcError::from)?
+        .into_iter()
+        .collect();
+    Ok(children
+        .iter()
+        .map(|node| {
+            node_to_file_entry(node, pending_ids.contains(node.node_id.as_uuid()))
+        })
+        .collect())
 }
 
 /// Encrypt and upload a file to the vault.
@@ -238,7 +253,7 @@ pub async fn upload_file(
     .await
     .map_err(IpcError::from)?;
 
-    Ok(node_to_file_entry(&node))
+    Ok(node_to_file_entry(&node, false))
 }
 
 /// Download and decrypt a file from the vault to a local destination path.
@@ -416,6 +431,58 @@ pub async fn list_remote(
         .collect();
 
     Ok(entries)
+}
+
+/// Flush all files staged in the epoch buffer into encrypted blobs.
+///
+/// Reports encryption progress via the `progress` channel.  Acquiring the flush
+/// mutex ensures at most one flush runs at a time even when called concurrently.
+#[tauri::command]
+pub async fn flush_epoch_buffer(
+    progress: Channel<ProgressUpdate>,
+    state: State<'_, AppState>,
+) -> Result<(), IpcError> {
+    state.session_manager.reset_timer().await;
+    require_active_session(&state).await?;
+
+    let vault_id = require_vault_id()?;
+    let staging_dir = vault_staging_dir(&vault_id);
+
+    let db_guard = state.database.read().await;
+    let db = db_guard
+        .as_ref()
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+
+    let kek = extract_kek(&state).await?;
+    let chunk_size_bytes = crate::storage::pipeline::read_chunk_size_bytes(db)
+        .await
+        .map_err(IpcError::from)?;
+
+    let progress_ch = ProgressChannel::new(progress);
+    let progress_fn = {
+        let progress = progress_ch.clone();
+        move |bytes_flushed: u64, bytes_total: u64| {
+            let percent = (bytes_flushed * 100 / bytes_total.max(1)) as u8;
+            let _ = progress.try_send_if_open(ProgressUpdate {
+                percent,
+                bytes_processed: bytes_flushed,
+                bytes_total,
+                status: "Flushing".into(),
+            });
+        }
+    };
+
+    let _flush_guard = state.flush_mutex.lock().await;
+
+    crate::storage::vault_ops::flush_epoch_buffer(
+        db,
+        &kek,
+        &staging_dir,
+        chunk_size_bytes,
+        Some(&progress_fn),
+    )
+    .await
+    .map_err(IpcError::from)
 }
 
 #[cfg(test)]

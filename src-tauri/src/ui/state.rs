@@ -37,6 +37,8 @@ pub struct AppState {
     pub(crate) app_handle: OnceLock<tauri::AppHandle>,
     /// Active vault identifier, mirrors SessionManager for quick IPC reads.
     pub(crate) active_vault_id: Arc<RwLock<Option<String>>>,
+    /// Mutex ensuring at most one epoch-buffer flush runs at a time.
+    pub(crate) flush_mutex: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// No-op cloud transport used until Phase 6.5 wires a real `RcloneTransport`.
@@ -123,6 +125,7 @@ impl AppState {
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             app_handle: OnceLock::new(),
             active_vault_id: Arc::new(RwLock::new(None)),
+            flush_mutex: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 

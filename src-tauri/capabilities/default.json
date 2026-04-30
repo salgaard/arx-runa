@@ -21,6 +21,7 @@
     "allow-delete-file",
     "allow-get-file-content",
     "allow-list-remote",
+    "allow-flush-epoch-buffer",
     "allow-sync-to-cloud",
     "allow-recover-from-cloud",
     "allow-get-sync-status",

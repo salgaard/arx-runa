@@ -25,7 +25,7 @@ struct DeviceEventPayload {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-/// Starts the Arx Runa Tauri runtime with all 33 registered commands.
+/// Starts the Arx Runa Tauri runtime with all 35 registered commands.
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -51,13 +51,14 @@ pub fn run() {
             ui::auth_commands::get_session_status,
             ui::auth_commands::check_pending_vault_operations,
             ui::auth_commands::retry_pending_vault_operation,
-            // Files (6)
+            // Files (7)
             ui::file_commands::list_directory,
             ui::file_commands::upload_file,
             ui::file_commands::download_file,
             ui::file_commands::delete_file,
             ui::file_commands::get_file_content,
             ui::file_commands::list_remote,
+            ui::file_commands::flush_epoch_buffer,
             // Sync (5)
             ui::sync_commands::sync_to_cloud,
             ui::sync_commands::recover_from_cloud,

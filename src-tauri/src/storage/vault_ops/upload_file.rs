@@ -6,7 +6,7 @@ use crate::storage::NodeId;
 use crate::storage::error::StorageError;
 use crate::storage::pipeline;
 use crate::storage::types::{Node, NodeType};
-use crate::storage::vault_ops::{RouteDecision, decide, flush_epoch_buffer};
+use crate::storage::vault_ops::{RouteDecision, decide};
 use tokio::fs;
 use uuid::Uuid;
 
@@ -60,16 +60,6 @@ pub async fn upload_file(
             metadata_store
                 .insert_file_node_and_stage_epoch_entry(&node, plaintext)
                 .await?;
-            let total_bytes = metadata_store.get_epoch_buffer_total_bytes().await?;
-            if total_bytes >= chunk_size_bytes {
-                flush_epoch_buffer(
-                    metadata_store,
-                    key_encryption_key,
-                    staging_directory,
-                    chunk_size_bytes,
-                )
-                .await?;
-            }
             Ok(node)
         }
         RouteDecision::Immediate => {
@@ -281,6 +271,11 @@ mod tests {
         /// Delegates epoch buffer entries.
         async fn get_epoch_buffer_entries(&self) -> Result<Vec<EpochBufferEntry>, StorageError> {
             self.inner.get_epoch_buffer_entries().await
+        }
+
+        /// Delegates epoch buffer node IDs.
+        async fn get_epoch_buffer_node_ids(&self) -> Result<Vec<Uuid>, StorageError> {
+            self.inner.get_epoch_buffer_node_ids().await
         }
 
         /// Delegates epoch flush commit.

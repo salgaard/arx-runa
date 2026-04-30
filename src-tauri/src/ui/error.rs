@@ -37,6 +37,9 @@ pub enum IpcError {
     /// An unexpected internal error occurred.
     #[error("Internal error: {0}")]
     InternalError(String),
+    /// The file is staged in the epoch buffer and cannot be downloaded until flushed.
+    #[error("Pending flush: {0}")]
+    PendingFlush(String),
 }
 
 #[allow(unreachable_patterns)]
@@ -80,6 +83,11 @@ impl From<crate::storage::StorageError> for IpcError {
             S::WrongKey => IpcError::AuthenticationFailed("Vault database key mismatch".into()),
             S::ConstraintViolation(_) => {
                 IpcError::AlreadyExists("A record with this identifier already exists".into())
+            }
+            S::EpochBufferNotFlushed(_) => {
+                IpcError::PendingFlush(
+                    "File is pending encryption — flush the epoch buffer first".into(),
+                )
             }
             S::Database(_) | S::Io(_) => IpcError::InternalError("An error occurred".into()),
             _ => IpcError::InternalError("An error occurred".into()),
@@ -194,6 +202,7 @@ mod tests {
             (IpcError::CloudError("x".into()), "cloudError"),
             (IpcError::InvalidInput("x".into()), "invalidInput"),
             (IpcError::InternalError("x".into()), "internalError"),
+            (IpcError::PendingFlush("x".into()), "pendingFlush"),
         ];
         for (err, expected_kind) in cases {
             let value = serde_json::to_value(&err).expect("serialisation must succeed");
@@ -460,6 +469,24 @@ mod tests {
         assert!(
             obj.contains_key("message"),
             "JSON object must contain 'message'"
+        );
+    }
+
+    /// Verifies that `From<StorageError::EpochBufferNotFlushed>` emits `pendingFlush` kind.
+    #[test]
+    fn test_from_storage_epoch_buffer_not_flushed_emits_pending_flush() {
+        let id = uuid::Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+            .expect("test UUID must parse");
+        let err = IpcError::from(crate::storage::StorageError::EpochBufferNotFlushed(id));
+        let value = serde_json::to_value(&err).expect("serialisation must succeed");
+        assert_eq!(
+            value["kind"], "pendingFlush",
+            "EpochBufferNotFlushed must map to pendingFlush kind"
+        );
+        let message = value["message"].as_str().expect("message must be a string");
+        assert!(
+            !message.contains("aaaaaaaa"),
+            "UUID must not leak into IPC response: {message}"
         );
     }
 }

@@ -585,6 +585,15 @@ impl MetadataStore for MockMetadataStore {
         Ok(guard.epoch_buffer.clone())
     }
 
+    /// Returns the node IDs of all entries currently staged in the epoch buffer.
+    async fn get_epoch_buffer_node_ids(&self) -> Result<Vec<Uuid>, StorageError> {
+        let guard = self
+            .inner
+            .lock()
+            .map_err(|error| StorageError::Database(error.to_string()))?;
+        Ok(guard.epoch_buffer.iter().map(|e| e.node_id).collect())
+    }
+
     /// Atomically stores the epoch blob record, inserts chunk rows, and clears the buffer.
     async fn commit_epoch_flush(
         &self,
@@ -1258,5 +1267,31 @@ mod tests {
                 .expect("meta should load"),
             Some("16".to_owned())
         );
+    }
+
+    /// Verifies `get_epoch_buffer_node_ids` returns the IDs of all staged entries.
+    #[tokio::test]
+    async fn test_get_epoch_buffer_node_ids_returns_staged_ids() {
+        let store = MockMetadataStore::new();
+        let node_a = Uuid::new_v4();
+        let node_b = Uuid::new_v4();
+
+        store
+            .stage_epoch_entry(node_a, vec![0x01u8; 64])
+            .await
+            .expect("staging node_a should succeed");
+        store
+            .stage_epoch_entry(node_b, vec![0x02u8; 128])
+            .await
+            .expect("staging node_b should succeed");
+
+        let ids = store
+            .get_epoch_buffer_node_ids()
+            .await
+            .expect("get_epoch_buffer_node_ids should succeed");
+
+        assert_eq!(ids.len(), 2, "two entries should be returned");
+        assert!(ids.contains(&node_a), "node_a must be present");
+        assert!(ids.contains(&node_b), "node_b must be present");
     }
 }

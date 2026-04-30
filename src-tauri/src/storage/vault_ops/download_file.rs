@@ -30,6 +30,13 @@ pub async fn download_file(
     }
     let chunks = metadata_store.get_chunks(node_id).await?;
 
+    if chunks.is_empty() {
+        let buffer_ids = metadata_store.get_epoch_buffer_node_ids().await?;
+        if buffer_ids.contains(&node_id) {
+            return Err(StorageError::EpochBufferNotFlushed(node_id));
+        }
+    }
+
     if chunks
         .first()
         .map(|c| c.epoch_blob_id.is_some())
@@ -216,6 +223,11 @@ mod tests {
         /// Delegates epoch buffer entries.
         async fn get_epoch_buffer_entries(&self) -> Result<Vec<EpochBufferEntry>, StorageError> {
             self.inner.get_epoch_buffer_entries().await
+        }
+
+        /// Delegates epoch buffer node IDs.
+        async fn get_epoch_buffer_node_ids(&self) -> Result<Vec<Uuid>, StorageError> {
+            self.inner.get_epoch_buffer_node_ids().await
         }
 
         /// Delegates epoch flush commit.
@@ -436,7 +448,7 @@ mod tests {
         .await
         .expect("epoch upload should succeed");
 
-        flush_epoch_buffer(&store, &kek, &staging_directory, chunk_size_bytes)
+        flush_epoch_buffer(&store, &kek, &staging_directory, chunk_size_bytes, None)
             .await
             .expect("flush should succeed");
 
@@ -455,5 +467,61 @@ mod tests {
             .await
             .expect("destination should be readable");
         assert_eq!(recovered, content);
+    }
+
+    /// Verifies that downloading a file staged in the epoch buffer (not yet flushed)
+    /// returns `StorageError::EpochBufferNotFlushed`.
+    #[tokio::test]
+    async fn test_download_file_returns_epoch_buffer_not_flushed_when_file_is_staged_but_not_flushed(
+    ) {
+        let temp_dir = TempDir::new().expect("temporary directory should be created");
+        let source_path = temp_dir.path().join("source.bin");
+        let destination_path = temp_dir.path().join("destination.bin");
+        let staging_directory = temp_dir.path().join("staging");
+        fs::create_dir_all(&staging_directory)
+            .await
+            .expect("staging directory should be created");
+
+        let content = b"staged but not flushed".to_vec();
+        write_source_file(&source_path, &content).await;
+
+        // Use epoch-enabled store so upload stages into epoch buffer.
+        let store = EpochOverrideStore {
+            inner: MockMetadataStore::new(),
+            epoch_enabled: true,
+        };
+        let node_id = Uuid::new_v4();
+        let kek = KeyEncryptionKey::from_bytes([55; 32]);
+
+        upload_file(
+            &source_path,
+            node_id,
+            None,
+            "staged.bin",
+            1,
+            1,
+            &store,
+            &kek,
+            &staging_directory,
+            None,
+        )
+        .await
+        .expect("epoch upload should succeed");
+
+        // Do NOT flush — downloading should return EpochBufferNotFlushed.
+        let result = download_file(
+            &destination_path,
+            node_id,
+            &store,
+            &kek,
+            &staging_directory,
+            None,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(StorageError::EpochBufferNotFlushed(id)) if id == node_id),
+            "expected EpochBufferNotFlushed, got: {result:?}"
+        );
     }
 }

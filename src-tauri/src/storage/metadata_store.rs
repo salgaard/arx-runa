@@ -122,6 +122,11 @@ pub trait MetadataStore: Send + Sync {
     /// Returns all entries currently staged in the epoch buffer.
     async fn get_epoch_buffer_entries(&self) -> Result<Vec<EpochBufferEntry>, StorageError>;
 
+    /// Returns the node IDs of all entries currently staged in the epoch buffer.
+    ///
+    /// Returns an empty vector when the epoch buffer is empty.
+    async fn get_epoch_buffer_node_ids(&self) -> Result<Vec<Uuid>, StorageError>;
+
     /// Atomically: insert epoch_blobs row, insert epoch chunk rows into chunks table,
     /// and clear the flushed epoch_buffer entries.
     /// extents: (node_id, chunk_index, byte_offset, byte_length)

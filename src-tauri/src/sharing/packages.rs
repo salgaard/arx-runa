@@ -362,6 +362,9 @@ mod tests {
         ) -> Result<crate::storage::types::EpochBlobRecord, StorageError> {
             unimplemented!()
         }
+        async fn get_epoch_buffer_node_ids(&self) -> Result<Vec<Uuid>, StorageError> {
+            Ok(vec![])
+        }
     }
 
     struct FakeSharingStore {

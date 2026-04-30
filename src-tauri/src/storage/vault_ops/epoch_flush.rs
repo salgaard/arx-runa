@@ -20,23 +20,35 @@ use crate::storage::types::EpochBlobRecord;
 /// `epoch_blobs` / `chunks` rows are committed atomically.  The epoch buffer is cleared
 /// as part of the commit.
 ///
+/// The optional `progress` callback is invoked after each blob is flushed with
+/// `(bytes_flushed, bytes_total)`.  Pass `None` to suppress progress reporting.
+/// The callback MUST NOT import or depend on `tauri::`.
+///
 /// Returns `Ok(())` immediately when the buffer is empty.
 pub async fn flush_epoch_buffer(
     metadata_store: &dyn MetadataStore,
     kek: &KeyEncryptionKey,
     staging_dir: &Path,
     chunk_size_bytes: u64,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<(), StorageError> {
     let entries = metadata_store.get_epoch_buffer_entries().await?;
     if entries.is_empty() {
         return Ok(());
     }
 
+    let total_bytes: u64 = entries.iter().map(|e| e.size_bytes).sum();
+    let mut flushed_bytes: u64 = 0;
+
     let mut current_blob_entries: Vec<(Uuid, Vec<u8>)> = Vec::new();
     let mut current_size: u64 = 0;
 
     for entry in &entries {
         if current_size + entry.size_bytes > chunk_size_bytes && !current_blob_entries.is_empty() {
+            let blob_bytes: u64 = current_blob_entries
+                .iter()
+                .map(|(_, p)| p.len() as u64)
+                .sum();
             flush_one_blob(
                 &current_blob_entries,
                 kek,
@@ -45,6 +57,10 @@ pub async fn flush_epoch_buffer(
                 metadata_store,
             )
             .await?;
+            flushed_bytes += blob_bytes;
+            if let Some(p) = progress {
+                p(flushed_bytes, total_bytes);
+            }
             current_blob_entries.clear();
             current_size = 0;
         }
@@ -53,6 +69,10 @@ pub async fn flush_epoch_buffer(
     }
 
     if !current_blob_entries.is_empty() {
+        let blob_bytes: u64 = current_blob_entries
+            .iter()
+            .map(|(_, p)| p.len() as u64)
+            .sum();
         flush_one_blob(
             &current_blob_entries,
             kek,
@@ -61,6 +81,10 @@ pub async fn flush_epoch_buffer(
             metadata_store,
         )
         .await?;
+        flushed_bytes += blob_bytes;
+        if let Some(p) = progress {
+            p(flushed_bytes, total_bytes);
+        }
     }
 
     Ok(())
@@ -153,7 +177,7 @@ mod tests {
         let store = epoch_store();
         let kek = test_kek();
 
-        let result = flush_epoch_buffer(&store, &kek, temp.path(), 4_194_304).await;
+        let result = flush_epoch_buffer(&store, &kek, temp.path(), 4_194_304, None).await;
 
         assert!(result.is_ok());
         let entries = store.get_epoch_buffer_entries().await.expect("should list");
@@ -174,7 +198,7 @@ mod tests {
             .await
             .expect("stage should succeed");
 
-        flush_epoch_buffer(&store, &kek, temp.path(), 4_194_304)
+        flush_epoch_buffer(&store, &kek, temp.path(), 4_194_304, None)
             .await
             .expect("flush should succeed");
 
@@ -216,7 +240,7 @@ mod tests {
             .await
             .expect("stage should succeed");
 
-        flush_epoch_buffer(&store, &kek, temp.path(), chunk_size)
+        flush_epoch_buffer(&store, &kek, temp.path(), chunk_size, None)
             .await
             .expect("flush should succeed");
 
@@ -246,7 +270,7 @@ mod tests {
             .await
             .expect("stage b should succeed");
 
-        flush_epoch_buffer(&store, &kek, temp.path(), chunk_size)
+        flush_epoch_buffer(&store, &kek, temp.path(), chunk_size, None)
             .await
             .expect("flush should succeed");
 

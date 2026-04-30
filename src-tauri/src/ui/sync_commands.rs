@@ -21,6 +21,7 @@ use crate::storage::cloud::{
 use crate::storage::staging::write_owner_only;
 use crate::ui::commands_common::{ProgressChannel, require_active_session};
 use crate::ui::error::IpcError;
+use crate::ui::file_commands::extract_kek;
 use crate::ui::state::AppState;
 use crate::ui::types::{MigrationProgress, SyncProgressUpdate, SyncResult, SyncStatus};
 use crate::ui::vault_paths::{resolve_singleton_vault, vault_staging_dir};
@@ -211,6 +212,24 @@ pub async fn sync_to_cloud(
             });
         }
     };
+
+    // Flush any epoch-buffered files before pushing to the cloud.
+    {
+        let kek = extract_kek(&state).await?;
+        let chunk_size_bytes = crate::storage::pipeline::read_chunk_size_bytes(db)
+            .await
+            .map_err(IpcError::from)?;
+        let _flush_guard = state.flush_mutex.lock().await;
+        crate::storage::vault_ops::flush_epoch_buffer(
+            db,
+            &kek,
+            &staging_dir,
+            chunk_size_bytes,
+            None,
+        )
+        .await
+        .map_err(IpcError::from)?;
+    }
 
     let push_report = push_vault(
         &db_path,
@@ -456,6 +475,24 @@ pub async fn sync_backup(
     let db = db_guard
         .as_ref()
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+
+    // Flush any epoch-buffered files before pushing to backup destinations.
+    {
+        let kek = extract_kek(&state).await?;
+        let chunk_size_bytes = crate::storage::pipeline::read_chunk_size_bytes(db)
+            .await
+            .map_err(IpcError::from)?;
+        let _flush_guard = state.flush_mutex.lock().await;
+        crate::storage::vault_ops::flush_epoch_buffer(
+            db,
+            &kek,
+            &staging_dir,
+            chunk_size_bytes,
+            None,
+        )
+        .await
+        .map_err(IpcError::from)?;
+    }
 
     // Collect backup destinations, optionally filtered by ID.
     let all_sessions = list_destination_sessions(db)

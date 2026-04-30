@@ -18,4 +18,9 @@ pub struct FileEntry {
     pub modified_at: String,
     /// Parent directory ID, `None` for root entries.
     pub parent_id: Option<String>,
+    /// Whether this file is staged in the epoch buffer and not yet encrypted.
+    ///
+    /// Downloads are not possible until the epoch buffer is flushed.
+    /// Always `false` for directory entries.
+    pub pending_flush: bool,
 }
