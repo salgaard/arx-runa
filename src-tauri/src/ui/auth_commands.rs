@@ -39,8 +39,8 @@ use crate::storage::cloud::{
 use secrecy::SecretBox;
 
 use crate::crypto::KeyEncryptionKey;
-use crate::storage::vault_ops::flush_epoch_buffer;
 use crate::storage::MetadataStore as _;
+use crate::storage::vault_ops::flush_epoch_buffer;
 use crate::ui::commands_common::{require_active_session, sanitise_password};
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
@@ -333,8 +333,7 @@ pub async fn authenticate(
         let staging_dir = vault_staging_dir(&vault_id);
         let db_guard = state.database.read().await;
         if let Some(ref inner_db) = *db_guard {
-            if let Err(error) =
-                crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
+            if let Err(error) = crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
             {
                 tracing::warn!(?error, "Failed to prepare vault storage on authenticate");
             }
@@ -485,8 +484,7 @@ pub async fn create_vault(
         let staging_dir = vault_staging_dir(&vault_id_str);
         let db_guard = state.database.read().await;
         if let Some(ref inner_db) = *db_guard {
-            if let Err(error) =
-                crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
+            if let Err(error) = crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
             {
                 tracing::warn!(?error, "Failed to prepare vault storage on create_vault");
             }
@@ -701,20 +699,14 @@ async fn try_flush_on_lock(
         None => return Ok(()),
     };
     let staging_dir = vault_staging_dir(&vault_id);
-    let kek_raw: [u8; 32] = match state
-        .session_manager
-        .with_key_encryption_key(|k| *k)
-        .await
-    {
+    let kek_raw: [u8; 32] = match state.session_manager.with_key_encryption_key(|k| *k).await {
         Ok(raw) => raw,
         Err(_) => return Ok(()),
     };
     let kek = KeyEncryptionKey::from_secret_box(SecretBox::new(Box::new(kek_raw)));
     let chunk_size_bytes = match db.get_meta("chunk_size_bytes").await? {
         Some(value) => value.parse::<u64>().map_err(|_| {
-            crate::storage::error::StorageError::Database(
-                "invalid chunk_size_bytes".to_owned(),
-            )
+            crate::storage::error::StorageError::Database("invalid chunk_size_bytes".to_owned())
         })?,
         None => return Ok(()),
     };

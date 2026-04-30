@@ -164,7 +164,21 @@ mod tests {
             ))
         }
         /// Fails for this test helper.
-        async fn insert_file_node_only(&self, _node: &crate::storage::types::Node) -> Result<(), crate::storage::error::StorageError> {
+        async fn insert_file_node_only(
+            &self,
+            _node: &crate::storage::types::Node,
+        ) -> Result<(), crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn insert_file_node_and_stage_epoch_entry(
+            &self,
+            _node: &crate::storage::types::Node,
+            _plaintext: Vec<u8>,
+        ) -> Result<(), crate::storage::error::StorageError> {
             Err(crate::storage::error::StorageError::Database(
                 "unused test helper method".to_owned(),
             ))
@@ -182,7 +196,9 @@ mod tests {
         }
 
         /// Fails for this test helper.
-        async fn get_epoch_buffer_total_bytes(&self) -> Result<u64, crate::storage::error::StorageError> {
+        async fn get_epoch_buffer_total_bytes(
+            &self,
+        ) -> Result<u64, crate::storage::error::StorageError> {
             Err(crate::storage::error::StorageError::Database(
                 "unused test helper method".to_owned(),
             ))
@@ -191,7 +207,8 @@ mod tests {
         /// Fails for this test helper.
         async fn get_epoch_buffer_entries(
             &self,
-        ) -> Result<Vec<crate::storage::types::EpochBufferEntry>, crate::storage::error::StorageError> {
+        ) -> Result<Vec<crate::storage::types::EpochBufferEntry>, crate::storage::error::StorageError>
+        {
             Err(crate::storage::error::StorageError::Database(
                 "unused test helper method".to_owned(),
             ))
@@ -212,7 +229,8 @@ mod tests {
         async fn get_epoch_blob(
             &self,
             _epoch_blob_id: uuid::Uuid,
-        ) -> Result<crate::storage::types::EpochBlobRecord, crate::storage::error::StorageError> {
+        ) -> Result<crate::storage::types::EpochBlobRecord, crate::storage::error::StorageError>
+        {
             Err(crate::storage::error::StorageError::Database(
                 "unused test helper method".to_owned(),
             ))

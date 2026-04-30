@@ -98,9 +98,23 @@ pub trait MetadataStore: Send + Sync {
     /// Inserts a file node row without any associated chunk rows.
     async fn insert_file_node_only(&self, node: &Node) -> Result<(), StorageError>;
 
+    /// Inserts a file node and stages its plaintext in the epoch buffer atomically.
+    ///
+    /// Implementations must ensure both the node row and the epoch buffer entry are
+    /// persisted in a single transaction so a crash between the two writes cannot
+    /// leave an orphaned node with no buffer entry.
+    async fn insert_file_node_and_stage_epoch_entry(
+        &self,
+        node: &Node,
+        plaintext: Vec<u8>,
+    ) -> Result<(), StorageError>;
+
     /// Stages a plaintext entry in the epoch buffer for the given node.
-    async fn stage_epoch_entry(&self, node_id: Uuid, plaintext: Vec<u8>)
-        -> Result<(), StorageError>;
+    async fn stage_epoch_entry(
+        &self,
+        node_id: Uuid,
+        plaintext: Vec<u8>,
+    ) -> Result<(), StorageError>;
 
     /// Returns the total number of bytes currently staged in the epoch buffer.
     async fn get_epoch_buffer_total_bytes(&self) -> Result<u64, StorageError>;

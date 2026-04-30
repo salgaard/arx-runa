@@ -132,8 +132,7 @@ pub fn SessionProvider(children: Children) -> impl IntoView {
         // Handles hot reloads and app restarts where the backend session remains
         // active but frontend WASM state has been reset to defaults.
         if !stop_poll.load(Ordering::Relaxed) {
-            if let Ok(status) =
-                invoke_command::<(), SessionStatus>("get_session_status", &()).await
+            if let Ok(status) = invoke_command::<(), SessionStatus>("get_session_status", &()).await
             {
                 if !stop_poll.load(Ordering::Relaxed) {
                     set_state.update(|s| s.apply_status(status));

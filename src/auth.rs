@@ -185,11 +185,8 @@ pub fn LoginPage(
                         // backend session stays alive. Check the actual backend state
                         // and sync the frontend rather than surfacing a cryptic error.
                         if err.kind == "invalidInput" {
-                            if let Ok(status) = invoke_command::<(), SessionStatus>(
-                                "get_session_status",
-                                &(),
-                            )
-                            .await
+                            if let Ok(status) =
+                                invoke_command::<(), SessionStatus>("get_session_status", &()).await
                             {
                                 if status.is_unlocked {
                                     if status.vault_id.as_deref() == Some(&vault_id_check) {

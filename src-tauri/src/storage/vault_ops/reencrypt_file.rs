@@ -269,9 +269,9 @@ mod tests {
                 blob_name: blob_name_0.clone(),
                 size_padded: 4_194_304,
                 blake3_checksum: checksum_0.0,
-            epoch_blob_id: None,
-            byte_offset: None,
-            byte_length: None,
+                epoch_blob_id: None,
+                byte_offset: None,
+                byte_length: None,
             },
             ChunkRecord {
                 chunk_id: Uuid::new_v4(),
@@ -280,9 +280,9 @@ mod tests {
                 blob_name: blob_name_1.clone(),
                 size_padded: 4_194_304,
                 blake3_checksum: checksum_1.0,
-            epoch_blob_id: None,
-            byte_offset: None,
-            byte_length: None,
+                epoch_blob_id: None,
+                byte_offset: None,
+                byte_length: None,
             },
         ];
         store

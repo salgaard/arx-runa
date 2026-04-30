@@ -510,6 +510,38 @@ impl MetadataStore for MockMetadataStore {
         Ok(())
     }
 
+    /// Inserts a file node and stages its epoch buffer entry atomically.
+    ///
+    /// The mock acquires the lock once so both mutations are visible together,
+    /// which is sufficient for tests (mocks do not crash).
+    async fn insert_file_node_and_stage_epoch_entry(
+        &self,
+        node: &Node,
+        plaintext: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|error| StorageError::Database(error.to_string()))?;
+        let node_uuid = *node.node_id.as_uuid();
+        ensure_node_type_file_key_wrapped_parity(node)?;
+        ensure_parent_is_directory_for_insert(&guard, node)?;
+        if guard.nodes.contains_key(&node_uuid) {
+            return Err(StorageError::ConstraintViolation(
+                "duplicate node_id".to_owned(),
+            ));
+        }
+        guard.nodes.insert(node_uuid, node.clone());
+        let size_bytes = plaintext.len() as u64;
+        guard.epoch_buffer.push(EpochBufferEntry {
+            entry_id: Uuid::new_v4(),
+            node_id: node_uuid,
+            plaintext,
+            size_bytes,
+        });
+        Ok(())
+    }
+
     /// Stages a plaintext entry in the epoch buffer for the given node.
     async fn stage_epoch_entry(
         &self,
@@ -578,11 +610,7 @@ impl MetadataStore for MockMetadataStore {
                 byte_offset: Some(byte_offset),
                 byte_length: Some(byte_length),
             };
-            guard
-                .chunks_by_node
-                .entry(node_id)
-                .or_default()
-                .push(chunk);
+            guard.chunks_by_node.entry(node_id).or_default().push(chunk);
         }
         guard.epoch_buffer.clear();
         Ok(())

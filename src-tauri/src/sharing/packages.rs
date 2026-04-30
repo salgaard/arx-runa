@@ -327,6 +327,13 @@ mod tests {
         async fn insert_file_node_only(&self, _node: &Node) -> Result<(), StorageError> {
             unimplemented!()
         }
+        async fn insert_file_node_and_stage_epoch_entry(
+            &self,
+            _node: &Node,
+            _plaintext: Vec<u8>,
+        ) -> Result<(), StorageError> {
+            unimplemented!()
+        }
         async fn stage_epoch_entry(
             &self,
             _node_id: Uuid,

@@ -92,8 +92,7 @@ async fn flush_one_blob(
 
     let epoch_blob_id = Uuid::new_v4();
     let file_key: FileKey = generate_file_key();
-    let wrapped_file_key =
-        wrap_file_key(&file_key, kek).map_err(StorageError::from)?;
+    let wrapped_file_key = wrap_file_key(&file_key, kek).map_err(StorageError::from)?;
 
     let packed_owned = std::mem::take(packed.as_mut());
     let encrypted = encrypt_chunk(
@@ -128,8 +127,6 @@ async fn flush_one_blob(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use tempfile::TempDir;
     use uuid::Uuid;
 
@@ -181,10 +178,7 @@ mod tests {
             .await
             .expect("flush should succeed");
 
-        let buffer = store
-            .get_epoch_buffer_entries()
-            .await
-            .expect("should list");
+        let buffer = store.get_epoch_buffer_entries().await.expect("should list");
         assert!(buffer.is_empty(), "buffer should be cleared after flush");
 
         let chunks = store

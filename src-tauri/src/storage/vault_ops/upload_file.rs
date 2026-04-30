@@ -1,14 +1,14 @@
 use std::path::Path;
 
-use tokio::fs;
-use uuid::Uuid;
 use crate::crypto::{FileKey, KeyEncryptionKey, generate_file_key, wrap_file_key};
 use crate::storage::MetadataStore;
+use crate::storage::NodeId;
 use crate::storage::error::StorageError;
 use crate::storage::pipeline;
 use crate::storage::types::{Node, NodeType};
 use crate::storage::vault_ops::{RouteDecision, decide, flush_epoch_buffer};
-use crate::storage::{NodeId};
+use tokio::fs;
+use uuid::Uuid;
 
 /// Uploads a local file into staged encrypted chunks and persists manifest rows.
 ///
@@ -43,7 +43,8 @@ pub async fn upload_file(
                 .await
                 .map_err(|error| StorageError::Io(error.to_string()))?;
             let file_size = plaintext.len() as u64;
-            let sentinel_file_key = FileKey::from_secret_box(secrecy::SecretBox::new(Box::new([0u8; 32])));
+            let sentinel_file_key =
+                FileKey::from_secret_box(secrecy::SecretBox::new(Box::new([0u8; 32])));
             let sentinel_wrapped = wrap_file_key(&sentinel_file_key, key_encryption_key)
                 .map_err(StorageError::from)?;
             let node = Node::new(
@@ -56,8 +57,9 @@ pub async fn upload_file(
                 file_size,
                 Some(sentinel_wrapped.0),
             );
-            metadata_store.insert_file_node_only(&node).await?;
-            metadata_store.stage_epoch_entry(node_id, plaintext).await?;
+            metadata_store
+                .insert_file_node_and_stage_epoch_entry(&node, plaintext)
+                .await?;
             let total_bytes = metadata_store.get_epoch_buffer_total_bytes().await?;
             if total_bytes >= chunk_size_bytes {
                 flush_epoch_buffer(
@@ -133,7 +135,6 @@ async fn cleanup_staged_blobs(staging_directory: &Path, chunks: &[crate::storage
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
     use tempfile::TempDir;
@@ -250,6 +251,17 @@ mod tests {
         /// Delegates file-node-only insert.
         async fn insert_file_node_only(&self, node: &Node) -> Result<(), StorageError> {
             self.inner.insert_file_node_only(node).await
+        }
+
+        /// Delegates atomic file-node-plus-epoch-buffer insert.
+        async fn insert_file_node_and_stage_epoch_entry(
+            &self,
+            node: &Node,
+            plaintext: Vec<u8>,
+        ) -> Result<(), StorageError> {
+            self.inner
+                .insert_file_node_and_stage_epoch_entry(node, plaintext)
+                .await
         }
 
         /// Delegates epoch entry staging.

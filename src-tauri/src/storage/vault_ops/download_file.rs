@@ -30,7 +30,11 @@ pub async fn download_file(
     }
     let chunks = metadata_store.get_chunks(node_id).await?;
 
-    if chunks.first().map(|c| c.epoch_blob_id.is_some()).unwrap_or(false) {
+    if chunks
+        .first()
+        .map(|c| c.epoch_blob_id.is_some())
+        .unwrap_or(false)
+    {
         let chunk = &chunks[0];
         return decrypt_epoch_file(
             destination,
@@ -182,6 +186,17 @@ mod tests {
         /// Delegates file-node-only insert.
         async fn insert_file_node_only(&self, node: &Node) -> Result<(), StorageError> {
             self.inner.insert_file_node_only(node).await
+        }
+
+        /// Delegates atomic file-node-plus-epoch-buffer insert.
+        async fn insert_file_node_and_stage_epoch_entry(
+            &self,
+            node: &Node,
+            plaintext: Vec<u8>,
+        ) -> Result<(), StorageError> {
+            self.inner
+                .insert_file_node_and_stage_epoch_entry(node, plaintext)
+                .await
         }
 
         /// Delegates epoch entry staging.
