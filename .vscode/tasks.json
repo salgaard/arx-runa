@@ -32,6 +32,7 @@
         },
         {
             // Builds the native Tauri binary that the Windows debugger launches.
+            // dependsOn ui:dev so trunk is serving at :1420 before cargo build starts.
             "label": "build:tauri-debug",
             "type": "shell",
             "command": "cargo",
@@ -40,6 +41,7 @@
                 "--manifest-path",
                 "src-tauri/Cargo.toml"
             ],
+            "dependsOn": ["ui:dev"],
             "options": {
                 "cwd": "${workspaceFolder}"
             },

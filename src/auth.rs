@@ -198,8 +198,7 @@ pub fn LoginPage(
                             } else {
                                 // A different vault is already unlocked.
                                 let message =
-                                    "Another vault is already unlocked. Lock it first."
-                                        .to_string();
+                                    "Another vault is already unlocked. Lock it first.".to_string();
                                 crate::components::use_toast().error(&message);
                                 session_actions.complete_failure(message);
                                 return;

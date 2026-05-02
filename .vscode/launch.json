@@ -19,24 +19,23 @@
         },
         {
             // Debugs native Rust backend code in src-tauri/src/** on Windows.
-            // Uses CodeLLDB (vadimcn.vscode-lldb) — Rust-aware debugger with proper enum/panic display.
-            // Starts trunk dev server via preLaunchTask before launching the debugger.
+            // Uses cppvsdbg (ms-vscode.cpptools) — native MSVC PDB reader, no Python LLDB shim.
+            // Rust natvis files in .vscode/ provide enum/Vec/String visualization.
+            // preLaunchTask starts trunk dev server then builds the binary.
             "name": "[Debug] Backend core (Windows)",
-            "type": "lldb",
+            "type": "cppvsdbg",
             "request": "launch",
-            "cargo": {
-                "args": [
-                    "build",
-                    "--manifest-path=./src-tauri/Cargo.toml",
-                    "--no-default-features"
-                ]
-            },
-            "preLaunchTask": "ui:dev",
-            "sourceLanguages": ["rust"],
-            "env": {
-                "RUST_LOG": "debug",
-                "RUST_BACKTRACE": "1"
-            }
+            "program": "${workspaceFolder}/target/debug/arx-runa-tauri.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                {"name": "RUST_LOG", "value": "debug"},
+                {"name": "RUST_BACKTRACE", "value": "1"}
+            ],
+            "visualizerFile": "${workspaceFolder}/.vscode/intrinsic.natvis",
+            "showDisplayString": true,
+            "preLaunchTask": "build:tauri-debug"
         }
     ],
     "compounds": [

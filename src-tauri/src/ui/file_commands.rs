@@ -16,7 +16,7 @@ use crate::crypto::KeyEncryptionKey;
 use crate::storage::vault_ops::{
     delete_file as vault_delete, download_file as vault_download, upload_file as vault_upload,
 };
-use crate::storage::{MetadataStore, NodeType};
+use crate::storage::{MetadataStore, Node, NodeType};
 use crate::ui::commands_common::{ProgressChannel, require_active_session};
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
@@ -25,6 +25,52 @@ use crate::ui::validation::{normalise_vault_path, validate_file_id, validate_vau
 use crate::ui::vault_paths::{resolve_singleton_vault, vault_staging_dir};
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
+
+/// Gets the root directory UUID, creating the root node and persisting `root_id`
+/// in manifest meta if it does not yet exist.
+async fn get_or_create_root(db: &dyn MetadataStore) -> Result<Uuid, IpcError> {
+    if let Some(id) = db.get_meta("root_id").await.map_err(IpcError::from)? {
+        return Uuid::parse_str(&id)
+            .map_err(|_| IpcError::InternalError("root_id is not a valid UUID".into()));
+    }
+    let root_id = Uuid::new_v4();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let root_node = Node::new(
+        root_id,
+        None,
+        NodeType::Directory,
+        "root".to_owned(),
+        now,
+        now,
+        0,
+        None,
+    );
+    db.insert_node(&root_node).await.map_err(IpcError::from)?;
+    db.set_meta("root_id", &root_id.hyphenated().to_string())
+        .await
+        .map_err(IpcError::from)?;
+    Ok(root_id)
+}
+
+/// Resolves the parent directory UUID from a normalised, slash-stripped vault path.
+///
+/// An empty parent component (file at root) triggers [`get_or_create_root`].
+/// A non-empty parent must be a directory node UUID.
+async fn resolve_parent_uuid(vault_path: &str, db: &dyn MetadataStore) -> Result<Uuid, IpcError> {
+    let parent = match vault_path.rfind('/') {
+        Some(pos) => &vault_path[..pos],
+        None => "",
+    };
+    if parent.is_empty() {
+        get_or_create_root(db).await
+    } else {
+        Uuid::parse_str(parent)
+            .map_err(|_| IpcError::InvalidInput("Parent directory path must be a UUID".into()))
+    }
+}
 
 /// Converts a Unix timestamp (seconds since 1970-01-01T00:00:00Z) to an ISO 8601 string.
 ///
@@ -180,8 +226,9 @@ pub async fn list_directory(
 
 /// Encrypt and upload a file to the vault.
 ///
-/// Places the file at vault root (`parent_id = None`) for Phase 6.5;
-/// path-based placement and progress streaming are deferred.
+/// `vault_path` is the full vault-relative destination path (e.g. `/file.txt` or
+/// `/<dir-uuid>/file.txt`).  The parent directory is resolved to a UUID; the root
+/// node is created on first use and its UUID persisted as `root_id`.
 #[tauri::command]
 pub async fn upload_file(
     source_path: PathBuf,
@@ -193,6 +240,7 @@ pub async fn upload_file(
     require_active_session(&state).await?;
 
     let vault_path = normalise_vault_path(&vault_path);
+    let vault_path = vault_path.trim_start_matches('/');
     if vault_path.is_empty() {
         return Err(IpcError::InvalidInput(
             "Vault path is required for upload".into(),
@@ -236,10 +284,12 @@ pub async fn upload_file(
         }
     };
 
+    let parent_id = resolve_parent_uuid(vault_path, db).await?;
+
     let node = vault_upload(
         &source_path,
         node_id,
-        None,
+        Some(parent_id),
         &name,
         now,
         now,

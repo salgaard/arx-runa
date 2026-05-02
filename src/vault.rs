@@ -675,15 +675,20 @@ pub fn VaultBrowser() -> impl IntoView {
                 <p class="text-danger text-sm">{e}</p>
             })}
 
-            <Show when=move || vault.read().loading>
+            <Show
+                when=move || vault.read().loading
+                fallback=move || {
+                    view! {
+                        <DropZone>
+                            <FileList entries=Signal::derive(move || vault.read().files.clone()) />
+                        </DropZone>
+                    }
+                }
+            >
                 <div class="flex justify-center p-8">
                     <Spinner size="h-8 w-8" />
                 </div>
             </Show>
-
-            <DropZone>
-                <FileList entries=Signal::derive(move || vault.read().files.clone()) />
-            </DropZone>
         </div>
     }
 }
