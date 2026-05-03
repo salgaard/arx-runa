@@ -70,17 +70,17 @@ pub fn on_file_drop<F: Fn(Vec<String>) + 'static>(handler: F) -> impl FnOnce() +
     // resolved function in UNLISTEN_REGISTRY so cleanup can call it.
     // Without awaiting, cleanup gets the raw Promise (not callable) and the
     // listener leaks — causing N duplicate upload_file calls after N mounts.
-    if let Ok(func) = on_drag_drop.dyn_into::<js_sys::Function>() {
-        if let Ok(promise_val) = func.call1(&window, cb.as_ref().unchecked_ref()) {
-            let promise = js_sys::Promise::from(promise_val);
-            wasm_bindgen_futures::spawn_local(async move {
-                if let Ok(unlisten_fn) = JsFuture::from(promise).await {
-                    if let Ok(f) = unlisten_fn.dyn_into::<js_sys::Function>() {
-                        UNLISTEN_REGISTRY.with(|reg| reg.borrow_mut().insert(id, f));
-                    }
-                }
-            });
-        }
+    if let Ok(func) = on_drag_drop.dyn_into::<js_sys::Function>()
+        && let Ok(promise_val) = func.call1(&window, cb.as_ref().unchecked_ref())
+    {
+        let promise = js_sys::Promise::from(promise_val);
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Ok(unlisten_fn) = JsFuture::from(promise).await
+                && let Ok(f) = unlisten_fn.dyn_into::<js_sys::Function>()
+            {
+                UNLISTEN_REGISTRY.with(|reg| reg.borrow_mut().insert(id, f));
+            }
+        });
     }
 
     cb.forget();
