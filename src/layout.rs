@@ -29,7 +29,13 @@ pub fn Header() -> impl IntoView {
     view! {
         <header class="flex items-center justify-between gap-3 px-6 py-4 bg-stone border-b border-steel">
             <div class="flex items-center gap-3">
-                <span class="text-rune text-xl font-bold">"⬡"</span>
+                <svg viewBox="0 0 200 236" width="28" height="33" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                    <path d="M 20 0 L 180 0 L 200 20 L 200 152 L 100 232 L 0 152 L 0 20 Z"
+                          fill="#0C0E14" stroke="#5C7090" stroke-width="8"/>
+                    <line x1="100" y1="30" x2="100" y2="188" stroke="#DBD7CD" stroke-width="10" stroke-linecap="square"/>
+                    <line x1="100" y1="103" x2="59"  y2="148" stroke="#DBD7CD" stroke-width="10" stroke-linecap="square"/>
+                    <line x1="100" y1="103" x2="141" y2="148" stroke="#DBD7CD" stroke-width="10" stroke-linecap="square"/>
+                </svg>
                 <span class="text-bone font-semibold">"Arx Runa"</span>
             </div>
             <div class="flex items-center gap-3">

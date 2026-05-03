@@ -1,0 +1,11 @@
+<svg viewBox="0 0 512 512" width="512" height="512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Dark shield outlined in rune-blue — silhouette at small sizes, elegant at large -->
+  <!-- Original logo: 200x236. Scale = 460/236 = 1.949. Centre x=(512-389.8)/2=61, y=(512-460)/2=26 -->
+  <g transform="translate(61, 26) scale(1.949)">
+    <path d="M 20 0 L 180 0 L 200 20 L 200 152 L 100 232 L 0 152 L 0 20 Z"
+          fill="#0C0E14" stroke="#5C7090" stroke-width="8"/>
+    <line x1="100" y1="30" x2="100" y2="188" stroke="#DBD7CD" stroke-width="6" stroke-linecap="square"/>
+    <line x1="100" y1="103" x2="59"  y2="148" stroke="#DBD7CD" stroke-width="6" stroke-linecap="square"/>
+    <line x1="100" y1="103" x2="141" y2="148" stroke="#DBD7CD" stroke-width="6" stroke-linecap="square"/>
+  </g>
+</svg>
