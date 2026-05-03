@@ -26,9 +26,9 @@ pub use received_share_entry::ReceivedShareEntry;
 pub use requests::{
     AddContactRequest, AddDestinationRequest, AuthenticateRequest, ChangePasswordRequest,
     ConfigureCloudRequest, CreateVaultRequest, DeleteDestinationRequest, DeleteFileRequest,
-    DeleteVaultRequest, DownloadFileRequest, GetFileContentRequest, ImportShareRequest,
-    ListDirectoryRequest, RevokeShareRequest, RotateKeyFileRequest, ShareFileRequest,
-    UploadFileRequest,
+    DeleteVaultRequest, DownloadFileRequest, ExportPublicKeyRequest, GetFileContentRequest,
+    ImportShareRequest, ListDirectoryRequest, RevokeShareRequest, RotateKeyFileRequest,
+    ShareFileRequest, UploadFileRequest,
 };
 pub use session_status::SessionStatus;
 pub use share_entry::ShareEntry;

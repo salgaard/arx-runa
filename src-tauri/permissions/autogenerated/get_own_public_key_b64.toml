@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-own-public-key-b64"
+description = "Enables the get_own_public_key_b64 command without any pre-configured scope."
+commands.allow = ["get_own_public_key_b64"]
+
+[[permission]]
+identifier = "deny-get-own-public-key-b64"
+description = "Denies the get_own_public_key_b64 command without any pre-configured scope."
+commands.deny = ["get_own_public_key_b64"]

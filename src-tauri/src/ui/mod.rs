@@ -37,10 +37,10 @@ pub use sync_commands::{
 // Destination commands (3)
 pub use destination_commands::{add_destination, delete_destination, list_destinations};
 
-// Sharing commands (8)
+// Sharing commands (9)
 pub use sharing_commands::{
-    add_contact, export_public_key, import_share, list_contacts, list_received_shares, list_shares,
-    revoke_share, share_file,
+    add_contact, export_public_key, get_own_public_key_b64, import_share, list_contacts,
+    list_received_shares, list_shares, revoke_share, share_file,
 };
 
 #[cfg(test)]

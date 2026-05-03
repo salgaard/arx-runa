@@ -69,8 +69,9 @@ pub fn run() {
             ui::destination_commands::add_destination,
             ui::destination_commands::list_destinations,
             ui::destination_commands::delete_destination,
-            // Sharing (8)
+            // Sharing (9)
             ui::sharing_commands::export_public_key,
+            ui::sharing_commands::get_own_public_key_b64,
             ui::sharing_commands::add_contact,
             ui::sharing_commands::list_contacts,
             ui::sharing_commands::share_file,

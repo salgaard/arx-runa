@@ -14,6 +14,7 @@ fn main() {
             "download_file",
             "export_public_key",
             "get_file_content",
+            "get_own_public_key_b64",
             "get_session_status",
             "get_sync_status",
             "import_share",

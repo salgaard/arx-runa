@@ -15,7 +15,7 @@ use zeroize::Zeroizing;
 use crate::crypto::{KeyEncryptionKey, WrappedFileKey, unwrap_file_key};
 use crate::sharing::{
     Contact, ContactId, DisplayName, ShareRecord, SharingStore, X25519PublicKey,
-    create_share_package, export_public_key_bytes, import_share_package,
+    create_share_package, export_public_key_bytes, import_share_package, public_key_qr_string,
 };
 use crate::storage::{MetadataStore, StorageError};
 use crate::ui::commands_common::require_active_session;
@@ -112,6 +112,28 @@ pub async fn export_public_key(
         .map_err(|_| IpcError::InternalError("Failed to write public key file".into()))?;
 
     Ok(())
+}
+
+/// Returns the user's own public key as a standard base64 string for display in the UI.
+///
+/// The key is encoded via `public_key_qr_string` (padded base64, 44 chars). The raw bytes
+/// are never logged or included in error messages.
+#[tauri::command]
+pub async fn get_own_public_key_b64(state: State<'_, AppState>) -> Result<String, IpcError> {
+    state.session_manager.reset_timer().await;
+    require_active_session(&state).await?;
+
+    let db_guard = state.database.read().await;
+    let db = db_guard
+        .as_ref()
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+
+    let public_key = (db as &dyn SharingStore)
+        .get_own_public_key()
+        .await
+        .map_err(IpcError::from)?;
+
+    Ok(public_key_qr_string(&public_key))
 }
 
 /// Import a contact's public key from a file.

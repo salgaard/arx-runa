@@ -4,8 +4,9 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
 
+use crate::dialog::open_save_dialog;
 use crate::invoke::invoke_command;
-use crate::ipc_types::{AddContactRequest, ContactEntry};
+use crate::ipc_types::{AddContactRequest, ContactEntry, ExportPublicKeyRequest};
 use crate::utils::format_fingerprint;
 
 // ─── ContactList (main component) ──────────────────────────────────────────
@@ -51,19 +52,57 @@ pub fn ContactList() -> impl IntoView {
 fn ExportKeyButton() -> impl IntoView {
     let key_data = RwSignal::new(None::<String>);
     let show_modal = RwSignal::new(false);
+    let error_message = RwSignal::new(None::<String>);
+    let save_status = RwSignal::new(None::<String>);
 
     let on_export = move |_| {
+        error_message.set(None);
         spawn_local(async move {
-            // TODO: Implement actual export via IPC invoke_command
-            // For now, this is a placeholder that will call the backend
-            // The modal will show the key and provide a copy button
+            match invoke_command::<(), String>("get_own_public_key_b64", &()).await {
+                Ok(b64) => {
+                    key_data.set(Some(b64));
+                    show_modal.set(true);
+                }
+                Err(e) => {
+                    error_message.set(Some(e.to_string()));
+                }
+            }
         });
     };
 
     let on_modal_close = move |_| {
-        // Zeroize the key from the signal when the modal closes
         key_data.set(None);
         show_modal.set(false);
+        save_status.set(None);
+    };
+
+    let on_save_to_file = move |_| {
+        let Some(key_b64) = key_data.get() else {
+            return;
+        };
+        // key_b64 is captured only to verify we have key data; actual file write goes via backend
+        let _ = key_b64;
+        save_status.set(None);
+        spawn_local(async move {
+            let Some(path) = open_save_dialog(Some("arx-runa.pub")).await else {
+                return;
+            };
+            match invoke_command::<ExportPublicKeyRequest, ()>(
+                "export_public_key",
+                &ExportPublicKeyRequest {
+                    destination_path: path,
+                },
+            )
+            .await
+            {
+                Ok(()) => {
+                    save_status.set(Some("Key saved successfully.".into()));
+                }
+                Err(e) => {
+                    save_status.set(Some(format!("Save failed: {e}")));
+                }
+            }
+        });
     };
 
     view! {
@@ -74,6 +113,9 @@ fn ExportKeyButton() -> impl IntoView {
             >
                 "Export Public Key"
             </button>
+            {move || error_message.get().map(|msg| view! {
+                <p class="text-red-400 text-sm">{msg}</p>
+            })}
             {move || {
                 if show_modal.get() {
                     view! {
@@ -81,24 +123,40 @@ fn ExportKeyButton() -> impl IntoView {
                             <div class="bg-stone p-6 rounded border border-steel max-w-md w-full mx-4">
                                 <h3 class="text-lg font-semibold text-bone mb-4">"Your Public Key"</h3>
                                 <p class="text-text-secondary text-sm mb-4">"Share this key with contacts to receive files."</p>
-                                        {move || {
+                                {move || {
                                     key_data.get().map(|key| {
+                                        let fingerprint = format_fingerprint(&key);
                                         view! {
                                             <textarea
                                                 class="w-full h-24 p-2 bg-iron border border-steel text-bone text-sm rounded font-mono"
                                                 prop:readOnly=true
                                                 prop:value=key.clone()
                                             />
-                                            <p class="mt-2 text-text-secondary text-sm">"Select all and copy manually to clipboard"</p>
+                                            <p class="mt-2 text-text-secondary text-sm">"Select all and copy manually to clipboard."</p>
+                                            <p class="mt-2 text-text-secondary text-xs">
+                                                "Fingerprint: "
+                                                <span class="font-mono text-bone">{fingerprint}</span>
+                                            </p>
                                         }
                                     })
                                 }}
-                                <button
-                                    class="mt-4 px-4 py-2 bg-steel text-bone rounded hover:bg-steel-light transition-colors w-full"
-                                    on:click=on_modal_close
-                                >
-                                    "Close"
-                                </button>
+                                {move || save_status.get().map(|msg| view! {
+                                    <p class="mt-2 text-sm text-bone">{msg}</p>
+                                })}
+                                <div class="mt-4 flex gap-2">
+                                    <button
+                                        class="flex-1 px-4 py-2 bg-rune text-bone rounded hover:bg-rune-dark transition-colors"
+                                        on:click=on_save_to_file
+                                    >
+                                        "Save to File"
+                                    </button>
+                                    <button
+                                        class="flex-1 px-4 py-2 bg-steel text-bone rounded hover:bg-steel-light transition-colors"
+                                        on:click=on_modal_close
+                                    >
+                                        "Close"
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     }.into_any()

@@ -141,6 +141,14 @@ pub struct AddContactRequest {
     pub email: Option<String>,
 }
 
+/// Argument payload for the `export_public_key` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportPublicKeyRequest {
+    /// Absolute path where the 32-byte raw public key will be written.
+    pub destination_path: String,
+}
+
 /// Argument payload for the `share_file` Tauri command.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
