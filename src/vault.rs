@@ -537,11 +537,15 @@ pub fn DropZone(children: Children) -> impl IntoView {
         // are disposed; try_get_untracked() returns None in that case so we can
         // bail out safely instead of panicking.  Also guards against a second
         // listener or Tauri double-fire while an upload is already in progress.
-        let Some(in_flight) = upload_channel.try_get_untracked() else { return; };
+        let Some(in_flight) = upload_channel.try_get_untracked() else {
+            return;
+        };
         if in_flight.is_some() {
             return;
         }
-        let Some(vault_state) = vault.try_get_untracked() else { return; };
+        let Some(vault_state) = vault.try_get_untracked() else {
+            return;
+        };
         let current_path = vault_state.current_path;
         for source_path in paths {
             let file_name = source_path.split(['/', '\\']).next_back().unwrap_or("file");
