@@ -515,7 +515,11 @@ pub fn FileList(
 
 /// File drop zone that accepts dragged files and initiates upload.
 ///
-/// Subscribes to `onDragDropEvent` on mount and unsubscribes in `on_cleanup`.
+/// Subscribes to `onDragDropEvent` once in the component body (not inside an
+/// `Effect`) and unsubscribes via `on_cleanup`.  Using `Effect::new` caused
+/// the listener to be re-registered on each effect re-run; if the async Tauri
+/// unlisten promise had not yet resolved, the previous listener was never
+/// removed, leaving two active listeners that both triggered `upload_file`.
 /// Shows a progress modal for the most-recently-started upload.
 #[component]
 pub fn DropZone(children: Children) -> impl IntoView {
@@ -523,40 +527,51 @@ pub fn DropZone(children: Children) -> impl IntoView {
     let vault_actions = use_vault_actions();
     let (upload_channel, set_upload_channel) = signal::<Option<IpcChannel<ProgressUpdate>>>(None);
 
-    Effect::new(move |_| {
-        let vault_actions = vault_actions;
-        let unsub = on_file_drop(move |paths| {
-            let current_path = vault.get_untracked().current_path;
-            for source_path in paths {
-                let file_name = source_path.split(['/', '\\']).next_back().unwrap_or("file");
-                let vault_path = join_vault_path(&current_path, file_name)
-                    .trim_start_matches('/')
-                    .to_owned();
-                let upload_path = current_path.clone();
-                let req = UploadFileRequest {
-                    source_path: source_path.clone(),
-                    vault_path,
-                };
-                let va = vault_actions;
-                let channel = IpcChannel::<ProgressUpdate>::new();
-                set_upload_channel.set(Some(channel.clone()));
-                leptos::task::spawn_local(async move {
-                    match invoke_command_with_channel::<UploadFileRequest, FileEntry>(
-                        "upload_file",
-                        &req,
-                        "progress",
-                        channel.inner(),
-                    )
-                    .await
-                    {
-                        Ok(_) => va.navigate(upload_path),
-                        Err(err) => va.set_error(err.message),
-                    }
-                });
-            }
-        });
-        on_cleanup(unsub);
+    // Register the listener once in the component body (not inside Effect::new).
+    // Effect::new can re-run if any tracked signal changes, and if the async
+    // promise that stores the Tauri unlisten function hasn't resolved before
+    // the cleanup fires, the old listener leaks — leaving two active listeners
+    // that both invoke upload_file on each drop.
+    let unsub = on_file_drop(move |paths| {
+        // If the component has been unmounted (user navigated away) the signals
+        // are disposed; try_get_untracked() returns None in that case so we can
+        // bail out safely instead of panicking.  Also guards against a second
+        // listener or Tauri double-fire while an upload is already in progress.
+        let Some(in_flight) = upload_channel.try_get_untracked() else { return; };
+        if in_flight.is_some() {
+            return;
+        }
+        let Some(vault_state) = vault.try_get_untracked() else { return; };
+        let current_path = vault_state.current_path;
+        for source_path in paths {
+            let file_name = source_path.split(['/', '\\']).next_back().unwrap_or("file");
+            let vault_path = join_vault_path(&current_path, file_name)
+                .trim_start_matches('/')
+                .to_owned();
+            let upload_path = current_path.clone();
+            let req = UploadFileRequest {
+                source_path: source_path.clone(),
+                vault_path,
+            };
+            let va = vault_actions;
+            let channel = IpcChannel::<ProgressUpdate>::new();
+            set_upload_channel.set(Some(channel.clone()));
+            leptos::task::spawn_local(async move {
+                match invoke_command_with_channel::<UploadFileRequest, FileEntry>(
+                    "upload_file",
+                    &req,
+                    "progress",
+                    channel.inner(),
+                )
+                .await
+                {
+                    Ok(_) => va.navigate(upload_path),
+                    Err(err) => va.set_error(err.message),
+                }
+            });
+        }
     });
+    on_cleanup(unsub);
 
     view! {
         <>

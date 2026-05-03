@@ -4,7 +4,11 @@
 //! and unsubscribed via `on_cleanup`. Handles only the "drop" variant;
 //! ignores "enter", "over", and "leave".
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::JsFuture;
 
 #[wasm_bindgen]
 extern "C" {
@@ -13,15 +17,24 @@ extern "C" {
     fn getCurrentWebviewWindow() -> JsValue;
 }
 
+// js_sys::Function is !Send, so the cleanup closure cannot hold it directly
+// (on_cleanup requires Send). Store resolved unlisten fns in a thread-local
+// keyed by a u64 — only the key is captured in the Send cleanup closure.
+thread_local! {
+    static UNLISTEN_REGISTRY: RefCell<HashMap<u64, js_sys::Function>> = RefCell::new(HashMap::new());
+}
+static NEXT_LISTENER_ID: AtomicU64 = AtomicU64::new(0);
+
 /// Subscribes to `onDragDropEvent` on the current Tauri webview window.
 ///
 /// Calls `handler` with the list of dropped file paths on a successful drop.
 /// "Enter", "over", and "leave" variants are silently ignored.
 ///
 /// Returns an unsubscribe closure that should be called in `on_cleanup`.
-pub fn on_file_drop<F: Fn(Vec<String>) + 'static>(handler: F) -> impl FnOnce() {
+pub fn on_file_drop<F: Fn(Vec<String>) + 'static>(handler: F) -> impl FnOnce() + Send {
     let window = getCurrentWebviewWindow();
     let handler = std::rc::Rc::new(handler);
+    let id = NEXT_LISTENER_ID.fetch_add(1, Ordering::Relaxed);
 
     let cb = Closure::wrap(Box::new(move |event: JsValue| {
         // onDragDropEvent delivers Event<DragDropPayload>:
@@ -53,26 +66,30 @@ pub fn on_file_drop<F: Fn(Vec<String>) + 'static>(handler: F) -> impl FnOnce() {
     let on_drag_drop = js_sys::Reflect::get(&window, &JsValue::from_str("onDragDropEvent"))
         .unwrap_or(JsValue::undefined());
 
-    // onDragDropEvent returns Promise<UnlistenFn> in Tauri v2; we store the
-    // resolved JsValue and attempt to call it as a function in cleanup. If the
-    // Promise hasn't resolved yet the cleanup will be a no-op (harmless since
-    // DropZone lifetime matches the vault session).
-    let unsub = if let Ok(func) = on_drag_drop.dyn_into::<js_sys::Function>() {
-        let result = func
-            .call1(&window, cb.as_ref().unchecked_ref())
-            .unwrap_or(JsValue::undefined());
-        Some(result)
-    } else {
-        None
-    };
+    // onDragDropEvent returns Promise<UnlistenFn>. Await it and store the
+    // resolved function in UNLISTEN_REGISTRY so cleanup can call it.
+    // Without awaiting, cleanup gets the raw Promise (not callable) and the
+    // listener leaks — causing N duplicate upload_file calls after N mounts.
+    if let Ok(func) = on_drag_drop.dyn_into::<js_sys::Function>() {
+        if let Ok(promise_val) = func.call1(&window, cb.as_ref().unchecked_ref()) {
+            let promise = js_sys::Promise::from(promise_val);
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Ok(unlisten_fn) = JsFuture::from(promise).await {
+                    if let Ok(f) = unlisten_fn.dyn_into::<js_sys::Function>() {
+                        UNLISTEN_REGISTRY.with(|reg| reg.borrow_mut().insert(id, f));
+                    }
+                }
+            });
+        }
+    }
 
     cb.forget();
 
     move || {
-        if let Some(unsub_fn) = unsub
-            && let Ok(f) = unsub_fn.dyn_into::<js_sys::Function>()
-        {
-            let _ = f.call0(&JsValue::undefined());
-        }
+        UNLISTEN_REGISTRY.with(|reg| {
+            if let Some(f) = reg.borrow_mut().remove(&id) {
+                let _ = f.call0(&JsValue::undefined());
+            }
+        });
     }
 }

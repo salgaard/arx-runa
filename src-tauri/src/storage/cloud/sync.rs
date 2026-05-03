@@ -712,6 +712,19 @@ async fn drain_pending_deletions(
                     completed += 1;
                     batch_completed += 1;
                 }
+                Err(CloudTransportError::NotFound) => {
+                    // Blob was never uploaded to the cloud (e.g. deleted locally
+                    // before the first sync). The desired state is already achieved.
+                    tracing::debug!(
+                        blob_name = %blob_name,
+                        remote_path = %remote_path,
+                        "blob not found in cloud during pending deletion drain; \
+                         treating as already deleted"
+                    );
+                    metadata_store.mark_deletion_complete(&blob_name).await?;
+                    completed += 1;
+                    batch_completed += 1;
+                }
                 Err(error) => {
                     tracing::warn!(
                         blob_name = %blob_name,
@@ -1283,6 +1296,59 @@ mod tests {
                 .await
                 .expect("pending deletions should load")
                 .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pull_vault_pending_deletion_not_found_in_cloud_clears_queue() {
+        // Scenario: file deleted locally before first sync. The blob was never
+        // uploaded, so the cloud returns NotFound. drain_pending_deletions must
+        // treat this as idempotent success and clear the row.
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key_bytes = [23u8; 32];
+        let store = setup_store(&db_path, &key_bytes)
+            .await
+            .expect("store should be created");
+        let cloud = MockCloudTransport::new();
+        let file_id = insert_single_chunk(
+            &store,
+            "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+            b"never-uploaded",
+        )
+        .await
+        .expect("chunk insert should succeed");
+        store
+            .delete_node(file_id)
+            .await
+            .expect("delete should enqueue pending deletion");
+        cloud
+            .inject_failure(
+                "vault/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.blob",
+                CloudTransportErrorKind::NotFound,
+            )
+            .await;
+
+        pull_vault(
+            temp.path(),
+            &SqlcipherKey::from_bytes([1; 32]),
+            &ManifestKey::from_bytes([2; 32]),
+            &store,
+            &cloud,
+            temp.path(),
+            &SyncConfig::default(),
+            None,
+        )
+        .await
+        .expect("pull should succeed");
+
+        assert!(
+            store
+                .list_pending_deletions(10)
+                .await
+                .expect("pending deletions should load")
+                .is_empty(),
+            "NotFound from cloud should clear the pending deletion row"
         );
     }
 }
