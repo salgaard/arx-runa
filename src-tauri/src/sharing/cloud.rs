@@ -99,6 +99,21 @@ pub(crate) async fn create_share(
 
             let source_path = staging_directory.join(format!("{}.blob", chunk.blob_name));
 
+            // If the local staging blob was cleaned up after cloud sync, fetch it back.
+            if !source_path.exists() {
+                let remote = format!("vault/{}.blob", chunk.blob_name);
+                if let Err(e) = cloud.download_blob(&remote, &source_path).await {
+                    cleanup_temp_files(&temp_local_paths).await;
+                    for uploaded in &uploaded_remote_paths {
+                        let _ = cloud.delete_blob(uploaded).await;
+                    }
+                    return Err(SharingError::CloudOperation(format!(
+                        "blob not in staging and cloud download failed (chunk {}): {}",
+                        chunk.chunk_index, e
+                    )));
+                }
+            }
+
             if let Err(io_err) = tokio::fs::copy(&source_path, &local_copy_path).await {
                 cleanup_temp_files(&temp_local_paths).await;
                 for remote in &uploaded_remote_paths {

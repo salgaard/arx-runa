@@ -503,6 +503,7 @@ pub fn ShareModal(
         let contact_id = selected_contact_id.get().unwrap();
         let file_id_clone = file_id.clone();
         let expiry_opt = expiration_days.get().and_then(|s| s.parse::<u32>().ok());
+        let receipt = request_receipt.get();
 
         spawn_local(async move {
             match invoke_command::<ShareFileRequest, ShareResponse>(
@@ -511,7 +512,7 @@ pub fn ShareModal(
                     file_id: file_id_clone,
                     contact_id: contact_id.clone(),
                     expiration_days: expiry_opt,
-                    request_receipt: request_receipt.get(),
+                    request_receipt: receipt,
                 },
             )
             .await

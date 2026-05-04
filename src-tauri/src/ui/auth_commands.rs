@@ -974,9 +974,14 @@ pub async fn recover_vault_from_cloud(
         endpoint: String::new(),
         path_prefix: dest_session.path_prefix.clone(),
     };
-    let transport =
-        RcloneTransport::new(binary_path, conf_path, &endpoint, &dest_public, SyncConfig::default())
-            .map_err(|e| IpcError::CloudError(e.to_string()))?;
+    let transport = RcloneTransport::new(
+        binary_path,
+        conf_path,
+        &endpoint,
+        &dest_public,
+        SyncConfig::default(),
+    )
+    .map_err(|e| IpcError::CloudError(e.to_string()))?;
 
     // ── Pre-download vault-header.json to discover the vault UUID ────────────
     // The ceremony re-downloads the header internally; this probe is needed
@@ -986,7 +991,10 @@ pub async fn recover_vault_from_cloud(
         .download_blob("vault-header.json", &probe_path)
         .await
         .map_err(|e| {
-            tracing::warn!(?e, "failed to probe vault header from cloud during recovery");
+            tracing::warn!(
+                ?e,
+                "failed to probe vault header from cloud during recovery"
+            );
             IpcError::CloudError(
                 "Could not reach the vault at the provided destination. \
                  Check your credentials and path prefix."
@@ -999,8 +1007,9 @@ pub async fn recover_vault_from_cloud(
         .map_err(|e| IpcError::InternalError(e.to_string()))?;
     let _ = tokio::fs::remove_file(&probe_path).await;
 
-    let vault_header: VaultHeader = serde_json::from_slice(&header_bytes)
-        .map_err(|_| IpcError::CloudError("Vault header at the cloud destination is malformed".into()))?;
+    let vault_header: VaultHeader = serde_json::from_slice(&header_bytes).map_err(|_| {
+        IpcError::CloudError("Vault header at the cloud destination is malformed".into())
+    })?;
     let cloud_vault_id = vault_header.vault_id.clone();
 
     // ── Guard: refuse to shadow an existing local vault ───────────────────────
