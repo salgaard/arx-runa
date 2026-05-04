@@ -10,4 +10,6 @@ pub struct ShareResponse {
     pub share_id: String,
     /// Filesystem path to the exported share package file.
     pub package_path: String,
+    /// Email address of the recipient contact, if one was recorded.
+    pub contact_email: Option<String>,
 }

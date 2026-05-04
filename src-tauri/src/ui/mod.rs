@@ -9,6 +9,7 @@ pub mod destination_commands;
 pub mod error;
 pub mod file_commands;
 pub mod sharing_commands;
+pub mod shell_commands;
 pub mod state;
 pub mod sync_commands;
 pub mod types;

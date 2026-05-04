@@ -2,6 +2,7 @@ mod auth_response;
 mod contact_entry;
 mod destination_entry;
 mod destination_session_config;
+mod download_received_share_response;
 mod file_entry;
 mod import_share_response;
 mod progress_update;
@@ -19,6 +20,7 @@ pub use auth_response::AuthResponse;
 pub use contact_entry::ContactEntry;
 pub use destination_entry::DestinationEntry;
 pub use destination_session_config::DestinationSessionConfig;
+pub use download_received_share_response::DownloadReceivedShareResponse;
 pub use file_entry::FileEntry;
 pub use import_share_response::ImportShareResponse;
 pub use progress_update::ProgressUpdate;
@@ -26,9 +28,10 @@ pub use received_share_entry::ReceivedShareEntry;
 pub use requests::{
     AddContactRequest, AddDestinationRequest, AuthenticateRequest, ChangePasswordRequest,
     ConfigureCloudRequest, CreateVaultRequest, DeleteDestinationRequest, DeleteFileRequest,
-    DeleteVaultRequest, DownloadFileRequest, ExportPublicKeyRequest, GetFileContentRequest,
-    ImportShareRequest, ListDirectoryRequest, RevokeShareRequest, RotateKeyFileRequest,
-    ShareFileRequest, UploadFileRequest,
+    DeleteVaultRequest, DownloadFileRequest, DownloadReceivedShareRequest, ExportPublicKeyRequest,
+    GetFileContentRequest, ImportShareRequest, ListDirectoryRequest, RecoverVaultFromCloudRequest,
+    RevealInExplorerRequest, RevokeShareRequest, RotateKeyFileRequest, ShareFileRequest,
+    UploadFileRequest,
 };
 pub use session_status::SessionStatus;
 pub use share_entry::ShareEntry;

@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use leptos_router::StaticSegment;
 use leptos_router::components::{Route, Router, Routes};
 
-use crate::auth::{LoginPage, VaultCreationPage};
+use crate::auth::{LoginPage, VaultCreationPage, VaultRecoveryPage};
 use crate::components::{ToastProvider, inject_toast_styles};
 use crate::contacts::ContactList;
 use crate::destinations::DestinationList;
@@ -54,6 +54,8 @@ fn AppRouter() -> impl IntoView {
     let selected_vault: RwSignal<Option<VaultSummary>> = RwSignal::new(None);
     // Whether the user clicked "Create vault".
     let create_vault_intent = RwSignal::new(false);
+    // Whether the user clicked "Recover vault from cloud".
+    let recover_intent = RwSignal::new(false);
 
     // Lock transition: clear vault and sync state when session becomes inactive.
     Effect::new(move |prev: Option<bool>| {
@@ -64,6 +66,7 @@ fn AppRouter() -> impl IntoView {
             // Return to VaultPicker after lock.
             selected_vault.set(None);
             create_vault_intent.set(false);
+            recover_intent.set(false);
         }
         now
     });
@@ -93,6 +96,11 @@ fn AppRouter() -> impl IntoView {
                 } />
             }
             .into_any()
+        } else if recover_intent.get() {
+            view! {
+                <VaultRecoveryPage on_back=move || recover_intent.set(false) />
+            }
+            .into_any()
         } else if let Some(vault) = selected_vault.get() {
             view! {
                 <LoginPage
@@ -106,6 +114,7 @@ fn AppRouter() -> impl IntoView {
                 <VaultPicker
                     on_select=move |v| selected_vault.set(Some(v))
                     on_create=move || create_vault_intent.set(true)
+                    on_recover=move || recover_intent.set(true)
                 />
             }
             .into_any()

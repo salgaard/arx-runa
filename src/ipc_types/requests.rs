@@ -47,6 +47,19 @@ pub struct CreateVaultRequest {
     pub epoch_buffer_enabled: bool,
 }
 
+/// Argument payload for the `recover_vault_from_cloud` Tauri command.
+#[derive(Debug, Clone, Serialize, Zeroize, ZeroizeOnDrop)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoverVaultFromCloudRequest {
+    /// Vault password (zeroize immediately after IPC call resolves).
+    pub password: String,
+    /// Absolute path to the key file, or `None` for Tier 1 (password-only) vaults.
+    pub key_file_path: Option<String>,
+    /// Cloud destination where the vault currently lives.
+    #[zeroize(skip)]
+    pub primary_destination: DestinationSessionConfig,
+}
+
 /// Argument payload for the `upload_file` Tauri command.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -159,6 +172,8 @@ pub struct ShareFileRequest {
     pub contact_id: String,
     /// Optional expiration period in days from now.
     pub expiration_days: Option<u32>,
+    /// Whether to request a delivery receipt from the recipient.
+    pub request_receipt: bool,
 }
 
 /// Argument payload for the `revoke_share` Tauri command.
@@ -191,4 +206,22 @@ pub struct ConfigureCloudRequest {
 pub struct ImportShareRequest {
     /// Absolute path to the share package file (.arxshare).
     pub share_package_path: String,
+}
+
+/// Argument payload for the `download_received_share` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadReceivedShareRequest {
+    /// Unique share ID of the received share to download.
+    pub share_id: String,
+    /// Absolute path to the destination file on the local filesystem.
+    pub destination_path: String,
+}
+
+/// Argument payload for the `reveal_in_explorer` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevealInExplorerRequest {
+    /// Absolute filesystem path to reveal in the OS file explorer.
+    pub path: String,
 }

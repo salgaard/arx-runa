@@ -102,4 +102,19 @@ pub trait CloudTransport: Send + Sync {
     async fn cleanup_session_artifacts(&self) -> Result<(), CloudTransportError> {
         Ok(())
     }
+
+    /// Generates scoped credentials for a recipient to download a shared prefix.
+    ///
+    /// Returns `None` when the backend does not support credential generation
+    /// (e.g., local-only transports).  Callers must treat `None` as "fall back
+    /// to path-prefix-only endpoint".
+    async fn generate_share_credentials(
+        &self,
+        path_prefix: &str,
+        ttl_seconds: u32,
+        receipt_requested: bool,
+    ) -> Result<Option<serde_json::Value>, CloudTransportError> {
+        let _ = (path_prefix, ttl_seconds, receipt_requested);
+        Ok(None)
+    }
 }

@@ -15,6 +15,8 @@ pub fn VaultPicker(
     on_select: impl Fn(VaultSummary) + Send + Sync + 'static + Clone,
     /// Called when the user clicks "Create vault".
     on_create: impl Fn() + Send + Sync + 'static + Clone,
+    /// Called when the user clicks "Recover vault from cloud".
+    on_recover: impl Fn() + Send + Sync + 'static + Clone,
 ) -> impl IntoView {
     let vaults: RwSignal<Vec<VaultSummary>> = RwSignal::new(Vec::new());
     let loading = RwSignal::new(true);
@@ -105,6 +107,17 @@ pub fn VaultPicker(
                     }
                 >
                     "+ Create new vault"
+                </button>
+
+                <button
+                    type="button"
+                    class="w-full px-4 py-2 rounded-xl text-text-secondary hover:text-bone transition-colors text-sm mt-2"
+                    on:click={
+                        let on_recover = on_recover.clone();
+                        move |_| on_recover()
+                    }
+                >
+                    "\u{2193} Recover vault from cloud"
                 </button>
             </div>
         </div>

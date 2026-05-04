@@ -21,15 +21,16 @@ use zeroize::Zeroizing;
 use crate::auth::LifecycleState;
 use crate::auth::ceremonies::{
     Argon2MigrationIntent, ChangePasswordRequest, CreateVaultRequest, PendingOperation,
-    PendingVaultHeader, RotateKeyFileRequest, Tier, change_password as ceremony_change_password,
-    create_vault as ceremony_create_vault, rotate_key_file as ceremony_rotate_key_file,
+    PendingVaultHeader, RecoverVaultRequest, RotateKeyFileRequest, Tier,
+    change_password as ceremony_change_password, create_vault as ceremony_create_vault,
+    recover_vault as ceremony_recover_vault, rotate_key_file as ceremony_rotate_key_file,
 };
 use crate::auth::kdf::Argon2Params;
 use crate::auth::key_source::FileKeySource;
 use crate::crypto::VaultId;
 use crate::storage::SqlCipherMetadataStore;
 use crate::storage::cloud::{
-    CloudEndpoint, DestinationSessionPublic, RcloneTransport, SyncConfig,
+    CloudEndpoint, CloudTransport as _, DestinationSessionPublic, RcloneTransport, SyncConfig,
     destination_session::{
         BackupSyncMode, DestinationSession, DestinationType, build_session_rclone_conf,
         destroy_session_rclone_conf, get_primary_destination,
@@ -40,6 +41,7 @@ use secrecy::SecretBox;
 
 use crate::crypto::KeyEncryptionKey;
 use crate::storage::MetadataStore as _;
+use crate::storage::staging::write_owner_only;
 use crate::storage::vault_ops::flush_epoch_buffer;
 use crate::ui::commands_common::{require_active_session, sanitise_password};
 use crate::ui::error::IpcError;
@@ -80,7 +82,7 @@ fn rclone_binary_path(handle: Option<&tauri::AppHandle>) -> PathBuf {
 }
 
 /// Returns the session-lived rclone configuration file path.
-fn rclone_conf_path() -> PathBuf {
+pub(crate) fn rclone_conf_path() -> PathBuf {
     dirs::config_dir()
         .expect("config_dir must be available")
         .join("arx-runa")
@@ -926,6 +928,159 @@ pub async fn configure_cloud(
     crate::storage::cloud::cloud_config::save_primary_cloud_endpoint(&endpoint_config)
         .await
         .map_err(|e| IpcError::InvalidInput(e.to_string()))
+}
+
+/// Recover an existing vault from cloud storage onto this device.
+///
+/// Does not require an active session. Downloads the vault header from the
+/// provided cloud destination to determine the vault's canonical ID, then
+/// runs the full recovery ceremony to import the manifest backup into a
+/// fresh local database. The session is opened immediately on success.
+///
+/// # Errors
+/// Returns `IpcError::CloudError` if the destination is unreachable or the
+/// vault header is malformed. Returns `IpcError::AuthenticationFailed` if the
+/// password or key file is incorrect.
+#[tauri::command]
+pub async fn recover_vault_from_cloud(
+    mut password: String,
+    key_file_path: Option<PathBuf>,
+    primary_destination: DestinationSessionConfig,
+    state: State<'_, AppState>,
+) -> Result<AuthResponse, IpcError> {
+    state.session_manager.reset_timer().await;
+    let password_bytes = sanitise_password(&mut password);
+    validate_password(std::str::from_utf8(&password_bytes).unwrap_or(""))?;
+
+    // ── Build a temporary rclone transport pointed at the cloud destination ──
+    let dest_session = destination_from_config(&primary_destination);
+    let conf_path = rclone_conf_path();
+    let binary_path = rclone_binary_path(state.app_handle.get());
+
+    if let Some(parent) = conf_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| IpcError::InternalError(format!("config dir: {e}")))?;
+    }
+    write_owner_only(&conf_path, dest_session.rclone_config_blob.as_bytes())
+        .await
+        .map_err(IpcError::from)?;
+
+    let dest_public = DestinationSessionPublic::from(&dest_session);
+    let endpoint = CloudEndpoint {
+        provider: String::new(),
+        bucket: dest_session.bucket.clone(),
+        region: String::new(),
+        endpoint: String::new(),
+        path_prefix: dest_session.path_prefix.clone(),
+    };
+    let transport =
+        RcloneTransport::new(binary_path, conf_path, &endpoint, &dest_public, SyncConfig::default())
+            .map_err(|e| IpcError::CloudError(e.to_string()))?;
+
+    // ── Pre-download vault-header.json to discover the vault UUID ────────────
+    // The ceremony re-downloads the header internally; this probe is needed
+    // only to derive the vault directory name before calling the ceremony.
+    let probe_path = std::env::temp_dir().join("arx-runa-recover-header-probe.json");
+    transport
+        .download_blob("vault-header.json", &probe_path)
+        .await
+        .map_err(|e| {
+            tracing::warn!(?e, "failed to probe vault header from cloud during recovery");
+            IpcError::CloudError(
+                "Could not reach the vault at the provided destination. \
+                 Check your credentials and path prefix."
+                    .into(),
+            )
+        })?;
+
+    let header_bytes = tokio::fs::read(&probe_path)
+        .await
+        .map_err(|e| IpcError::InternalError(e.to_string()))?;
+    let _ = tokio::fs::remove_file(&probe_path).await;
+
+    let vault_header: VaultHeader = serde_json::from_slice(&header_bytes)
+        .map_err(|_| IpcError::CloudError("Vault header at the cloud destination is malformed".into()))?;
+    let cloud_vault_id = vault_header.vault_id.clone();
+
+    // ── Guard: refuse to shadow an existing local vault ───────────────────────
+    let vault_dir = default_vault_root().join(&cloud_vault_id);
+    if vault_dir.join("vault.db").exists() {
+        return Err(IpcError::AlreadyExists(format!(
+            "Vault '{cloud_vault_id}' already exists on this device"
+        )));
+    }
+    tokio::fs::create_dir_all(&vault_dir)
+        .await
+        .map_err(|e| IpcError::InternalError(e.to_string()))?;
+
+    // ── Run recovery ceremony ────────────────────────────────────────────────
+    let key_source_opt: Option<FileKeySource> = key_file_path.map(FileKeySource::new);
+    let key_source_ref: Option<&(dyn crate::auth::KeySource + Send + Sync)> = key_source_opt
+        .as_ref()
+        .map(|ks| ks as &(dyn crate::auth::KeySource + Send + Sync));
+
+    let vault_db_path = vault_dir.join("vault.db");
+    let vault_id = ceremony_recover_vault(
+        RecoverVaultRequest {
+            password_bytes: &password_bytes,
+            key_source: key_source_ref,
+            vault_db_path: vault_db_path.clone(),
+        },
+        &state.session_manager,
+        &transport,
+    )
+    .await
+    .map_err(|err| {
+        let _ = std::fs::remove_dir_all(&vault_dir);
+        IpcError::from(err)
+    })?;
+
+    let vault_id_str = vault_id.to_uuid().to_string();
+
+    // Write vault-header.json locally so list_local_vaults discovers the vault.
+    tokio::fs::write(vault_dir.join("vault-header.json"), &header_bytes)
+        .await
+        .map_err(|e| IpcError::InternalError(e.to_string()))?;
+
+    // ── Open the recovered database and establish the session ─────────────────
+    let key_copy: [u8; 32] = state
+        .session_manager
+        .with_sqlcipher_key(|k| *k)
+        .await
+        .map_err(IpcError::from)?;
+    let key_zeroizing = Zeroizing::new(key_copy);
+    let db = SqlCipherMetadataStore::open(&vault_db_path, &key_zeroizing)
+        .await
+        .map_err(IpcError::from)?;
+    drop(key_zeroizing);
+
+    *state.database.write().await = Some(db);
+
+    {
+        let db_guard = state.database.read().await;
+        if let Some(ref inner_db) = *db_guard {
+            try_build_and_swap_rclone_transport(&state, inner_db).await;
+        }
+    }
+
+    {
+        let staging_dir = vault_staging_dir(&vault_id_str);
+        let db_guard = state.database.read().await;
+        if let Some(ref inner_db) = *db_guard {
+            if let Err(error) = crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
+            {
+                tracing::warn!(?error, "Failed to prepare vault storage after recovery");
+            }
+        }
+    }
+
+    *state.active_vault_id.write().await = Some(vault_id_str.clone());
+
+    Ok(AuthResponse {
+        vault_id: vault_id_str.clone(),
+        vault_name: vault_id_str,
+    })
 }
 
 #[cfg(test)]

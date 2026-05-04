@@ -15,7 +15,8 @@ use crate::dialog::{open_directory_dialog, open_file_dialog};
 use crate::invoke::invoke_command;
 use crate::ipc_types::VaultSummary;
 use crate::ipc_types::{
-    AuthResponse, AuthenticateRequest, CreateVaultRequest, DestinationSessionConfig, SessionStatus,
+    AuthResponse, AuthenticateRequest, CreateVaultRequest, DestinationSessionConfig,
+    RecoverVaultFromCloudRequest, SessionStatus,
 };
 use crate::state::use_session_actions;
 
@@ -566,6 +567,121 @@ pub fn VaultCreationPage(
                         </button>
                         <Button loading=loading on_click=on_submit>
                             "Create Vault"
+                        </Button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+// ─── VaultRecoveryPage ────────────────────────────────────────────────────────
+
+/// Recovery page — downloads an existing cloud vault and imports it onto this device.
+///
+/// Sections: Cloud Destination → Credentials (password + optional key file).
+/// Calls `recover_vault_from_cloud` (no active session required). On success,
+/// the session transitions to the unlocked state via `session_actions.complete_success`.
+#[component]
+pub fn VaultRecoveryPage(
+    /// Called when the user clicks "← Back" to return to the vault picker.
+    on_back: impl Fn() + 'static + Clone,
+) -> impl IntoView {
+    let (password, set_password) = signal(String::new());
+    let (key_file_path, set_key_file_path) = signal::<Option<String>>(None);
+    let (primary_destination, set_primary_destination) = signal(default_local_destination());
+    let (loading, set_loading) = signal(false);
+
+    let session_actions = use_session_actions();
+    let on_back_cancel = on_back.clone();
+
+    let on_submit = move |_| {
+        let mut password_value = password.get();
+        if password_value.is_empty() {
+            crate::components::use_toast().warning("Password is required");
+            return;
+        }
+
+        set_loading.set(true);
+        let session_actions = session_actions;
+        let set_loading = set_loading;
+        let set_password = set_password;
+
+        let req = RecoverVaultFromCloudRequest {
+            password: password_value.clone(),
+            key_file_path: key_file_path.get(),
+            primary_destination: primary_destination.get(),
+        };
+
+        leptos::task::spawn_local(async move {
+            let result = invoke_command::<RecoverVaultFromCloudRequest, AuthResponse>(
+                "recover_vault_from_cloud",
+                &req,
+            )
+            .await;
+            password_value.zeroize();
+            set_password.update(|s| s.zeroize());
+            set_loading.set(false);
+            match result {
+                Ok(resp) => {
+                    crate::components::use_toast().success("Vault recovered successfully");
+                    session_actions.complete_success(resp.vault_id);
+                }
+                Err(err) => {
+                    crate::components::use_toast().error(&err.message);
+                }
+            }
+        });
+    };
+
+    let section_header = |title: &'static str| {
+        view! {
+            <h2 class="text-xs font-semibold uppercase tracking-widest text-text-secondary border-b border-border-default pb-2 mb-4">
+                {title}
+            </h2>
+        }
+    };
+
+    view! {
+        <div class="min-h-screen bg-iron flex items-center justify-center p-4">
+            <div class="w-full max-w-lg bg-stone border border-steel rounded-xl shadow-xl overflow-hidden">
+                <div class="p-6 overflow-y-auto max-h-screen">
+                    <h1 class="text-2xl text-bone text-center mb-8">"Recover Vault from Cloud"</h1>
+
+                    <div class="mb-8">
+                        {section_header("Cloud Destination")}
+                        <DestinationSelector on_change=move |cfg| set_primary_destination.set(cfg) />
+                    </div>
+
+                    <div class="mb-8">
+                        {section_header("Credentials")}
+                        <Input
+                            input_type="password"
+                            label="Password".to_string()
+                            value=password
+                            on_input=move |v| set_password.set(v)
+                        />
+                        <div>
+                            <label class="text-sm text-text-secondary block mb-1">
+                                "Key file (leave empty for Tier 1 / password-only vaults)"
+                            </label>
+                            <KeyFileIndicator
+                                detected_path=key_file_path
+                                on_manual_select=move |path| set_key_file_path.set(Some(path))
+                            />
+                        </div>
+                    </div>
+
+                    <div class="flex gap-3">
+                        <button
+                            type="button"
+                            class="flex-1 px-4 py-2 rounded-lg border border-border-default text-bone hover:bg-surface-overlay transition-colors"
+                            on:click=move |_| on_back_cancel()
+                        >
+                            "\u{2190} Back"
+                        </button>
+                        <Button loading=loading on_click=on_submit>
+                            "Recover Vault"
                         </Button>
                     </div>
                 </div>

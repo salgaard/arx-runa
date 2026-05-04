@@ -62,6 +62,22 @@ impl RcloneTransport {
         })
     }
 
+    /// Creates a transport for downloading a received share using embedded B2 credentials.
+    ///
+    /// `remote_root` must be the full rclone remote root string, e.g. `"arxshare-dl:bucket/prefix"`.
+    pub(crate) fn new_for_share_download(
+        binary_path: PathBuf,
+        session_config_path: PathBuf,
+        remote_root: String,
+    ) -> Self {
+        Self {
+            session_config_path,
+            remote_root,
+            sync_config: SyncConfig::default(),
+            runner: Arc::new(RealRclone { binary_path }),
+        }
+    }
+
     #[cfg(test)]
     fn with_runner(
         session_config_path: PathBuf,
@@ -203,6 +219,67 @@ impl CloudTransport for RcloneTransport {
         // which calls destroy_session_rclone_conf() on session lock.
         // This is a no-op here since the path is not owned by RcloneTransport.
         Ok(())
+    }
+
+    /// Generates scoped B2 credentials for a share recipient, if the rclone config
+    /// contains a B2 stanza.  Returns `None` for non-B2 backends.
+    async fn generate_share_credentials(
+        &self,
+        path_prefix: &str,
+        ttl_seconds: u32,
+        receipt_requested: bool,
+    ) -> Result<Option<serde_json::Value>, CloudTransportError> {
+        let conf = tokio::fs::read_to_string(&self.session_config_path)
+            .await
+            .map_err(CloudTransportError::IoError)?;
+
+        let Some((master_key_id, master_app_key, bucket_name)) =
+            crate::sharing::b2_api::parse_b2_credentials_from_conf(&conf)
+        else {
+            return Ok(None);
+        };
+
+        let auth = crate::sharing::b2_api::b2_authorize_account(&master_key_id, &master_app_key)
+            .await
+            .map_err(|_| CloudTransportError::Other("B2 authorization failed".to_owned()))?;
+
+        let client = reqwest::Client::new();
+        let bucket_id = crate::sharing::b2_api::b2_get_bucket_id(&client, &auth, &bucket_name)
+            .await
+            .map_err(|_| CloudTransportError::Other("B2 bucket lookup failed".to_owned()))?;
+
+        let mut capabilities = vec!["readFiles", "listBuckets"];
+        if receipt_requested {
+            capabilities.push("writeFiles");
+        }
+
+        let app_key = crate::sharing::b2_api::b2_create_application_key(
+            &client,
+            &auth,
+            &bucket_id,
+            path_prefix,
+            &capabilities,
+            ttl_seconds,
+        )
+        .await
+        .map_err(|_| CloudTransportError::Other("B2 key creation failed".to_owned()))?;
+
+        tracing::debug!(key_id = %app_key.application_key_id, "created B2 scoped key");
+
+        let mut creds = serde_json::json!({
+            "provider": "b2",
+            "bucket": bucket_name,
+            "download_url": auth.download_url,
+            "key_id": app_key.application_key_id,
+            "application_key": app_key.application_key,
+            "path_prefix": path_prefix,
+        });
+
+        if receipt_requested {
+            creds["receipt_requested"] = serde_json::json!(true);
+        }
+
+        Ok(Some(creds))
     }
 }
 

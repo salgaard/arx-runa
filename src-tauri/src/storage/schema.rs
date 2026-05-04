@@ -151,7 +151,7 @@ pub(crate) fn apply_epoch_v2_migration(conn: &Connection) -> Result<(), StorageE
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "2" {
+    if version == "2" || version == "3" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -200,6 +200,54 @@ pub(crate) fn apply_epoch_v2_migration(conn: &Connection) -> Result<(), StorageE
         );
 
         UPDATE manifest_meta SET value = '2' WHERE key = 'schema_version';
+        ",
+    )
+    .map_err(StorageError::from_rusqlite)?;
+
+    conn.execute_batch("COMMIT")
+        .map_err(StorageError::from_rusqlite)?;
+
+    Ok(())
+}
+
+/// Migrates a schema-version-2 manifest to schema-version-3.
+///
+/// Idempotent: if `schema_version` is already `'3'`, commits immediately and returns `Ok`.
+/// Must be called after `apply_epoch_v2_migration` on any vault opened from disk.
+///
+/// Migration steps (single `BEGIN IMMEDIATE` transaction):
+/// 1. Add `download_key_id` column to `shares` (nullable TEXT).
+/// 2. Add `receipt_requested` column to `shares` (INTEGER NOT NULL DEFAULT 0).
+/// 3. Add `receipt_received_at` column to `shares` (nullable INTEGER).
+/// 4. Bump `schema_version` to `'3'`.
+pub(crate) fn apply_sharing_v3_migration(conn: &Connection) -> Result<(), StorageError> {
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(StorageError::from_rusqlite)?;
+
+    let version = conn
+        .query_row(
+            "SELECT value FROM manifest_meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(StorageError::from_rusqlite)?
+        .ok_or_else(|| {
+            StorageError::Database("missing manifest_meta key: schema_version".to_owned())
+        })?;
+
+    if version == "3" {
+        conn.execute_batch("COMMIT")
+            .map_err(StorageError::from_rusqlite)?;
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        "
+        ALTER TABLE shares ADD COLUMN download_key_id TEXT;
+        ALTER TABLE shares ADD COLUMN receipt_requested INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE shares ADD COLUMN receipt_received_at INTEGER;
+        UPDATE manifest_meta SET value = '3' WHERE key = 'schema_version';
         ",
     )
     .map_err(StorageError::from_rusqlite)?;
@@ -295,9 +343,9 @@ pub(crate) fn seed_manifest_meta(
 /// Validates immutable `manifest_meta` constraints required by design invariants.
 pub(crate) fn validate_manifest_meta(conn: &Connection) -> Result<(), StorageError> {
     let schema_version = manifest_meta_value(conn, "schema_version")?;
-    if schema_version != "1" && schema_version != "2" {
+    if schema_version != "1" && schema_version != "2" && schema_version != "3" {
         return Err(StorageError::Database(
-            "invalid schema_version: expected 1 or 2".to_owned(),
+            "invalid schema_version: expected 1, 2, or 3".to_owned(),
         ));
     }
 
@@ -341,8 +389,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        apply_canonical_schema, apply_epoch_v2_migration, seed_manifest_meta,
-        validate_manifest_meta, validate_schema_integrity,
+        apply_canonical_schema, apply_epoch_v2_migration, apply_sharing_v3_migration,
+        seed_manifest_meta, validate_manifest_meta, validate_schema_integrity,
     };
     use crate::storage::error::StorageError;
 
@@ -437,7 +485,7 @@ mod tests {
         apply_canonical_schema(&conn).expect("schema should apply");
         seed_manifest_meta(&conn, Uuid::new_v4(), 4_194_304, false).expect("seed should succeed");
         conn.execute(
-            "UPDATE manifest_meta SET value = '3' WHERE key = 'schema_version'",
+            "UPDATE manifest_meta SET value = '4' WHERE key = 'schema_version'",
             [],
         )
         .expect("test setup should update schema_version");
@@ -568,5 +616,77 @@ mod tests {
             .query_row("SELECT count(*) FROM chunks", [], |row| row.get(0))
             .expect("chunk count should be readable");
         assert_eq!(count, 1);
+    }
+
+    /// Verifies that `apply_sharing_v3_migration` migrates a version-2 schema to version 3.
+    #[test]
+    fn test_apply_sharing_v3_migration_upgrades_version_2_to_3() {
+        let conn = Connection::open_in_memory().expect("in-memory connection should open");
+        apply_canonical_schema(&conn).expect("schema should apply");
+        seed_manifest_meta(&conn, Uuid::new_v4(), 4_194_304, false).expect("seed should succeed");
+        apply_epoch_v2_migration(&conn).expect("v2 migration should succeed");
+
+        apply_sharing_v3_migration(&conn).expect("v3 migration should succeed");
+
+        let version: String = conn
+            .query_row(
+                "SELECT value FROM manifest_meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("schema_version should be readable");
+        assert_eq!(version, "3");
+
+        let result = validate_manifest_meta(&conn);
+        assert!(result.is_ok());
+    }
+
+    /// Verifies that `apply_sharing_v3_migration` is idempotent when already at version 3.
+    #[test]
+    fn test_apply_sharing_v3_migration_is_idempotent_when_already_at_version_3() {
+        let conn = Connection::open_in_memory().expect("in-memory connection should open");
+        apply_canonical_schema(&conn).expect("schema should apply");
+        seed_manifest_meta(&conn, Uuid::new_v4(), 4_194_304, false).expect("seed should succeed");
+        apply_epoch_v2_migration(&conn).expect("v2 migration should succeed");
+        apply_sharing_v3_migration(&conn).expect("first v3 migration should succeed");
+
+        let result = apply_sharing_v3_migration(&conn);
+
+        assert!(result.is_ok());
+    }
+
+    /// Verifies that the new shares columns exist after v3 migration and default correctly.
+    #[test]
+    fn test_apply_sharing_v3_migration_adds_shares_columns_with_defaults() {
+        let conn = Connection::open_in_memory().expect("in-memory connection should open");
+        apply_canonical_schema(&conn).expect("schema should apply");
+        seed_manifest_meta(&conn, Uuid::new_v4(), 4_194_304, false).expect("seed should succeed");
+        apply_epoch_v2_migration(&conn).expect("v2 migration should succeed");
+        apply_sharing_v3_migration(&conn).expect("v3 migration should succeed");
+
+        conn.execute_batch(
+            "INSERT INTO contacts (contact_id, display_name, public_key, created_at)
+             VALUES ('00000000-0000-4000-8000-000000000001', 'Test', X'0000000000000000000000000000000000000000000000000000000000000000', 1);
+             INSERT INTO nodes (node_id, parent_id, node_type, name, created_at, modified_at, size_bytes, file_key_wrapped)
+             VALUES ('00000000-0000-4000-8000-000000000002', NULL, 'file', 'test.txt', 1, 1, 0, X'0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000');
+             INSERT INTO shares (share_id, file_id, contact_id, file_share_id, cloud_path, created_at)
+             VALUES ('00000000-0000-4000-8000-000000000003',
+                     '00000000-0000-4000-8000-000000000002',
+                     '00000000-0000-4000-8000-000000000001',
+                     'fsid-1', 'shared/fsid-1/', 1000);",
+        )
+        .expect("test row should insert");
+
+        let (download_key_id, receipt_requested, receipt_received_at): (Option<String>, i64, Option<i64>) = conn
+            .query_row(
+                "SELECT download_key_id, receipt_requested, receipt_received_at FROM shares WHERE share_id = '00000000-0000-4000-8000-000000000003'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("row should be readable");
+
+        assert_eq!(download_key_id, None);
+        assert_eq!(receipt_requested, 0);
+        assert_eq!(receipt_received_at, None);
     }
 }

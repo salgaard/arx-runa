@@ -25,7 +25,7 @@ struct DeviceEventPayload {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-/// Starts the Arx Runa Tauri runtime with all 35 registered commands.
+/// Starts the Arx Runa Tauri runtime with all 37 registered commands.
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -36,9 +36,10 @@ pub fn run() {
     if let Err(error) = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(crate::ui::AppState::construct_default())
         .invoke_handler(tauri::generate_handler![
-            // Auth (12)
+            // Auth (13)
             ui::auth_commands::authenticate,
             ui::auth_commands::check_cloud_configured,
             ui::auth_commands::configure_cloud,
@@ -51,6 +52,7 @@ pub fn run() {
             ui::auth_commands::get_session_status,
             ui::auth_commands::check_pending_vault_operations,
             ui::auth_commands::retry_pending_vault_operation,
+            ui::auth_commands::recover_vault_from_cloud,
             // Files (7)
             ui::file_commands::list_directory,
             ui::file_commands::upload_file,
@@ -76,9 +78,13 @@ pub fn run() {
             ui::sharing_commands::list_contacts,
             ui::sharing_commands::share_file,
             ui::sharing_commands::import_share,
+            ui::sharing_commands::check_share_receipts,
+            ui::sharing_commands::download_received_share,
             ui::sharing_commands::revoke_share,
             ui::sharing_commands::list_shares,
             ui::sharing_commands::list_received_shares,
+            // Shell (1)
+            ui::shell_commands::reveal_in_explorer,
         ])
         .setup(|app| {
             use tauri::Emitter as _;

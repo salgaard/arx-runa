@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-check-share-receipts"
+description = "Enables the check_share_receipts command without any pre-configured scope."
+commands.allow = ["check_share_receipts"]
+
+[[permission]]
+identifier = "deny-check-share-receipts"
+description = "Denies the check_share_receipts command without any pre-configured scope."
+commands.deny = ["check_share_receipts"]

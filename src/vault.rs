@@ -5,6 +5,7 @@
 //! `use_vault_actions()` from the `VaultProvider` context.
 
 use leptos::prelude::*;
+use leptos::task::spawn_local;
 
 use crate::components::{Button, Modal, Spinner};
 use crate::dialog::{open_file_dialog, open_save_dialog};
@@ -13,7 +14,7 @@ use crate::invoke::{invoke_command, invoke_command_with_channel};
 use crate::ipc_channel::IpcChannel;
 use crate::ipc_types::{
     DeleteFileRequest, DownloadFileRequest, FileEntry, GetFileContentRequest, ProgressUpdate,
-    UploadFileRequest,
+    RevealInExplorerRequest, ShareResponse, UploadFileRequest,
 };
 use crate::shares::ShareModal;
 use crate::state::{use_vault, use_vault_actions};
@@ -222,7 +223,7 @@ pub fn FileItem(
     let entry_clone = entry.clone();
     let (show_delete_confirm, set_show_delete_confirm) = signal(false);
     let (show_share_modal, set_show_share_modal) = signal(false);
-    let (share_success_msg, set_share_success_msg) = signal::<Option<String>>(None);
+    let share_result = RwSignal::new(None::<ShareResponse>);
     let file_content = RwSignal::new(None::<String>);
     let (download_progress_channel, set_download_progress_channel) =
         signal::<Option<IpcChannel<ProgressUpdate>>>(None);
@@ -351,7 +352,7 @@ pub fn FileItem(
                             title="Share"
                             on:click=move |_| {
                                 set_show_share_modal.set(true);
-                                set_share_success_msg.set(None);
+                                share_result.set(None);
                             }
                         >
                             "↗"
@@ -462,32 +463,69 @@ pub fn FileItem(
                     file_id=file_id_stored.get_value()
                     _file_name=file_name_stored.get_value()
                     on_close=move || set_show_share_modal.set(false)
-                    on_success=move || {
+                    on_success=Callback::new(move |response: ShareResponse| {
                         set_show_share_modal.set(false);
-                        set_share_success_msg.set(Some("File shared successfully!".to_string()));
-                        leptos::task::spawn_local(async move {
-                            gloo_timers::future::sleep(std::time::Duration::from_secs(3)).await;
-                            set_share_success_msg.set(None);
-                        });
-                    }
+                        share_result.set(Some(response));
+                    })
                 />
             </Show>
 
-            // Share success message
-            <Show
-                when=move || share_success_msg.get().is_some()
-                fallback=|| ()
-            >
-                {move || {
-                    share_success_msg.get().map(|msg| {
-                        view! {
-                            <div class="fixed bottom-4 right-4 px-4 py-2 bg-rune text-bone rounded text-sm shadow-lg">
-                                {msg}
-                            </div>
-                        }
-                    })
-                }}
-            </Show>
+            // Share result panel
+            {move || share_result.get().map(|result| {
+                let package_path = result.package_path.clone();
+                let file_name = std::path::Path::new(&package_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&package_path)
+                    .to_owned();
+                let contact_email = result.contact_email.clone();
+
+                view! {
+                    <div class="p-4 bg-stone border border-steel rounded mb-4">
+                        <p class="text-bone font-semibold mb-2">"Share package ready"</p>
+                        <p class="text-text-secondary text-sm mb-3">{file_name}</p>
+                        <div class="flex gap-2 flex-wrap">
+                            <button
+                                class="px-3 py-1 text-sm text-bone bg-steel rounded hover:bg-steel-light transition-colors"
+                                on:click={
+                                    let path = package_path.clone();
+                                    move |_| {
+                                        let path = path.clone();
+                                        spawn_local(async move {
+                                            let _ = invoke_command::<RevealInExplorerRequest, ()>(
+                                                "reveal_in_explorer",
+                                                &RevealInExplorerRequest { path },
+                                            ).await;
+                                        });
+                                    }
+                                }
+                            >
+                                "Reveal in Explorer"
+                            </button>
+                            {contact_email.map(|email| {
+                                let mailto = format!(
+                                    "mailto:{}?subject=Shared%20file%20via%20Arx%20Runa&body=I%27ve%20shared%20a%20file%20with%20you%20using%20Arx%20Runa.%0A%0ATo%20access%20it%3A%0A1.%20Install%20Arx%20Runa%0A2.%20Go%20to%20Shares%20%E2%86%92%20Received%20%E2%86%92%20Import%20from%20file%0A3.%20Select%20the%20attached%20.arxshare%20file%0A%0AThe%20file%20is%20encrypted%20%E2%80%94%20only%20you%20can%20open%20it.",
+                                    email
+                                );
+                                view! {
+                                    <a
+                                        href=mailto
+                                        class="px-3 py-1 text-sm text-bone bg-rune rounded hover:bg-rune-dark transition-colors"
+                                    >
+                                        "Compose email"
+                                    </a>
+                                }
+                            })}
+                            <button
+                                class="px-3 py-1 text-sm text-text-secondary hover:text-bone transition-colors"
+                                on:click=move |_| share_result.set(None)
+                            >
+                                "Close"
+                            </button>
+                        </div>
+                    </div>
+                }
+            })}
         </>
     }
 }

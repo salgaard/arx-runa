@@ -37,9 +37,12 @@
     "allow-list-contacts",
     "allow-share-file",
     "allow-import-share",
+    "allow-check-share-receipts",
+    "allow-download-received-share",
     "allow-revoke-share",
     "allow-list-shares",
     "allow-list-received-shares",
+    "allow-reveal-in-explorer",
     {
       "identifier": "shell:allow-execute",
       "allow": [

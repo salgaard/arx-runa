@@ -68,6 +68,12 @@ pub struct ShareRecord {
     pub expires_at: Option<i64>,
     /// Unix timestamp when the share was revoked (`None` = still active).
     pub revoked_at: Option<i64>,
+    /// B2 scoped application key identifier for this share, if one was generated.
+    pub download_key_id: Option<String>,
+    /// Whether the recipient was asked to send a receipt after downloading.
+    pub receipt_requested: bool,
+    /// Unix timestamp when the receipt was received (`None` = not yet received).
+    pub receipt_received_at: Option<i64>,
 }
 
 /// Persistence boundary for identity, contacts, and received-shares operations.
