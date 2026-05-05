@@ -233,11 +233,23 @@ impl CloudTransport for RcloneTransport {
             .await
             .map_err(CloudTransportError::IoError)?;
 
-        let Some((master_key_id, master_app_key, bucket_name)) =
-            crate::sharing::b2_api::parse_b2_credentials_from_conf(&conf)
+        let Some((master_key_id, master_app_key)) =
+            crate::sharing::b2_api::parse_b2_api_keys_from_conf(&conf)
         else {
             return Ok(None);
         };
+
+        // Standard rclone B2 remotes do not embed a bucket in the config stanza;
+        // the bucket is the first path component of the remote root ("remote:bucket/prefix").
+        let bucket_name = self
+            .remote_root
+            .split_once(':')
+            .and_then(|(_, rest)| rest.split('/').next())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                CloudTransportError::Other("cannot extract bucket name from remote root".to_owned())
+            })?
+            .to_owned();
 
         let auth = crate::sharing::b2_api::b2_authorize_account(&master_key_id, &master_app_key)
             .await

@@ -187,6 +187,44 @@ pub(crate) async fn b2_delete_key(
     Ok(())
 }
 
+/// Parses B2 master API key credentials from a rclone.conf INI string.
+///
+/// Returns `Some((account, key))` for the first stanza with `type = b2`.
+/// The bucket is intentionally excluded — it is derived from the rclone remote root path,
+/// not the config stanza, because standard rclone B2 remotes do not embed a `bucket` line.
+/// Returns `None` if no B2 stanza with both `account` and `key` is found.
+pub(crate) fn parse_b2_api_keys_from_conf(conf: &str) -> Option<(String, String)> {
+    let mut account: Option<String> = None;
+    let mut key: Option<String> = None;
+    let mut in_b2_section = false;
+
+    for line in conf.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_b2_section = false;
+            account = None;
+            key = None;
+            continue;
+        }
+        if let Some((k, v)) = trimmed.split_once('=') {
+            let k = k.trim();
+            let v = v.trim();
+            match k {
+                "type" if v == "b2" => in_b2_section = true,
+                "account" if in_b2_section => account = Some(v.to_owned()),
+                "key" if in_b2_section => key = Some(v.to_owned()),
+                _ => {}
+            }
+        }
+        if in_b2_section {
+            if let (Some(a), Some(k)) = (&account, &key) {
+                return Some((a.clone(), k.clone()));
+            }
+        }
+    }
+    None
+}
+
 /// Parses B2 credentials from a rclone.conf INI string.
 ///
 /// Returns `Some((account, key, bucket))` for the first stanza with `type = b2`.
@@ -229,6 +267,33 @@ pub(crate) fn parse_b2_credentials_from_conf(conf: &str) -> Option<(String, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Verifies that a B2 section with only account and key is parsed by `parse_b2_api_keys_from_conf`.
+    #[test]
+    fn test_parse_b2_api_keys_from_conf_parses_account_and_key_without_bucket() {
+        let conf = "[remote]\ntype = b2\naccount = ACC123\nkey = SECRETKEY\n";
+        assert_eq!(
+            parse_b2_api_keys_from_conf(conf),
+            Some(("ACC123".to_owned(), "SECRETKEY".to_owned()))
+        );
+    }
+
+    /// Verifies that `parse_b2_api_keys_from_conf` also works when bucket is present.
+    #[test]
+    fn test_parse_b2_api_keys_from_conf_parses_when_bucket_present() {
+        let conf = "[remote]\ntype = b2\naccount = ACC123\nkey = SECRETKEY\nbucket = my-bucket\n";
+        assert_eq!(
+            parse_b2_api_keys_from_conf(conf),
+            Some(("ACC123".to_owned(), "SECRETKEY".to_owned()))
+        );
+    }
+
+    /// Verifies that `parse_b2_api_keys_from_conf` returns None for a non-B2 section.
+    #[test]
+    fn test_parse_b2_api_keys_from_conf_returns_none_for_non_b2_section() {
+        let conf = "[remote]\ntype = s3\naccount = ACC123\nkey = SECRETKEY\n";
+        assert_eq!(parse_b2_api_keys_from_conf(conf), None);
+    }
 
     /// Verifies that a well-formed B2 section is parsed correctly.
     #[test]
