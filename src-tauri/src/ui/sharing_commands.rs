@@ -723,6 +723,13 @@ pub async fn download_received_share(
         )
     };
 
+    tracing::debug!(
+        staging_dir = %staging_dir.display(),
+        chunk_uuids = ?chunk_uuids,
+        local_blobs = ?local_blobs,
+        "download_received_share: staging dir, chunk UUIDs, and downloaded blob paths",
+    );
+
     let dest = std::path::Path::new(&destination_path);
     let decrypt_result = decrypt_received_share_blobs(
         dest,
@@ -875,12 +882,20 @@ async fn decrypt_received_share_blobs(
     let crypto_file_id = FileId::from_uuid(file_id);
     let chunk_size_u64 = chunk_size as u64;
 
+    tracing::debug!(
+        blob_directory = %blob_directory.display(),
+        chunk_count,
+        "decrypt_received_share_blobs: reading {} blob(s)",
+        chunk_uuids.len(),
+    );
+
     let result: Result<(), StorageError> = async {
         for (index, blob_name) in chunk_uuids.iter().enumerate() {
             let blob_path = blob_directory.join(format!("{blob_name}.blob"));
+            tracing::debug!(blob_path = %blob_path.display(), index, "reading blob");
             let blob_bytes = tokio::fs::read(&blob_path)
                 .await
-                .map_err(|e| StorageError::Io(e.to_string()))?;
+                .map_err(|e| StorageError::Io(format!("{e} (blob: {})", blob_path.display())))?;
 
             let hash_bytes: [u8; 32] = blake3::hash(&blob_bytes).into();
             let verified =
@@ -917,9 +932,20 @@ async fn decrypt_received_share_blobs(
         return result;
     }
 
+    tracing::debug!(
+        temp_dest = %temp_dest.display(),
+        destination = %destination.display(),
+        "renaming temp file to destination",
+    );
     tokio::fs::rename(&temp_dest, destination)
         .await
-        .map_err(|e| StorageError::Io(e.to_string()))
+        .map_err(|e| {
+            StorageError::Io(format!(
+                "{e} (rename: {} -> {})",
+                temp_dest.display(),
+                destination.display(),
+            ))
+        })
 }
 
 /// Checks for delivery receipts on all active shares that requested one.

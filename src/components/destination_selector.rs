@@ -239,7 +239,7 @@ pub fn DestinationSelector(
                         <button
                             type="button"
                             on:click=browse_local
-                            class="px-3 py-2 rounded-lg border border-border-default text-bone text-sm hover:bg-surface-overlay transition-colors whitespace-nowrap"
+                            class="px-3 py-2 rounded-lg border border-border-default text-bone text-sm cursor-pointer hover:bg-surface-overlay transition-colors whitespace-nowrap"
                         >
                             "Browse"
                         </button>
@@ -264,7 +264,7 @@ pub fn DestinationSelector(
                         <button
                             type="button"
                             on:click=browse_external
-                            class="px-3 py-2 rounded-lg border border-border-default text-bone text-sm hover:bg-surface-overlay transition-colors whitespace-nowrap"
+                            class="px-3 py-2 rounded-lg border border-border-default text-bone text-sm cursor-pointer hover:bg-surface-overlay transition-colors whitespace-nowrap"
                         >
                             "Browse"
                         </button>

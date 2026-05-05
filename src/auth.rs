@@ -246,7 +246,7 @@ pub fn LoginPage(
                 }}
                 <Button loading=loading on_click=on_submit>"Unlock"</Button>
                 <button
-                    class="mt-4 text-rune text-sm w-full text-center"
+                    class="mt-4 text-rune text-sm w-full text-center cursor-pointer hover:text-bone transition-colors"
                     on:click=move |_| on_back()
                 >
                     "← Back"
@@ -441,7 +441,7 @@ pub fn VaultCreationPage(
                                 "Authentication Tier"
                             </label>
                             <select
-                                class="bg-surface-overlay border border-border-default rounded-lg px-3 py-2 text-bone w-full focus:outline-none focus:border-rune"
+                                class="bg-surface-overlay border border-border-default rounded-lg px-3 py-2 text-bone w-full cursor-pointer focus:outline-none focus:border-rune"
                                 on:change=move |ev| {
                                     use leptos::prelude::event_target_value;
                                     let v: u8 = event_target_value(&ev).parse().unwrap_or(2);
@@ -476,7 +476,7 @@ pub fn VaultCreationPage(
                         <button
                             type="button"
                             on:click=move |_| set_show_advanced.update(|v| *v = !*v)
-                            class="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-text-secondary border-b border-border-default pb-2 mb-4 w-full text-left hover:text-bone transition-colors"
+                            class="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-text-secondary border-b border-border-default pb-2 mb-4 w-full text-left cursor-pointer hover:text-bone transition-colors"
                         >
                             <span class="transition-transform duration-200"
                                   class=("rotate-90", move || show_advanced.get())>
@@ -560,7 +560,7 @@ pub fn VaultCreationPage(
                     <div class="flex gap-3">
                         <button
                             type="button"
-                            class="flex-1 px-4 py-2 rounded-lg border border-border-default text-bone hover:bg-surface-overlay transition-colors"
+                            class="flex-1 px-4 py-2 rounded-lg border border-border-default text-bone cursor-pointer hover:bg-surface-overlay transition-colors"
                             on:click=move |_| on_back()
                         >
                             "← Back"
@@ -675,7 +675,7 @@ pub fn VaultRecoveryPage(
                     <div class="flex gap-3">
                         <button
                             type="button"
-                            class="flex-1 px-4 py-2 rounded-lg border border-border-default text-bone hover:bg-surface-overlay transition-colors"
+                            class="flex-1 px-4 py-2 rounded-lg border border-border-default text-bone cursor-pointer hover:bg-surface-overlay transition-colors"
                             on:click=move |_| on_back_cancel()
                         >
                             "\u{2190} Back"

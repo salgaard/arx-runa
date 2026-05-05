@@ -127,7 +127,7 @@ pub fn ContentViewerModal(
                 <div class="flex items-center justify-between mb-4">
                     <h2 class="text-lg text-bone truncate">{filename.clone()}</h2>
                     <button
-                        class="text-text-muted hover:text-bone"
+                        class="text-text-muted hover:text-bone cursor-pointer"
                         on:click=move |_| content.set(None)
                     >
                         "✕"
@@ -191,7 +191,7 @@ pub fn Breadcrumbs(
                     let full_click = full.clone();
                     view! {
                         <button
-                            class="hover:text-rune"
+                            class="hover:text-rune cursor-pointer"
                             on:click=move |_| actions.navigate(full_click.clone())
                         >
                             {label}
@@ -308,7 +308,7 @@ pub fn FileItem(
                                 if is_pending_flush {
                                     "text-text-muted text-sm px-2 py-1 cursor-not-allowed opacity-50"
                                 } else {
-                                    "text-text-muted hover:text-rune text-sm px-2 py-1"
+                                    "text-text-muted hover:text-rune cursor-pointer text-sm px-2 py-1"
                                 }
                             }
                             title=move || {
@@ -348,7 +348,7 @@ pub fn FileItem(
                             "⬇"
                         </button>
                         <button
-                            class="text-text-muted hover:text-rune text-sm px-2 py-1"
+                            class="text-text-muted hover:text-rune cursor-pointer text-sm px-2 py-1"
                             title="Share"
                             on:click=move |_| {
                                 set_show_share_modal.set(true);
@@ -358,7 +358,7 @@ pub fn FileItem(
                             "↗"
                         </button>
                         <button
-                            class="text-text-muted hover:text-danger text-sm px-2 py-1"
+                            class="text-text-muted hover:text-danger cursor-pointer text-sm px-2 py-1"
                             title="Delete"
                             on:click=move |_| {
                                 set_show_delete_confirm.set(true);
@@ -394,13 +394,13 @@ pub fn FileItem(
                         }}
                         <div class="flex gap-2 justify-end">
                             <button
-                                class="px-4 py-2 rounded bg-surface-overlay hover:bg-surface-overlay-hover text-bone"
+                                class="px-4 py-2 rounded bg-surface-overlay hover:bg-steel cursor-pointer text-bone transition-colors"
                                 on:click=move |_| set_show_delete_confirm.set(false)
                             >
                                 "Cancel"
                             </button>
                             <button
-                                class="px-4 py-2 rounded bg-danger hover:bg-danger-hover text-white"
+                                class="px-4 py-2 rounded bg-danger hover:bg-danger/80 cursor-pointer text-white transition-colors"
                                 on:click=move |_| {
                                     let entry = entry_stored.get_value();
                                     let current_path = vault.get_untracked().current_path;
@@ -486,7 +486,7 @@ pub fn FileItem(
                         <p class="text-text-secondary text-sm mb-3">{file_name}</p>
                         <div class="flex gap-2 flex-wrap">
                             <button
-                                class="px-3 py-1 text-sm text-bone bg-steel rounded hover:bg-steel-light transition-colors"
+                                class="px-3 py-1 text-sm text-bone bg-steel rounded cursor-pointer hover:bg-rune/20 transition-colors"
                                 on:click={
                                     let path = package_path.clone();
                                     move |_| {
@@ -510,14 +510,14 @@ pub fn FileItem(
                                 view! {
                                     <a
                                         href=mailto
-                                        class="px-3 py-1 text-sm text-bone bg-rune rounded hover:bg-rune-dark transition-colors"
+                                        class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors"
                                     >
                                         "Compose email"
                                     </a>
                                 }
                             })}
                             <button
-                                class="px-3 py-1 text-sm text-text-secondary hover:text-bone transition-colors"
+                                class="px-3 py-1 text-sm text-text-secondary cursor-pointer hover:text-bone transition-colors"
                                 on:click=move |_| share_result.set(None)
                             >
                                 "Close"

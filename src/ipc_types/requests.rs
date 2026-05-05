@@ -100,12 +100,8 @@ pub struct GetFileContentRequest {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AddDestinationRequest {
-    /// Human-readable label for the destination.
-    pub label: String,
-    /// Destination type: `"local_path"` or `"rclone_remote"`.
-    pub destination_type: String,
-    /// Path (local) or remote name (rclone config). Treated as opaque by frontend.
-    pub path_or_remote: String,
+    /// Full destination configuration matching the backend `DestinationSessionConfig`.
+    pub config: DestinationSessionConfig,
 }
 
 /// Argument payload for the `delete_destination` Tauri command.

@@ -106,7 +106,7 @@ fn ToastNotification(toast: ToastItem, on_dismiss: impl Fn() + 'static) -> impl 
                 {if matches!(toast_type, ToastType::Error) {
                     view! {
                         <button
-                            class="ml-2 text-xs hover:opacity-70 transition-opacity flex-shrink-0"
+                            class="ml-2 text-xs cursor-pointer hover:opacity-70 transition-opacity flex-shrink-0"
                             on:click=move |_| {
                                 on_dismiss_rc();
                                 dismissed_signal.set(true);
@@ -269,62 +269,5 @@ pub fn ToastProvider(children: Children) -> impl IntoView {
     }
 }
 
-/// Inject toast stylesheet into document head.
-///
-/// Call this once during app initialization (usually in `App::view()`).
-pub fn inject_toast_styles() {
-    let style_content = r#"
-.toast-item {
-  display: flex;
-  padding: 12px 16px;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  font-family: inherit;
-  animation: slideInRight 0.3s ease-out;
-  max-width: 384px;
-}
-
-@keyframes slideInRight {
-  from {
-    opacity: 0;
-    transform: translateX(100%);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-.toast-success {
-  background-color: #00d084;
-  color: #fffbf5;
-  border-left: 4px solid #009966;
-}
-
-.toast-error {
-  background-color: #d84855;
-  color: #fffbf5;
-  border-left: 4px solid #a0364a;
-}
-
-.toast-info {
-  background-color: #00d084;
-  color: #fffbf5;
-  border-left: 4px solid #009966;
-}
-
-.toast-warning {
-  background-color: #ff9800;
-  color: #fffbf5;
-  border-left: 4px solid #f57c00;
-}
-"#;
-
-    if let Some(document) = web_sys::window().and_then(|w| w.document())
-        && let Ok(Some(head_element)) = document.query_selector("head")
-        && let Ok(style_element) = document.create_element("style")
-    {
-        style_element.set_text_content(Some(style_content));
-        let _ = head_element.append_child(&style_element);
-    }
-}
+/// No-op: toast styles are now defined in `input.css` `@layer components`.
+pub fn inject_toast_styles() {}

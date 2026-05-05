@@ -359,10 +359,9 @@ pub(crate) async fn fetch_received_share_to_local(
         if !tokio::fs::try_exists(&local_path).await.unwrap_or(false) {
             cleanup_temp_files(&local_paths).await;
             if b2_transport.is_some() {
-                let _ = tokio::fs::remove_file(
-                    staging_directory.join(format!("dl-{share_id}.conf")),
-                )
-                .await;
+                let _ =
+                    tokio::fs::remove_file(staging_directory.join(format!("dl-{share_id}.conf")))
+                        .await;
             }
             return Err(SharingError::CloudOperation(format!(
                 "blob not written by transport after reporting success (chunk {})",

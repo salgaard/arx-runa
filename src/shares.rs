@@ -25,7 +25,7 @@ pub fn SharesPage() -> impl IntoView {
             <div class="flex justify-between items-center">
                 <h1 class="text-2xl font-bold text-bone">"Shares"</h1>
                 <A href="/">
-                    <button class="px-3 py-1 text-sm text-bone bg-rune rounded hover:bg-rune-dark transition-colors">
+                    <button class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors">
                         "← Back to Vault"
                     </button>
                 </A>
@@ -35,9 +35,9 @@ pub fn SharesPage() -> impl IntoView {
                 <button
                     class=move || {
                         if active_tab.get() == "sent" {
-                            "px-4 py-2 border-b-2 border-rune text-bone font-semibold"
+                            "px-4 py-2 border-b-2 border-rune text-bone font-semibold cursor-pointer"
                         } else {
-                            "px-4 py-2 text-text-secondary hover:text-bone transition-colors"
+                            "px-4 py-2 text-text-secondary cursor-pointer hover:text-bone transition-colors"
                         }
                     }
                     on:click=move |_| active_tab.set("sent")
@@ -47,9 +47,9 @@ pub fn SharesPage() -> impl IntoView {
                 <button
                     class=move || {
                         if active_tab.get() == "received" {
-                            "px-4 py-2 border-b-2 border-rune text-bone font-semibold"
+                            "px-4 py-2 border-b-2 border-rune text-bone font-semibold cursor-pointer"
                         } else {
-                            "px-4 py-2 text-text-secondary hover:text-bone transition-colors"
+                            "px-4 py-2 text-text-secondary cursor-pointer hover:text-bone transition-colors"
                         }
                     }
                     on:click=move |_| active_tab.set("received")
@@ -118,7 +118,7 @@ fn SentSharesList() -> impl IntoView {
         <div class="flex flex-col gap-4">
             <div class="flex justify-end">
                 <button
-                    class="px-3 py-1 text-sm text-bone bg-steel rounded hover:bg-steel-light transition-colors disabled:opacity-50"
+                    class="px-3 py-1 text-sm text-bone bg-steel rounded cursor-pointer hover:bg-rune/20 transition-colors disabled:opacity-50"
                     on:click=handle_check_receipts
                     disabled=move || checking_receipts.get()
                 >
@@ -129,7 +129,7 @@ fn SentSharesList() -> impl IntoView {
                 if loading.get() {
                     view! { <p class="text-text-secondary">"Loading shares…"</p> }.into_any()
                 } else if let Some(err) = error.get() {
-                    view! { <p class="text-red-400">"Error: " {err}</p> }.into_any()
+                    view! { <p class="text-danger">"Error: " {err}</p> }.into_any()
                 } else if shares.get().is_empty() {
                     view! { <p class="text-text-secondary">"No shares yet."</p> }.into_any()
                 } else {
@@ -175,7 +175,7 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                     {if receipt_requested {
                         let badge = match &receipt_received_at {
                             Some(ts) => view! {
-                                <p class="text-green-400 text-xs mt-1">"✓ Received " {ts.clone()}</p>
+                                <p class="text-success-text text-xs mt-1">"✓ Received " {ts.clone()}</p>
                             }.into_any(),
                             None => view! {
                                 <p class="text-text-secondary text-xs mt-1">"⏳ Awaiting receipt"</p>
@@ -188,7 +188,7 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                     {move || {
                         if share.revoked {
                             view! {
-                                <p class="text-red-400 text-sm mt-2">"(Revoked)"</p>
+                                <p class="text-danger text-sm mt-2">"(Revoked)"</p>
                             }.into_any()
                         } else {
                             ().into_any()
@@ -199,7 +199,7 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                     if !share.revoked {
                         view! {
                             <button
-                                class="px-3 py-1 text-sm text-bone bg-red-900 rounded hover:bg-red-700 transition-colors disabled:opacity-50"
+                                class="px-3 py-1 text-sm text-danger bg-danger/20 rounded cursor-pointer hover:bg-danger/30 transition-colors disabled:opacity-50"
                                 on:click=move |_| show_confirm.set(true)
                                 disabled=move || revoking.get()
                             >
@@ -218,11 +218,11 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                     let contact_name_for_confirm = contact_name.clone();
 
                     view! {
-                        <div class="mt-4 p-3 bg-red-900/20 border border-red-700 rounded">
+                        <div class="mt-4 p-3 bg-danger/10 border border-danger rounded">
                             <p class="text-bone text-sm mb-3">"Revoke access for " {contact_name_for_confirm} "?"</p>
                             <div class="flex gap-2">
                                 <button
-                                    class="px-3 py-1 text-sm bg-red-900 text-bone rounded hover:bg-red-700 transition-colors"
+                                    class="px-3 py-1 text-sm bg-danger/20 text-danger rounded cursor-pointer hover:bg-danger/30 transition-colors"
                                     on:click=move |_| {
                                         revoking.set(true);
                                         let share_id_clone = share_id_for_revoke.clone();
@@ -252,7 +252,7 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                                     "Confirm Revoke"
                                 </button>
                                 <button
-                                    class="px-3 py-1 text-sm bg-steel text-bone rounded hover:bg-steel-light transition-colors"
+                                    class="px-3 py-1 text-sm bg-steel text-bone rounded cursor-pointer hover:bg-rune/20 transition-colors"
                                     on:click=move |_| show_confirm.set(false)
                                     disabled=move || revoking.get()
                                 >
@@ -338,14 +338,14 @@ fn ReceivedSharesList() -> impl IntoView {
         <div class="flex flex-col gap-4">
             <div class="flex items-center gap-3">
                 <button
-                    class="px-3 py-2 text-sm text-bone bg-rune rounded hover:bg-rune-dark transition-colors disabled:opacity-50"
+                    class="px-3 py-2 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
                     on:click=handle_import_file
                     disabled=move || importing_file.get()
                 >
                     {move || if importing_file.get() { "Importing…" } else { "Import from file" }}
                 </button>
                 {move || import_error.get().map(|e| view! {
-                    <p class="text-red-400 text-sm">{e}</p>
+                    <p class="text-danger text-sm">{e}</p>
                 })}
             </div>
 
@@ -353,7 +353,7 @@ fn ReceivedSharesList() -> impl IntoView {
                 if loading.get() {
                     view! { <p class="text-text-secondary">"Loading shares…"</p> }.into_any()
                 } else if let Some(err) = error.get() {
-                    view! { <p class="text-red-400">"Error: " {err}</p> }.into_any()
+                    view! { <p class="text-danger">"Error: " {err}</p> }.into_any()
                 } else if shares.get().is_empty() {
                     view! { <p class="text-text-secondary">"No received shares yet."</p> }.into_any()
                 } else {
@@ -437,7 +437,7 @@ fn ReceivedShareItem(
                     <p class="text-text-secondary text-xs mt-1">{display_imported_at}</p>
                 </div>
                 <button
-                    class="px-3 py-1 text-sm text-bone bg-rune rounded hover:bg-rune-dark transition-colors disabled:opacity-50"
+                    class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
                     on:click=handle_download
                     disabled=move || downloading.get()
                 >
@@ -445,10 +445,10 @@ fn ReceivedShareItem(
                 </button>
             </div>
             {move || download_error.get().map(|e| view! {
-                <p class="text-red-400 text-sm mt-2">{e}</p>
+                <p class="text-danger text-sm mt-2">{e}</p>
             })}
             {move || download_success.get().map(|msg| view! {
-                <p class="text-green-400 text-sm mt-2">{msg}</p>
+                <p class="text-success-text text-sm mt-2">{msg}</p>
             })}
         </div>
     }
@@ -620,7 +620,7 @@ pub fn ShareModal(
                 {move || {
                     error.get().map(|msg| {
                         view! {
-                            <div class="p-2 bg-red-900 text-red-100 rounded text-sm mb-4">
+                            <div class="p-2 bg-danger/20 text-danger rounded text-sm mb-4">
                                 {msg}
                             </div>
                         }
@@ -629,14 +629,14 @@ pub fn ShareModal(
 
                 <div class="flex gap-2">
                     <button
-                        class="flex-1 px-4 py-2 bg-rune text-bone rounded hover:bg-rune-dark transition-colors disabled:opacity-50"
+                        class="flex-1 px-4 py-2 bg-rune text-bone rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
                         on:click=handle_share
                         disabled=move || sharing.get() || selected_contact_id.get().is_none()
                     >
                         {move || if sharing.get() { "Sharing…" } else { "Share" }}
                     </button>
                     <button
-                        class="flex-1 px-4 py-2 bg-steel text-bone rounded hover:bg-steel-light transition-colors"
+                        class="flex-1 px-4 py-2 bg-steel text-bone rounded cursor-pointer hover:bg-rune/20 transition-colors"
                         on:click=move |_| on_close.run(())
                         disabled=move || sharing.get()
                     >

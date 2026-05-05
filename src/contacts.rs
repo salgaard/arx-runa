@@ -19,7 +19,7 @@ pub fn ContactList() -> impl IntoView {
             <div class="flex justify-between items-center">
                 <h1 class="text-2xl font-bold text-bone">"Contacts"</h1>
                 <A href="/">
-                    <button class="px-3 py-1 text-sm text-bone bg-rune rounded hover:bg-rune-dark transition-colors">
+                    <button class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors">
                         "← Back to Vault"
                     </button>
                 </A>
@@ -108,13 +108,13 @@ fn ExportKeyButton() -> impl IntoView {
     view! {
         <div class="flex flex-col gap-2">
             <button
-                class="px-4 py-2 bg-rune text-bone rounded hover:bg-rune-dark transition-colors"
+                class="px-4 py-2 bg-rune text-bone rounded cursor-pointer hover:bg-rune/80 transition-colors"
                 on:click=on_export
             >
                 "Export Public Key"
             </button>
             {move || error_message.get().map(|msg| view! {
-                <p class="text-red-400 text-sm">{msg}</p>
+                <p class="text-danger text-sm">{msg}</p>
             })}
             {move || {
                 if show_modal.get() {
@@ -145,13 +145,13 @@ fn ExportKeyButton() -> impl IntoView {
                                 })}
                                 <div class="mt-4 flex gap-2">
                                     <button
-                                        class="flex-1 px-4 py-2 bg-rune text-bone rounded hover:bg-rune-dark transition-colors"
+                                        class="flex-1 px-4 py-2 bg-rune text-bone rounded cursor-pointer hover:bg-rune/80 transition-colors"
                                         on:click=on_save_to_file
                                     >
                                         "Save to File"
                                     </button>
                                     <button
-                                        class="flex-1 px-4 py-2 bg-steel text-bone rounded hover:bg-steel-light transition-colors"
+                                        class="flex-1 px-4 py-2 bg-steel text-bone rounded cursor-pointer hover:bg-rune/20 transition-colors"
                                         on:click=on_modal_close
                                     >
                                         "Close"
@@ -267,7 +267,7 @@ fn AddContactForm() -> impl IntoView {
             {move || {
                 error_message.get().map(|msg| {
                     view! {
-                        <div class="p-2 bg-red-900 text-red-100 rounded text-sm">
+                        <div class="p-2 bg-danger/20 text-danger rounded text-sm">
                             {msg}
                         </div>
                     }
@@ -275,7 +275,7 @@ fn AddContactForm() -> impl IntoView {
             }}
 
             <button
-                class="px-4 py-2 bg-rune text-bone rounded hover:bg-rune-dark transition-colors disabled:opacity-50"
+                class="px-4 py-2 bg-rune text-bone rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
                 on:click=on_submit
                 disabled=move || loading.get()
             >
@@ -321,7 +321,7 @@ fn ContactListPanel() -> impl IntoView {
                 if loading.get() {
                     view! { <p class="text-text-secondary">"Loading contacts…"</p> }.into_any()
                 } else if let Some(err) = error.get() {
-                    view! { <p class="text-red-400">"Error: " {err}</p> }.into_any()
+                    view! { <p class="text-danger">"Error: " {err}</p> }.into_any()
                 } else if contacts.get().is_empty() {
                     view! { <p class="text-text-secondary">"No contacts yet. Add one above."</p> }.into_any()
                 } else {

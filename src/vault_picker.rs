@@ -79,7 +79,7 @@ pub fn VaultPicker(
                             view! {
                                 <button
                                     type="button"
-                                    class="w-full bg-stone border border-steel rounded-xl p-4 text-left hover:border-rune hover:bg-surface-overlay transition-colors"
+                                    class="w-full bg-stone border border-steel rounded-xl p-4 text-left cursor-pointer hover:border-rune hover:bg-surface-overlay transition-colors"
                                     on:click=move |_| on_select(vault_clone.clone())
                                 >
                                     <div class="flex items-center justify-between">
@@ -100,7 +100,7 @@ pub fn VaultPicker(
 
                 <button
                     type="button"
-                    class="w-full px-4 py-3 rounded-xl border border-rune text-rune hover:bg-surface-overlay transition-colors text-sm font-medium"
+                    class="w-full px-4 py-3 rounded-xl border border-rune text-rune cursor-pointer hover:bg-surface-overlay transition-colors text-sm font-medium"
                     on:click={
                         let on_create = on_create.clone();
                         move |_| on_create()
@@ -111,7 +111,7 @@ pub fn VaultPicker(
 
                 <button
                     type="button"
-                    class="w-full px-4 py-2 rounded-xl text-text-secondary hover:text-bone transition-colors text-sm mt-2"
+                    class="w-full px-4 py-2 rounded-xl text-text-secondary cursor-pointer hover:text-bone transition-colors text-sm mt-2"
                     on:click={
                         let on_recover = on_recover.clone();
                         move |_| on_recover()
