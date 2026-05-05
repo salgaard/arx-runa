@@ -294,6 +294,17 @@ pub(crate) async fn fetch_received_share_to_local(
         None
     };
 
+    // If no scoped transport was built and the share has no provider field, the
+    // sender did not embed credentials (non-B2 backend).  Using the recipient's
+    // own transport would target the wrong bucket and silently produce nothing.
+    if b2_transport.is_none() && received_share.cloud_endpoint.get("provider").is_none() {
+        return Err(SharingError::CloudOperation(
+            "share download requires sender cloud credentials; \
+             only Backblaze B2 shares support cross-user download"
+                .into(),
+        ));
+    }
+
     let effective_cloud: &dyn CloudTransport = match &b2_transport {
         Some(t) => t,
         None => cloud,
@@ -515,7 +526,10 @@ mod tests {
                 chunk_count: 1,
                 chunk_size: 4096,
                 chunk_uuids: vec!["../../../etc/passwd".to_owned()],
-                cloud_endpoint: serde_json::json!({ "path_prefix": "shared/test/" }),
+                cloud_endpoint: serde_json::json!({
+                    "provider": "webdav",
+                    "path_prefix": "shared/test/"
+                }),
                 expires_at: None,
                 imported_at: 0,
             },
@@ -546,7 +560,8 @@ mod tests {
                 chunk_count: 1,
                 chunk_size: 4096,
                 chunk_uuids: vec![Uuid::new_v4().hyphenated().to_string()],
-                cloud_endpoint: serde_json::json!({}),
+                // provider present so credentials guard passes; path_prefix absent triggers InvalidSharePackage
+                cloud_endpoint: serde_json::json!({ "provider": "webdav" }),
                 expires_at: None,
                 imported_at: 0,
             },
@@ -577,7 +592,7 @@ mod tests {
                 chunk_count: 1,
                 chunk_size: 4096,
                 chunk_uuids: vec![Uuid::new_v4().hyphenated().to_string()],
-                cloud_endpoint: serde_json::json!({ "path_prefix": "" }),
+                cloud_endpoint: serde_json::json!({ "provider": "webdav", "path_prefix": "" }),
                 expires_at: None,
                 imported_at: 0,
             },
@@ -609,7 +624,11 @@ mod tests {
                 chunk_count: 1,
                 chunk_size: 4096,
                 chunk_uuids: vec![valid_chunk_uuid.clone()],
-                cloud_endpoint: serde_json::json!({ "path_prefix": "shared/file-share-id-123/" }),
+                // provider present (non-B2) so the no-credentials early-return is skipped
+                cloud_endpoint: serde_json::json!({
+                    "provider": "webdav",
+                    "path_prefix": "shared/file-share-id-123/"
+                }),
                 expires_at: None,
                 imported_at: 0,
             },
@@ -619,11 +638,47 @@ mod tests {
 
         let result = fetch_received_share_to_local("share-4", &store, &cloud, staging, None).await;
 
-        // We expect a CloudOperation error (not found) because MockCloudTransport is empty,
-        // but this proves the path_prefix validation passed and we reached the download step
+        // MockCloudTransport has no blobs so the download fails, but path_prefix
+        // validation passed and the no-credentials guard was not triggered.
         assert!(
             matches!(result, Err(SharingError::CloudOperation(_))),
             "expected CloudOperation error (blob not found), got {result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_rejects_share_without_provider_credentials() {
+        let store = MockSharingStoreForFetch {
+            received_share: ReceivedShare {
+                share_id: "share-5".to_owned(),
+                sender_contact_id: None,
+                sender_public_key: X25519PublicKey::new([0u8; 32]),
+                file_id: Uuid::new_v4().hyphenated().to_string(),
+                file_name: "test.txt".to_owned(),
+                file_key_wrapped: [0u8; 72],
+                chunk_count: 1,
+                chunk_size: 4096,
+                chunk_uuids: vec![Uuid::new_v4().hyphenated().to_string()],
+                // Only path_prefix stored — sender used a non-B2 backend and
+                // generate_share_credentials returned None.
+                cloud_endpoint: serde_json::json!({ "path_prefix": "shared/file-share-id-456/" }),
+                expires_at: None,
+                imported_at: 0,
+            },
+        };
+        let cloud = MockCloudTransport::new();
+        let staging = std::path::Path::new("/tmp/staging");
+
+        let result = fetch_received_share_to_local("share-5", &store, &cloud, staging, None).await;
+
+        match result {
+            Err(SharingError::CloudOperation(msg)) => {
+                assert!(
+                    msg.contains("sender cloud credentials"),
+                    "expected credentials error, got: {msg}"
+                );
+            }
+            other => panic!("expected CloudOperation(credentials), got {other:?}"),
+        }
     }
 }
