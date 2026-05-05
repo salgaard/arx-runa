@@ -234,6 +234,12 @@ pub(crate) async fn fetch_received_share_to_local(
 ) -> Result<Vec<PathBuf>, SharingError> {
     let received_share = sharing_store.get_received_share(share_id).await?;
 
+    // Ensure the staging directory exists before writing the rclone conf file or
+    // receiving any blob downloads into it.
+    crate::storage::staging::ensure_staging_directory(staging_directory)
+        .await
+        .map_err(|e| SharingError::CloudOperation(format!("staging directory: {e}")))?;
+
     // If the share has embedded B2 scoped credentials, build a temporary rclone
     // transport so the download bypasses the vault owner's own cloud config.
     let b2_transport: Option<crate::storage::cloud::RcloneTransport> = if let (
@@ -274,7 +280,9 @@ pub(crate) async fn fetch_received_share_to_local(
             .await
             .map_err(|e| SharingError::CloudOperation(format!("temp conf write failed: {e}")))?;
 
-        let remote_root = format!("arxshare-dl:{bucket}/{path_prefix}");
+        // Trim any trailing slash from path_prefix so that remote_target's
+        // "{remote_root}/{remote_path}" join does not produce a double slash.
+        let remote_root = format!("arxshare-dl:{bucket}/{}", path_prefix.trim_end_matches('/'));
         Some(
             crate::storage::cloud::RcloneTransport::new_for_share_download(
                 bin.to_path_buf(),
@@ -342,6 +350,23 @@ pub(crate) async fn fetch_received_share_to_local(
             return Err(SharingError::CloudOperation(format!(
                 "download failed (chunk {}): {}",
                 i, transport_err
+            )));
+        }
+
+        // Guard against rclone reporting success (exit 0) without writing the
+        // blob file.  Without this check the missing file would only be
+        // discovered later as a cryptic "decrypt failed: file not found" error.
+        if !tokio::fs::try_exists(&local_path).await.unwrap_or(false) {
+            cleanup_temp_files(&local_paths).await;
+            if b2_transport.is_some() {
+                let _ = tokio::fs::remove_file(
+                    staging_directory.join(format!("dl-{share_id}.conf")),
+                )
+                .await;
+            }
+            return Err(SharingError::CloudOperation(format!(
+                "blob not written by transport after reporting success (chunk {})",
+                i
             )));
         }
 
