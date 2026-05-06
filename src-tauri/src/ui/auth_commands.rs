@@ -377,9 +377,47 @@ pub async fn create_vault(
         ));
     }
 
-    // Validate storage destination before proceeding with ceremony.
-    // This ensures cloud credentials are valid and accessible before creating the vault.
-    let cloud_transport_arc = state.cloud_transport.read().await.clone();
+    // Build a real RcloneTransport from the provided destination config when the
+    // destination type is cloud. At vault-creation time no vault is open yet, so
+    // AppState still holds NoOpCloudTransport. Mirroring the pattern used in
+    // recover_vault_from_cloud, we write the rclone config blob to disk and
+    // construct a transport directly from the config so that both connectivity
+    // validation and the ceremony use real credentials.
+    let cloud_transport_arc: Arc<dyn crate::storage::cloud::CloudTransport> =
+        if primary_destination.destination_type == "cloud" {
+            let dest_session = destination_from_config(&primary_destination);
+            let conf_path = rclone_conf_path();
+            let binary_path = rclone_binary_path(state.app_handle.get());
+            if let Some(parent) = conf_path.parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|e| IpcError::InternalError(format!("config dir: {e}")))?;
+            }
+            write_owner_only(&conf_path, dest_session.rclone_config_blob.as_bytes())
+                .await
+                .map_err(IpcError::from)?;
+            let dest_public = DestinationSessionPublic::from(&dest_session);
+            let endpoint = CloudEndpoint {
+                provider: String::new(),
+                bucket: dest_session.bucket.clone(),
+                region: String::new(),
+                endpoint: String::new(),
+                path_prefix: dest_session.path_prefix.clone(),
+            };
+            Arc::new(
+                RcloneTransport::new(
+                    binary_path,
+                    conf_path,
+                    &endpoint,
+                    &dest_public,
+                    SyncConfig::default(),
+                )
+                .map_err(|e| IpcError::CloudError(e.to_string()))?,
+            )
+        } else {
+            state.cloud_transport.read().await.clone()
+        };
+
     validate_storage_destination(&primary_destination, &cloud_transport_arc).await?;
 
     // Pre-generate the vault UUID so the directory is created with the final name.
@@ -518,10 +556,14 @@ pub async fn change_password(
     validate_password(std::str::from_utf8(&current_bytes).unwrap_or(""))?;
     validate_password(std::str::from_utf8(&new_bytes).unwrap_or(""))?;
 
-    let (_, db_path, header_path) = resolve_singleton_vault()?
-        .ok_or_else(|| IpcError::InvalidInput("No vault configured".into()))?;
-
-    // Read and parse the vault header (ceremony modifies it in place).
+    let (_, db_path, header_path) = {
+        let vault_id = state
+            .session_manager
+            .active_vault_id()
+            .await
+            .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
+        resolve_vault_by_id(&vault_id)?
+    };
     let header_json = tokio::fs::read_to_string(&header_path)
         .await
         .map_err(|_| IpcError::InternalError("Failed to read vault header".into()))?;
@@ -585,8 +627,14 @@ pub async fn rotate_key_file(
 
     let password_bytes = sanitise_password(&mut current_password);
 
-    let (_, db_path, header_path) = resolve_singleton_vault()?
-        .ok_or_else(|| IpcError::InvalidInput("No vault configured".into()))?;
+    let (_, db_path, header_path) = {
+        let vault_id = state
+            .session_manager
+            .active_vault_id()
+            .await
+            .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
+        resolve_vault_by_id(&vault_id)?
+    };
 
     let header_json = tokio::fs::read_to_string(&header_path)
         .await
@@ -657,8 +705,11 @@ pub async fn delete_vault(
         ));
     }
 
-    let (vault_id, _, _) =
-        resolve_singleton_vault()?.ok_or_else(|| IpcError::NotFound("No vault found".into()))?;
+    let vault_id = state
+        .session_manager
+        .active_vault_id()
+        .await
+        .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
 
     // Lock the session (zeroizes all key material).
     state.session_manager.lock().await;
@@ -762,18 +813,23 @@ pub async fn get_session_status(state: State<'_, AppState>) -> Result<SessionSta
     let timeout_seconds = state.session_manager.remaining_seconds().await;
 
     // Read vault tier from vault header when session is active
-    let vault_tier = if is_unlocked && vault_id.is_some() {
-        match resolve_singleton_vault() {
-            Ok(Some((_, _db_path, header_path))) => {
-                match tokio::fs::read_to_string(&header_path).await {
-                    Ok(header_json) => match serde_json::from_str::<VaultHeader>(&header_json) {
-                        Ok(header) => Some(header.tier),
+    let vault_tier = if is_unlocked {
+        match &vault_id {
+            Some(id) => match resolve_vault_by_id(id) {
+                Ok((_, _db_path, header_path)) => {
+                    match tokio::fs::read_to_string(&header_path).await {
+                        Ok(header_json) => {
+                            match serde_json::from_str::<VaultHeader>(&header_json) {
+                                Ok(header) => Some(header.tier),
+                                Err(_) => None,
+                            }
+                        }
                         Err(_) => None,
-                    },
-                    Err(_) => None,
+                    }
                 }
-            }
-            _ => None,
+                _ => None,
+            },
+            None => None,
         }
     } else {
         None
@@ -860,9 +916,8 @@ pub async fn retry_pending_vault_operation(
 
     let _password_bytes = sanitise_password(&mut password);
 
-    // Resolve vault paths from singleton vault
-    let (_vault_id, _db_path, _header_path) = resolve_singleton_vault()?
-        .ok_or_else(|| IpcError::InvalidInput("No vault configured".into()))?;
+    // Resolve vault paths using the vault ID from the pending artifact
+    let (_vault_id, _db_path, _header_path) = resolve_vault_by_id(&pending.vault_id)?;
 
     // Attempt to complete the pending operation
     match pending.operation {

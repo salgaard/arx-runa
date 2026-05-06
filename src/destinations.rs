@@ -107,11 +107,11 @@ fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
     let label = RwSignal::new(String::new());
     let backup_mode = RwSignal::new("mirror".to_string());
     let is_adding = RwSignal::new(false);
-    let error = RwSignal::new(String::new());
+    let validation_error = RwSignal::new(String::new());
 
     let config: RwSignal<DestinationSessionConfig> = RwSignal::new(DestinationSessionConfig {
         label: String::new(),
-        destination_type: "local".to_string(),
+        destination_type: "local_path".to_string(),
         provider: "local".to_string(),
         bucket: String::new(),
         region: String::new(),
@@ -129,10 +129,10 @@ fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
             <h3 class="text-lg font-semibold text-bone mb-3">"Add Destination"</h3>
 
             {move || {
-                if !error.get().is_empty() {
+                if !validation_error.get().is_empty() {
                     view! {
                         <div class="mb-3 p-2 bg-danger/20 text-danger text-sm rounded">
-                            {error.get()}
+                            {validation_error.get()}
                         </div>
                     }
                     .into_any()
@@ -151,6 +151,7 @@ fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
                         prop:value=move || label.get()
                         on:input=move |ev| {
                             label.set(event_target_value(&ev));
+                            validation_error.set(String::new());
                         }
                         disabled=move || is_adding.get()
                     />
@@ -178,15 +179,15 @@ fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
                     on:click=move |_| {
                         let lbl = label.get();
                         if lbl.trim().is_empty() {
-                            error.set("Destination name is required".to_string());
+                            validation_error.set("Destination name is required".to_string());
                             return;
                         }
 
                         is_adding.set(true);
-                        error.set(String::new());
+                        validation_error.set(String::new());
 
                         let mut final_config = config.get();
-                        final_config.label = lbl;
+                        final_config.label = lbl.clone();
                         final_config.is_primary = false;
                         final_config.backup_mode = Some(backup_mode.get());
 
@@ -202,11 +203,14 @@ fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
                                 Ok(_entry) => {
                                     is_adding.set(false);
                                     label.set(String::new());
+                                    crate::components::use_toast()
+                                        .success(format!("Destination \"{}\" added.", lbl));
                                     on_added_ref();
                                 }
                                 Err(e) => {
                                     is_adding.set(false);
-                                    error.set(format!("Failed to add destination: {}", e));
+                                    crate::components::use_toast()
+                                        .error(format!("Failed to add destination: {}", e));
                                 }
                             }
                         });
@@ -225,24 +229,21 @@ fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
 /// List of configured destinations with add and delete controls.
 #[component]
 pub fn DestinationList() -> impl IntoView {
-    let destinations = LocalResource::new(|| async move {
-        invoke_command::<(), Vec<DestinationEntry>>("list_destinations", &()).await
+    let refresh_count = RwSignal::new(0u32);
+
+    // LocalResource re-runs automatically when refresh_count changes because
+    // it is accessed inside the synchronous closure that LocalResource tracks.
+    let destinations = LocalResource::new(move || {
+        let _trigger = refresh_count.get();
+        async move { invoke_command::<(), Vec<DestinationEntry>>("list_destinations", &()).await }
     });
 
-    let refresh_count = RwSignal::new(0);
-
     let on_add: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-        refresh_count.set(refresh_count.get() + 1);
+        refresh_count.update(|n| *n += 1);
     });
 
     let on_delete: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-        refresh_count.set(refresh_count.get() + 1);
-    });
-
-    // Re-fetch when refresh_count changes
-    Effect::new(move |_| {
-        let _ = refresh_count.get();
-        destinations.refetch();
+        refresh_count.update(|n| *n += 1);
     });
 
     view! {

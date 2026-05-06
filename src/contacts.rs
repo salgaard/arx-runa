@@ -3,6 +3,7 @@
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
+use std::sync::Arc;
 
 use crate::dialog::open_save_dialog;
 use crate::invoke::invoke_command;
@@ -14,6 +15,11 @@ use crate::utils::format_fingerprint;
 /// Main contacts page: displays contact list and add contact form.
 #[component]
 pub fn ContactList() -> impl IntoView {
+    let refresh_trigger = RwSignal::new(0u32);
+
+    let on_added: Arc<dyn Fn() + Send + Sync> =
+        Arc::new(move || refresh_trigger.update(|n| *n += 1));
+
     view! {
         <div class="flex flex-col gap-6">
             <div class="flex justify-between items-center">
@@ -33,13 +39,13 @@ pub fn ContactList() -> impl IntoView {
 
                 <div class="flex flex-col gap-4">
                     <h2 class="text-xl font-semibold text-bone">"Add Contact"</h2>
-                    <AddContactForm />
+                    <AddContactForm on_added=on_added.clone() />
                 </div>
             </div>
 
             <div class="flex flex-col gap-4">
                 <h2 class="text-xl font-semibold text-bone">"Your Contacts"</h2>
-                <ContactListPanel />
+                <ContactListPanel refresh_trigger />
             </div>
         </div>
     }
@@ -172,17 +178,17 @@ fn ExportKeyButton() -> impl IntoView {
 
 /// Form to add a new contact from a public key file.
 #[component]
-fn AddContactForm() -> impl IntoView {
+fn AddContactForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
     let display_name = RwSignal::new(String::new());
     let email = RwSignal::new(String::new());
     let public_key_path = RwSignal::new(String::new());
-    let error_message = RwSignal::new(None::<String>);
+    let validation_error = RwSignal::new(None::<String>);
     let loading = RwSignal::new(false);
 
     let on_submit = move |_| {
         let name = display_name.get().trim().to_string();
         if name.is_empty() {
-            error_message.set(Some("Display name is required".to_string()));
+            validation_error.set(Some("Display name is required".to_string()));
             return;
         }
 
@@ -193,13 +199,14 @@ fn AddContactForm() -> impl IntoView {
             .then(|| email.get().trim().to_string());
         let path = public_key_path.get().trim().to_string();
         if path.is_empty() {
-            error_message.set(Some("Public key file path is required".to_string()));
+            validation_error.set(Some("Public key file path is required".to_string()));
             return;
         }
 
         loading.set(true);
-        error_message.set(None);
+        validation_error.set(None);
 
+        let on_added = on_added.clone();
         spawn_local(async move {
             match invoke_command::<AddContactRequest, ContactEntry>(
                 "add_contact",
@@ -212,14 +219,14 @@ fn AddContactForm() -> impl IntoView {
             .await
             {
                 Ok(_) => {
-                    // Clear form on success
                     display_name.set(String::new());
                     email.set(String::new());
                     public_key_path.set(String::new());
-                    // TODO: Trigger list refresh
+                    crate::components::use_toast().success(format!("Contact \"{}\" added.", name));
+                    on_added();
                 }
                 Err(e) => {
-                    error_message.set(Some(e.to_string()));
+                    crate::components::use_toast().error(e.to_string());
                 }
             }
             loading.set(false);
@@ -235,7 +242,7 @@ fn AddContactForm() -> impl IntoView {
                     class="w-full px-3 py-2 bg-stone border border-steel text-bone rounded"
                     placeholder="Contact name"
                     value=move || display_name.get()
-                    on:input=move |e| display_name.set(event_target_value(&e))
+                    on:input=move |e| { display_name.set(event_target_value(&e)); validation_error.set(None); }
                     disabled=move || loading.get()
                 />
             </div>
@@ -259,13 +266,13 @@ fn AddContactForm() -> impl IntoView {
                     class="w-full px-3 py-2 bg-stone border border-steel text-bone rounded"
                     placeholder="/path/to/public_key"
                     value=move || public_key_path.get()
-                    on:input=move |e| public_key_path.set(event_target_value(&e))
+                    on:input=move |e| { public_key_path.set(event_target_value(&e)); validation_error.set(None); }
                     disabled=move || loading.get()
                 />
             </div>
 
             {move || {
-                error_message.get().map(|msg| {
+                validation_error.get().map(|msg| {
                     view! {
                         <div class="p-2 bg-danger/20 text-danger rounded text-sm">
                             {msg}
@@ -289,13 +296,14 @@ fn AddContactForm() -> impl IntoView {
 
 /// Displays a list of contacts.
 #[component]
-fn ContactListPanel() -> impl IntoView {
+fn ContactListPanel(refresh_trigger: RwSignal<u32>) -> impl IntoView {
     let contacts = RwSignal::new(Vec::<ContactEntry>::new());
     let loading = RwSignal::new(true);
     let error = RwSignal::new(None::<String>);
 
-    // Load contacts on mount
+    // Load contacts on mount and whenever refresh_trigger changes
     Effect::new(move |_| {
+        let _ = refresh_trigger.get();
         let contacts_clone = contacts;
         let loading_clone = loading;
         let error_clone = error;

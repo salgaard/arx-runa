@@ -87,11 +87,21 @@ fn classify_non_zero_exit(
     stderr_sanitised: &str,
 ) -> Result<String, CloudTransportError> {
     if is_authentication_failure(stderr_raw) {
+        tracing::warn!(
+            exit_code = exit_code,
+            stderr = %stderr_sanitised,
+            "rclone authentication failure — check cloud credentials"
+        );
         return Err(CloudTransportError::AuthenticationFailed);
     }
     if matches!(exit_code, 3 | 4) {
         return Err(CloudTransportError::NotFound);
     }
+    tracing::warn!(
+        exit_code = exit_code,
+        stderr = %stderr_sanitised,
+        "rclone process failed"
+    );
     Err(CloudTransportError::RcloneProcessFailed {
         exit_code,
         stderr_sanitised: stderr_sanitised.to_owned(),

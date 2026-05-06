@@ -258,7 +258,12 @@ impl CloudTransport for RcloneTransport {
         let client = reqwest::Client::new();
         let bucket_id = crate::sharing::b2_api::b2_get_bucket_id(&client, &auth, &bucket_name)
             .await
-            .map_err(|_| CloudTransportError::Other("B2 bucket lookup failed".to_owned()))?;
+            .map_err(|e| {
+                CloudTransportError::Other(format!(
+                    "B2 bucket lookup failed for '{}': {}",
+                    bucket_name, e
+                ))
+            })?;
 
         let mut capabilities = vec!["readFiles", "listBuckets"];
         if receipt_requested {
@@ -274,7 +279,11 @@ impl CloudTransport for RcloneTransport {
             ttl_seconds,
         )
         .await
-        .map_err(|_| CloudTransportError::Other("B2 key creation failed".to_owned()))?;
+        .map_err(|e| {
+            CloudTransportError::Other(format!(
+                "B2 key creation failed (check that your key has writeKeys capability): {e}"
+            ))
+        })?;
 
         tracing::debug!(key_id = %app_key.application_key_id, "created B2 scoped key");
 

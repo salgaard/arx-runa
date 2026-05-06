@@ -241,8 +241,8 @@ pub fn FileItem(
 
     view! {
         <>
-            <div class="flex items-center gap-3 p-2 rounded hover:bg-surface-overlay">
-                <span class="text-rune w-4 text-center">
+            <div class="flex items-center gap-4 px-3 py-3 rounded hover:bg-surface-overlay">
+                <span class="text-rune w-6 text-xl text-center">
                     {if is_dir { "📁" } else { "📄" }}
                 </span>
                 <span
@@ -302,13 +302,13 @@ pub fn FileItem(
                     when=move || !is_dir
                     fallback=|| ()
                 >
-                    <div class="flex gap-1">
+                    <div class="flex gap-2 items-center">
                         <button
                             class=move || {
                                 if is_pending_flush {
-                                    "text-text-muted text-sm px-2 py-1 cursor-not-allowed opacity-50"
+                                    "text-text-muted text-xl px-2 py-1 cursor-not-allowed opacity-50"
                                 } else {
-                                    "text-text-muted hover:text-rune cursor-pointer text-sm px-2 py-1"
+                                    "text-text-muted hover:text-rune cursor-pointer text-xl px-2 py-1 transition-transform hover:scale-125"
                                 }
                             }
                             title=move || {
@@ -348,7 +348,7 @@ pub fn FileItem(
                             "⬇"
                         </button>
                         <button
-                            class="text-text-muted hover:text-rune cursor-pointer text-sm px-2 py-1"
+                            class="text-text-muted hover:text-rune cursor-pointer text-xl px-2 py-1 transition-transform hover:scale-125"
                             title="Share"
                             on:click=move |_| {
                                 set_show_share_modal.set(true);
@@ -358,7 +358,7 @@ pub fn FileItem(
                             "↗"
                         </button>
                         <button
-                            class="text-text-muted hover:text-danger cursor-pointer text-sm px-2 py-1"
+                            class="text-text-muted hover:text-danger cursor-pointer text-xl px-2 py-1 transition-transform hover:scale-125"
                             title="Delete"
                             on:click=move |_| {
                                 set_show_delete_confirm.set(true);

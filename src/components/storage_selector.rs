@@ -65,10 +65,10 @@ impl StorageConfig {
         DestinationSessionConfig {
             label: self.label.clone(),
             destination_type: match self.provider {
-                StorageProvider::Local => "local".to_string(),
-                StorageProvider::S3 => "s3".to_string(),
-                StorageProvider::B2 => "b2".to_string(),
-                StorageProvider::Rclone => "rclone".to_string(),
+                StorageProvider::Local => "local_path".to_string(),
+                StorageProvider::S3 => "cloud".to_string(),
+                StorageProvider::B2 => "cloud".to_string(),
+                StorageProvider::Rclone => "cloud".to_string(),
             },
             provider: match self.provider {
                 StorageProvider::Local => "local".to_string(),

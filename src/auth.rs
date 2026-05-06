@@ -301,7 +301,7 @@ fn format_chunk_size(bytes: u64) -> String {
 fn default_local_destination() -> DestinationSessionConfig {
     DestinationSessionConfig {
         label: "Local Filesystem".to_string(),
-        destination_type: "local".to_string(),
+        destination_type: "local_path".to_string(),
         provider: "local".to_string(),
         bucket: String::new(),
         region: String::new(),

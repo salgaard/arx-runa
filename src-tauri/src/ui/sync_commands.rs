@@ -24,7 +24,7 @@ use crate::ui::error::IpcError;
 use crate::ui::file_commands::extract_kek;
 use crate::ui::state::AppState;
 use crate::ui::types::{MigrationProgress, SyncProgressUpdate, SyncResult, SyncStatus};
-use crate::ui::vault_paths::{resolve_singleton_vault, vault_staging_dir};
+use crate::ui::vault_paths::{resolve_vault_by_id, vault_staging_dir};
 
 // ---------------------------------------------------------------------------
 // Private helpers
@@ -174,8 +174,12 @@ pub async fn sync_to_cloud(
     state.session_manager.reset_timer().await;
     require_active_session(&state).await?;
 
-    let (vault_id, db_path, header_path) = resolve_singleton_vault()?
-        .ok_or_else(|| IpcError::InvalidInput("No vault configured on this device".into()))?;
+    let vault_id = state
+        .session_manager
+        .active_vault_id()
+        .await
+        .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
+    let (vault_id, db_path, header_path) = resolve_vault_by_id(&vault_id)?;
 
     let staging_dir = vault_staging_dir(&vault_id);
 
@@ -282,11 +286,12 @@ pub async fn recover_from_cloud(
     // Phase 7 will use vault_header_path for new-device bootstrap.
     let _ = vault_header_path;
 
-    let (vault_id, db_path, _) = resolve_singleton_vault()?.ok_or_else(|| {
-        IpcError::InvalidInput(
-            "No local vault found; Phase 7 required for new-device recovery".into(),
-        )
-    })?;
+    let vault_id = state
+        .session_manager
+        .active_vault_id()
+        .await
+        .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
+    let (vault_id, db_path, _) = resolve_vault_by_id(&vault_id)?;
 
     let staging_dir = vault_staging_dir(&vault_id);
 
@@ -359,8 +364,11 @@ pub async fn migrate_vault(
         ));
     }
 
-    let (vault_id, _, _) = resolve_singleton_vault()?
-        .ok_or_else(|| IpcError::InvalidInput("No vault configured on this device".into()))?;
+    let vault_id = state
+        .session_manager
+        .active_vault_id()
+        .await
+        .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
 
     let staging_dir = vault_staging_dir(&vault_id);
     let config_path = staging_dir.join(".rclone-migrate.conf");
@@ -465,8 +473,11 @@ pub async fn sync_backup(
     state.session_manager.reset_timer().await;
     require_active_session(&state).await?;
 
-    let (vault_id, _, _) = resolve_singleton_vault()?
-        .ok_or_else(|| IpcError::InvalidInput("No vault configured on this device".into()))?;
+    let vault_id = state
+        .session_manager
+        .active_vault_id()
+        .await
+        .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
 
     let staging_dir = vault_staging_dir(&vault_id);
     let config_path = staging_dir.join(".rclone-backup.conf");

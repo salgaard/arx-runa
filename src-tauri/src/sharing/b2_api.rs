@@ -101,7 +101,7 @@ pub(crate) async fn b2_get_bucket_id(
     let url = format!("{}/b2api/v3/b2_list_buckets", auth.api_url);
     let resp = client
         .post(&url)
-        .bearer_auth(&auth.authorization_token)
+        .header("Authorization", &auth.authorization_token)
         .json(&serde_json::json!({
             "accountId": auth.account_id,
             "bucketName": bucket_name,
@@ -110,7 +110,12 @@ pub(crate) async fn b2_get_bucket_id(
         .await?;
 
     if !resp.status().is_success() {
-        return Err(B2ApiError::Api("bucket listing failed".to_owned()));
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        let body = body.chars().take(200).collect::<String>();
+        return Err(B2ApiError::Api(format!(
+            "b2_list_buckets returned HTTP {status}: {body}"
+        )));
     }
 
     let data: B2BucketListResponse = resp.json().await?;
@@ -118,7 +123,7 @@ pub(crate) async fn b2_get_bucket_id(
         .into_iter()
         .find(|b| b.bucket_name == bucket_name)
         .map(|b| b.bucket_id)
-        .ok_or_else(|| B2ApiError::Api("bucket not found".to_owned()))
+        .ok_or_else(|| B2ApiError::Api(format!("bucket '{bucket_name}' not found in account")))
 }
 
 #[derive(Deserialize)]
@@ -141,13 +146,25 @@ pub(crate) async fn b2_create_application_key(
     valid_duration_seconds: u32,
 ) -> Result<B2AppKey, B2ApiError> {
     let url = format!("{}/b2api/v3/b2_create_key", auth.api_url);
+    // B2 keyName may only contain letters, digits, and dashes — strip slashes from path prefix.
+    let safe_suffix: String = name_prefix
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .take(16)
+        .collect();
     let resp = client
         .post(&url)
-        .bearer_auth(&auth.authorization_token)
+        .header("Authorization", &auth.authorization_token)
         .json(&serde_json::json!({
             "accountId": auth.account_id,
             "capabilities": capabilities,
-            "keyName": format!("arx-share-{}", &name_prefix[..name_prefix.len().min(16)]),
+            "keyName": format!("arx-share-{}", safe_suffix),
             "validDurationInSeconds": valid_duration_seconds,
             "bucketId": bucket_id,
             "namePrefix": name_prefix,
@@ -156,7 +173,12 @@ pub(crate) async fn b2_create_application_key(
         .await?;
 
     if !resp.status().is_success() {
-        return Err(B2ApiError::Api("key creation failed".to_owned()));
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(B2ApiError::Api(format!(
+            "key creation failed ({}): {}",
+            status, body
+        )));
     }
 
     let data: B2CreateKeyResponse = resp.json().await?;
@@ -176,7 +198,7 @@ pub(crate) async fn b2_delete_key(
     let url = format!("{}/b2api/v3/b2_delete_key", auth.api_url);
     let resp = client
         .post(&url)
-        .bearer_auth(&auth.authorization_token)
+        .header("Authorization", &auth.authorization_token)
         .json(&serde_json::json!({ "applicationKeyId": application_key_id }))
         .send()
         .await?;

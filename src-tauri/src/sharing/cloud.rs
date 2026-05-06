@@ -161,11 +161,12 @@ pub(crate) async fn create_share(
             None,
         ),
         Err(e) => {
-            tracing::warn!("share credential generation failed: {}", e);
-            (
-                serde_json::json!({ "path_prefix": cloud_path_prefix }),
-                None,
-            )
+            return Err(SharingError::CloudOperation(format!(
+                "B2 application key creation failed: {}. \
+                 Sharing requires a B2 key with writeKeys capability \
+                 (or the master application key).",
+                e
+            )));
         }
     };
 

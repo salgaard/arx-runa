@@ -29,10 +29,10 @@ pub enum CloudProvider {
 impl CloudProvider {
     fn destination_type_str(self) -> &'static str {
         match self {
-            CloudProvider::S3 => "s3",
-            CloudProvider::B2 => "b2",
-            CloudProvider::GoogleDrive => "rclone",
-            CloudProvider::Custom => "rclone",
+            CloudProvider::S3 => "cloud",
+            CloudProvider::B2 => "cloud",
+            CloudProvider::GoogleDrive => "cloud",
+            CloudProvider::Custom => "cloud",
         }
     }
 
@@ -65,7 +65,7 @@ fn build_config(
     match dest_type {
         DestinationType::Local => DestinationSessionConfig {
             label: "Local Filesystem".to_string(),
-            destination_type: "local".to_string(),
+            destination_type: "local_path".to_string(),
             provider: "local".to_string(),
             bucket: String::new(),
             region: String::new(),

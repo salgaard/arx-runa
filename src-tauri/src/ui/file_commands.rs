@@ -22,7 +22,7 @@ use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
 use crate::ui::types::{FileContent, FileEntry, ProgressUpdate, RemoteFileEntry};
 use crate::ui::validation::{normalise_vault_path, validate_file_id, validate_vault_path};
-use crate::ui::vault_paths::{resolve_singleton_vault, vault_staging_dir};
+use crate::ui::vault_paths::vault_staging_dir;
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
@@ -143,13 +143,16 @@ fn node_to_file_entry(node: &crate::storage::Node, pending_flush: bool) -> FileE
     }
 }
 
-/// Resolves the singleton vault and returns the vault identifier string.
+/// Returns the vault identifier for the currently active session.
 ///
-/// Returns `IpcError::VaultLocked` when no vault is found on disk.
-fn require_vault_id() -> Result<String, IpcError> {
-    let (vault_id, _, _) = resolve_singleton_vault()?
-        .ok_or_else(|| IpcError::VaultLocked("No vault found on this device".into()))?;
-    Ok(vault_id)
+/// Returns `IpcError::VaultLocked` when the session is not active or the vault
+/// ID is unavailable.
+async fn require_vault_id(state: &AppState) -> Result<String, IpcError> {
+    state
+        .session_manager
+        .active_vault_id()
+        .await
+        .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))
 }
 
 /// Copies the KEK out of the session guard and wraps it in a `KeyEncryptionKey`.
@@ -254,7 +257,7 @@ pub async fn upload_file(
         .ok_or_else(|| IpcError::InvalidInput("Source path has no valid file name".into()))?
         .to_owned();
 
-    let vault_id = require_vault_id()?;
+    let vault_id = require_vault_id(&state).await?;
     let staging_dir = vault_staging_dir(&vault_id);
 
     let db_guard = state.database.read().await;
@@ -321,7 +324,7 @@ pub async fn download_file(
     let node_uuid =
         Uuid::parse_str(&file_id).map_err(|_| IpcError::InvalidInput("Invalid file ID".into()))?;
 
-    let vault_id = require_vault_id()?;
+    let vault_id = require_vault_id(&state).await?;
     let staging_dir = vault_staging_dir(&vault_id);
 
     let db_guard = state.database.read().await;
@@ -373,7 +376,7 @@ pub async fn delete_file(file_id: String, state: State<'_, AppState>) -> Result<
     let node_uuid =
         Uuid::parse_str(&file_id).map_err(|_| IpcError::InvalidInput("Invalid file ID".into()))?;
 
-    let vault_id = require_vault_id()?;
+    let vault_id = require_vault_id(&state).await?;
     let staging_dir = vault_staging_dir(&vault_id);
 
     let db_guard = state.database.read().await;
@@ -417,7 +420,7 @@ pub async fn get_file_content(
         ));
     }
 
-    let vault_id = require_vault_id()?;
+    let vault_id = require_vault_id(&state).await?;
     let staging_dir = vault_staging_dir(&vault_id);
 
     let kek = extract_kek(&state).await?;
@@ -493,7 +496,7 @@ pub async fn flush_epoch_buffer(
     state.session_manager.reset_timer().await;
     require_active_session(&state).await?;
 
-    let vault_id = require_vault_id()?;
+    let vault_id = require_vault_id(&state).await?;
     let staging_dir = vault_staging_dir(&vault_id);
 
     let db_guard = state.database.read().await;

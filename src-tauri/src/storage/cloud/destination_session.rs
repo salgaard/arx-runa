@@ -280,8 +280,9 @@ fn validate_single_remote_stanza(
         ));
     }
 
-    let mut headers = stanza_header_regex().captures_iter(rclone_config_blob);
-    let first = headers.next().ok_or_else(|| {
+    let re = stanza_header_regex();
+    let mut headers = re.captures_iter(rclone_config_blob);
+    headers.next().ok_or_else(|| {
         StorageError::ConstraintViolation(
             "rclone_config_blob must contain exactly one remote stanza header".to_owned(),
         )
@@ -293,17 +294,17 @@ fn validate_single_remote_stanza(
         ));
     }
 
-    let header_name = first
-        .get(1)
-        .map(|capture| capture.as_str().trim())
-        .unwrap_or_default();
-    if header_name != expected_remote_name {
-        return Err(StorageError::ConstraintViolation(format!(
-            "rclone_config_blob stanza header '{header_name}' must match rclone_remote_name '{expected_remote_name}'"
-        )));
-    }
-
-    let mut normalised = rclone_config_blob.trim_end().to_owned();
+    // Rewrite the stanza header to the backend-assigned remote name so the stored
+    // blob is always consistent with `rclone_remote_name`, regardless of what the
+    // frontend placed in the header.
+    let rewritten = re
+        .replacen(
+            rclone_config_blob,
+            1,
+            format!("[{expected_remote_name}]").as_str(),
+        )
+        .into_owned();
+    let mut normalised = rewritten.trim_end().to_owned();
     normalised.push('\n');
     Ok(normalised)
 }
@@ -318,7 +319,6 @@ mod tests {
         delete_destination_session, destroy_session_rclone_conf, get_primary_destination,
         insert_destination_session, list_destination_sessions,
     };
-    use crate::storage::cloud::CloudTransportError;
     use crate::storage::error::StorageError;
     use crate::storage::sqlcipher::SqlCipherMetadataStore;
 
@@ -460,25 +460,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_destination_session_insert_rejects_header_mismatch() {
+    async fn test_destination_session_insert_rewrites_header_to_remote_name() {
         let (_directory, _db_path, store) = create_store().await;
         let mut session = sample_session("one", true);
-        session.rclone_config_blob = "[wrong]\ntype = s3\n".to_owned();
+        // Simulate frontend sending a provider-named header instead of the backend remote name.
+        session.rclone_config_blob = "[amazon_s3]\ntype = s3\n".to_owned();
 
-        let result = insert_destination_session(&store, &session).await;
-        assert!(matches!(result, Err(StorageError::ConstraintViolation(_))));
+        insert_destination_session(&store, &session)
+            .await
+            .expect("insert should succeed with header rewrite");
+
+        let sessions = list_destination_sessions(&store).await.unwrap();
+        assert_eq!(sessions.len(), 1);
+        // The stored blob header must be rewritten to the backend-assigned remote name.
+        assert!(
+            sessions[0].rclone_config_blob.starts_with("[remote-one]"),
+            "expected blob header '[remote-one]', got: {}",
+            sessions[0].rclone_config_blob
+        );
     }
 
     #[tokio::test]
-    async fn test_build_session_rclone_conf_rejects_malformed_persisted_blob() {
+    async fn test_build_session_rclone_conf_normalises_persisted_stanza_header() {
         let (directory, _db_path, store) = create_store().await;
+        // Directly insert a blob whose header doesn't match the remote name (simulates
+        // a blob written by an older code path before normalisation was applied).
         store
             .insert_destination_session(
-                "dest-malformed".to_owned(),
-                "malformed".to_owned(),
+                "dest-legacy".to_owned(),
+                "legacy".to_owned(),
                 "cloud".to_owned(),
-                "remote-malformed".to_owned(),
-                "[wrong]\ntype = s3\n".to_owned(),
+                "remote-legacy".to_owned(),
+                "[old_provider_name]\ntype = s3\n".to_owned(),
                 "bucket".to_owned(),
                 "vault".to_owned(),
                 false,
@@ -488,7 +501,14 @@ mod tests {
             .expect("manual insert should succeed");
 
         let output = directory.path().join("session.conf");
-        let result = build_session_rclone_conf(&store, &output).await;
-        assert!(matches!(result, Err(CloudTransportError::Other(_))));
+        build_session_rclone_conf(&store, &output)
+            .await
+            .expect("build should succeed by normalising the stanza header");
+
+        let conf = tokio::fs::read_to_string(&output).await.unwrap();
+        assert!(
+            conf.contains("[remote-legacy]"),
+            "conf should contain normalised header '[remote-legacy]', got:\n{conf}"
+        );
     }
 }
