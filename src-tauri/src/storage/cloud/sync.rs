@@ -31,6 +31,7 @@ use crate::storage::metadata_store::MetadataStore;
 use crate::storage::sqlcipher::{SqlCipherMetadataStore, read_snapshot_state_from_database};
 use crate::storage::types::SyncChunkRecord;
 use crate::storage::validation::validate_blob_name_uuid_v4;
+use uuid::Uuid;
 
 const CONFLICT_PROBE_DB_FILE_NAME: &str = "manifest-backup-conflict-probe.db";
 const PENDING_DELETIONS_BATCH_LIMIT: usize = 128;
@@ -382,6 +383,60 @@ pub(crate) async fn drive_blob_downloads(
     } else {
         Err((verification_failures, transport_failures))
     }
+}
+
+/// Downloads any blobs required to decrypt `node_id` that are missing from `staging_dir`.
+///
+/// After a push sync the local blob files are removed; this restores only the
+/// blobs needed for the requested file rather than pulling the entire vault.
+/// Handles both regular multi-chunk files and epoch-packed files.
+/// No-ops when all required blobs are already present locally.
+pub(crate) async fn fetch_missing_file_blobs(
+    node_id: Uuid,
+    db: &dyn MetadataStore,
+    staging_dir: &Path,
+    cloud_transport: &dyn CloudTransport,
+) -> Result<(), SyncError> {
+    use std::collections::HashMap;
+
+    let chunks = db.get_chunks(node_id).await?;
+    let mut needed: HashMap<String, [u8; 32]> = HashMap::new();
+
+    for chunk in &chunks {
+        let (blob_name, checksum) = if let Some(epoch_id) = chunk.epoch_blob_id {
+            let epoch = db.get_epoch_blob(epoch_id).await?;
+            (epoch.blob_name, epoch.blake3_checksum)
+        } else {
+            (chunk.blob_name.clone(), chunk.blake3_checksum)
+        };
+        needed.entry(blob_name).or_insert(checksum);
+    }
+
+    for (blob_name, blake3_checksum) in needed {
+        let local_path = blob_staging_path(staging_dir, &blob_name);
+        if tokio::fs::try_exists(&local_path).await? {
+            continue;
+        }
+        download_blob_task(
+            SyncChunkRecord {
+                blob_name,
+                blake3_checksum,
+            },
+            cloud_transport,
+            staging_dir,
+        )
+        .await
+        .map_err(|e| match e {
+            DownloadTaskError::Transport(_, err) => SyncError::Transport { source: err },
+            DownloadTaskError::Verification(name) => SyncError::Transport {
+                source: CloudTransportError::Other(format!(
+                    "Blob checksum mismatch after download: {name}"
+                )),
+            },
+        })?;
+    }
+
+    Ok(())
 }
 
 /// Pushes staged vault blobs, then uploads manifest backup and vault header.

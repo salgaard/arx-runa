@@ -18,7 +18,8 @@ use crate::storage::error::StorageError;
 use crate::storage::metadata_store::MetadataStore;
 use crate::storage::schema::{
     apply_canonical_schema, apply_epoch_v2_migration, apply_sharing_v3_migration,
-    seed_manifest_meta, validate_manifest_meta, validate_schema_integrity, verify_sqlcipher_key,
+    apply_sharing_v4_migration, seed_manifest_meta, validate_manifest_meta,
+    validate_schema_integrity, verify_sqlcipher_key,
 };
 use crate::storage::types::{
     ChunkRecord, EpochBlobRecord, EpochBufferEntry, Node, NodeId, NodeType, SyncChunkRecord,
@@ -70,6 +71,7 @@ impl SqlCipherMetadataStore {
             let conn = open_keyed_connection(&path, &sqlcipher_key)?;
             apply_epoch_v2_migration(&conn)?;
             apply_sharing_v3_migration(&conn)?;
+            apply_sharing_v4_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             Ok(conn)
@@ -98,6 +100,7 @@ impl SqlCipherMetadataStore {
             seed_manifest_meta(&conn, vault_id, chunk_size_bytes, epoch_buffer_enabled)?;
             apply_epoch_v2_migration(&conn)?;
             apply_sharing_v3_migration(&conn)?;
+            apply_sharing_v4_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             validate_create_immutable_meta_matches(

@@ -13,8 +13,8 @@ use crate::drag_drop::on_file_drop;
 use crate::invoke::{invoke_command, invoke_command_with_channel};
 use crate::ipc_channel::IpcChannel;
 use crate::ipc_types::{
-    DeleteFileRequest, DownloadFileRequest, FileEntry, GetFileContentRequest, ProgressUpdate,
-    RevealInExplorerRequest, ShareResponse, UploadFileRequest,
+    DeleteFileRequest, DownloadFileRequest, FileContentResponse, FileEntry, GetFileContentRequest,
+    ProgressUpdate, RevealInExplorerRequest, ShareResponse, UploadFileRequest,
 };
 use crate::shares::ShareModal;
 use crate::state::{use_vault, use_vault_actions};
@@ -110,8 +110,8 @@ fn base64_decode(encoded: &str) -> Option<Vec<u8>> {
 /// Implements Zero-Trace: clears signal state on dismiss (not just hidden).
 #[component]
 pub fn ContentViewerModal(
-    /// RwSignal holding the file content bytes (base64-encoded from backend).
-    content: RwSignal<Option<String>>,
+    /// RwSignal holding the decoded file content from the backend.
+    content: RwSignal<Option<FileContentResponse>>,
     /// Filename for display and type detection.
     filename: String,
 ) -> impl IntoView {
@@ -140,8 +140,8 @@ pub fn ContentViewerModal(
                             <div class="flex-1 overflow-auto bg-surface-overlay rounded p-4">
                                 <pre class="text-text-secondary text-sm font-mono whitespace-pre-wrap break-words">
                                     {move || {
-                                        content.get().and_then(|encoded| {
-                                            let decoded = base64_decode(&encoded)?;
+                                        content.get().and_then(|fc| {
+                                            let decoded = base64_decode(&fc.data_base64)?;
                                             String::from_utf8(decoded).ok()
                                         })
                                     }}
@@ -152,8 +152,8 @@ pub fn ContentViewerModal(
                 >
                     <div class="flex-1 flex items-center justify-center overflow-auto bg-surface-overlay rounded">
                         {move || {
-                            let encoded = content.get()?;
-                            let img_src = format!("data:image/png;base64,{}", &encoded);
+                            let fc = content.get()?;
+                            let img_src = format!("data:{};base64,{}", fc.mime_type, fc.data_base64);
                             Some(view! {
                                 <img
                                     src=img_src
@@ -224,7 +224,8 @@ pub fn FileItem(
     let (show_delete_confirm, set_show_delete_confirm) = signal(false);
     let (show_share_modal, set_show_share_modal) = signal(false);
     let share_result = RwSignal::new(None::<ShareResponse>);
-    let file_content = RwSignal::new(None::<String>);
+    let file_content = RwSignal::new(None::<FileContentResponse>);
+    let (preview_loading, set_preview_loading) = signal(false);
     let (download_progress_channel, set_download_progress_channel) =
         signal::<Option<IpcChannel<ProgressUpdate>>>(None);
     let (delete_error, set_delete_error) = signal::<Option<String>>(None);
@@ -262,15 +263,20 @@ pub fn FileItem(
                             && extension_is_previewable(&entry_clone.name)
                         {
                             let entry = entry_clone.clone();
+                            set_preview_loading.set(true);
                             leptos::task::spawn_local(async move {
                                 let req = GetFileContentRequest {
                                     file_id: entry.id.clone(),
                                 };
-                                match invoke_command::<GetFileContentRequest, String>("get_file_content", &req)
+                                match invoke_command::<GetFileContentRequest, FileContentResponse>("get_file_content", &req)
                                     .await
                                 {
-                                    Ok(content) => file_content.set(Some(content)),
+                                    Ok(content) => {
+                                        set_preview_loading.set(false);
+                                        file_content.set(Some(content));
+                                    }
                                     Err(err) => {
+                                        set_preview_loading.set(false);
                                         leptos::logging::error!("Failed to fetch file content: {}", err.message);
                                     }
                                 }
@@ -288,6 +294,14 @@ pub fn FileItem(
                             title="File is queued for encryption. Flush the epoch buffer or sync to finalise."
                         >
                             "Encrypting…"
+                        </span>
+                    </Show>
+                    <Show
+                        when=move || preview_loading.get()
+                        fallback=|| ()
+                    >
+                        <span class="ml-2 inline-flex items-center">
+                            <Spinner size="h-3 w-3" />
                         </span>
                     </Show>
                 </span>

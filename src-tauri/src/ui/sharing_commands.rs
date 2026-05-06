@@ -360,67 +360,131 @@ pub async fn import_share(
 
     let kek = extract_kek(&state).await?;
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
-        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
-
-    // Retrieve the wrapped X25519 private key from the vault identity row.
-    let wrapped_blob: Vec<u8> = db
-        .with_connection_blocking(|conn| {
-            conn.query_row(
-                "SELECT wrapped_private_key FROM vault_identity WHERE id = 1",
-                [],
-                |row| row.get::<_, Vec<u8>>(0),
-            )
-            .optional()
-            .map_err(StorageError::from_rusqlite)
-        })
+    let vault_id = state
+        .active_vault_id
+        .read()
         .await
-        .map_err(|_| IpcError::InternalError("Vault identity query failed".into()))?
-        .ok_or_else(|| IpcError::InternalError("Vault identity row missing".into()))?;
+        .clone()
+        .ok_or_else(|| IpcError::VaultLocked("No active vault".into()))?;
+    let staging_dir = vault_staging_dir(&vault_id);
 
-    let wrapped_array: [u8; 72] = wrapped_blob
-        .try_into()
-        .map_err(|_| IpcError::InternalError("Vault identity key blob corrupted".into()))?;
+    let rclone_bin: Option<PathBuf> = state.app_handle.get().map(|h| {
+        use tauri::Manager as _;
+        let name = if cfg!(target_os = "windows") {
+            "rclone.exe"
+        } else {
+            "rclone"
+        };
+        if let Ok(dir) = h.path().resource_dir() {
+            let c = dir.join("bin").join(name);
+            if c.exists() {
+                return c;
+            }
+        }
+        PathBuf::from(name)
+    });
 
-    let wrapped_key = WrappedFileKey(wrapped_array);
-    let private_key_secret = unwrap_file_key(&wrapped_key, &kek)
-        // Do not include any key material in error messages.
-        .map_err(|_| IpcError::AuthenticationFailed("Vault identity key unwrap failed".into()))?;
+    // Scope the DB lock: import, look up sender name, then release before async upload.
+    let (share_id, file_name, sender_name, import_receipt_ctx) = {
+        let db_guard = state.database.read().await;
+        let db = db_guard
+            .as_ref()
+            .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
 
-    // Copy private key bytes into a zeroing buffer.
-    // RULE: private_key_bytes must never appear in any log or error message.
-    let private_key_bytes: Zeroizing<[u8; 32]> =
-        Zeroizing::new(private_key_secret.with_exposed(|bytes| *bytes));
-
-    let now = now_unix_seconds();
-
-    // `SharingError::AuthenticationFailed` → `IpcError::AuthenticationFailed` via `?`.
-    let received_share = import_share_package(
-        &wire_bytes,
-        &private_key_bytes,
-        &kek,
-        db as &dyn SharingStore,
-        now,
-    )
-    .await
-    .map_err(IpcError::from)?;
-
-    // Look up the sender's display name if they are a known contact.
-    let sender_name = if let Some(contact_id) = received_share.sender_contact_id {
-        (db as &dyn SharingStore)
-            .get_contact(contact_id)
+        // Retrieve the wrapped X25519 private key from the vault identity row.
+        let wrapped_blob: Vec<u8> = db
+            .with_connection_blocking(|conn| {
+                conn.query_row(
+                    "SELECT wrapped_private_key FROM vault_identity WHERE id = 1",
+                    [],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional()
+                .map_err(StorageError::from_rusqlite)
+            })
             .await
-            .ok()
-            .map(|c| c.display_name.as_str().to_owned())
-    } else {
-        None
+            .map_err(|_| IpcError::InternalError("Vault identity query failed".into()))?
+            .ok_or_else(|| IpcError::InternalError("Vault identity row missing".into()))?;
+
+        let wrapped_array: [u8; 72] = wrapped_blob
+            .try_into()
+            .map_err(|_| IpcError::InternalError("Vault identity key blob corrupted".into()))?;
+
+        let wrapped_key = WrappedFileKey(wrapped_array);
+        let private_key_secret = unwrap_file_key(&wrapped_key, &kek).map_err(|_| {
+            IpcError::AuthenticationFailed("Vault identity key unwrap failed".into())
+        })?;
+
+        let private_key_bytes: Zeroizing<[u8; 32]> =
+            Zeroizing::new(private_key_secret.with_exposed(|bytes| *bytes));
+
+        let now = now_unix_seconds();
+
+        let received_share = import_share_package(
+            &wire_bytes,
+            &private_key_bytes,
+            &kek,
+            db as &dyn SharingStore,
+            now,
+        )
+        .await
+        .map_err(IpcError::from)?;
+
+        let sender_name = if let Some(contact_id) = received_share.sender_contact_id {
+            (db as &dyn SharingStore)
+                .get_contact(contact_id)
+                .await
+                .ok()
+                .map(|c| c.display_name.as_str().to_owned())
+        } else {
+            None
+        };
+
+        // Capture receipt context before the DB lock is released.
+        let import_receipt_ctx: Option<(
+            crate::sharing::X25519PublicKey,
+            serde_json::Value,
+            String,
+        )> = if received_share
+            .cloud_endpoint
+            .get("receipt_requested")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            Some((
+                received_share.sender_public_key.clone(),
+                received_share.cloud_endpoint.clone(),
+                received_share.share_id.clone(),
+            ))
+        } else {
+            None
+        };
+
+        (
+            received_share.share_id,
+            received_share.file_name,
+            sender_name,
+            import_receipt_ctx,
+        )
     };
 
+    // Best-effort: write an import receipt blob sealed with the sender's public key.
+    if let Some((sender_pub_key, cloud_endpoint, receipt_share_id)) = import_receipt_ctx {
+        write_receipt_blob(
+            &receipt_share_id,
+            &sender_pub_key,
+            &cloud_endpoint,
+            &staging_dir,
+            rclone_bin,
+            "import-receipts",
+            "imported_at",
+        )
+        .await;
+    }
+
     Ok(ImportShareResponse {
-        share_id: received_share.share_id,
-        file_name: received_share.file_name,
+        share_id,
+        file_name,
         sender_name,
     })
 }
@@ -512,12 +576,22 @@ pub async fn list_shares(state: State<'_, AppState>) -> Result<Vec<ShareEntry>, 
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
 
     // SharingStore trait has no list_all_shares; query directly with a JOIN.
-    let rows: Vec<(String, String, String, i64, Option<i64>, bool, Option<i64>)> = db
+    let rows: Vec<(
+        String,
+        String,
+        String,
+        i64,
+        Option<i64>,
+        bool,
+        Option<i64>,
+        Option<i64>,
+    )> = db
         .with_connection_blocking(|conn| {
             let mut stmt = conn
                 .prepare(
                     "SELECT s.share_id, n.name, c.display_name, s.created_at, s.revoked_at, \
-                            s.receipt_requested, s.receipt_received_at \
+                            s.receipt_requested, s.receipt_received_at, \
+                            s.import_receipt_received_at \
                      FROM shares s \
                      JOIN nodes n ON s.file_id = n.node_id \
                      JOIN contacts c ON s.contact_id = c.contact_id \
@@ -534,11 +608,20 @@ pub async fn list_shares(state: State<'_, AppState>) -> Result<Vec<ShareEntry>, 
                         row.get::<_, Option<i64>>(4)?,
                         row.get::<_, bool>(5)?,
                         row.get::<_, Option<i64>>(6)?,
+                        row.get::<_, Option<i64>>(7)?,
                     ))
                 })
                 .map_err(StorageError::from_rusqlite)?;
-            let mut rows: Vec<(String, String, String, i64, Option<i64>, bool, Option<i64>)> =
-                Vec::new();
+            let mut rows: Vec<(
+                String,
+                String,
+                String,
+                i64,
+                Option<i64>,
+                bool,
+                Option<i64>,
+                Option<i64>,
+            )> = Vec::new();
             for row in mapped {
                 rows.push(row.map_err(StorageError::from_rusqlite)?);
             }
@@ -558,6 +641,7 @@ pub async fn list_shares(state: State<'_, AppState>) -> Result<Vec<ShareEntry>, 
                 revoked_at,
                 receipt_requested,
                 receipt_received_at,
+                import_receipt_received_at,
             )| ShareEntry {
                 share_id,
                 file_name,
@@ -566,6 +650,7 @@ pub async fn list_shares(state: State<'_, AppState>) -> Result<Vec<ShareEntry>, 
                 revoked: revoked_at.is_some(),
                 receipt_requested,
                 receipt_received_at: receipt_received_at.map(unix_ts_to_iso8601),
+                import_receipt_received_at: import_receipt_received_at.map(unix_ts_to_iso8601),
             },
         )
         .collect())
@@ -757,6 +842,8 @@ pub async fn download_received_share(
             &cloud_endpoint,
             &staging_dir,
             rclone_bin,
+            "receipts",
+            "downloaded_at",
         )
         .await;
     }
@@ -773,11 +860,13 @@ async fn write_receipt_blob(
     cloud_endpoint: &serde_json::Value,
     staging_dir: &std::path::Path,
     rclone_bin: Option<PathBuf>,
+    receipt_prefix: &str,
+    timestamp_key: &str,
 ) {
     use crate::storage::cloud::{CloudTransport as _, RcloneTransport};
 
     let now = now_unix_seconds();
-    let payload = serde_json::json!({ "share_id": share_id, "downloaded_at": now });
+    let payload = serde_json::json!({ "share_id": share_id, timestamp_key: now });
     let plaintext = match serde_json::to_vec(&payload) {
         Ok(b) => b,
         Err(e) => {
@@ -836,7 +925,7 @@ async fn write_receipt_blob(
         return;
     }
 
-    let remote_root = format!("arxshare-rcpt:{bucket}/{path_prefix}receipts");
+    let remote_root = format!("arxshare-rcpt:{bucket}/{path_prefix}{receipt_prefix}");
     let upload_transport =
         RcloneTransport::new_for_share_download(rclone_binary, conf_path.clone(), remote_root);
     let remote_path = format!("{receipt_uuid}.blob");
@@ -995,8 +1084,8 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
         Zeroizing::new(secret.with_exposed(|b| *b))
     };
 
-    // Fetch shares that need receipt checking.
-    let pending: Vec<(String, String)> = {
+    // Fetch shares that need download-receipt checking.
+    let pending_download: Vec<(String, String)> = {
         let db_guard = state.database.read().await;
         let db = db_guard
             .as_ref()
@@ -1004,7 +1093,7 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
         db.with_connection_blocking(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT share_id, cloud_endpoint \
+                    "SELECT share_id, cloud_path \
                      FROM shares \
                      WHERE receipt_requested = 1 \
                        AND receipt_received_at IS NULL \
@@ -1026,15 +1115,11 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
         .map_err(IpcError::from)?
     };
 
-    for (share_id, endpoint_json) in &pending {
-        let endpoint: serde_json::Value = match serde_json::from_str(endpoint_json) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let Some(path_prefix) = endpoint.get("path_prefix").and_then(|v| v.as_str()) else {
+    for (share_id, cloud_path) in &pending_download {
+        if cloud_path.is_empty() {
             continue;
-        };
-        let receipt_prefix = format!("{path_prefix}receipts/");
+        }
+        let receipt_prefix = format!("{cloud_path}receipts/");
 
         // List receipt blobs using the vault owner's transport.
         let blob_names = match transport.list_blobs(&receipt_prefix).await {
@@ -1088,6 +1173,104 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
                     .with_connection_blocking(move |conn| {
                         conn.execute(
                             "UPDATE shares SET receipt_received_at = ?1 WHERE share_id = ?2",
+                            rusqlite::params![ts, sid],
+                        )
+                        .map_err(StorageError::from_rusqlite)?;
+                        Ok(())
+                    })
+                    .await;
+            }
+        }
+    }
+
+    // Second pass: check import receipts for shares that haven't been imported yet.
+    let pending_import: Vec<(String, String)> = {
+        let db_guard = state.database.read().await;
+        let db = db_guard
+            .as_ref()
+            .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+        db.with_connection_blocking(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT share_id, cloud_path \
+                     FROM shares \
+                     WHERE receipt_requested = 1 \
+                       AND import_receipt_received_at IS NULL \
+                       AND revoked_at IS NULL",
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(StorageError::from_rusqlite)?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row.map_err(StorageError::from_rusqlite)?);
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(IpcError::from)?
+    };
+
+    for (share_id, cloud_path) in &pending_import {
+        if cloud_path.is_empty() {
+            continue;
+        }
+        let receipt_prefix = format!("{cloud_path}import-receipts/");
+
+        let blob_names = match transport.list_blobs(&receipt_prefix).await {
+            Ok(names) => names,
+            Err(_) => continue,
+        };
+        if blob_names.is_empty() {
+            continue;
+        }
+
+        let mut earliest_imported_at: Option<i64> = None;
+
+        for blob_name in &blob_names {
+            let local_path = staging_dir.join(format!("import-rcpt-chk-{}.blob", Uuid::new_v4()));
+            if transport
+                .download_blob(blob_name, &local_path)
+                .await
+                .is_err()
+            {
+                continue;
+            }
+            let bytes = match tokio::fs::read(&local_path).await {
+                Ok(b) => b,
+                Err(_) => {
+                    let _ = tokio::fs::remove_file(&local_path).await;
+                    continue;
+                }
+            };
+            let _ = tokio::fs::remove_file(&local_path).await;
+
+            match crate::sharing::hpke::open(&private_key_bytes, &bytes) {
+                Ok(plaintext) => {
+                    if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&plaintext) {
+                        if let Some(ts) = payload.get("imported_at").and_then(|v| v.as_i64()) {
+                            earliest_imported_at =
+                                Some(earliest_imported_at.map_or(ts, |prev| prev.min(ts)));
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(%share_id, %e, "import receipt HPKE open failed");
+                }
+            }
+        }
+
+        if let Some(ts) = earliest_imported_at {
+            let db_guard = state.database.read().await;
+            if let Some(db) = db_guard.as_ref() {
+                let sid = share_id.clone();
+                let _ = db
+                    .with_connection_blocking(move |conn| {
+                        conn.execute(
+                            "UPDATE shares SET import_receipt_received_at = ?1 WHERE share_id = ?2",
                             rusqlite::params![ts, sid],
                         )
                         .map_err(StorageError::from_rusqlite)?;

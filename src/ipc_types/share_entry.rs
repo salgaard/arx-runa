@@ -18,6 +18,8 @@ pub struct ShareEntry {
     pub revoked: bool,
     /// Whether a delivery receipt was requested.
     pub receipt_requested: bool,
-    /// ISO 8601 timestamp when the receipt was received, or `None` if not yet received.
+    /// ISO 8601 timestamp when the download receipt was received, or `None` if not yet received.
     pub receipt_received_at: Option<String>,
+    /// ISO 8601 timestamp when the import receipt was received, or `None` if not yet received.
+    pub import_receipt_received_at: Option<String>,
 }

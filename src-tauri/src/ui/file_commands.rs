@@ -13,6 +13,7 @@ use tauri::ipc::Channel;
 use uuid::Uuid;
 
 use crate::crypto::KeyEncryptionKey;
+use crate::storage::cloud::sync::fetch_missing_file_blobs;
 use crate::storage::vault_ops::{
     delete_file as vault_delete, download_file as vault_download, upload_file as vault_upload,
 };
@@ -334,6 +335,10 @@ pub async fn download_file(
 
     let kek = extract_kek(&state).await?;
 
+    // Download any blobs uploaded to cloud that were pruned from local staging.
+    let cloud = state.cloud_transport.read().await.clone();
+    fetch_missing_file_blobs(node_uuid, db, &staging_dir, cloud.as_ref()).await?;
+
     // Wrap the Tauri channel in a ProgressChannel to gracefully handle
     // closed connections (M3: Streaming Progress Channel Validation)
     let progress_ch = ProgressChannel::new(progress);
@@ -424,6 +429,10 @@ pub async fn get_file_content(
     let staging_dir = vault_staging_dir(&vault_id);
 
     let kek = extract_kek(&state).await?;
+
+    // Download any blobs uploaded to cloud that were pruned from local staging.
+    let cloud = state.cloud_transport.read().await.clone();
+    fetch_missing_file_blobs(node_uuid, db, &staging_dir, cloud.as_ref()).await?;
 
     // Decrypt into a temporary file; the TempDir and its contents are removed
     // on drop, keeping the plaintext off permanent storage.

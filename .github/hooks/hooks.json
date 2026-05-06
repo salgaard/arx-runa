@@ -24,6 +24,20 @@
     "postToolUse": [
       {
         "type": "command",
+        "bash": "uvx jcodemunch-mcp hook-copilot-posttooluse",
+        "powershell": "uvx jcodemunch-mcp hook-copilot-posttooluse",
+        "timeoutSec": 30,
+        "comment": "Auto-reindex source files after edits"
+      },
+      {
+        "type": "command",
+        "bash": "uvx jdocmunch-mcp hook-posttooluse",
+        "powershell": "uvx jdocmunch-mcp hook-posttooluse",
+        "timeoutSec": 30,
+        "comment": "Auto-reindex doc files after edits"
+      },
+      {
+        "type": "command",
         "bash": "./scripts/hooks/run-clippy.sh",
         "powershell": "./scripts/hooks/run-clippy.ps1",
         "timeoutSec": 60,

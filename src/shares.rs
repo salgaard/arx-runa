@@ -103,6 +103,21 @@ fn SentSharesList() -> impl IntoView {
 
     let checking_receipts = RwSignal::new(false);
 
+    // Auto-check receipts once on mount.
+    Effect::new(move |_| {
+        let shares_clone = shares;
+        let checking_clone = checking_receipts;
+        spawn_local(async move {
+            checking_clone.set(true);
+            if let Ok(entries) =
+                invoke_command::<(), Vec<ShareEntry>>("check_share_receipts", &()).await
+            {
+                shares_clone.set(entries);
+            }
+            checking_clone.set(false);
+        });
+    });
+
     let handle_check_receipts = move |_| {
         checking_receipts.set(true);
         spawn_local(async move {
@@ -122,7 +137,7 @@ fn SentSharesList() -> impl IntoView {
                     on:click=handle_check_receipts
                     disabled=move || checking_receipts.get()
                 >
-                    {move || if checking_receipts.get() { "Checking…" } else { "Check receipts" }}
+                    {move || if checking_receipts.get() { "Checking…" } else { "Refresh receipt status" }}
                 </button>
             </div>
             {move || {
@@ -162,8 +177,8 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
     let revoking = RwSignal::new(false);
     let share_id = share.share_id.clone();
     let contact_name = share.contact_name.clone();
-    let receipt_requested = share.receipt_requested;
     let receipt_received_at = share.receipt_received_at.clone();
+    let import_receipt_received_at = share.import_receipt_received_at.clone();
 
     view! {
         <div class="p-4 bg-iron border border-steel rounded">
@@ -172,18 +187,18 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                     <p class="text-bone font-semibold">{share.file_name.clone()}</p>
                     <p class="text-text-secondary text-sm">"Shared with: " {contact_name.clone()}</p>
                     <p class="text-text-secondary text-xs mt-1">{share.created_at.clone()}</p>
-                    {if receipt_requested {
-                        let badge = match &receipt_received_at {
-                            Some(ts) => view! {
-                                <p class="text-success-text text-xs mt-1">"✓ Received " {ts.clone()}</p>
-                            }.into_any(),
-                            None => view! {
-                                <p class="text-text-secondary text-xs mt-1">"⏳ Awaiting receipt"</p>
-                            }.into_any(),
-                        };
-                        badge
+                    {if let Some(ts) = receipt_received_at {
+                        view! {
+                            <p class="text-success-text text-xs mt-1">"Downloaded " {ts}</p>
+                        }.into_any()
+                    } else if let Some(ts) = import_receipt_received_at {
+                        view! {
+                            <p class="text-text-secondary text-xs mt-1">"Received " {ts}</p>
+                        }.into_any()
                     } else {
-                        ().into_any()
+                        view! {
+                            <p class="text-text-secondary text-xs mt-1">"Awaiting receipt"</p>
+                        }.into_any()
                     }}
                     {move || {
                         if share.revoked {
@@ -466,7 +481,6 @@ pub fn ShareModal(
 ) -> impl IntoView {
     let selected_contact_id = RwSignal::new(None::<String>);
     let expiration_days = RwSignal::new(None::<String>);
-    let request_receipt = RwSignal::new(false);
     let contacts = RwSignal::new(Vec::<ContactEntry>::new());
     let loading_contacts = RwSignal::new(true);
     let sharing = RwSignal::new(false);
@@ -503,7 +517,6 @@ pub fn ShareModal(
         let contact_id = selected_contact_id.get().unwrap();
         let file_id_clone = file_id.clone();
         let expiry_opt = expiration_days.get().and_then(|s| s.parse::<u32>().ok());
-        let receipt = request_receipt.get();
 
         spawn_local(async move {
             match invoke_command::<ShareFileRequest, ShareResponse>(
@@ -512,7 +525,7 @@ pub fn ShareModal(
                     file_id: file_id_clone,
                     contact_id: contact_id.clone(),
                     expiration_days: expiry_opt,
-                    request_receipt: receipt,
+                    request_receipt: true,
                 },
             )
             .await
@@ -604,17 +617,6 @@ pub fn ShareModal(
                             disabled=move || sharing.get()
                         />
                     </div>
-
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input
-                            type="checkbox"
-                            class="rounded"
-                            checked=move || request_receipt.get()
-                            on:change=move |e| request_receipt.set(event_target_checked(&e))
-                            disabled=move || sharing.get()
-                        />
-                        <span class="text-sm text-bone">"Request receipt"</span>
-                    </label>
                 </div>
 
                 {move || {
