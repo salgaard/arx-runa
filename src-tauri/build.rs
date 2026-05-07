@@ -30,6 +30,7 @@ fn main() {
             "lock_session",
             "migrate_vault",
             "recover_from_cloud",
+            "compose_email_with_attachment",
             "reveal_in_explorer",
             "revoke_share",
             "rotate_key_file",

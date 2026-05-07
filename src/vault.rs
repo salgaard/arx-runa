@@ -13,8 +13,9 @@ use crate::drag_drop::on_file_drop;
 use crate::invoke::{invoke_command, invoke_command_with_channel};
 use crate::ipc_channel::IpcChannel;
 use crate::ipc_types::{
-    DeleteFileRequest, DownloadFileRequest, FileContentResponse, FileEntry, GetFileContentRequest,
-    ProgressUpdate, RevealInExplorerRequest, ShareResponse, UploadFileRequest,
+    ComposeEmailWithAttachmentRequest, DeleteFileRequest, DownloadFileRequest, FileContentResponse,
+    FileEntry, GetFileContentRequest, ProgressUpdate, RevealInExplorerRequest, ShareResponse,
+    UploadFileRequest,
 };
 use crate::shares::ShareModal;
 use crate::state::{use_vault, use_vault_actions};
@@ -493,6 +494,7 @@ pub fn FileItem(
                     .unwrap_or(&package_path)
                     .to_owned();
                 let contact_email = result.contact_email.clone();
+                let file_name_hint = file_name.clone();
 
                 view! {
                     <div class="p-4 bg-stone border border-steel rounded mb-4">
@@ -516,18 +518,27 @@ pub fn FileItem(
                             >
                                 "Reveal in Explorer"
                             </button>
-                            {contact_email.map(|email| {
-                                let mailto = format!(
-                                    "mailto:{}?subject=Shared%20file%20via%20Arx%20Runa&body=I%27ve%20shared%20a%20file%20with%20you%20using%20Arx%20Runa.%0A%0ATo%20access%20it%3A%0A1.%20Install%20Arx%20Runa%0A2.%20Go%20to%20Shares%20%E2%86%92%20Received%20%E2%86%92%20Import%20from%20file%0A3.%20Select%20the%20attached%20.arxshare%20file%0A%0AThe%20file%20is%20encrypted%20%E2%80%94%20only%20you%20can%20open%20it.",
-                                    email
-                                );
+                            {contact_email.clone().map(|email| {
+                                let email_clone = email.clone();
+                                let path_clone = package_path.clone();
                                 view! {
-                                    <a
-                                        href=mailto
+                                    <button
                                         class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors"
+                                        on:click=move |_| {
+                                            let req = ComposeEmailWithAttachmentRequest {
+                                                package_path: path_clone.clone(),
+                                                recipient_email: email_clone.clone(),
+                                            };
+                                            spawn_local(async move {
+                                                let _ = invoke_command::<ComposeEmailWithAttachmentRequest, ()>(
+                                                    "compose_email_with_attachment",
+                                                    &req,
+                                                ).await;
+                                            });
+                                        }
                                     >
                                         "Compose email"
-                                    </a>
+                                    </button>
                                 }
                             })}
                             <button
@@ -537,6 +548,13 @@ pub fn FileItem(
                                 "Close"
                             </button>
                         </div>
+                        {contact_email.map(|_| view! {
+                            <p class="text-text-secondary text-xs mt-3">
+                                "Remember to attach "
+                                <span class="text-bone font-mono">{file_name_hint}</span>
+                                " to the email before sending."
+                            </p>
+                        })}
                     </div>
                 }
             })}

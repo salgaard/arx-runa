@@ -42,6 +42,7 @@
     "allow-revoke-share",
     "allow-list-shares",
     "allow-list-received-shares",
+    "allow-compose-email-with-attachment",
     "allow-reveal-in-explorer",
     {
       "identifier": "shell:allow-execute",

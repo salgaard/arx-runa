@@ -214,6 +214,16 @@ pub struct DownloadReceivedShareRequest {
     pub destination_path: String,
 }
 
+/// Argument payload for the `compose_email_with_attachment` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposeEmailWithAttachmentRequest {
+    /// Absolute filesystem path to the `.arxshare` package to attach.
+    pub package_path: String,
+    /// Email address of the recipient.
+    pub recipient_email: String,
+}
+
 /// Argument payload for the `reveal_in_explorer` Tauri command.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

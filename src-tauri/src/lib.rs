@@ -25,7 +25,7 @@ struct DeviceEventPayload {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-/// Starts the Arx Runa Tauri runtime with all 37 registered commands.
+/// Starts the Arx Runa Tauri runtime with all 38 registered commands.
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -83,8 +83,9 @@ pub fn run() {
             ui::sharing_commands::revoke_share,
             ui::sharing_commands::list_shares,
             ui::sharing_commands::list_received_shares,
-            // Shell (1)
+            // Shell (2)
             ui::shell_commands::reveal_in_explorer,
+            ui::shell_commands::compose_email_with_attachment,
         ])
         .setup(|app| {
             use tauri::Emitter as _;

@@ -29,11 +29,11 @@ pub use progress_update::ProgressUpdate;
 pub use received_share_entry::ReceivedShareEntry;
 pub use requests::{
     AddContactRequest, AddDestinationRequest, AuthenticateRequest, ChangePasswordRequest,
-    ConfigureCloudRequest, CreateVaultRequest, DeleteDestinationRequest, DeleteFileRequest,
-    DeleteVaultRequest, DownloadFileRequest, DownloadReceivedShareRequest, ExportPublicKeyRequest,
-    GetFileContentRequest, ImportShareRequest, ListDirectoryRequest, RecoverVaultFromCloudRequest,
-    RevealInExplorerRequest, RevokeShareRequest, RotateKeyFileRequest, ShareFileRequest,
-    UploadFileRequest,
+    ComposeEmailWithAttachmentRequest, ConfigureCloudRequest, CreateVaultRequest,
+    DeleteDestinationRequest, DeleteFileRequest, DeleteVaultRequest, DownloadFileRequest,
+    DownloadReceivedShareRequest, ExportPublicKeyRequest, GetFileContentRequest, ImportShareRequest,
+    ListDirectoryRequest, RecoverVaultFromCloudRequest, RevealInExplorerRequest,
+    RevokeShareRequest, RotateKeyFileRequest, ShareFileRequest, UploadFileRequest,
 };
 pub use session_status::SessionStatus;
 pub use share_entry::ShareEntry;
