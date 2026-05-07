@@ -40,6 +40,10 @@ pub enum IpcError {
     /// The file is staged in the epoch buffer and cannot be downloaded until flushed.
     #[error("Pending flush: {0}")]
     PendingFlush(String),
+    /// A push was blocked because the cloud has a newer snapshot (another device synced).
+    /// Call `pull_and_reconcile` then retry the push.
+    #[error("Sync conflict: {0}")]
+    SyncConflict(String),
 }
 
 #[allow(unreachable_patterns)]
@@ -142,7 +146,9 @@ impl From<crate::storage::SyncError> for IpcError {
         tracing::error!("sync error: {:?}", error);
         use crate::storage::SyncError as Sy;
         match error {
-            Sy::Conflict(_) => IpcError::CloudError("Cloud snapshot conflict".into()),
+            Sy::Conflict(_) => {
+                IpcError::SyncConflict("Another device has synced since your last pull".into())
+            }
             Sy::Transport { .. }
             | Sy::CloudManifestUnreadable { .. }
             | Sy::PushUploadFailed { .. }
@@ -204,6 +210,7 @@ mod tests {
             (IpcError::InvalidInput("x".into()), "invalidInput"),
             (IpcError::InternalError("x".into()), "internalError"),
             (IpcError::PendingFlush("x".into()), "pendingFlush"),
+            (IpcError::SyncConflict("x".into()), "syncConflict"),
         ];
         for (err, expected_kind) in cases {
             let value = serde_json::to_value(&err).expect("serialisation must succeed");
@@ -420,13 +427,13 @@ mod tests {
         assert_eq!(value["kind"], "alreadyExists");
     }
 
-    /// Verifies that `From<SyncError::Conflict>` emits cloudError and does not leak conflict
+    /// Verifies that `From<SyncError::Conflict>` emits syncConflict and does not leak conflict
     /// counter values into the IPC message.
     ///
     /// Note: `SyncError::Conflict` wraps a `SyncConflict` struct (not a plain string);
     /// the sentinel counter `987654321` must not appear in the sanitised message.
     #[test]
-    fn test_from_sync_error_conflict_emits_cloud_error() {
+    fn test_from_sync_error_conflict_emits_sync_conflict() {
         let err = IpcError::from(crate::storage::SyncError::Conflict(
             crate::storage::SyncConflict {
                 local_counter: 987_654_321,
@@ -436,7 +443,7 @@ mod tests {
             },
         ));
         let value = serde_json::to_value(&err).expect("serialisation must succeed");
-        assert_eq!(value["kind"], "cloudError");
+        assert_eq!(value["kind"], "syncConflict");
         let message = value["message"].as_str().expect("message must be a string");
         assert!(
             !message.contains("987654321"),

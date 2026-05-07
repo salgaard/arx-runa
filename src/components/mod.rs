@@ -11,6 +11,7 @@ mod input;
 mod modal;
 mod spinner;
 mod storage_selector;
+mod sync_conflict_dialog;
 mod toast;
 
 pub use button::Button;
@@ -21,4 +22,5 @@ pub use input::Input;
 pub use modal::Modal;
 pub use spinner::Spinner;
 pub use storage_selector::{StorageConfig, StorageProvider, StorageSelector};
+pub use sync_conflict_dialog::SyncConflictDialog;
 pub use toast::{ToastActions, ToastProvider, ToastType, inject_toast_styles, use_toast};

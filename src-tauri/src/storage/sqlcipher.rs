@@ -17,9 +17,9 @@ use crate::crypto::SqlcipherKey;
 use crate::storage::error::StorageError;
 use crate::storage::metadata_store::MetadataStore;
 use crate::storage::schema::{
-    apply_canonical_schema, apply_epoch_v2_migration, apply_sharing_v3_migration,
-    apply_sharing_v4_migration, seed_manifest_meta, validate_manifest_meta,
-    validate_schema_integrity, verify_sqlcipher_key,
+    apply_backup_v5_migration, apply_canonical_schema, apply_epoch_v2_migration,
+    apply_sharing_v3_migration, apply_sharing_v4_migration, seed_manifest_meta,
+    validate_manifest_meta, validate_schema_integrity, verify_sqlcipher_key,
 };
 use crate::storage::types::{
     ChunkRecord, EpochBlobRecord, EpochBufferEntry, Node, NodeId, NodeType, SyncChunkRecord,
@@ -72,6 +72,7 @@ impl SqlCipherMetadataStore {
             apply_epoch_v2_migration(&conn)?;
             apply_sharing_v3_migration(&conn)?;
             apply_sharing_v4_migration(&conn)?;
+            apply_backup_v5_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             Ok(conn)
@@ -101,6 +102,7 @@ impl SqlCipherMetadataStore {
             apply_epoch_v2_migration(&conn)?;
             apply_sharing_v3_migration(&conn)?;
             apply_sharing_v4_migration(&conn)?;
+            apply_backup_v5_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             validate_create_immutable_meta_matches(
@@ -508,6 +510,197 @@ impl SqlCipherMetadataStore {
 
             tx.commit().map_err(StorageError::from_rusqlite)?;
             Ok(())
+        })
+        .await
+    }
+
+    /// Records a failed backup blob upload, incrementing the retry count on conflict.
+    pub(crate) async fn record_backup_failure(
+        &self,
+        blob_name: &str,
+        destination_id: &str,
+    ) -> Result<(), StorageError> {
+        let blob_name = blob_name.to_owned();
+        let destination_id = destination_id.to_owned();
+        self.with_connection_blocking(move |conn| {
+            let now = unix_timestamp_now()?;
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            tx.execute(
+                "INSERT INTO backup_upload_failures (blob_name, destination_id, failed_at, retry_count)
+                 VALUES (?1, ?2, ?3, 0)
+                 ON CONFLICT(blob_name, destination_id)
+                 DO UPDATE SET failed_at = excluded.failed_at,
+                               retry_count = retry_count + 1",
+                params![blob_name, destination_id, now],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Removes a backup failure record after a successful retry upload.
+    pub(crate) async fn clear_backup_failure(
+        &self,
+        blob_name: &str,
+        destination_id: &str,
+    ) -> Result<(), StorageError> {
+        let blob_name = blob_name.to_owned();
+        let destination_id = destination_id.to_owned();
+        self.with_connection_blocking(move |conn| {
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            tx.execute(
+                "DELETE FROM backup_upload_failures WHERE blob_name = ?1 AND destination_id = ?2",
+                params![blob_name, destination_id],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Returns all blob names that previously failed to upload to the given destination.
+    pub(crate) async fn list_backup_failures(
+        &self,
+        destination_id: &str,
+    ) -> Result<Vec<String>, StorageError> {
+        let destination_id = destination_id.to_owned();
+        self.with_connection_blocking(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT blob_name FROM backup_upload_failures
+                     WHERE destination_id = ?1
+                     ORDER BY failed_at ASC, blob_name ASC",
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            let rows = stmt
+                .query_map(params![destination_id], |row| row.get::<_, String>(0))
+                .map_err(StorageError::from_rusqlite)?;
+            let mut names = Vec::new();
+            for row in rows {
+                names.push(row.map_err(StorageError::from_rusqlite)?);
+            }
+            Ok(names)
+        })
+        .await
+    }
+
+    /// Returns per-destination failure counts: `(destination_id, count)` pairs.
+    pub(crate) async fn get_backup_failure_counts(
+        &self,
+    ) -> Result<Vec<(String, u32)>, StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT destination_id, COUNT(*) as cnt
+                     FROM backup_upload_failures
+                     GROUP BY destination_id
+                     ORDER BY destination_id ASC",
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            let rows = stmt
+                .query_map([], |row| {
+                    let dest: String = row.get(0)?;
+                    let cnt: i64 = row.get(1)?;
+                    Ok((dest, cnt as u32))
+                })
+                .map_err(StorageError::from_rusqlite)?;
+            let mut result = Vec::new();
+            for row in rows {
+                result.push(row.map_err(StorageError::from_rusqlite)?);
+            }
+            Ok(result)
+        })
+        .await
+    }
+
+    /// Sets `snapshot_counter` to `target` when `target` is greater than the current value.
+    ///
+    /// Used by `pull_and_reconcile` to advance the local counter to match the cloud
+    /// after merging manifests from another device.
+    pub(crate) async fn advance_snapshot_counter_to(
+        &self,
+        target: u64,
+    ) -> Result<(), StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            let current_raw = tx
+                .query_row(
+                    "SELECT value FROM manifest_meta WHERE key = 'snapshot_counter'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            let current: u64 = current_raw
+                .parse()
+                .map_err(|_| StorageError::Database("invalid snapshot_counter value".to_owned()))?;
+            if target > current {
+                tx.execute(
+                    "UPDATE manifest_meta SET value = ?1 WHERE key = 'snapshot_counter'",
+                    params![target.to_string()],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            }
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Merges nodes and chunks from a probe manifest database into this store.
+    ///
+    /// Uses SQLite ATTACH to copy rows with INSERT OR IGNORE semantics, so
+    /// existing local rows are preserved. Returns the cloud `snapshot_counter`
+    /// read from the probe database.
+    pub(crate) async fn merge_from_probe_db(
+        &self,
+        probe_path: &std::path::Path,
+        key_bytes: [u8; 32],
+    ) -> Result<u64, StorageError> {
+        let probe_path_str = probe_path
+            .to_str()
+            .ok_or_else(|| StorageError::Database("probe path is not valid UTF-8".to_owned()))?
+            .replace('\'', "''");
+        let hex_key: String = key_bytes.iter().map(|b| format!("{b:02x}")).collect();
+
+        self.with_connection_blocking(move |conn| {
+            let attach_sql =
+                format!("ATTACH DATABASE '{probe_path_str}' AS probe KEY \"x'{hex_key}'\";",);
+            conn.execute_batch(&attach_sql)
+                .map_err(StorageError::from_rusqlite)?;
+
+            let merge_result = (|| -> Result<u64, StorageError> {
+                conn.execute_batch(
+                    "BEGIN IMMEDIATE;
+                     INSERT OR IGNORE INTO nodes SELECT * FROM probe.nodes;
+                     INSERT OR IGNORE INTO chunks SELECT * FROM probe.chunks;
+                     INSERT OR IGNORE INTO epoch_blobs SELECT * FROM probe.epoch_blobs;
+                     COMMIT;",
+                )
+                .map_err(StorageError::from_rusqlite)?;
+
+                let cloud_counter: u64 = conn
+                    .query_row(
+                        "SELECT value FROM probe.manifest_meta WHERE key = 'snapshot_counter'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .map_err(StorageError::from_rusqlite)
+                    .and_then(|v| {
+                        v.parse::<u64>().map_err(|_| {
+                            StorageError::Database(
+                                "invalid snapshot_counter in probe DB".to_owned(),
+                            )
+                        })
+                    })?;
+
+                Ok(cloud_counter)
+            })();
+
+            let _ = conn.execute_batch("DETACH DATABASE probe;");
+            merge_result
         })
         .await
     }

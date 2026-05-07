@@ -6,9 +6,10 @@ use std::sync::Arc;
 use crate::components::DestinationSelector;
 use crate::invoke::invoke_command;
 use crate::ipc_types::{
-    AddDestinationRequest, DeleteDestinationRequest, DestinationEntry, DestinationSessionConfig,
-    SetPrimaryDestinationRequest,
+    AddDestinationRequest, DeleteDestinationRequest, DestinationEntry, DestinationHealth,
+    DestinationSessionConfig, SetPrimaryDestinationRequest,
 };
+use crate::state::use_sync;
 
 // ─── DestinationItem ──────────────────────────────────────────────────────────
 
@@ -20,6 +21,7 @@ use crate::ipc_types::{
 fn DestinationItem(
     entry: DestinationEntry,
     on_refresh: Arc<dyn Fn() + Send + Sync>,
+    #[prop(default = 0u32)] pending_failures: u32,
 ) -> impl IntoView {
     let is_primary = entry.is_primary;
     let backup_mode_label = match entry.backup_mode.as_deref() {
@@ -41,6 +43,20 @@ fn DestinationItem(
                         view! {
                             <span class="px-2 py-0.5 text-xs font-medium bg-rune text-bone rounded">
                                 "Primary"
+                            </span>
+                        }
+                        .into_any()
+                    } else {
+                        ().into_any()
+                    }}
+                    {if pending_failures > 0 {
+                        view! {
+                            <span class="px-2 py-0.5 text-xs font-medium bg-danger/20 text-danger rounded">
+                                {format!(
+                                    "{} backup failure{}",
+                                    pending_failures,
+                                    if pending_failures == 1 { "" } else { "s" },
+                                )}
                             </span>
                         }
                         .into_any()
@@ -316,12 +332,19 @@ fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
 #[component]
 pub fn DestinationList() -> impl IntoView {
     let refresh_count = RwSignal::new(0u32);
+    let sync_state = use_sync();
 
     // LocalResource re-runs automatically when refresh_count changes because
     // it is accessed inside the synchronous closure that LocalResource tracks.
     let destinations = LocalResource::new(move || {
         let _trigger = refresh_count.get();
         async move { invoke_command::<(), Vec<DestinationEntry>>("list_destinations", &()).await }
+    });
+
+    let health_data = LocalResource::new(move || {
+        let _trigger = refresh_count.get();
+        let _sync_at = sync_state.with(|s| s.last_synced_at.clone());
+        async move { invoke_command::<(), Vec<DestinationHealth>>("get_backup_health", &()).await }
     });
 
     let on_refresh: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
@@ -345,6 +368,10 @@ pub fn DestinationList() -> impl IntoView {
                     view! { <p class="text-text-secondary">"Loading destinations…"</p> }
                 }>
                     {move || {
+                        let health: Vec<DestinationHealth> = health_data
+                            .get()
+                            .and_then(|r| r.ok())
+                            .unwrap_or_default();
                         destinations.get().map(|result| match result {
                             Ok(entries) if !entries.is_empty() => {
                                 let on_refresh_ref = on_refresh.clone();
@@ -353,10 +380,16 @@ pub fn DestinationList() -> impl IntoView {
                                         {entries
                                             .into_iter()
                                             .map(|entry| {
+                                                let failures = health
+                                                    .iter()
+                                                    .find(|h| h.destination_id == entry.destination_id)
+                                                    .map(|h| h.pending_failure_blobs)
+                                                    .unwrap_or(0);
                                                 view! {
                                                     <DestinationItem
                                                         entry
                                                         on_refresh=on_refresh_ref.clone()
+                                                        pending_failures=failures
                                                     />
                                                 }
                                             })

@@ -151,7 +151,7 @@ pub(crate) fn apply_epoch_v2_migration(conn: &Connection) -> Result<(), StorageE
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "2" || version == "3" || version == "4" {
+    if version == "2" || version == "3" || version == "4" || version == "5" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -236,7 +236,7 @@ pub(crate) fn apply_sharing_v3_migration(conn: &Connection) -> Result<(), Storag
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "3" || version == "4" {
+    if version == "3" || version == "4" || version == "5" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -277,7 +277,7 @@ pub(crate) fn apply_sharing_v4_migration(conn: &Connection) -> Result<(), Storag
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "4" {
+    if version == "4" || version == "5" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -287,6 +287,56 @@ pub(crate) fn apply_sharing_v4_migration(conn: &Connection) -> Result<(), Storag
         "
         ALTER TABLE shares ADD COLUMN import_receipt_received_at INTEGER;
         UPDATE manifest_meta SET value = '4' WHERE key = 'schema_version';
+        ",
+    )
+    .map_err(StorageError::from_rusqlite)?;
+
+    conn.execute_batch("COMMIT")
+        .map_err(StorageError::from_rusqlite)?;
+
+    Ok(())
+}
+
+/// Adds the `backup_upload_failures` tracking table introduced in Phase 7.
+///
+/// Idempotent: if `schema_version` is already `'5'`, commits immediately and returns.
+/// Must be called after `apply_sharing_v4_migration` on any vault opened from disk.
+///
+/// Migration steps (single `BEGIN IMMEDIATE` transaction):
+/// 1. Create `backup_upload_failures` table.
+/// 2. Bump `schema_version` to `'5'`.
+pub(crate) fn apply_backup_v5_migration(conn: &Connection) -> Result<(), StorageError> {
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(StorageError::from_rusqlite)?;
+
+    let version = conn
+        .query_row(
+            "SELECT value FROM manifest_meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(StorageError::from_rusqlite)?
+        .ok_or_else(|| {
+            StorageError::Database("missing manifest_meta key: schema_version".to_owned())
+        })?;
+
+    if version == "5" {
+        conn.execute_batch("COMMIT")
+            .map_err(StorageError::from_rusqlite)?;
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS backup_upload_failures (
+            blob_name       TEXT NOT NULL,
+            destination_id  TEXT NOT NULL,
+            failed_at       INTEGER NOT NULL,
+            retry_count     INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (blob_name, destination_id)
+        );
+        UPDATE manifest_meta SET value = '5' WHERE key = 'schema_version';
         ",
     )
     .map_err(StorageError::from_rusqlite)?;
@@ -386,9 +436,10 @@ pub(crate) fn validate_manifest_meta(conn: &Connection) -> Result<(), StorageErr
         && schema_version != "2"
         && schema_version != "3"
         && schema_version != "4"
+        && schema_version != "5"
     {
         return Err(StorageError::Database(
-            "invalid schema_version: expected 1, 2, 3, or 4".to_owned(),
+            "invalid schema_version: expected 1, 2, 3, 4, or 5".to_owned(),
         ));
     }
 

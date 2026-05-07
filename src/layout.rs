@@ -5,6 +5,7 @@ use leptos::prelude::*;
 use leptos_router::components::A;
 use leptos_router::hooks::use_location;
 
+use crate::components::SyncConflictDialog;
 use crate::invoke::invoke_command;
 use crate::state::{
     use_session, use_session_actions, use_sync, use_sync_actions, use_vault_actions,
@@ -162,6 +163,7 @@ pub fn AppShell(children: Children) -> impl IntoView {
             <Header />
             <main class="flex-1 p-6 overflow-auto">{children()}</main>
             <SessionStatusBar />
+            <SyncConflictDialog />
         </div>
     }
 }

@@ -4,9 +4,9 @@ use gloo_timers::callback::Interval;
 use leptos::prelude::*;
 use serde::Serialize;
 
-use crate::invoke::invoke_command_with_channel;
+use crate::invoke::{invoke_command, invoke_command_with_channel};
 use crate::ipc_channel::IpcChannel;
-use crate::ipc_types::{SyncProgressUpdate, SyncResult};
+use crate::ipc_types::{DestinationHealth, ReconcileResult, SyncProgressUpdate, SyncResult};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +27,8 @@ pub struct SyncState {
     pub conflict: Option<String>,
     /// Last user-displayable sync error, or `None` when clean.
     pub error: Option<String>,
+    /// Per-destination backup failure counts; refreshed after each `sync_backup`.
+    pub backup_health: Vec<DestinationHealth>,
 }
 
 impl SyncState {
@@ -37,6 +39,7 @@ impl SyncState {
         self.pending_changes = 0;
         self.conflict = None;
         self.error = None;
+        self.backup_health = Vec::new();
     }
 }
 
@@ -77,6 +80,12 @@ impl SyncActions {
                 });
             }
 
+            if let Ok(health) =
+                invoke_command::<(), Vec<DestinationHealth>>("get_backup_health", &()).await
+            {
+                self.set_state.update(|s| s.backup_health = health);
+            }
+
             let channel = IpcChannel::<SyncProgressUpdate>::new();
             match invoke_command_with_channel::<(), SyncResult>(
                 "sync_to_cloud",
@@ -96,9 +105,52 @@ impl SyncActions {
                     });
                 }
                 Err(e) => {
+                    if e.kind == "syncConflict" {
+                        self.set_state.update(|s| {
+                            s.syncing = false;
+                            s.conflict = Some(
+                                "Another device has synced. Pull changes and continue?".into(),
+                            );
+                        });
+                    } else {
+                        self.set_state.update(|s| {
+                            s.syncing = false;
+                            s.error = Some(e.to_string());
+                        });
+                    }
+                }
+            }
+        });
+    }
+
+    /// Dismisses the active sync conflict without taking action.
+    pub fn dismiss_conflict(self) {
+        self.set_state.update(|s| s.conflict = None);
+    }
+
+    /// Calls `pull_and_reconcile` then retries `sync()`.
+    pub fn pull_and_reconcile_then_sync(self) {
+        self.set_state.update(|s| {
+            s.conflict = None;
+            s.syncing = true;
+        });
+        leptos::task::spawn_local(async move {
+            let channel = IpcChannel::<SyncProgressUpdate>::new();
+            match invoke_command_with_channel::<(), ReconcileResult>(
+                "pull_and_reconcile",
+                &(),
+                "progress",
+                channel.inner(),
+            )
+            .await
+            {
+                Ok(_) => {
+                    self.sync();
+                }
+                Err(e) => {
                     self.set_state.update(|s| {
                         s.syncing = false;
-                        s.error = Some(e.to_string());
+                        s.error = Some(format!("Pull failed: {e}"));
                     });
                 }
             }

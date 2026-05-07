@@ -30,9 +30,10 @@ pub use file_commands::{
     delete_file, download_file, get_file_content, list_directory, list_remote, upload_file,
 };
 
-// Sync commands (5)
+// Sync commands (7)
 pub use sync_commands::{
-    get_sync_status, migrate_vault, recover_from_cloud, sync_backup, sync_to_cloud,
+    get_backup_health, get_sync_status, migrate_vault, pull_and_reconcile, recover_from_cloud,
+    sync_backup, sync_to_cloud,
 };
 
 // Destination commands (3)

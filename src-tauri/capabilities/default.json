@@ -28,6 +28,8 @@
     "allow-get-sync-status",
     "allow-migrate-vault",
     "allow-sync-backup",
+    "allow-pull-and-reconcile",
+    "allow-get-backup-health",
     "allow-add-destination",
     "allow-list-destinations",
     "allow-delete-destination",
