@@ -67,10 +67,11 @@ pub fn run() {
             ui::sync_commands::get_sync_status,
             ui::sync_commands::migrate_vault,
             ui::sync_commands::sync_backup,
-            // Destinations (3)
+            // Destinations (4)
             ui::destination_commands::add_destination,
             ui::destination_commands::list_destinations,
             ui::destination_commands::delete_destination,
+            ui::destination_commands::set_primary_destination_cmd,
             // Sharing (9)
             ui::sharing_commands::export_public_key,
             ui::sharing_commands::get_own_public_key_b64,

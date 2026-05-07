@@ -372,8 +372,16 @@ pub fn DestinationSelector(
 
                     // B2: account ID and application key
                     <Show when=move || cloud_provider.get() == CloudProvider::B2>
+                        <div class="p-3 bg-surface-overlay border border-border-default rounded-lg">
+                            <p class="text-xs text-text-secondary">
+                                "Enter your Backblaze B2 master key or application key credentials. "
+                                "Find these in the B2 Console under "
+                                <span class="text-rune">"Account → App Keys"</span>
+                                "."
+                            </p>
+                        </div>
                         <div class="space-y-1">
-                            <label class="text-xs text-text-secondary">"Account ID"</label>
+                            <label class="text-xs text-text-secondary">"Key ID"</label>
                             <input
                                 type="text"
                                 placeholder="123456789abcdef"

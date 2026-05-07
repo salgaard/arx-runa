@@ -11,9 +11,12 @@ use tauri::ipc::Channel;
 
 use crate::crypto::{ManifestKey, SqlcipherKey};
 use crate::storage::cloud::destination_session::{
-    DestinationSession, destroy_session_rclone_conf, list_destination_sessions,
+    BackupSyncMode, DestinationSession, DestinationType, destroy_session_rclone_conf,
+    list_destination_sessions,
 };
+use crate::storage::cloud::manifest_backup::upload_manifest_backup;
 use crate::storage::cloud::vault_header::VaultHeader;
+use crate::storage::cloud::vault_header_io::VAULT_HEADER_BLOB_NAME;
 use crate::storage::cloud::{
     CloudEndpoint, CloudTransport, DestinationSessionPublic, RcloneTransport, SyncConfig,
     pull_vault, push_vault,
@@ -31,7 +34,7 @@ use crate::ui::vault_paths::{resolve_vault_by_id, vault_staging_dir};
 // ---------------------------------------------------------------------------
 
 /// Returns the bundled rclone binary path, falling back to `rclone` on PATH.
-fn rclone_binary_path(handle: &tauri::AppHandle) -> PathBuf {
+pub(crate) fn rclone_binary_path(handle: &tauri::AppHandle) -> PathBuf {
     use tauri::Manager;
     if let Ok(rd) = handle.path().resource_dir() {
         let name = if cfg!(target_os = "windows") {
@@ -114,7 +117,7 @@ async fn extract_manifest_key(
 /// owner-only permissions, then constructs a [`RcloneTransport`] for that
 /// destination.  Caller is responsible for calling
 /// [`destroy_session_rclone_conf`] to wipe the file after use.
-async fn build_destination_transport(
+pub(crate) async fn build_destination_transport(
     binary_path: PathBuf,
     config_path: &std::path::Path,
     dest: &DestinationSession,
@@ -126,7 +129,13 @@ async fn build_destination_transport(
             .map_err(|e| IpcError::InternalError(format!("staging dir creation failed: {e}")))?;
     }
 
-    write_owner_only(config_path, dest.rclone_config_blob.as_bytes())
+    let config_blob = match dest.destination_type {
+        DestinationType::LocalPath | DestinationType::ExternalDrive => {
+            format!("[{}]\ntype = local\n", dest.rclone_remote_name)
+        }
+        DestinationType::Cloud => dest.rclone_config_blob.clone(),
+    };
+    write_owner_only(config_path, config_blob.as_bytes())
         .await
         .map_err(IpcError::from)?;
 
@@ -479,8 +488,21 @@ pub async fn sync_backup(
         .await
         .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
 
+    let (_, db_path, header_path) = resolve_vault_by_id(&vault_id)?;
+
     let staging_dir = vault_staging_dir(&vault_id);
     let config_path = staging_dir.join(".rclone-backup.conf");
+
+    let sqlcipher_key = extract_sqlcipher_key(&state.session_manager).await?;
+    let manifest_key_bytes: [u8; 32] = state
+        .session_manager
+        .with_manifest_key(|k| {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(k);
+            arr
+        })
+        .await
+        .map_err(IpcError::from)?;
 
     let db_guard = state.database.read().await;
     let db = db_guard
@@ -528,23 +550,20 @@ pub async fn sync_backup(
         });
     }
 
-    // Collect blobs that are present in local staging.
+    // All blob names currently referenced in the DB — used by mirror deletion to
+    // distinguish orphaned remote blobs from blobs that are valid but no longer
+    // in local staging (because they were already pushed to the primary).
     let chunks = db.list_sync_chunks().await.map_err(IpcError::from)?;
+    let all_blob_names: std::collections::HashSet<String> =
+        chunks.iter().map(|c| c.blob_name.clone()).collect();
+
+    // Collect only the subset that still exists in local staging (to upload).
     let mut staged_blobs: Vec<String> = Vec::new();
     for chunk in &chunks {
         let local_path = staging_dir.join(format!("{}.blob", chunk.blob_name));
         if tokio::fs::try_exists(&local_path).await.unwrap_or(false) {
             staged_blobs.push(chunk.blob_name.clone());
         }
-    }
-
-    if staged_blobs.is_empty() {
-        return Ok(SyncResult {
-            files_uploaded: 0,
-            files_downloaded: 0,
-            files_deleted: 0,
-            conflicts: vec![],
-        });
     }
 
     let blobs_total = staged_blobs.len() as u32;
@@ -556,6 +575,7 @@ pub async fn sync_backup(
     let binary_path = rclone_binary_path(app_handle);
 
     let mut total_uploaded: u32 = 0;
+    let mut total_deleted: u32 = 0;
 
     for dest in &backup_dests {
         let transport =
@@ -578,7 +598,7 @@ pub async fn sync_backup(
                     destination_id = %dest.destination_id,
                     blob_name = %blob_name,
                     error = %e,
-                    "backup upload failed; continuing with remaining blobs"
+                    "backup blob upload failed; continuing with remaining blobs"
                 );
             } else {
                 dest_uploaded += 1;
@@ -594,6 +614,68 @@ pub async fn sync_backup(
 
         total_uploaded += dest_uploaded;
 
+        // Upload encrypted manifest backup so the destination is independently recoverable.
+        if let Err(e) = upload_manifest_backup(
+            &db_path,
+            &sqlcipher_key,
+            &manifest_key_bytes,
+            &transport,
+            &staging_dir,
+        )
+        .await
+        {
+            tracing::warn!(
+                destination_id = %dest.destination_id,
+                error = %e,
+                "backup manifest upload failed"
+            );
+        }
+
+        // Upload vault header (plaintext JSON) for recovery bootstrapping.
+        if let Err(e) = transport
+            .upload_blob(&header_path, VAULT_HEADER_BLOB_NAME)
+            .await
+        {
+            tracing::warn!(
+                destination_id = %dest.destination_id,
+                error = %e,
+                "backup vault header upload failed"
+            );
+        }
+
+        // Mirror mode: delete remote blobs that are no longer present in local staging.
+        if dest.backup_mode == Some(BackupSyncMode::Mirror) {
+            match transport.list_blobs("vault/").await {
+                Ok(remote_blobs) => {
+                    for remote_path in &remote_blobs {
+                        let blob_name = remote_path
+                            .strip_prefix("vault/")
+                            .and_then(|s| s.strip_suffix(".blob"))
+                            .unwrap_or("");
+                        if !blob_name.is_empty() && !all_blob_names.contains(blob_name) {
+                            if let Err(e) = transport.delete_blob(remote_path).await {
+                                tracing::warn!(
+                                    destination_id = %dest.destination_id,
+                                    remote_path = %remote_path,
+                                    error = %e,
+                                    "mirror delete failed for orphan blob"
+                                );
+                            } else {
+                                total_deleted += 1;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        destination_id = %dest.destination_id,
+                        error = %e,
+                        "mirror list_blobs failed; skipping orphan deletion for this destination"
+                    );
+                }
+            }
+        }
+
         // Wipe config for this destination before moving to the next.
         let _ = destroy_session_rclone_conf(&config_path).await;
     }
@@ -601,7 +683,7 @@ pub async fn sync_backup(
     Ok(SyncResult {
         files_uploaded: total_uploaded,
         files_downloaded: 0,
-        files_deleted: 0,
+        files_deleted: total_deleted,
         conflicts: vec![],
     })
 }

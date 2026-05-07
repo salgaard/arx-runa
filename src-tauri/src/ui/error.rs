@@ -166,6 +166,9 @@ impl From<crate::storage::CloudTransportError> for IpcError {
         match error {
             C::NotFound => IpcError::NotFound("Cloud blob not found".into()),
             C::AuthenticationFailed => IpcError::CloudError("Cloud authentication failed".into()),
+            C::BucketNameTaken => {
+                IpcError::AlreadyExists("Cloud bucket name is already in use".into())
+            }
             C::Timeout | C::IoError(_) | C::RcloneProcessFailed { .. } | C::Other(_) => {
                 IpcError::CloudError("Cloud operation failed".into())
             }

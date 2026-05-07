@@ -31,9 +31,10 @@ pub use requests::{
     AddContactRequest, AddDestinationRequest, AuthenticateRequest, ChangePasswordRequest,
     ComposeEmailWithAttachmentRequest, ConfigureCloudRequest, CreateVaultRequest,
     DeleteDestinationRequest, DeleteFileRequest, DeleteVaultRequest, DownloadFileRequest,
-    DownloadReceivedShareRequest, ExportPublicKeyRequest, GetFileContentRequest, ImportShareRequest,
-    ListDirectoryRequest, RecoverVaultFromCloudRequest, RevealInExplorerRequest,
-    RevokeShareRequest, RotateKeyFileRequest, ShareFileRequest, UploadFileRequest,
+    DownloadReceivedShareRequest, ExportPublicKeyRequest, GetFileContentRequest,
+    ImportShareRequest, ListDirectoryRequest, RecoverVaultFromCloudRequest,
+    RevealInExplorerRequest, RevokeShareRequest, RotateKeyFileRequest,
+    SetPrimaryDestinationRequest, ShareFileRequest, UploadFileRequest,
 };
 pub use session_status::SessionStatus;
 pub use share_entry::ShareEntry;

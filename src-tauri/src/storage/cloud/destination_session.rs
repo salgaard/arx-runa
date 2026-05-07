@@ -175,6 +175,18 @@ pub async fn delete_destination_session(
         .await
 }
 
+/// Atomically promotes the given destination to primary, demoting all others.
+///
+/// Returns `StorageError::NotFound` if `destination_id` does not exist.
+pub async fn set_primary_destination(
+    store: &SqlCipherMetadataStore,
+    destination_id: &str,
+) -> Result<(), StorageError> {
+    store
+        .swap_primary_destination(destination_id.to_owned())
+        .await
+}
+
 /// Builds a session-lived `rclone.conf` from all stored destination sessions.
 #[cfg_attr(not(test), allow(dead_code))]
 pub async fn build_session_rclone_conf(
@@ -189,17 +201,20 @@ pub async fn build_session_rclone_conf(
         .map_err(map_storage_error)?;
     let mut concatenated = Zeroizing::new(String::new());
     for session in sessions.iter() {
-        if session.destination_type != DestinationType::Cloud {
-            continue;
-        }
         if !concatenated.is_empty() && !concatenated.ends_with('\n') {
             concatenated.push('\n');
         }
-        let validated_blob =
-            validate_single_remote_stanza(&session.rclone_config_blob, &session.rclone_remote_name)
-                .map_err(map_storage_error)?;
-        let validated_blob = Zeroizing::new(validated_blob);
-        concatenated.push_str(&validated_blob);
+        let stanza = Zeroizing::new(match session.destination_type {
+            DestinationType::Cloud => validate_single_remote_stanza(
+                &session.rclone_config_blob,
+                &session.rclone_remote_name,
+            )
+            .map_err(map_storage_error)?,
+            DestinationType::LocalPath | DestinationType::ExternalDrive => {
+                format!("[{}]\ntype = local\n", session.rclone_remote_name)
+            }
+        });
+        concatenated.push_str(&stanza);
         if !concatenated.ends_with('\n') {
             concatenated.push('\n');
         }

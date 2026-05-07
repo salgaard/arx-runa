@@ -468,7 +468,7 @@ pub async fn push_vault(
 
     if let Some(cloud_state) =
         read_cloud_snapshot_state(cloud_transport, staging_dir, manifest_key, sqlcipher_key).await?
-        && cloud_state.snapshot_counter != local_counter
+        && cloud_state.snapshot_counter > local_counter
     {
         return Err(SyncError::Conflict(SyncConflict {
             local_counter,

@@ -9,6 +9,7 @@ fn main() {
             "configure_cloud",
             "create_vault",
             "delete_destination",
+            "set_primary_destination_cmd",
             "delete_file",
             "delete_vault",
             "download_file",

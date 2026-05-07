@@ -8,7 +8,7 @@ use std::time::Duration;
 use super::destination_session::DestinationSessionPublic;
 use super::rclone_subprocess::run_rclone;
 use super::remote_path::{compose_remote_root, validate_remote_path, validate_remote_prefix};
-use super::{CloudEndpoint, CloudTransport, CloudTransportError, SyncConfig};
+use super::{CloudEndpoint, CloudTransport, CloudTransportError, DestinationType, SyncConfig};
 use async_trait::async_trait;
 use serde::Deserialize;
 
@@ -40,6 +40,9 @@ impl RcloneRunner for RealRclone {
 pub struct RcloneTransport {
     session_config_path: PathBuf,
     remote_root: String,
+    /// The `remote_name:bucket` path used for container-level operations (e.g., mkdir).
+    /// Does not include the path prefix. Empty for share-download transports.
+    bucket_root: String,
     sync_config: SyncConfig,
     runner: Arc<dyn RcloneRunner>,
 }
@@ -57,6 +60,7 @@ impl RcloneTransport {
         Ok(Self {
             session_config_path,
             remote_root,
+            bucket_root: format!("{}:{}", destination.rclone_remote_name, destination.bucket),
             sync_config,
             runner: Arc::new(RealRclone { binary_path }),
         })
@@ -73,6 +77,7 @@ impl RcloneTransport {
         Self {
             session_config_path,
             remote_root,
+            bucket_root: String::new(),
             sync_config: SyncConfig::default(),
             runner: Arc::new(RealRclone { binary_path }),
         }
@@ -88,6 +93,7 @@ impl RcloneTransport {
         Ok(Self {
             session_config_path,
             remote_root: build_remote_root(destination)?,
+            bucket_root: format!("{}:{}", destination.rclone_remote_name, destination.bucket),
             sync_config,
             runner,
         })
@@ -215,10 +221,27 @@ impl CloudTransport for RcloneTransport {
     }
 
     async fn cleanup_session_artifacts(&self) -> Result<(), CloudTransportError> {
-        // The session-lived rclone.conf file is managed by SessionManager,
-        // which calls destroy_session_rclone_conf() on session lock.
-        // This is a no-op here since the path is not owned by RcloneTransport.
         Ok(())
+    }
+
+    async fn ensure_container(&self) -> Result<(), CloudTransportError> {
+        let mut args = self.base_args();
+        args.push(OsString::from("mkdir"));
+        args.push(OsString::from(&self.bucket_root));
+        match self.runner.run(args, Duration::from_secs(30)).await {
+            Ok(_) => Ok(()),
+            Err(CloudTransportError::RcloneProcessFailed {
+                ref stderr_sanitised,
+                ..
+            }) if stderr_sanitised.contains("already_exists")
+                || stderr_sanitised
+                    .to_ascii_lowercase()
+                    .contains("bucket name is already in use") =>
+            {
+                Err(CloudTransportError::BucketNameTaken)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Generates scoped B2 credentials for a share recipient, if the rclone config
@@ -239,8 +262,6 @@ impl CloudTransport for RcloneTransport {
             return Ok(None);
         };
 
-        // Standard rclone B2 remotes do not embed a bucket in the config stanza;
-        // the bucket is the first path component of the remote root ("remote:bucket/prefix").
         let bucket_name = self
             .remote_root
             .split_once(':')
@@ -307,11 +328,18 @@ impl CloudTransport for RcloneTransport {
 fn build_remote_root(
     destination: &DestinationSessionPublic,
 ) -> Result<String, CloudTransportError> {
-    compose_remote_root(
-        &destination.rclone_remote_name,
-        &destination.bucket,
-        &destination.path_prefix,
-    )
+    match destination.destination_type {
+        DestinationType::LocalPath | DestinationType::ExternalDrive => {
+            // Local paths are used verbatim; rclone accepts forward slashes on Windows.
+            let path = destination.path_prefix.replace('\\', "/");
+            Ok(format!("{}:{}", destination.rclone_remote_name, path))
+        }
+        _ => compose_remote_root(
+            &destination.rclone_remote_name,
+            &destination.bucket,
+            &destination.path_prefix,
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -465,5 +493,22 @@ mod tests {
             StubRclone::from(vec![]),
         );
         assert!(matches!(result, Err(CloudTransportError::Other(_))));
+    }
+
+    #[tokio::test]
+    async fn test_ensure_container_bucket_name_taken_returns_bucket_name_taken_error() {
+        let transport = transport_with(vec![Err(CloudTransportError::RcloneProcessFailed {
+            exit_code: 1,
+            stderr_sanitised: "b2 bucket already_exists".to_string(),
+        })]);
+        let result = transport.ensure_container().await;
+        assert!(matches!(result, Err(CloudTransportError::BucketNameTaken)));
+    }
+
+    #[tokio::test]
+    async fn test_ensure_container_success_returns_ok() {
+        let transport = transport_with(vec![Ok(String::new())]);
+        let result = transport.ensure_container().await;
+        assert!(result.is_ok());
     }
 }

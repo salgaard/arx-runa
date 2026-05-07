@@ -390,6 +390,39 @@ impl SqlCipherMetadataStore {
         .await
     }
 
+    /// Atomically promotes `new_primary_id` to primary, demoting all others.
+    ///
+    /// Returns `StorageError::NotFound` if `new_primary_id` does not exist.
+    /// Intentionally SQLCipher-specific; this method is not exposed on
+    /// [`MetadataStore`].
+    pub(crate) async fn swap_primary_destination(
+        &self,
+        new_primary_id: String,
+    ) -> Result<(), StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            tx.execute(
+                "UPDATE destination_sessions SET backup_mode = 'mirror' WHERE is_primary = 1 AND backup_mode IS NULL",
+                [],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+            tx.execute("UPDATE destination_sessions SET is_primary = 0", [])
+                .map_err(StorageError::from_rusqlite)?;
+            let rows_changed = tx
+                .execute(
+                    "UPDATE destination_sessions SET is_primary = 1 WHERE destination_id = ?1",
+                    params![new_primary_id],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            if rows_changed == 0 {
+                return Err(StorageError::NotFound);
+            }
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Deletes `manifest_meta.last_synced_at`.
     ///
     /// Intentionally SQLCipher-specific; this method is not exposed on

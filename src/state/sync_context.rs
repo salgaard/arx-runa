@@ -2,10 +2,17 @@
 
 use gloo_timers::callback::Interval;
 use leptos::prelude::*;
+use serde::Serialize;
 
 use crate::invoke::invoke_command_with_channel;
 use crate::ipc_channel::IpcChannel;
 use crate::ipc_types::{SyncProgressUpdate, SyncResult};
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncBackupPayload {
+    destination_id: Option<String>,
+}
 
 /// Frontend-side sync status. Distinct from the wire DTO `ipc_types::SyncStatus`.
 #[derive(Clone, Debug, Default)]
@@ -45,12 +52,31 @@ impl SyncActions {
         self.set_state.update(|s| s.clear());
     }
 
-    /// Calls `sync_to_cloud` and updates `SyncState` on completion.
-    /// Updates `last_synced_at` on success, sets `error` on failure.
+    /// Calls `sync_backup` then `sync_to_cloud`, updating `SyncState` on completion.
+    ///
+    /// Backup destinations are pushed first while staged blobs still exist on
+    /// disk; `sync_to_cloud` removes staging files after uploading to the
+    /// primary, so reversing the order would leave mirrors empty.
     pub fn sync(self) {
         self.set_state.update(|s| s.syncing = true);
 
         leptos::task::spawn_local(async move {
+            let backup_channel = IpcChannel::<SyncProgressUpdate>::new();
+            if let Err(e) = invoke_command_with_channel::<SyncBackupPayload, SyncResult>(
+                "sync_backup",
+                &SyncBackupPayload {
+                    destination_id: None,
+                },
+                "progress",
+                backup_channel.inner(),
+            )
+            .await
+            {
+                self.set_state.update(|s| {
+                    s.error = Some(format!("Backup sync failed: {e}"));
+                });
+            }
+
             let channel = IpcChannel::<SyncProgressUpdate>::new();
             match invoke_command_with_channel::<(), SyncResult>(
                 "sync_to_cloud",
@@ -63,11 +89,10 @@ impl SyncActions {
                 Ok(_result) => {
                     let now = js_sys::Date::new_0();
                     let iso_string = now.to_iso_string().as_string().unwrap_or_default();
-
                     self.set_state.update(|s| {
-                        s.syncing = false;
                         s.last_synced_at = Some(iso_string);
                         s.error = None;
+                        s.syncing = false;
                     });
                 }
                 Err(e) => {

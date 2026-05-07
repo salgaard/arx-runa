@@ -112,6 +112,14 @@ pub struct DeleteDestinationRequest {
     pub destination_id: String,
 }
 
+/// Argument payload for the `set_primary_destination_cmd` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetPrimaryDestinationRequest {
+    /// Unique identifier of the destination to promote to primary.
+    pub destination_id: String,
+}
+
 /// Argument payload for the `change_password` Tauri command.
 #[derive(Debug, Clone, Serialize, Zeroize, ZeroizeOnDrop)]
 #[serde(rename_all = "camelCase")]

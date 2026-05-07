@@ -31,6 +31,7 @@
     "allow-add-destination",
     "allow-list-destinations",
     "allow-delete-destination",
+    "allow-set-primary-destination-cmd",
     "allow-export-public-key",
     "allow-get-own-public-key-b64",
     "allow-add-contact",

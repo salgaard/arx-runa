@@ -3,13 +3,18 @@
 use tauri::State;
 use uuid::Uuid;
 
+use std::sync::Arc;
+
 use crate::storage::cloud::destination_session::{
     BackupSyncMode, DestinationSession, DestinationType, delete_destination_session,
-    insert_destination_session, list_destination_sessions,
+    get_primary_destination, insert_destination_session, list_destination_sessions,
+    set_primary_destination,
 };
+use crate::ui::auth_commands::rclone_conf_path;
 use crate::ui::commands_common::require_active_session;
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
+use crate::ui::sync_commands::{build_destination_transport, rclone_binary_path};
 use crate::ui::types::{DestinationEntry, DestinationSessionConfig};
 
 /// Add a new destination session (primary or backup) to the vault.
@@ -52,12 +57,19 @@ pub async fn add_destination(
     // Derive a collision-resistant rclone remote name from the UUID prefix.
     let rclone_remote_name = format!("arx_{}", &destination_id[..8]);
 
+    let rclone_config_blob = match destination_type {
+        DestinationType::LocalPath | DestinationType::ExternalDrive => {
+            format!("[{}]\ntype = local\n", rclone_remote_name)
+        }
+        DestinationType::Cloud => config.rclone_config_blob.clone(),
+    };
+
     let session = DestinationSession {
         destination_id: destination_id.clone(),
         label: config.label.clone(),
         destination_type,
         rclone_remote_name,
-        rclone_config_blob: config.rclone_config_blob.clone(),
+        rclone_config_blob,
         bucket: config.bucket.clone(),
         path_prefix: config.path_prefix.clone(),
         is_primary: config.is_primary,
@@ -153,9 +165,66 @@ pub async fn delete_destination(
         .as_ref()
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
 
+    let primary = get_primary_destination(db).await.map_err(IpcError::from)?;
+    if primary.is_some_and(|p| p.destination_id == destination_id) {
+        return Err(IpcError::InvalidInput(
+            "Cannot delete the primary destination — promote another destination to primary first."
+                .into(),
+        ));
+    }
+
     delete_destination_session(db, &destination_id)
         .await
         .map_err(IpcError::from)?;
+
+    Ok(())
+}
+
+/// Promote a backup destination to primary, demoting the current primary.
+///
+/// Also hot-swaps `AppState.cloud_transport` so subsequent syncs use the new
+/// primary's rclone config without requiring a lock/unlock cycle.
+#[tauri::command]
+pub async fn set_primary_destination_cmd(
+    destination_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), IpcError> {
+    state.session_manager.reset_timer().await;
+    require_active_session(&state).await?;
+
+    if destination_id.is_empty() {
+        return Err(IpcError::InvalidInput(
+            "Destination ID must not be empty".into(),
+        ));
+    }
+
+    let db_guard = state.database.read().await;
+    let db = db_guard
+        .as_ref()
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+
+    set_primary_destination(db, &destination_id)
+        .await
+        .map_err(IpcError::from)?;
+
+    let new_primary = get_primary_destination(db)
+        .await
+        .map_err(IpcError::from)?
+        .ok_or_else(|| IpcError::InternalError("Primary destination missing after swap".into()))?;
+
+    drop(db_guard);
+
+    let app_handle = state
+        .app_handle
+        .get()
+        .ok_or_else(|| IpcError::InternalError("App handle not initialised".into()))?;
+    let binary_path = rclone_binary_path(app_handle);
+
+    let conf_path = rclone_conf_path();
+
+    let transport = build_destination_transport(binary_path, &conf_path, &new_primary).await?;
+
+    state.swap_cloud_transport(Arc::new(transport)).await;
 
     Ok(())
 }

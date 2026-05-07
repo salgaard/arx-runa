@@ -115,66 +115,82 @@ fn destination_from_config(config: &DestinationSessionConfig) -> DestinationSess
     }
 }
 
+/// Formats a [`CloudTransportError`] into a human-readable message for the given destination.
+fn format_cloud_error(
+    err: &crate::storage::cloud::CloudTransportError,
+    config: &DestinationSessionConfig,
+) -> String {
+    match err {
+        crate::storage::cloud::CloudTransportError::AuthenticationFailed => format!(
+            "Cloud storage authentication failed for '{}'. Please check your credentials.",
+            config.label
+        ),
+        crate::storage::cloud::CloudTransportError::NotFound => format!(
+            "Cloud storage path not found for '{}'. Please check the bucket name and path prefix.",
+            config.label
+        ),
+        crate::storage::cloud::CloudTransportError::Timeout => format!(
+            "Cloud storage connection timed out for '{}'. Please check your network and try again.",
+            config.label
+        ),
+        crate::storage::cloud::CloudTransportError::RcloneProcessFailed {
+            exit_code,
+            stderr_sanitised,
+        } => format!(
+            "Failed to connect to {} (rclone exit code {}): {}",
+            config.label, exit_code, stderr_sanitised
+        ),
+        _ => format!(
+            "Failed to validate cloud storage '{}': {}",
+            config.label, err
+        ),
+    }
+}
+
 /// Validates storage destination configuration before vault creation.
 ///
-/// For local destinations, this is a no-op. For cloud destinations, this tests
-/// connectivity to ensure the configured credentials are valid before running
-/// the creation ceremony. If the test fails, returns a user-friendly error message.
+/// For local destinations, this is a no-op. For cloud destinations, attempts
+/// to list blobs first. If the path is not found, tries to create the container
+/// via `ensure_container`. Returns a specific error when the bucket name is
+/// already taken by another account, or a generic creation error otherwise.
 async fn validate_storage_destination(
     config: &DestinationSessionConfig,
     cloud_transport: &Arc<dyn crate::storage::cloud::CloudTransport>,
 ) -> Result<(), IpcError> {
-    // Local and external destinations don't need validation.
     if config.destination_type != "cloud" {
         return Ok(());
     }
 
-    // For cloud destinations, test basic connectivity by listing blobs at the
-    // configured path prefix. This validates that:
-    // 1. The rclone remote is properly configured (credentials are present)
-    // 2. The credentials are valid (authentication succeeds)
-    // 3. The bucket/container is accessible
     let test_path = config.path_prefix.as_str();
+    match cloud_transport.list_blobs(test_path).await {
+        Ok(_) => return Ok(()),
+        Err(crate::storage::cloud::CloudTransportError::NotFound) => {}
+        Err(err) => return Err(IpcError::InvalidInput(format_cloud_error(&err, config))),
+    }
+
+    match cloud_transport.ensure_container().await {
+        Ok(()) => {}
+        Err(crate::storage::cloud::CloudTransportError::BucketNameTaken) => {
+            return Err(IpcError::InvalidInput(format!(
+                "Bucket name '{}' is already taken by another Backblaze B2 account. \
+                 Please choose a different bucket name.",
+                config.bucket
+            )));
+        }
+        Err(err) => {
+            return Err(IpcError::InvalidInput(format!(
+                "Bucket does not exist and could not be created automatically for '{}'. \
+                 Please create the bucket in the Backblaze B2 console. Details: {}",
+                config.label, err
+            )));
+        }
+    }
+
     cloud_transport
         .list_blobs(test_path)
         .await
-        .map_err(|err| {
-            let message = match err {
-                crate::storage::cloud::CloudTransportError::AuthenticationFailed => {
-                    format!(
-                        "Cloud storage authentication failed for '{}'. Please check your credentials.",
-                        config.label
-                    )
-                }
-                crate::storage::cloud::CloudTransportError::NotFound => {
-                    format!(
-                        "Cloud storage path not found for '{}'. Please check the bucket name and path prefix.",
-                        config.label
-                    )
-                }
-                crate::storage::cloud::CloudTransportError::Timeout => {
-                    format!(
-                        "Cloud storage connection timed out for '{}'. Please check your network and try again.",
-                        config.label
-                    )
-                }
-                crate::storage::cloud::CloudTransportError::RcloneProcessFailed {
-                    exit_code,
-                    stderr_sanitised,
-                } => {
-                    format!(
-                        "Failed to connect to {} (rclone exit code {}): {}",
-                        config.label, exit_code, stderr_sanitised
-                    )
-                }
-                _ => format!(
-                    "Failed to validate cloud storage '{}': {}",
-                    config.label, err
-                ),
-            };
-            IpcError::InvalidInput(message)
-        })
-        .map(|_| ()) // Discard the list result; we only cared about testing connectivity
+        .map_err(|err| IpcError::InvalidInput(format_cloud_error(&err, config)))
+        .map(|_| ())
 }
 
 /// Best-effort: writes rclone.conf from the DB and installs an `RcloneTransport`.
@@ -250,21 +266,18 @@ pub async fn authenticate(
     let password_bytes = sanitise_password(&mut password);
     validate_password(std::str::from_utf8(&password_bytes).unwrap_or(""))?;
 
-    // Resolve vault paths: by explicit ID or by singleton discovery.
     let (vault_id, db_path, header_path) = match vault_id {
         Some(ref id) => resolve_vault_by_id(id)?,
         None => resolve_singleton_vault()?
             .ok_or_else(|| IpcError::InvalidInput("No vault configured".into()))?,
     };
 
-    // Read and parse the vault header from local disk.
     let header_json = tokio::fs::read_to_string(&header_path)
         .await
         .map_err(|_| IpcError::InternalError("Failed to read vault header".into()))?;
     let header: VaultHeader = serde_json::from_str(&header_json)
         .map_err(|_| IpcError::InternalError("Vault header corrupted".into()))?;
 
-    // Decode the 32-byte Argon2 salt from base64.
     let salt_bytes = B64_STANDARD
         .decode(&header.argon2_salt)
         .map_err(|_| IpcError::InternalError("Vault header corrupted".into()))?;
@@ -272,14 +285,12 @@ pub async fn authenticate(
         .try_into()
         .map_err(|_| IpcError::InternalError("Vault header corrupted".into()))?;
 
-    // Build Argon2 parameters from the vault header.
     let params = Argon2Params {
         memory_cost_kib: header.argon2_params.memory_cost,
         time_cost: header.argon2_params.time_cost,
         parallelism: header.argon2_params.parallelism,
     };
 
-    // Build the optional key source for Tier 2 vaults.
     let key_source_opt: Option<FileKeySource> = if header.tier == 2 {
         let path = key_file_path.ok_or_else(|| {
             IpcError::AuthenticationFailed("Key file required for Tier 2 vault".into())
@@ -292,7 +303,6 @@ pub async fn authenticate(
         .as_ref()
         .map(|ks| ks as &(dyn crate::auth::KeySource + Send + Sync));
 
-    // Authenticate — derives session keys from password + optional key file.
     state
         .session_manager
         .authenticate(
@@ -305,8 +315,6 @@ pub async fn authenticate(
         .await
         .map_err(IpcError::from)?;
 
-    // Copy the sqlcipher key bytes out of the session and immediately zeroize.
-    // SAFETY: The copy is wrapped in Zeroizing so it is overwritten on drop.
     let key_copy: [u8; 32] = state
         .session_manager
         .with_sqlcipher_key(|k| *k)
@@ -316,13 +324,10 @@ pub async fn authenticate(
     let db = SqlCipherMetadataStore::open(&db_path, &key_zeroizing)
         .await
         .map_err(IpcError::from)?;
-    // key_zeroizing is dropped here — bytes are zeroed.
     drop(key_zeroizing);
 
-    // Store the open database in shared state.
     *state.database.write().await = Some(db);
 
-    // Best-effort: build and install rclone transport from the stored destination.
     {
         let db_guard = state.database.read().await;
         if let Some(ref inner_db) = *db_guard {
@@ -330,7 +335,6 @@ pub async fn authenticate(
         }
     }
 
-    // Best-effort: ensure the vault staging directory exists and clean up orphaned blobs.
     {
         let staging_dir = vault_staging_dir(&vault_id);
         let db_guard = state.database.read().await;
@@ -341,7 +345,6 @@ pub async fn authenticate(
         }
     }
 
-    // Cache the active vault identifier for quick reads.
     *state.active_vault_id.write().await = Some(vault_id.clone());
 
     Ok(AuthResponse {
@@ -377,12 +380,6 @@ pub async fn create_vault(
         ));
     }
 
-    // Build a real RcloneTransport from the provided destination config when the
-    // destination type is cloud. At vault-creation time no vault is open yet, so
-    // AppState still holds NoOpCloudTransport. Mirroring the pattern used in
-    // recover_vault_from_cloud, we write the rclone config blob to disk and
-    // construct a transport directly from the config so that both connectivity
-    // validation and the ceremony use real credentials.
     let cloud_transport_arc: Arc<dyn crate::storage::cloud::CloudTransport> =
         if primary_destination.destination_type == "cloud" {
             let dest_session = destination_from_config(&primary_destination);
@@ -420,9 +417,6 @@ pub async fn create_vault(
 
     validate_storage_destination(&primary_destination, &cloud_transport_arc).await?;
 
-    // Pre-generate the vault UUID so the directory is created with the final name.
-    // This avoids a post-ceremony rename, which would fail on Windows because
-    // the session manager opens the SQLite DB during install and holds the handle.
     let vault_uuid = Uuid::new_v4();
     let vault_id_str = vault_uuid.hyphenated().to_string();
     let vault_dir = default_vault_root().join(&vault_id_str);
@@ -467,9 +461,6 @@ pub async fn create_vault(
         primary_destination: Some(dest_session),
     };
 
-    // Run the create_vault ceremony: derives keys, creates DB, inserts destination,
-    // uploads vault header, and installs the session. The session becomes Active only
-    // if destination insertion also succeeds, so partial state cannot be left behind.
     if let Err(err) = ceremony_create_vault(
         request,
         &state.session_manager,
@@ -477,9 +468,6 @@ pub async fn create_vault(
     )
     .await
     {
-        // Ceremony failed before installing the session. Remove the vault directory
-        // that this handler pre-created — the ceremony cleans up vault.db and the
-        // key file internally, but the outer directory is owned here.
         if let Err(cleanup_err) = tokio::fs::remove_dir_all(&vault_dir).await {
             tracing::warn!(
                 ?cleanup_err,
@@ -489,8 +477,6 @@ pub async fn create_vault(
         return Err(IpcError::from(err));
     }
 
-    // Open the vault database for use in the current session.
-    // SAFETY: key_copy is wrapped in Zeroizing and overwritten on drop.
     let key_copy: [u8; 32] = state
         .session_manager
         .with_sqlcipher_key(|k| *k)
@@ -500,17 +486,14 @@ pub async fn create_vault(
     let db = SqlCipherMetadataStore::open(&db_path, &key_zeroizing)
         .await
         .map_err(|e| {
-            // Vault was correctly created; just lock the session. The user can re-authenticate.
             let err = IpcError::from(e);
             tracing::error!(?err, "Failed to open vault DB after successful creation");
             err
         })?;
     drop(key_zeroizing);
 
-    // Store the open database in shared state.
     *state.database.write().await = Some(db);
 
-    // Best-effort: build and install rclone transport.
     {
         let db_guard = state.database.read().await;
         if let Some(ref inner_db) = *db_guard {
@@ -518,7 +501,6 @@ pub async fn create_vault(
         }
     }
 
-    // Best-effort: ensure the vault staging directory exists and clean up orphaned blobs.
     {
         let staging_dir = vault_staging_dir(&vault_id_str);
         let db_guard = state.database.read().await;
@@ -529,7 +511,6 @@ pub async fn create_vault(
         }
     }
 
-    // Cache the active vault identifier.
     *state.active_vault_id.write().await = Some(vault_id_str.clone());
 
     Ok(AuthResponse {
@@ -541,7 +522,7 @@ pub async fn create_vault(
 /// Change the vault password.
 ///
 /// Requires an active session. Phase 6.5 supports Tier 1 only; Tier 2 requires
-/// a current key file which is not yet exposed in this IPC surface.
+/// a current key file which is not yet exposed in this IPC signature.
 #[tauri::command]
 pub async fn change_password(
     mut current_password: String,
@@ -576,8 +557,6 @@ pub async fn change_password(
 
     let cloud_transport_arc = state.cloud_transport.read().await.clone();
 
-    // current_key_source: None for Tier 1. Tier 2 requires the caller to supply
-    // the current key file — not yet supported in this IPC signature.
     let request = ChangePasswordRequest {
         current_password_bytes: &current_bytes,
         new_password_bytes: &new_bytes,
@@ -598,7 +577,6 @@ pub async fn change_password(
     .await
     .map_err(IpcError::from)?;
 
-    // Persist the updated vault header (argon2_salt may have rotated).
     if let Ok(json) = serde_json::to_string_pretty(&header)
         && let Err(error) = tokio::fs::write(&header_path, json).await
     {
@@ -675,7 +653,6 @@ pub async fn rotate_key_file(
     .await
     .map_err(IpcError::from)?;
 
-    // Persist the updated vault header (key_file_blake3 is refreshed).
     if let Ok(json) = serde_json::to_string_pretty(&header)
         && let Err(error) = tokio::fs::write(&header_path, json).await
     {
@@ -711,25 +688,20 @@ pub async fn delete_vault(
         .await
         .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
 
-    // Lock the session (zeroizes all key material).
     state.session_manager.lock().await;
 
-    // Reset cloud transport to no-op.
     state.reset_cloud_transport().await;
 
-    // Destroy the rclone.conf (best-effort; ignore not-found).
     let conf_path = rclone_conf_path();
     if let Err(error) = destroy_session_rclone_conf(&conf_path).await {
         tracing::warn!(?error, "Failed to destroy rclone.conf during vault delete");
     }
 
-    // Remove the vault directory tree.
     let vault_dir = default_vault_root().join(&vault_id);
     if let Err(error) = tokio::fs::remove_dir_all(&vault_dir).await {
         tracing::warn!(?error, "Failed to remove vault directory during delete");
     }
 
-    // Clear shared state.
     *state.database.write().await = None;
     *state.active_vault_id.write().await = None;
 
@@ -789,7 +761,6 @@ pub async fn lock_session(state: State<'_, AppState>) -> Result<(), IpcError> {
     state.session_manager.lock().await;
     state.reset_cloud_transport().await;
 
-    // Destroy the rclone.conf (best-effort; ignore not-found).
     let conf_path = rclone_conf_path();
     if let Err(error) = destroy_session_rclone_conf(&conf_path).await {
         tracing::warn!(?error, "Failed to destroy rclone.conf during lock");
@@ -812,7 +783,6 @@ pub async fn get_session_status(state: State<'_, AppState>) -> Result<SessionSta
     let vault_id = state.session_manager.active_vault_id().await;
     let timeout_seconds = state.session_manager.remaining_seconds().await;
 
-    // Read vault tier from vault header when session is active
     let vault_tier = if is_unlocked {
         match &vault_id {
             Some(id) => match resolve_vault_by_id(id) {
@@ -861,29 +831,26 @@ pub async fn check_pending_vault_operations(state: State<'_, AppState>) -> Resul
     }
 
     match tokio::fs::read_to_string(&pending_path).await {
-        Ok(json_content) => {
-            match serde_json::from_str::<PendingVaultHeader>(&json_content) {
-                Ok(pending) => {
-                    tracing::info!(
-                        vault_id = %pending.vault_id,
-                        operation = ?pending.operation,
-                        "Detected pending vault operation on startup"
-                    );
-                    // Emit event to frontend (best-effort)
-                    if let Some(handle) = state.app_handle.get() {
-                        let _ = handle.emit("vault_operation_recovery_needed", &pending);
-                    }
-                    Ok(true)
+        Ok(json_content) => match serde_json::from_str::<PendingVaultHeader>(&json_content) {
+            Ok(pending) => {
+                tracing::info!(
+                    vault_id = %pending.vault_id,
+                    operation = ?pending.operation,
+                    "Detected pending vault operation on startup"
+                );
+                if let Some(handle) = state.app_handle.get() {
+                    let _ = handle.emit("vault_operation_recovery_needed", &pending);
                 }
-                Err(error) => {
-                    tracing::warn!(
-                        ?error,
-                        "Pending vault artifact exists but is malformed; will be skipped"
-                    );
-                    Ok(false)
-                }
+                Ok(true)
             }
-        }
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "Pending vault artifact exists but is malformed; will be skipped"
+                );
+                Ok(false)
+            }
+        },
         Err(error) => {
             tracing::warn!(?error, "Failed to read pending vault artifact");
             Ok(false)
@@ -916,21 +883,16 @@ pub async fn retry_pending_vault_operation(
 
     let _password_bytes = sanitise_password(&mut password);
 
-    // Resolve vault paths using the vault ID from the pending artifact
     let (_vault_id, _db_path, _header_path) = resolve_vault_by_id(&pending.vault_id)?;
 
-    // Attempt to complete the pending operation
     match pending.operation {
         PendingOperation::ChangePassword => {
-            // For password change recovery, we just need to verify the operation succeeded
-            // The ceremony itself should have already updated the header
             tracing::info!(
                 vault_id = %pending.vault_id,
                 "Completing pending password change operation"
             );
         }
         PendingOperation::RotateKeyFile => {
-            // For key rotation recovery, similar approach
             tracing::info!(
                 vault_id = %pending.vault_id,
                 "Completing pending key file rotation operation"
@@ -938,7 +900,6 @@ pub async fn retry_pending_vault_operation(
         }
     }
 
-    // Delete the pending artifact on success
     if let Err(error) = tokio::fs::remove_file(&pending_path).await {
         tracing::warn!(
             ?error,
@@ -1007,7 +968,6 @@ pub async fn recover_vault_from_cloud(
     let password_bytes = sanitise_password(&mut password);
     validate_password(std::str::from_utf8(&password_bytes).unwrap_or(""))?;
 
-    // ── Build a temporary rclone transport pointed at the cloud destination ──
     let dest_session = destination_from_config(&primary_destination);
     let conf_path = rclone_conf_path();
     let binary_path = rclone_binary_path(state.app_handle.get());
@@ -1038,9 +998,6 @@ pub async fn recover_vault_from_cloud(
     )
     .map_err(|e| IpcError::CloudError(e.to_string()))?;
 
-    // ── Pre-download vault-header.json to discover the vault UUID ────────────
-    // The ceremony re-downloads the header internally; this probe is needed
-    // only to derive the vault directory name before calling the ceremony.
     let probe_path = std::env::temp_dir().join("arx-runa-recover-header-probe.json");
     transport
         .download_blob("vault-header.json", &probe_path)
@@ -1067,7 +1024,6 @@ pub async fn recover_vault_from_cloud(
     })?;
     let cloud_vault_id = vault_header.vault_id.clone();
 
-    // ── Guard: refuse to shadow an existing local vault ───────────────────────
     let vault_dir = default_vault_root().join(&cloud_vault_id);
     if vault_dir.join("vault.db").exists() {
         return Err(IpcError::AlreadyExists(format!(
@@ -1078,7 +1034,6 @@ pub async fn recover_vault_from_cloud(
         .await
         .map_err(|e| IpcError::InternalError(e.to_string()))?;
 
-    // ── Run recovery ceremony ────────────────────────────────────────────────
     let key_source_opt: Option<FileKeySource> = key_file_path.map(FileKeySource::new);
     let key_source_ref: Option<&(dyn crate::auth::KeySource + Send + Sync)> = key_source_opt
         .as_ref()
@@ -1102,12 +1057,10 @@ pub async fn recover_vault_from_cloud(
 
     let vault_id_str = vault_id.to_uuid().to_string();
 
-    // Write vault-header.json locally so list_local_vaults discovers the vault.
     tokio::fs::write(vault_dir.join("vault-header.json"), &header_bytes)
         .await
         .map_err(|e| IpcError::InternalError(e.to_string()))?;
 
-    // ── Open the recovered database and establish the session ─────────────────
     let key_copy: [u8; 32] = state
         .session_manager
         .with_sqlcipher_key(|k| *k)
@@ -1154,7 +1107,6 @@ mod tests {
 
     #[test]
     fn test_session_status_fields_populated() {
-        // Verify that the SessionStatus struct can hold all required fields
         let _status = SessionStatus {
             is_unlocked: true,
             vault_id: Some("test-vault-id".into()),
@@ -1170,13 +1122,11 @@ mod tests {
         } else {
             "rclone"
         };
-        // Just verify the platform-conditional logic is defined
         assert!(!expected_name.is_empty());
     }
 
     #[tokio::test]
     async fn test_pending_vault_header_serialization() {
-        // Verify that PendingVaultHeader can be serialized/deserialized
         let pending = PendingVaultHeader {
             vault_id: "test-vault-123".to_string(),
             operation: PendingOperation::ChangePassword,
@@ -1193,7 +1143,6 @@ mod tests {
 
     #[test]
     fn test_pending_operation_enum() {
-        // Verify both enum variants exist and can be serialized
         let password_change = PendingOperation::ChangePassword;
         let key_rotate = PendingOperation::RotateKeyFile;
 

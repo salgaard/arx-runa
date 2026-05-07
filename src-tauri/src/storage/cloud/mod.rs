@@ -47,6 +47,8 @@ pub use wizard::{
 pub enum CloudTransportError {
     #[error("blob not found at remote path")]
     NotFound,
+    #[error("bucket name is already taken by another account")]
+    BucketNameTaken,
     #[error("cloud transport authentication failed")]
     AuthenticationFailed,
     #[error("cloud transport operation timed out")]
@@ -100,6 +102,14 @@ pub trait CloudTransport: Send + Sync {
     /// Called on session lock or timeout to remove sensitive files from disk.
     /// Implementations must be idempotent (file not found is not an error).
     async fn cleanup_session_artifacts(&self) -> Result<(), CloudTransportError> {
+        Ok(())
+    }
+
+    /// Creates the storage container (bucket/folder) if it does not already exist.
+    ///
+    /// The default implementation is a no-op for transports that do not support
+    /// container creation (e.g., local or external-drive transports).
+    async fn ensure_container(&self) -> Result<(), CloudTransportError> {
         Ok(())
     }
 
