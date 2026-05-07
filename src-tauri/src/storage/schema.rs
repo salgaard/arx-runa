@@ -580,7 +580,7 @@ mod tests {
         apply_canonical_schema(&conn).expect("schema should apply");
         seed_manifest_meta(&conn, Uuid::new_v4(), 4_194_304, false).expect("seed should succeed");
         conn.execute(
-            "UPDATE manifest_meta SET value = '5' WHERE key = 'schema_version'",
+            "UPDATE manifest_meta SET value = '6' WHERE key = 'schema_version'",
             [],
         )
         .expect("test setup should update schema_version");

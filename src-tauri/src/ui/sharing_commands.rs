@@ -452,7 +452,7 @@ pub async fn import_share(
             .unwrap_or(false)
         {
             Some((
-                received_share.sender_public_key.clone(),
+                received_share.sender_public_key,
                 received_share.cloud_endpoint.clone(),
                 received_share.share_id.clone(),
             ))
@@ -535,29 +535,36 @@ pub async fn revoke_share(share_id: String, state: State<'_, AppState>) -> Resul
     // Best-effort: delete the scoped B2 application key so recipients lose access immediately.
     if let Some(key_id) = download_key_id {
         let conf_path = crate::ui::auth_commands::rclone_conf_path();
-        if let Ok(conf) = tokio::fs::read_to_string(&conf_path).await {
-            if let Some((master_key_id, master_app_key, _)) =
+        if let Ok(conf) = tokio::fs::read_to_string(&conf_path).await
+            && let Some((master_key_id, master_app_key, _)) =
                 crate::sharing::b2_api::parse_b2_credentials_from_conf(&conf)
+            && let Ok(auth) =
+                crate::sharing::b2_api::b2_authorize_account(&master_key_id, &master_app_key).await
+        {
+            let client = reqwest::Client::new();
+            if let Err(error) = crate::sharing::b2_api::b2_delete_key(&client, &auth, &key_id).await
             {
-                if let Ok(auth) =
-                    crate::sharing::b2_api::b2_authorize_account(&master_key_id, &master_app_key)
-                        .await
-                {
-                    let client = reqwest::Client::new();
-                    if let Err(error) =
-                        crate::sharing::b2_api::b2_delete_key(&client, &auth, &key_id).await
-                    {
-                        tracing::warn!(%error, key_id = %key_id, "B2 key deletion failed after revoke");
-                    } else {
-                        tracing::debug!(key_id = %key_id, "deleted B2 scoped key after revoke");
-                    }
-                }
+                tracing::warn!(%error, key_id = %key_id, "B2 key deletion failed after revoke");
+            } else {
+                tracing::debug!(key_id = %key_id, "deleted B2 scoped key after revoke");
             }
         }
     }
 
     Ok(())
 }
+
+/// Row type returned by the `list_shares` SQL query.
+type ShareRow = (
+    String,
+    String,
+    String,
+    i64,
+    Option<i64>,
+    bool,
+    Option<i64>,
+    Option<i64>,
+);
 
 /// List outgoing shares.
 ///
@@ -576,16 +583,7 @@ pub async fn list_shares(state: State<'_, AppState>) -> Result<Vec<ShareEntry>, 
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
 
     // SharingStore trait has no list_all_shares; query directly with a JOIN.
-    let rows: Vec<(
-        String,
-        String,
-        String,
-        i64,
-        Option<i64>,
-        bool,
-        Option<i64>,
-        Option<i64>,
-    )> = db
+    let rows: Vec<ShareRow> = db
         .with_connection_blocking(|conn| {
             let mut stmt = conn
                 .prepare(
@@ -612,16 +610,7 @@ pub async fn list_shares(state: State<'_, AppState>) -> Result<Vec<ShareEntry>, 
                     ))
                 })
                 .map_err(StorageError::from_rusqlite)?;
-            let mut rows: Vec<(
-                String,
-                String,
-                String,
-                i64,
-                Option<i64>,
-                bool,
-                Option<i64>,
-                Option<i64>,
-            )> = Vec::new();
+            let mut rows: Vec<ShareRow> = Vec::new();
             for row in mapped {
                 rows.push(row.map_err(StorageError::from_rusqlite)?);
             }
@@ -777,7 +766,7 @@ pub async fn download_received_share(
                 .unwrap_or(false)
             {
                 Some((
-                    share.sender_public_key.clone(),
+                    share.sender_public_key,
                     share.cloud_endpoint.clone(),
                     share.share_id.clone(),
                 ))
@@ -944,6 +933,7 @@ async fn write_receipt_blob(
 }
 
 /// Decrypts chunk blobs for a received share, writing plaintext to `destination`.
+#[allow(clippy::too_many_arguments)]
 async fn decrypt_received_share_blobs(
     destination: &std::path::Path,
     file_id: Uuid,
@@ -1152,11 +1142,11 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
 
             match crate::sharing::hpke::open(&private_key_bytes, &bytes) {
                 Ok(plaintext) => {
-                    if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&plaintext) {
-                        if let Some(ts) = payload.get("downloaded_at").and_then(|v| v.as_i64()) {
-                            earliest_downloaded_at =
-                                Some(earliest_downloaded_at.map_or(ts, |prev| prev.min(ts)));
-                        }
+                    if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&plaintext)
+                        && let Some(ts) = payload.get("downloaded_at").and_then(|v| v.as_i64())
+                    {
+                        earliest_downloaded_at =
+                            Some(earliest_downloaded_at.map_or(ts, |prev| prev.min(ts)));
                     }
                 }
                 Err(e) => {
@@ -1250,11 +1240,11 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
 
             match crate::sharing::hpke::open(&private_key_bytes, &bytes) {
                 Ok(plaintext) => {
-                    if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&plaintext) {
-                        if let Some(ts) = payload.get("imported_at").and_then(|v| v.as_i64()) {
-                            earliest_imported_at =
-                                Some(earliest_imported_at.map_or(ts, |prev| prev.min(ts)));
-                        }
+                    if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&plaintext)
+                        && let Some(ts) = payload.get("imported_at").and_then(|v| v.as_i64())
+                    {
+                        earliest_imported_at =
+                            Some(earliest_imported_at.map_or(ts, |prev| prev.min(ts)));
                     }
                 }
                 Err(e) => {

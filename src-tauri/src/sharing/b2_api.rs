@@ -238,10 +238,8 @@ pub(crate) fn parse_b2_api_keys_from_conf(conf: &str) -> Option<(String, String)
                 _ => {}
             }
         }
-        if in_b2_section {
-            if let (Some(a), Some(k)) = (&account, &key) {
-                return Some((a.clone(), k.clone()));
-            }
+        if in_b2_section && let (Some(a), Some(k)) = (&account, &key) {
+            return Some((a.clone(), k.clone()));
         }
     }
     None
@@ -277,10 +275,8 @@ pub(crate) fn parse_b2_credentials_from_conf(conf: &str) -> Option<(String, Stri
                 _ => {}
             }
         }
-        if in_b2_section {
-            if let (Some(a), Some(k), Some(b)) = (&account, &key, &bucket) {
-                return Some((a.clone(), k.clone(), b.clone()));
-            }
+        if in_b2_section && let (Some(a), Some(k), Some(b)) = (&account, &key, &bucket) {
+            return Some((a.clone(), k.clone(), b.clone()));
         }
     }
     None

@@ -1084,11 +1084,10 @@ pub async fn recover_vault_from_cloud(
     {
         let staging_dir = vault_staging_dir(&vault_id_str);
         let db_guard = state.database.read().await;
-        if let Some(ref inner_db) = *db_guard {
-            if let Err(error) = crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
-            {
-                tracing::warn!(?error, "Failed to prepare vault storage after recovery");
-            }
+        if let Some(ref inner_db) = *db_guard
+            && let Err(error) = crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
+        {
+            tracing::warn!(?error, "Failed to prepare vault storage after recovery");
         }
     }
 

@@ -121,9 +121,10 @@ fn SentSharesList() -> impl IntoView {
     let handle_check_receipts = move |_| {
         checking_receipts.set(true);
         spawn_local(async move {
-            match invoke_command::<(), Vec<ShareEntry>>("check_share_receipts", &()).await {
-                Ok(entries) => shares.set(entries),
-                Err(_) => {}
+            if let Ok(entries) =
+                invoke_command::<(), Vec<ShareEntry>>("check_share_receipts", &()).await
+            {
+                shares.set(entries)
             }
             checking_receipts.set(false);
         });
