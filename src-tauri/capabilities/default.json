@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "opener:default",
@@ -43,6 +45,7 @@
     "allow-check-share-receipts",
     "allow-download-received-share",
     "allow-revoke-share",
+    "allow-recover-vault-from-cloud",
     "allow-list-shares",
     "allow-list-received-shares",
     "allow-compose-email-with-attachment",

@@ -14,6 +14,7 @@ fn main() {
             "delete_vault",
             "download_file",
             "export_public_key",
+            "recover_vault_from_cloud",
             "get_file_content",
             "get_own_public_key_b64",
             "get_session_status",
