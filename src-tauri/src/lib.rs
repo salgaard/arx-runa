@@ -25,7 +25,7 @@ struct DeviceEventPayload {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-/// Starts the Arx Runa Tauri runtime with all 40 registered commands.
+/// Starts the Arx Runa Tauri runtime with all 45 registered commands.
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -69,11 +69,15 @@ pub fn run() {
             ui::sync_commands::migrate_vault,
             ui::sync_commands::sync_backup,
             ui::sync_commands::get_backup_health,
-            // Destinations (4)
+            // Destinations (8)
             ui::destination_commands::add_destination,
             ui::destination_commands::list_destinations,
             ui::destination_commands::delete_destination,
             ui::destination_commands::set_primary_destination_cmd,
+            ui::destination_commands::begin_google_drive_setup,
+            ui::destination_commands::begin_onedrive_setup,
+            ui::destination_commands::poll_oauth_setup,
+            ui::destination_commands::cancel_oauth_setup_cmd,
             // Sharing (9)
             ui::sharing_commands::export_public_key,
             ui::sharing_commands::get_own_public_key_b64,
@@ -86,9 +90,10 @@ pub fn run() {
             ui::sharing_commands::revoke_share,
             ui::sharing_commands::list_shares,
             ui::sharing_commands::list_received_shares,
-            // Shell (2)
+            // Shell (3)
             ui::shell_commands::reveal_in_explorer,
             ui::shell_commands::compose_email_with_attachment,
+            ui::shell_commands::open_url,
         ])
         .setup(|app| {
             use tauri::Emitter as _;

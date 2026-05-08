@@ -17,7 +17,24 @@ use crate::storage::validation::{
     validate_blob_name_uuid_v4, validate_size_padded_matches_chunk_size,
 };
 
-/// Decrypts a file from encrypted chunk blobs into a destination path.
+/// Resolves the path of a blob from its name by checking, in order, the
+/// `pending/` subdirectory, the `cache/` subdirectory, then falling back to
+/// flat staging for backwards-compatibility with blobs written before migration.
+async fn resolve_blob_path(staging_dir: &Path, blob_name: &str) -> PathBuf {
+    let pending = staging_dir
+        .join("pending")
+        .join(format!("{blob_name}.blob"));
+    if tokio::fs::try_exists(&pending).await.unwrap_or(false) {
+        return pending;
+    }
+    let cache = staging_dir.join("cache").join(format!("{blob_name}.blob"));
+    if tokio::fs::try_exists(&cache).await.unwrap_or(false) {
+        return cache;
+    }
+    staging_dir.join(format!("{blob_name}.blob"))
+}
+
+
 ///
 /// The optional `progress` callback is invoked after each chunk's plaintext is
 /// written with `(bytes_decrypted, file_size)`.  Callback fires AFTER the
@@ -75,7 +92,7 @@ pub async fn decrypt_file(
     let decrypt_result: Result<(), StorageError> = async {
         for (position, chunk) in sorted_chunks.iter().enumerate() {
             validate_blob_name_uuid_v4(&chunk.blob_name)?;
-            let blob_path = blob_directory.join(format!("{}.blob", chunk.blob_name));
+            let blob_path = resolve_blob_path(blob_directory, &chunk.blob_name).await;
             let encrypted_blob =
                 read_encrypted_blob(&blob_path, expected_blob_len, expected_blob_len_usize).await?;
 

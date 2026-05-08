@@ -25,10 +25,13 @@ pub async fn delete_file(
         ));
     }
     let chunks = metadata_store.get_chunks(node_id).await?;
-    let mut validated_blob_paths = Vec::with_capacity(chunks.len());
+    let mut validated_blob_paths = Vec::with_capacity(chunks.len() * 3);
     for chunk in &chunks {
         validate_blob_name_uuid_v4(&chunk.blob_name)?;
-        validated_blob_paths.push(staging_directory.join(format!("{}.blob", chunk.blob_name)));
+        let blob_file = format!("{}.blob", chunk.blob_name);
+        validated_blob_paths.push(staging_directory.join("pending").join(&blob_file));
+        validated_blob_paths.push(staging_directory.join("cache").join(&blob_file));
+        validated_blob_paths.push(staging_directory.join(&blob_file));
     }
     metadata_store.delete_node(node_id).await?;
     for blob_path in validated_blob_paths {

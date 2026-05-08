@@ -649,58 +649,230 @@ impl SqlCipherMetadataStore {
         .await
     }
 
-    /// Merges nodes and chunks from a probe manifest database into this store.
+    /// Merges nodes, chunks, and epoch_blobs from a probe manifest database into
+    /// this store using two independent [`Connection`] objects.
     ///
-    /// Uses SQLite ATTACH to copy rows with INSERT OR IGNORE semantics, so
-    /// existing local rows are preserved. Returns the cloud `snapshot_counter`
-    /// read from the probe database.
+    /// The probe database is a SQLCipher file produced by `VACUUM INTO`
+    /// (passphrase mode) with the same `key_bytes` as the vault.  All rows are
+    /// collected from the probe first, then inserted with `INSERT OR IGNORE`
+    /// inside a single `IMMEDIATE` transaction, so existing local rows are
+    /// always preserved.  Returns the cloud `snapshot_counter` read from the
+    /// probe.
     pub(crate) async fn merge_from_probe_db(
         &self,
         probe_path: &std::path::Path,
         key_bytes: [u8; 32],
     ) -> Result<u64, StorageError> {
-        let probe_path_str = probe_path
-            .to_str()
-            .ok_or_else(|| StorageError::Database("probe path is not valid UTF-8".to_owned()))?
-            .replace('\'', "''");
-        let hex_key: String = key_bytes.iter().map(|b| format!("{b:02x}")).collect();
-
+        let probe_path = probe_path.to_path_buf();
         self.with_connection_blocking(move |conn| {
-            let attach_sql =
-                format!("ATTACH DATABASE '{probe_path_str}' AS probe KEY \"x'{hex_key}'\";",);
-            conn.execute_batch(&attach_sql)
-                .map_err(StorageError::from_rusqlite)?;
+            let probe_key = protected_sqlcipher_key_from_slice(&key_bytes);
+            let probe_conn = open_sqlcipher(&probe_path, &probe_key)
+                .map_err(|_| StorageError::WrongKey)?;
 
-            let merge_result = (|| -> Result<u64, StorageError> {
-                conn.execute_batch(
-                    "BEGIN IMMEDIATE;
-                     INSERT OR IGNORE INTO nodes SELECT * FROM probe.nodes;
-                     INSERT OR IGNORE INTO chunks SELECT * FROM probe.chunks;
-                     INSERT OR IGNORE INTO epoch_blobs SELECT * FROM probe.epoch_blobs;
-                     COMMIT;",
+            let cloud_counter: u64 = probe_conn
+                .query_row(
+                    "SELECT value FROM manifest_meta WHERE key = 'snapshot_counter'",
+                    [],
+                    |row| row.get::<_, String>(0),
                 )
+                .map_err(StorageError::from_rusqlite)
+                .and_then(|v| {
+                    v.parse::<u64>().map_err(|_| {
+                        StorageError::Database(
+                            "invalid snapshot_counter in probe DB".to_owned(),
+                        )
+                    })
+                })?;
+
+            let epoch_blobs: Vec<(String, String, Vec<u8>, i64, Vec<u8>)> = {
+                let mut stmt = probe_conn
+                    .prepare(
+                        "SELECT epoch_blob_id, blob_name, file_key_wrapped, size_padded, \
+                         blake3_checksum FROM epoch_blobs",
+                    )
+                    .map_err(StorageError::from_rusqlite)?;
+                stmt.query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, Vec<u8>>(4)?,
+                    ))
+                })
+                .map_err(StorageError::from_rusqlite)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(StorageError::from_rusqlite)?
+            };
+
+            #[allow(clippy::type_complexity)]
+            let nodes: Vec<(
+                String,
+                Option<String>,
+                String,
+                String,
+                i64,
+                i64,
+                Option<i64>,
+                Option<Vec<u8>>,
+            )> = {
+                let mut stmt = probe_conn
+                    .prepare(
+                        "SELECT node_id, parent_id, node_type, name, created_at, modified_at, \
+                         size_bytes, file_key_wrapped FROM nodes",
+                    )
+                    .map_err(StorageError::from_rusqlite)?;
+                stmt.query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, Option<i64>>(6)?,
+                        row.get::<_, Option<Vec<u8>>>(7)?,
+                    ))
+                })
+                .map_err(StorageError::from_rusqlite)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(StorageError::from_rusqlite)?
+            };
+
+            #[allow(clippy::type_complexity)]
+            let chunks: Vec<(
+                String,
+                String,
+                i64,
+                Option<String>,
+                i64,
+                Vec<u8>,
+                Option<String>,
+                Option<i64>,
+                Option<i64>,
+            )> = {
+                let mut stmt = probe_conn
+                    .prepare(
+                        "SELECT chunk_id, node_id, chunk_index, blob_name, size_padded, \
+                         blake3_checksum, epoch_blob_id, byte_offset, byte_length FROM chunks",
+                    )
+                    .map_err(StorageError::from_rusqlite)?;
+                stmt.query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, Vec<u8>>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, Option<i64>>(7)?,
+                        row.get::<_, Option<i64>>(8)?,
+                    ))
+                })
+                .map_err(StorageError::from_rusqlite)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(StorageError::from_rusqlite)?
+            };
+
+            drop(probe_conn);
+
+            conn.execute_batch("PRAGMA foreign_keys = OFF;")
                 .map_err(StorageError::from_rusqlite)?;
 
-                let cloud_counter: u64 = conn
-                    .query_row(
-                        "SELECT value FROM probe.manifest_meta WHERE key = 'snapshot_counter'",
-                        [],
-                        |row| row.get::<_, String>(0),
-                    )
-                    .map_err(StorageError::from_rusqlite)
-                    .and_then(|v| {
-                        v.parse::<u64>().map_err(|_| {
-                            StorageError::Database(
-                                "invalid snapshot_counter in probe DB".to_owned(),
-                            )
-                        })
-                    })?;
+            let merge_result = (|| -> Result<(), StorageError> {
+                let tx = conn
+                    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                    .map_err(StorageError::from_rusqlite)?;
 
-                Ok(cloud_counter)
+                for (epoch_blob_id, blob_name, file_key_wrapped, size_padded, blake3_checksum) in
+                    &epoch_blobs
+                {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO epoch_blobs \
+                         (epoch_blob_id, blob_name, file_key_wrapped, size_padded, \
+                         blake3_checksum) VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![
+                            epoch_blob_id,
+                            blob_name,
+                            file_key_wrapped,
+                            size_padded,
+                            blake3_checksum
+                        ],
+                    )
+                    .map_err(StorageError::from_rusqlite)?;
+                }
+
+                for (
+                    node_id,
+                    parent_id,
+                    node_type,
+                    name,
+                    created_at,
+                    modified_at,
+                    size_bytes,
+                    file_key_wrapped,
+                ) in &nodes
+                {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO nodes \
+                         (node_id, parent_id, node_type, name, created_at, modified_at, \
+                         size_bytes, file_key_wrapped) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        params![
+                            node_id,
+                            parent_id,
+                            node_type,
+                            name,
+                            created_at,
+                            modified_at,
+                            size_bytes,
+                            file_key_wrapped
+                        ],
+                    )
+                    .map_err(StorageError::from_rusqlite)?;
+                }
+
+                for (
+                    chunk_id,
+                    node_id,
+                    chunk_index,
+                    blob_name,
+                    size_padded,
+                    blake3_checksum,
+                    epoch_blob_id,
+                    byte_offset,
+                    byte_length,
+                ) in &chunks
+                {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO chunks \
+                         (chunk_id, node_id, chunk_index, blob_name, size_padded, \
+                         blake3_checksum, epoch_blob_id, byte_offset, byte_length) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        params![
+                            chunk_id,
+                            node_id,
+                            chunk_index,
+                            blob_name,
+                            size_padded,
+                            blake3_checksum,
+                            epoch_blob_id,
+                            byte_offset,
+                            byte_length
+                        ],
+                    )
+                    .map_err(StorageError::from_rusqlite)?;
+                }
+
+                tx.commit().map_err(StorageError::from_rusqlite)?;
+                Ok(())
             })();
 
-            let _ = conn.execute_batch("DETACH DATABASE probe;");
-            merge_result
+            conn.execute_batch("PRAGMA foreign_keys = ON;")
+                .map_err(StorageError::from_rusqlite)?;
+
+            merge_result?;
+            Ok(cloud_counter)
         })
         .await
     }

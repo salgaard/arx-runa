@@ -16,7 +16,7 @@ mod toast;
 
 pub use button::Button;
 pub use chunk_size_selector::{CHUNK_MAX, CHUNK_MIN, ChunkSizeSelector, PRESETS, clamp_chunk_size};
-pub use destination_selector::{CloudProvider, DestinationSelector, DestinationType};
+pub use destination_selector::{DestinationKind, DestinationSelector};
 pub use epoch_buffer_toggle::EpochBufferToggle;
 pub use input::Input;
 pub use modal::Modal;

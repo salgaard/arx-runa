@@ -299,7 +299,7 @@ pub async fn upload_file(
         now,
         db,
         &kek,
-        &staging_dir,
+        &staging_dir.join("pending"),
         Some(&progress_fn),
     )
     .await

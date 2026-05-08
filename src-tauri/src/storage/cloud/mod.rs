@@ -38,8 +38,9 @@ pub use vault_header_io::{
     download_vault_header, upload_vault_header,
 };
 pub use wizard::{
-    GoogleDriveRuntimePaths, GoogleDriveSetupRequest, GoogleDriveSetupResult, OpenerLike,
-    S3SetupRequest, setup_google_drive, setup_s3_provider,
+    GoogleDriveRuntimePaths, GoogleDriveSetupRequest, GoogleDriveSetupResult, OAuthProvider,
+    OAuthSetupBegun, OpenerLike, S3SetupRequest, begin_oauth_setup, cancel_oauth_setup,
+    complete_oauth_setup, setup_google_drive, setup_s3_provider,
 };
 
 /// Errors produced by [`CloudTransport`] implementations.

@@ -16,13 +16,13 @@ use chacha20poly1305::{
 use thiserror::Error;
 use zeroize::Zeroizing;
 
-use super::{CloudTransport, CloudTransportError};
 use crate::crypto::SqlcipherKey;
 use crate::crypto::error::CryptoError;
 use crate::crypto::nonce::generate_nonce;
 use crate::storage::schema::{validate_manifest_meta, validate_schema_integrity};
 use crate::storage::sqlcipher::open_sqlcipher;
 use crate::storage::staging::{ensure_staging_directory, write_owner_only};
+use super::{CloudTransport, CloudTransportError};
 
 const NONCE_LEN: usize = 24;
 const TAG_LEN: usize = 16;
@@ -33,7 +33,7 @@ pub const MANIFEST_BACKUP_BLOB_NAME: &str = "manifest/manifest-backup.blob";
 pub(crate) const MANIFEST_BACKUP_UPLOAD_STAGING_FILE_NAME: &str = "manifest-backup-staging.blob";
 /// Download-side local staging filename for the encrypted backup wire payload.
 pub(crate) const MANIFEST_BACKUP_DOWNLOAD_STAGING_FILE_NAME: &str = "manifest-backup-download.blob";
-/// Local export filename used by `VACUUM INTO` before encryption.
+/// Local export filename used by `sqlcipher_export` before AEAD encryption.
 pub(crate) const MANIFEST_EXPORT_FILE_NAME: &str = "manifest-export.db";
 
 /// Errors produced while syncing `manifest/manifest-backup.blob`.
@@ -43,8 +43,8 @@ pub enum ManifestBackupSyncError {
     /// Staging-directory or staging-file I/O failed.
     #[error("manifest-backup staging I/O failed: {0}")]
     StagingIo(String),
-    /// SQLCipher export via `VACUUM INTO` failed.
-    #[error("manifest VACUUM INTO failed: {0}")]
+    /// SQLCipher plaintext export failed.
+    #[error("manifest export failed: {0}")]
     Vacuum(String),
     /// Reading the exported SQLCipher snapshot failed.
     #[error("manifest export read failed: {0}")]
@@ -258,10 +258,11 @@ pub async fn download_manifest_backup(
     .await
     .map_err(|error| ManifestBackupSyncError::DbPersistIo(error.to_string()))??;
 
-    let sqlcipher_key = sqlcipher_key_from_array(sqlcipher_key.with_exposed(|bytes| *bytes));
     let destination_for_integrity = destination_db_path.clone();
+    let key_bytes = sqlcipher_key.with_exposed(|bytes| *bytes);
     let integrity_join = tokio::task::spawn_blocking(move || {
-        verify_manifest_database_integrity(&destination_for_integrity, &sqlcipher_key)
+        let verify_key = sqlcipher_key_from_array(key_bytes);
+        verify_manifest_database_integrity(&destination_for_integrity, &verify_key)
     })
     .await;
     let integrity_result = match integrity_join {
@@ -279,7 +280,11 @@ pub async fn download_manifest_backup(
     Ok(())
 }
 
-/// Executes a SQLCipher `VACUUM INTO` export for manifest backup upload.
+/// Exports the vault manifest as a SQLCipher snapshot using `VACUUM INTO`.
+///
+/// The output is a SQLCipher-encrypted database in passphrase mode using the
+/// same key as the source.  The caller AEAD-encrypts the resulting bytes
+/// before upload so that the cloud receives only opaque ciphertext.
 fn run_vacuum_into_export(
     vault_db_path: &Path,
     sqlcipher_key: &SqlcipherKey,
@@ -287,9 +292,13 @@ fn run_vacuum_into_export(
 ) -> Result<(), ManifestBackupSyncError> {
     let conn = open_sqlcipher(vault_db_path, sqlcipher_key)
         .map_err(|error| ManifestBackupSyncError::Vacuum(error.to_string()))?;
-    let escaped_export_path = export_path.to_string_lossy().replace('\'', "''");
-    let statement = format!("VACUUM INTO '{escaped_export_path}'");
-    conn.execute_batch(&statement)
+    let export_path_str = export_path
+        .to_str()
+        .ok_or_else(|| {
+            ManifestBackupSyncError::Vacuum("export path is not valid UTF-8".to_owned())
+        })?
+        .replace('\'', "''");
+    conn.execute_batch(&format!("VACUUM INTO '{export_path_str}'"))
         .map_err(|error| ManifestBackupSyncError::Vacuum(error.to_string()))?;
     drop(conn);
 
@@ -333,8 +342,10 @@ fn persist_manifest_database_atomically(
     Ok(())
 }
 
-/// Verifies that the persisted SQLCipher DB opens with the provided key and
-/// satisfies canonical schema invariants.
+/// Verifies that the persisted manifest database satisfies canonical schema invariants.
+///
+/// The database is a SQLCipher file produced by `VACUUM INTO` (passphrase mode),
+/// so it must be opened with the same key used during upload.
 fn verify_manifest_database_integrity(
     destination_db_path: &Path,
     sqlcipher_key: &SqlcipherKey,
@@ -370,6 +381,7 @@ mod tests {
     use super::*;
     use crate::storage::SqlCipherMetadataStore;
     use crate::storage::cloud::mock::{CloudTransportErrorKind, MockCloudTransport};
+    use crate::storage::sqlcipher::open_sqlcipher;
 
     /// Creates a `SqlcipherKey` from fixed test bytes.
     fn sqlcipher_key_from_bytes(bytes: [u8; 32]) -> SqlcipherKey {
@@ -567,47 +579,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_download_manifest_backup_wrong_key_returns_integrity_check_failed_and_removes_destination()
-     {
-        let temp = tempdir().expect("tempdir must succeed");
-        let source_db_path = temp.path().join("source.db");
-        let destination_db_path = temp.path().join("recovered.db");
-        let upload_staging_dir = temp.path().join("upload-staging");
-        let download_staging_dir = temp.path().join("download-staging");
-        let upload_sqlcipher_key_bytes = [0x44u8; 32];
-        let upload_sqlcipher_key = sqlcipher_key_from_bytes(upload_sqlcipher_key_bytes);
-        let wrong_sqlcipher_key = sqlcipher_key_from_bytes([0x99u8; 32]);
-        let manifest_key = [0x54u8; 32];
-        let cloud_transport = MockCloudTransport::new();
-
-        create_manifest_database(&source_db_path, &upload_sqlcipher_key_bytes).await;
-        upload_manifest_backup(
-            &source_db_path,
-            &upload_sqlcipher_key,
-            &manifest_key,
-            &cloud_transport,
-            &upload_staging_dir,
-        )
-        .await
-        .expect("upload must succeed");
-
-        let result = download_manifest_backup(
-            &cloud_transport,
-            &download_staging_dir,
-            &manifest_key,
-            &destination_db_path,
-            &wrong_sqlcipher_key,
-        )
-        .await;
-
-        assert!(matches!(
-            result,
-            Err(ManifestBackupSyncError::IntegrityCheckFailed)
-        ));
-        assert!(!destination_db_path.exists());
-    }
-
-    #[tokio::test]
     async fn test_download_manifest_backup_missing_manifest_meta_returns_integrity_check_failed() {
         let temp = tempdir().expect("tempdir must succeed");
         let source_db_path = temp.path().join("source.db");
@@ -661,13 +632,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_download_manifest_backup_wrong_key_returns_integrity_check_failed_and_removes_destination()
+    {
+        let temp = tempdir().expect("tempdir must succeed");
+        let source_db_path = temp.path().join("source.db");
+        let destination_db_path = temp.path().join("recovered.db");
+        let upload_staging_dir = temp.path().join("upload-staging");
+        let download_staging_dir = temp.path().join("download-staging");
+        let upload_key_bytes = [0xAAu8; 32];
+        let upload_sqlcipher_key = sqlcipher_key_from_bytes(upload_key_bytes);
+        let wrong_sqlcipher_key = sqlcipher_key_from_bytes([0xBBu8; 32]);
+        let manifest_key = [0xCCu8; 32];
+        let cloud_transport = MockCloudTransport::new();
+
+        create_manifest_database(&source_db_path, &upload_key_bytes).await;
+        upload_manifest_backup(
+            &source_db_path,
+            &upload_sqlcipher_key,
+            &manifest_key,
+            &cloud_transport,
+            &upload_staging_dir,
+        )
+        .await
+        .expect("upload must succeed");
+
+        let result = download_manifest_backup(
+            &cloud_transport,
+            &download_staging_dir,
+            &manifest_key,
+            &destination_db_path,
+            &wrong_sqlcipher_key,
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(ManifestBackupSyncError::IntegrityCheckFailed)
+        ));
+        assert!(!destination_db_path.exists());
+    }
+
+    #[tokio::test]
     async fn test_download_manifest_backup_truncated_wire_returns_crypto_failed() {
         let temp = tempdir().expect("tempdir must succeed");
         let destination_db_path = temp.path().join("recovered.db");
         let download_staging_dir = temp.path().join("download-staging");
-        let sqlcipher_key = sqlcipher_key_from_bytes([0x45u8; 32]);
         let manifest_key = [0x55u8; 32];
         let cloud_transport = MockCloudTransport::new();
+        let sqlcipher_key = sqlcipher_key_from_bytes([0u8; 32]);
 
         upload_raw_remote_blob(
             &cloud_transport,
@@ -759,9 +771,9 @@ mod tests {
         let temp = tempdir().expect("tempdir must succeed");
         let destination_db_path = temp.path().join("already-present.db");
         let download_staging_dir = temp.path().join("download-staging");
-        let sqlcipher_key = sqlcipher_key_from_bytes([0x46u8; 32]);
         let manifest_key = [0x56u8; 32];
         let cloud_transport = MockCloudTransport::new();
+        let sqlcipher_key = sqlcipher_key_from_bytes([0u8; 32]);
         tokio::fs::write(&destination_db_path, b"existing")
             .await
             .expect("destination seed file must be written");
@@ -791,9 +803,9 @@ mod tests {
         let temp = tempdir().expect("tempdir must succeed");
         let destination_db_path = temp.path().join("recovered.db");
         let download_staging_dir = temp.path().join("download-staging");
-        let sqlcipher_key = sqlcipher_key_from_bytes([0x47u8; 32]);
         let manifest_key = [0x57u8; 32];
         let cloud_transport = MockCloudTransport::new();
+        let sqlcipher_key = sqlcipher_key_from_bytes([0u8; 32]);
 
         let result = download_manifest_backup(
             &cloud_transport,
@@ -912,9 +924,9 @@ mod tests {
         let temp = tempdir().expect("tempdir must succeed");
         let destination_db_path = temp.path().join("recovered.db");
         let download_staging_dir = temp.path().join("download-staging");
-        let sqlcipher_key = sqlcipher_key_from_bytes([0x47u8; 32]);
         let manifest_key = [0x57u8; 32];
         let transport = SilentOkCloudTransport;
+        let sqlcipher_key = sqlcipher_key_from_bytes([0u8; 32]);
 
         let result = download_manifest_backup(
             &transport,

@@ -19,7 +19,17 @@ pub async fn reveal_in_explorer(
     Ok(())
 }
 
-/// Opens the default email client pre-filled to share an Arx Runa package.
+/// Opens a URL in the default system browser.
+///
+/// Used by the OAuth destination setup flow to open the rclone auth URL.
+#[tauri::command]
+pub async fn open_url(url: String, app: AppHandle) -> Result<(), IpcError> {
+    app.opener()
+        .open_url(&url, None::<&str>)
+        .map_err(|e| IpcError::InternalError(format!("open_url failed: {e}")))?;
+    Ok(())
+}
+
 ///
 /// On Linux, delegates to `xdg-email --attach` so the `.arxshare` file is
 /// attached automatically. On Windows and macOS the package is revealed in the

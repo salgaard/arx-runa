@@ -4,6 +4,7 @@
 
 mod auth_response;
 mod contact_entry;
+mod oauth_setup_response;
 mod destination_entry;
 mod destination_health;
 mod destination_session_config;
@@ -27,6 +28,7 @@ mod vault_summary;
 
 pub use auth_response::AuthResponse;
 pub use contact_entry::ContactEntry;
+pub use oauth_setup_response::{BeginOauthSetupResponse, OauthPollResponse};
 pub use destination_entry::DestinationEntry;
 pub use destination_health::DestinationHealth;
 pub use destination_session_config::DestinationSessionConfig;

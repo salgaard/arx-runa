@@ -239,3 +239,27 @@ pub struct RevealInExplorerRequest {
     /// Absolute filesystem path to reveal in the OS file explorer.
     pub path: String,
 }
+
+/// Argument payload for the `poll_oauth_setup` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PollOauthSetupRequest {
+    /// Opaque setup ID returned by `begin_google_drive_setup` or `begin_onedrive_setup`.
+    pub setup_id: String,
+}
+
+/// Argument payload for the `cancel_oauth_setup_cmd` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelOauthSetupRequest {
+    /// Opaque setup ID returned by `begin_google_drive_setup` or `begin_onedrive_setup`.
+    pub setup_id: String,
+}
+
+/// Argument payload for the `open_url` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenUrlRequest {
+    /// URL to open in the default system browser.
+    pub url: String,
+}

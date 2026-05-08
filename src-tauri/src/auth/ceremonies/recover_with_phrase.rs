@@ -88,8 +88,14 @@ pub async fn recover_with_phrase(
     }
     let master_key = recovered_master_key.ok_or(AuthenticationError::InvalidCredentials)?;
     let session_keys = SessionKeys::from_master_key_bytes(&master_key)?;
-    let sqlcipher_key = sqlcipher_key_from_array(session_keys.sqlcipher_key.expose());
     let manifest_key_bytes = Zeroizing::new(*session_keys.manifest_key.expose());
+    let sqlcipher_key = {
+        use secrecy::SecretBox;
+        use crate::crypto::SqlcipherKey;
+        let mut boxed = Box::new([0u8; 32]);
+        boxed.copy_from_slice(session_keys.sqlcipher_key.expose());
+        SqlcipherKey::from_secret_box(SecretBox::new(boxed))
+    };
     let storage_staging_dir = storage::staging::default_staging_directory()
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     storage::staging::ensure_staging_directory(&storage_staging_dir)

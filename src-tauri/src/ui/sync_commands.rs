@@ -240,7 +240,7 @@ pub async fn sync_to_cloud(
         crate::storage::vault_ops::flush_epoch_buffer(
             db,
             &kek,
-            &staging_dir,
+            &staging_dir.join("pending"),
             chunk_size_bytes,
             None,
         )
@@ -434,9 +434,9 @@ pub async fn pull_and_reconcile(
     .map_err(|e| IpcError::CloudError(format!("manifest download: {e}")))?;
 
     // Merge probe rows into the local store; returns the cloud snapshot_counter.
-    let key_bytes = sqlcipher_key.with_exposed(|bytes| *bytes);
+    let sqlcipher_key_bytes = sqlcipher_key.with_exposed(|b| *b);
     let cloud_counter = db
-        .merge_from_probe_db(&probe_path, key_bytes)
+        .merge_from_probe_db(&probe_path, sqlcipher_key_bytes)
         .await
         .map_err(IpcError::from)?;
 
@@ -746,7 +746,7 @@ pub async fn sync_backup(
         crate::storage::vault_ops::flush_epoch_buffer(
             db,
             &kek,
-            &staging_dir,
+            &staging_dir.join("pending"),
             chunk_size_bytes,
             None,
         )

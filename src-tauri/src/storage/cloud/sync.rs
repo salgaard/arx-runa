@@ -257,7 +257,7 @@ async fn upload_blob_task(
             CloudTransportError::Other(error.to_string())
         }
     })?;
-    let local_path = blob_staging_path(staging_dir, &blob_name);
+    let local_path = pending_blob_path(staging_dir, &blob_name);
     cloud_transport
         .upload_blob(&local_path, &remote_path)
         .await?;
@@ -279,7 +279,7 @@ async fn download_blob_task(
             CloudTransportError::Other(error.to_string()),
         )
     })?;
-    let local_path = blob_staging_path(staging_dir, &blob_name);
+    let local_path = cache_blob_path(staging_dir, &blob_name);
     cloud_transport
         .download_blob(&remote_path, &local_path)
         .await
@@ -413,8 +413,10 @@ pub(crate) async fn fetch_missing_file_blobs(
     }
 
     for (blob_name, blake3_checksum) in needed {
-        let local_path = blob_staging_path(staging_dir, &blob_name);
-        if tokio::fs::try_exists(&local_path).await? {
+        // Skip if blob is already present in either pending/ or cache/.
+        if tokio::fs::try_exists(&pending_blob_path(staging_dir, &blob_name)).await?
+            || tokio::fs::try_exists(&cache_blob_path(staging_dir, &blob_name)).await?
+        {
             continue;
         }
         download_blob_task(
@@ -482,7 +484,7 @@ pub async fn push_vault(
     let mut upload_blobs = Vec::new();
     for chunk in chunks {
         validate_blob_name_uuid_v4(&chunk.blob_name)?;
-        let local_path = blob_staging_path(staging_dir, &chunk.blob_name);
+        let local_path = pending_blob_path(staging_dir, &chunk.blob_name);
         if tokio::fs::try_exists(&local_path).await? {
             upload_blobs.push(chunk.blob_name);
         }
@@ -582,7 +584,7 @@ pub async fn pull_vault(
 
     for chunk in chunks {
         validate_blob_name_uuid_v4(&chunk.blob_name)?;
-        let local_path = blob_staging_path(staging_dir, &chunk.blob_name);
+        let local_path = cache_blob_path(staging_dir, &chunk.blob_name);
         if tokio::fs::try_exists(&local_path).await? {
             if verify_blob_checksum(&local_path, &chunk.blake3_checksum).await? {
                 blobs_skipped_present += 1;
@@ -659,8 +661,14 @@ pub async fn delete_vault_from_cloud(
     Ok(report)
 }
 
-fn blob_staging_path(staging_dir: &Path, blob_name: &str) -> PathBuf {
-    staging_dir.join(format!("{blob_name}.blob"))
+/// Returns the path for a locally-encrypted blob awaiting upload.
+fn pending_blob_path(staging_dir: &Path, blob_name: &str) -> PathBuf {
+    staging_dir.join("pending").join(format!("{blob_name}.blob"))
+}
+
+/// Returns the path for a blob fetched from cloud for local viewing/decryption.
+fn cache_blob_path(staging_dir: &Path, blob_name: &str) -> PathBuf {
+    staging_dir.join("cache").join(format!("{blob_name}.blob"))
 }
 
 fn build_blob_remote_path(blob_name: &str) -> Result<String, SyncError> {
@@ -1053,8 +1061,11 @@ mod tests {
             .delete_node(deleted_file_id)
             .await
             .expect("delete should enqueue pending deletion");
+        tokio::fs::create_dir_all(temp.path().join("pending"))
+            .await
+            .expect("pending dir should be created");
         tokio::fs::write(
-            blob_staging_path(temp.path(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            pending_blob_path(temp.path(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
             b"encrypted-payload",
         )
         .await
@@ -1182,6 +1193,9 @@ mod tests {
             .upload_blob(&upload_path, &remote_path)
             .await
             .expect("mock upload should succeed");
+        tokio::fs::create_dir_all(temp.path().join("cache"))
+            .await
+            .expect("cache dir should be created");
 
         let result = drive_blob_downloads(
             vec![SyncChunkRecord {
@@ -1195,7 +1209,7 @@ mod tests {
         .await;
 
         assert!(matches!(result, Err((verification, _)) if verification == vec![blob_name]));
-        assert!(!blob_staging_path(temp.path(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").exists());
+        assert!(!cache_blob_path(temp.path(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").exists());
     }
 
     #[tokio::test]

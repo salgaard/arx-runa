@@ -13,6 +13,7 @@ pub async fn prepare_vault_storage(
     staging_directory: &Path,
 ) -> Result<usize, StorageError> {
     staging::ensure_staging_directory(staging_directory).await?;
+    staging::migrate_flat_staging_blobs(staging_directory).await?;
     staging::cleanup_orphaned_blobs(staging_directory, store).await
 }
 
@@ -134,7 +135,9 @@ mod tests {
 
         assert_eq!(orphan_count, 0);
         for chunk in &chunks {
-            let blob_path = staging_directory.join(format!("{}.blob", chunk.blob_name));
+            let blob_path = staging_directory
+                .join("pending")
+                .join(format!("{}.blob", chunk.blob_name));
             assert!(blob_path.exists());
         }
 
