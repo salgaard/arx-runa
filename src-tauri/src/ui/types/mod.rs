@@ -4,7 +4,6 @@
 
 mod auth_response;
 mod contact_entry;
-mod oauth_setup_response;
 mod destination_entry;
 mod destination_health;
 mod destination_session_config;
@@ -13,6 +12,7 @@ mod file_content;
 mod file_entry;
 mod import_share_response;
 mod migration_progress;
+mod oauth_setup_response;
 mod progress_update;
 mod received_share_entry;
 mod reconcile_result;
@@ -28,7 +28,6 @@ mod vault_summary;
 
 pub use auth_response::AuthResponse;
 pub use contact_entry::ContactEntry;
-pub use oauth_setup_response::{BeginOauthSetupResponse, OauthPollResponse};
 pub use destination_entry::DestinationEntry;
 pub use destination_health::DestinationHealth;
 pub use destination_session_config::DestinationSessionConfig;
@@ -37,6 +36,7 @@ pub use file_content::FileContent;
 pub use file_entry::FileEntry;
 pub use import_share_response::ImportShareResponse;
 pub use migration_progress::MigrationProgress;
+pub use oauth_setup_response::{BeginOauthSetupResponse, OauthPollResponse};
 pub use progress_update::ProgressUpdate;
 pub use received_share_entry::ReceivedShareEntry;
 pub use reconcile_result::ReconcileResult;

@@ -11,13 +11,17 @@ use crate::storage::cloud::destination_session::{
     get_primary_destination, insert_destination_session, list_destination_sessions,
     set_primary_destination,
 };
-use crate::storage::cloud::{OAuthProvider, begin_oauth_setup, cancel_oauth_setup, complete_oauth_setup};
+use crate::storage::cloud::{
+    OAuthProvider, begin_oauth_setup, cancel_oauth_setup, complete_oauth_setup,
+};
 use crate::ui::auth_commands::rclone_conf_path;
 use crate::ui::commands_common::require_active_session;
 use crate::ui::error::IpcError;
 use crate::ui::state::{AppState, OAuthSetupHandle};
 use crate::ui::sync_commands::{build_destination_transport, rclone_binary_path};
-use crate::ui::types::{BeginOauthSetupResponse, DestinationEntry, DestinationSessionConfig, OauthPollResponse};
+use crate::ui::types::{
+    BeginOauthSetupResponse, DestinationEntry, DestinationSessionConfig, OauthPollResponse,
+};
 
 /// Validate a local `path_prefix` before creating a destination session.
 ///
@@ -40,9 +44,7 @@ fn validate_local_path(path_prefix: &str) -> Result<(), IpcError> {
             .map(|s| {
                 let s = s.trim_end_matches(['/', '\\']);
                 // Windows drive root: exactly "C:" after trimming
-                (s.len() == 2 && s.as_bytes().get(1) == Some(&b':'))
-                    || s == "/"
-                    || s.is_empty()
+                (s.len() == 2 && s.as_bytes().get(1) == Some(&b':')) || s == "/" || s.is_empty()
             })
             .unwrap_or(false);
     if is_root {
@@ -52,12 +54,12 @@ fn validate_local_path(path_prefix: &str) -> Result<(), IpcError> {
     }
 
     // Reject the home directory itself.
-    if let Some(home) = dirs::home_dir() {
-        if path == home {
-            return Err(IpcError::InvalidInput(
-                "Path must not be your home folder. Choose a dedicated subfolder instead.".into(),
-            ));
-        }
+    if let Some(home) = dirs::home_dir()
+        && path == home
+    {
+        return Err(IpcError::InvalidInput(
+            "Path must not be your home folder. Choose a dedicated subfolder instead.".into(),
+        ));
     }
 
     // Reject paths inside OneDrive-managed directories.
@@ -99,7 +101,12 @@ fn validate_local_path(path_prefix: &str) -> Result<(), IpcError> {
             }
             components
                 .get(home_components.len() + 2)
-                .map(|c| c.as_os_str().to_string_lossy().to_lowercase().starts_with("onedrive"))
+                .map(|c| {
+                    c.as_os_str()
+                        .to_string_lossy()
+                        .to_lowercase()
+                        .starts_with("onedrive")
+                })
                 .unwrap_or(false)
         }
         #[cfg(not(any(target_os = "windows", target_os = "macos")))]

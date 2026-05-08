@@ -40,7 +40,10 @@ pub enum DestinationKind {
 impl DestinationKind {
     /// Returns `true` for providers that use the two-phase OAuth flow.
     fn is_oauth(self) -> bool {
-        matches!(self, DestinationKind::OneDrive | DestinationKind::GoogleDrive)
+        matches!(
+            self,
+            DestinationKind::OneDrive | DestinationKind::GoogleDrive
+        )
     }
 }
 
@@ -76,7 +79,10 @@ struct DestinationFields<'a> {
 }
 
 /// Derives a `DestinationSessionConfig` for the given kind.
-fn build_config_for_kind(kind: DestinationKind, f: DestinationFields<'_>) -> DestinationSessionConfig {
+fn build_config_for_kind(
+    kind: DestinationKind,
+    f: DestinationFields<'_>,
+) -> DestinationSessionConfig {
     match kind {
         DestinationKind::Local => DestinationSessionConfig {
             label: "Local Filesystem".to_string(),
@@ -142,7 +148,8 @@ fn build_config_for_kind(kind: DestinationKind, f: DestinationFields<'_>) -> Des
             backup_mode: None,
         },
         DestinationKind::CustomRclone => {
-            let name = f.custom_rclone_config
+            let name = f
+                .custom_rclone_config
                 .lines()
                 .find_map(|line| {
                     let trimmed = line.trim();
@@ -256,8 +263,7 @@ pub fn DestinationSelector(
                     _ => return,
                 };
 
-                let begin_result =
-                    invoke_command::<_, BeginOauthSetupResponse>(command, &()).await;
+                let begin_result = invoke_command::<_, BeginOauthSetupResponse>(command, &()).await;
 
                 let response = match begin_result {
                     Ok(response) => response,
@@ -338,7 +344,7 @@ pub fn DestinationSelector(
         }
     });
 
-    let cancel_oauth= move |_| {
+    let cancel_oauth = move |_| {
         let current_state = oauth_state.get_untracked();
         if let OAuthFlowState::WaitingForBrowser { setup_id } = current_state {
             leptos::task::spawn_local(async move {
@@ -354,9 +360,7 @@ pub fn DestinationSelector(
 
     let field_class = "w-full bg-surface-overlay border border-border-default rounded-lg px-3 py-2 text-bone text-sm focus:outline-none focus:border-rune";
 
-    let render_option = move |option: DestinationKind,
-                              label: &'static str,
-                              desc: &'static str| {
+    let render_option = move |option: DestinationKind, label: &'static str, desc: &'static str| {
         let is_selected = move || kind.get() == option;
         view! {
             <label

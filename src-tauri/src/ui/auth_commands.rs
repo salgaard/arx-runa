@@ -734,7 +734,14 @@ async fn try_flush_on_lock(
         None => return Ok(()),
     };
     let _flush_guard = state.flush_mutex.lock().await;
-    flush_epoch_buffer(db, &kek, &staging_dir.join("pending"), chunk_size_bytes, None).await
+    flush_epoch_buffer(
+        db,
+        &kek,
+        &staging_dir.join("pending"),
+        chunk_size_bytes,
+        None,
+    )
+    .await
 }
 
 /// Zero all session keys and lock the vault.

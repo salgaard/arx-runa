@@ -450,9 +450,11 @@ pub async fn begin_oauth_setup(
 
     let mut reader = BufReader::new(stderr).lines();
     let mut auth_url = None;
-    while let Some(line) = reader.next_line().await.map_err(|error| {
-        CloudTransportError::Other(format!("reading rclone stderr: {error}"))
-    })? {
+    while let Some(line) = reader
+        .next_line()
+        .await
+        .map_err(|error| CloudTransportError::Other(format!("reading rclone stderr: {error}")))?
+    {
         if line.contains("http://127.0.0.1:") {
             auth_url = line
                 .rfind("http://127.0.0.1:")
@@ -464,9 +466,7 @@ pub async fn begin_oauth_setup(
         CloudTransportError::Other("rclone did not emit an auth URL on stderr".to_owned())
     })?;
 
-    tokio::spawn(async move {
-        while let Ok(Some(_)) = reader.next_line().await {}
-    });
+    tokio::spawn(async move { while let Ok(Some(_)) = reader.next_line().await {} });
 
     Ok(OAuthSetupBegun {
         setup_id,
@@ -525,9 +525,7 @@ pub async fn cancel_oauth_setup(
     if let Err(error) = child.start_kill() {
         tracing::warn!(error = %error, "cancel_oauth_setup: failed to kill rclone child");
     }
-    if let Err(error) =
-        tokio::time::timeout(Duration::from_secs(5), child.wait()).await
-    {
+    if let Err(error) = tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
         tracing::warn!(error = %error, "cancel_oauth_setup: failed to reap rclone child");
     }
     if let Err(error) = destroy_session_rclone_conf(temp_config_path).await {

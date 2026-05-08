@@ -90,8 +90,8 @@ pub async fn recover_with_phrase(
     let session_keys = SessionKeys::from_master_key_bytes(&master_key)?;
     let manifest_key_bytes = Zeroizing::new(*session_keys.manifest_key.expose());
     let sqlcipher_key = {
-        use secrecy::SecretBox;
         use crate::crypto::SqlcipherKey;
+        use secrecy::SecretBox;
         let mut boxed = Box::new([0u8; 32]);
         boxed.copy_from_slice(session_keys.sqlcipher_key.expose());
         SqlcipherKey::from_secret_box(SecretBox::new(boxed))

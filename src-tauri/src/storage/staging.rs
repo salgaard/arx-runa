@@ -80,11 +80,7 @@ pub async fn migrate_flat_staging_blobs(staging_dir: &Path) -> Result<(), Storag
         })?;
         let dest = pending_dir.join(file_name);
         tokio::fs::rename(&path, &dest).await.map_err(|error| {
-            StorageError::Io(format!(
-                "{} -> {}: {error}",
-                path.display(),
-                dest.display()
-            ))
+            StorageError::Io(format!("{} -> {}: {error}", path.display(), dest.display()))
         })?;
     }
     Ok(())

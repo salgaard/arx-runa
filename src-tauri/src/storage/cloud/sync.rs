@@ -663,7 +663,9 @@ pub async fn delete_vault_from_cloud(
 
 /// Returns the path for a locally-encrypted blob awaiting upload.
 fn pending_blob_path(staging_dir: &Path, blob_name: &str) -> PathBuf {
-    staging_dir.join("pending").join(format!("{blob_name}.blob"))
+    staging_dir
+        .join("pending")
+        .join(format!("{blob_name}.blob"))
 }
 
 /// Returns the path for a blob fetched from cloud for local viewing/decryption.

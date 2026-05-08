@@ -1,5 +1,9 @@
 //! SQLCipher-backed `MetadataStore` implementation.
 
+/// Row type returned by the `epoch_blobs` SELECT query:
+/// `(epoch_blob_id, blob_name, file_key_wrapped, size_padded, blake3_checksum)`.
+type EpochBlobRow = (String, String, Vec<u8>, i64, Vec<u8>);
+
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -666,8 +670,8 @@ impl SqlCipherMetadataStore {
         let probe_path = probe_path.to_path_buf();
         self.with_connection_blocking(move |conn| {
             let probe_key = protected_sqlcipher_key_from_slice(&key_bytes);
-            let probe_conn = open_sqlcipher(&probe_path, &probe_key)
-                .map_err(|_| StorageError::WrongKey)?;
+            let probe_conn =
+                open_sqlcipher(&probe_path, &probe_key).map_err(|_| StorageError::WrongKey)?;
 
             let cloud_counter: u64 = probe_conn
                 .query_row(
@@ -678,13 +682,11 @@ impl SqlCipherMetadataStore {
                 .map_err(StorageError::from_rusqlite)
                 .and_then(|v| {
                     v.parse::<u64>().map_err(|_| {
-                        StorageError::Database(
-                            "invalid snapshot_counter in probe DB".to_owned(),
-                        )
+                        StorageError::Database("invalid snapshot_counter in probe DB".to_owned())
                     })
                 })?;
 
-            let epoch_blobs: Vec<(String, String, Vec<u8>, i64, Vec<u8>)> = {
+            let epoch_blobs: Vec<EpochBlobRow> = {
                 let mut stmt = probe_conn
                     .prepare(
                         "SELECT epoch_blob_id, blob_name, file_key_wrapped, size_padded, \

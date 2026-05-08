@@ -16,13 +16,13 @@ use chacha20poly1305::{
 use thiserror::Error;
 use zeroize::Zeroizing;
 
+use super::{CloudTransport, CloudTransportError};
 use crate::crypto::SqlcipherKey;
 use crate::crypto::error::CryptoError;
 use crate::crypto::nonce::generate_nonce;
 use crate::storage::schema::{validate_manifest_meta, validate_schema_integrity};
 use crate::storage::sqlcipher::open_sqlcipher;
 use crate::storage::staging::{ensure_staging_directory, write_owner_only};
-use super::{CloudTransport, CloudTransportError};
 
 const NONCE_LEN: usize = 24;
 const TAG_LEN: usize = 16;
@@ -633,7 +633,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_manifest_backup_wrong_key_returns_integrity_check_failed_and_removes_destination()
-    {
+     {
         let temp = tempdir().expect("tempdir must succeed");
         let source_db_path = temp.path().join("source.db");
         let destination_db_path = temp.path().join("recovered.db");

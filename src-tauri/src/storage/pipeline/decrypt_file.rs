@@ -34,7 +34,6 @@ async fn resolve_blob_path(staging_dir: &Path, blob_name: &str) -> PathBuf {
     staging_dir.join(format!("{blob_name}.blob"))
 }
 
-
 ///
 /// The optional `progress` callback is invoked after each chunk's plaintext is
 /// written with `(bytes_decrypted, file_size)`.  Callback fires AFTER the
