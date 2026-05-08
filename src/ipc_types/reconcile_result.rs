@@ -5,10 +5,8 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReconcileResult {
-    /// Number of blobs pulled from the primary destination into local staging.
-    pub blobs_pulled: u32,
-    /// Number of local blobs that were already staged and untouched.
-    pub local_blobs_staged: u32,
+    /// Number of pending cloud deletions drained during reconciliation.
+    pub pending_deletions_drained: u32,
     /// Cloud snapshot counter this device is now aligned to.
     pub cloud_counter: u64,
 }

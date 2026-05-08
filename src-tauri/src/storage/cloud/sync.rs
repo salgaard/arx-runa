@@ -584,17 +584,27 @@ pub async fn pull_vault(
 
     for chunk in chunks {
         validate_blob_name_uuid_v4(&chunk.blob_name)?;
-        let local_path = cache_blob_path(staging_dir, &chunk.blob_name);
-        if tokio::fs::try_exists(&local_path).await? {
-            if verify_blob_checksum(&local_path, &chunk.blake3_checksum).await? {
+        let cache_path = cache_blob_path(staging_dir, &chunk.blob_name);
+        if tokio::fs::try_exists(&cache_path).await? {
+            if verify_blob_checksum(&cache_path, &chunk.blake3_checksum).await? {
                 blobs_skipped_present += 1;
             } else {
-                remove_file_if_present(&local_path).await?;
+                remove_file_if_present(&cache_path).await?;
                 chunks_to_fetch.push(chunk);
             }
-        } else {
-            chunks_to_fetch.push(chunk);
+            continue;
         }
+        // Also check the pending directory: blobs staged locally for upload but not yet on
+        // cloud (e.g. device B's changes after a conflict). If the checksum matches they are
+        // already correct on-disk and don't need to be downloaded.
+        let pending_path = pending_blob_path(staging_dir, &chunk.blob_name);
+        if tokio::fs::try_exists(&pending_path).await?
+            && let Ok(true) = verify_blob_checksum(&pending_path, &chunk.blake3_checksum).await
+        {
+            blobs_skipped_present += 1;
+            continue;
+        }
+        chunks_to_fetch.push(chunk);
     }
 
     let total_to_fetch = chunks_to_fetch.len();
@@ -744,7 +754,7 @@ async fn verify_blob_checksum(
     Ok(checksum.as_bytes() == expected_checksum)
 }
 
-async fn drain_pending_deletions(
+pub(crate) async fn drain_pending_deletions(
     metadata_store: &SqlCipherMetadataStore,
     cloud_transport: &dyn CloudTransport,
 ) -> Result<usize, SyncError> {
@@ -1420,6 +1430,56 @@ mod tests {
                 .expect("pending deletions should load")
                 .is_empty(),
             "NotFound from cloud should clear the pending deletion row"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pull_vault_skips_cloud_download_for_blob_present_in_pending_directory() {
+        // Scenario: device B has a locally-staged blob in pending/ that was never uploaded
+        // (conflict detected before push). After merge_from_probe_db both device B's and
+        // device A's chunk records coexist in the DB. pull_vault must recognise device B's
+        // own pending blob by falling back to pending_blob_path so it does not attempt a
+        // cloud download that would fail (the blob has never been uploaded).
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key_bytes = [30u8; 32];
+        let store = setup_store(&db_path, &key_bytes)
+            .await
+            .expect("store should be created");
+        let cloud = MockCloudTransport::new();
+        let payload = b"locally-staged-blob";
+        let blob_name = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+        let _file_id = insert_single_chunk(&store, blob_name, payload)
+            .await
+            .expect("chunk insert should succeed");
+
+        tokio::fs::create_dir_all(temp.path().join("pending"))
+            .await
+            .expect("pending dir should be created");
+        tokio::fs::write(pending_blob_path(temp.path(), blob_name), payload)
+            .await
+            .expect("pending blob should be written");
+
+        let report = pull_vault(
+            &db_path,
+            &SqlcipherKey::from_bytes([1; 32]),
+            &ManifestKey::from_bytes([2; 32]),
+            &store,
+            &cloud,
+            temp.path(),
+            &SyncConfig::default(),
+            None,
+        )
+        .await
+        .expect("pull should succeed without attempting cloud download for pending blob");
+
+        assert_eq!(
+            report.blobs_downloaded, 0,
+            "pending blob should not be downloaded from cloud"
+        );
+        assert_eq!(
+            report.blobs_skipped_present, 1,
+            "pending blob should be counted as already present"
         );
     }
 }

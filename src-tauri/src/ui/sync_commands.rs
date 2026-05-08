@@ -16,11 +16,12 @@ use crate::storage::cloud::destination_session::{
     set_primary_destination,
 };
 use crate::storage::cloud::manifest_backup::{download_manifest_backup, upload_manifest_backup};
+use crate::storage::cloud::sync::drain_pending_deletions;
 use crate::storage::cloud::vault_header::VaultHeader;
 use crate::storage::cloud::vault_header_io::VAULT_HEADER_BLOB_NAME;
 use crate::storage::cloud::{
-    CloudEndpoint, CloudTransport, DestinationSessionPublic, PullReport, RcloneTransport,
-    SyncConfig, pull_vault, push_vault,
+    CloudEndpoint, CloudTransport, DestinationSessionPublic, RcloneTransport, SyncConfig,
+    pull_vault, push_vault,
 };
 use crate::storage::staging::write_owner_only;
 use crate::ui::commands_common::{ProgressChannel, require_active_session};
@@ -390,7 +391,7 @@ pub async fn pull_and_reconcile(
         .active_vault_id()
         .await
         .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
-    let (vault_id, db_path, _) = resolve_vault_by_id(&vault_id)?;
+    let (vault_id, _, _) = resolve_vault_by_id(&vault_id)?;
 
     let staging_dir = vault_staging_dir(&vault_id);
     let probe_path = staging_dir.join("probe-reconcile.db");
@@ -402,7 +403,6 @@ pub async fn pull_and_reconcile(
     let cloud_transport = state.cloud_transport.read().await.clone();
 
     let sqlcipher_key = extract_sqlcipher_key(&state.session_manager).await?;
-    let manifest_key = extract_manifest_key(&state.session_manager).await?;
     let manifest_key_bytes: [u8; 32] = state
         .session_manager
         .with_manifest_key(|k| {
@@ -442,32 +442,16 @@ pub async fn pull_and_reconcile(
 
     let _ = tokio::fs::remove_file(&probe_path).await;
 
-    let progress_fn = {
-        let progress = progress.clone();
-        move |files_done: u32, files_total: u32, label: Option<&str>| {
-            let percent = 10 + (files_done * 85 / files_total.max(1)) as u8;
-            let _ = progress.send(SyncProgressUpdate {
-                percent,
-                current_file: label.map(str::to_owned),
-                files_processed: files_done,
-                files_total,
-            });
-        }
-    };
+    let _ = progress.send(SyncProgressUpdate {
+        percent: 50,
+        current_file: Some("Applying pending deletions".to_owned()),
+        files_processed: 0,
+        files_total: 0,
+    });
 
-    // Pull blobs now referenced in local DB that are missing from staging.
-    let pull_report: PullReport = pull_vault(
-        &db_path,
-        &sqlcipher_key,
-        &manifest_key,
-        db,
-        &*cloud_transport,
-        &staging_dir,
-        &SyncConfig::default(),
-        Some(&progress_fn),
-    )
-    .await
-    .map_err(|e| IpcError::CloudError(format!("pull: {e}")))?;
+    let pending_deletions_drained = drain_pending_deletions(db, &*cloud_transport)
+        .await
+        .map_err(|e| IpcError::CloudError(format!("drain deletions: {e}")))?;
 
     db.advance_snapshot_counter_to(cloud_counter)
         .await
@@ -476,13 +460,12 @@ pub async fn pull_and_reconcile(
     let _ = progress.send(SyncProgressUpdate {
         percent: 100,
         current_file: None,
-        files_processed: pull_report.blobs_downloaded as u32,
-        files_total: (pull_report.blobs_downloaded + pull_report.blobs_skipped_present) as u32,
+        files_processed: 0,
+        files_total: 0,
     });
 
     Ok(ReconcileResult {
-        blobs_pulled: pull_report.blobs_downloaded as u32,
-        local_blobs_staged: pull_report.blobs_skipped_present as u32,
+        pending_deletions_drained: pending_deletions_drained as u32,
         cloud_counter,
     })
 }
