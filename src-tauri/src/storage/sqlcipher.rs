@@ -22,8 +22,8 @@ use crate::storage::error::StorageError;
 use crate::storage::metadata_store::MetadataStore;
 use crate::storage::schema::{
     apply_backup_v5_migration, apply_canonical_schema, apply_epoch_v2_migration,
-    apply_sharing_v3_migration, apply_sharing_v4_migration, seed_manifest_meta,
-    validate_manifest_meta, validate_schema_integrity, verify_sqlcipher_key,
+    apply_pending_backup_v6_migration, apply_sharing_v3_migration, apply_sharing_v4_migration,
+    seed_manifest_meta, validate_manifest_meta, validate_schema_integrity, verify_sqlcipher_key,
 };
 use crate::storage::types::{
     ChunkRecord, EpochBlobRecord, EpochBufferEntry, Node, NodeId, NodeType, SyncChunkRecord,
@@ -77,6 +77,7 @@ impl SqlCipherMetadataStore {
             apply_sharing_v3_migration(&conn)?;
             apply_sharing_v4_migration(&conn)?;
             apply_backup_v5_migration(&conn)?;
+            apply_pending_backup_v6_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             Ok(conn)
@@ -107,6 +108,7 @@ impl SqlCipherMetadataStore {
             apply_sharing_v3_migration(&conn)?;
             apply_sharing_v4_migration(&conn)?;
             apply_backup_v5_migration(&conn)?;
+            apply_pending_backup_v6_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             validate_create_immutable_meta_matches(
@@ -565,32 +567,6 @@ impl SqlCipherMetadataStore {
         .await
     }
 
-    /// Returns all blob names that previously failed to upload to the given destination.
-    pub(crate) async fn list_backup_failures(
-        &self,
-        destination_id: &str,
-    ) -> Result<Vec<String>, StorageError> {
-        let destination_id = destination_id.to_owned();
-        self.with_connection_blocking(move |conn| {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT blob_name FROM backup_upload_failures
-                     WHERE destination_id = ?1
-                     ORDER BY failed_at ASC, blob_name ASC",
-                )
-                .map_err(StorageError::from_rusqlite)?;
-            let rows = stmt
-                .query_map(params![destination_id], |row| row.get::<_, String>(0))
-                .map_err(StorageError::from_rusqlite)?;
-            let mut names = Vec::new();
-            for row in rows {
-                names.push(row.map_err(StorageError::from_rusqlite)?);
-            }
-            Ok(names)
-        })
-        .await
-    }
-
     /// Returns per-destination failure counts: `(destination_id, count)` pairs.
     pub(crate) async fn get_backup_failure_counts(
         &self,
@@ -616,6 +592,97 @@ impl SqlCipherMetadataStore {
                 result.push(row.map_err(StorageError::from_rusqlite)?);
             }
             Ok(result)
+        })
+        .await
+    }
+
+    /// Enqueues multiple blobs for backup to a mirror destination in a single transaction.
+    ///
+    /// Silently ignores duplicates (idempotent).
+    pub(crate) async fn bulk_insert_pending_backup(
+        &self,
+        blob_names: &[String],
+        destination_id: &str,
+    ) -> Result<(), StorageError> {
+        let blob_names = blob_names.to_vec();
+        let destination_id = destination_id.to_owned();
+        self.with_connection_blocking(move |conn| {
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            for blob_name in &blob_names {
+                tx.execute(
+                    "INSERT OR IGNORE INTO pending_backup (blob_name, destination_id) VALUES (?1, ?2)",
+                    params![blob_name, destination_id],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            }
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Returns all blob names pending backup to the given destination, ordered alphabetically.
+    pub(crate) async fn list_pending_backups(
+        &self,
+        destination_id: &str,
+    ) -> Result<Vec<String>, StorageError> {
+        let destination_id = destination_id.to_owned();
+        self.with_connection_blocking(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT blob_name FROM pending_backup
+                     WHERE destination_id = ?1
+                     ORDER BY blob_name ASC",
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            let rows = stmt
+                .query_map(params![destination_id], |row| row.get::<_, String>(0))
+                .map_err(StorageError::from_rusqlite)?;
+            let mut names = Vec::new();
+            for row in rows {
+                names.push(row.map_err(StorageError::from_rusqlite)?);
+            }
+            Ok(names)
+        })
+        .await
+    }
+
+    /// Removes a pending backup record after a successful mirror upload.
+    pub(crate) async fn clear_pending_backup(
+        &self,
+        blob_name: &str,
+        destination_id: &str,
+    ) -> Result<(), StorageError> {
+        let blob_name = blob_name.to_owned();
+        let destination_id = destination_id.to_owned();
+        self.with_connection_blocking(move |conn| {
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            tx.execute(
+                "DELETE FROM pending_backup WHERE blob_name = ?1 AND destination_id = ?2",
+                params![blob_name, destination_id],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Removes all pending backup records for a destination (called on destination delete).
+    pub(crate) async fn clear_pending_backups_for_destination(
+        &self,
+        destination_id: &str,
+    ) -> Result<(), StorageError> {
+        let destination_id = destination_id.to_owned();
+        self.with_connection_blocking(move |conn| {
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            tx.execute(
+                "DELETE FROM pending_backup WHERE destination_id = ?1",
+                params![destination_id],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
         })
         .await
     }

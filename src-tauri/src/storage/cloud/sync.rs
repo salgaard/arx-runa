@@ -63,6 +63,8 @@ pub struct SyncConflict {
 pub struct PushReport {
     /// Number of uploaded blob staging files.
     pub blobs_uploaded: usize,
+    /// Names of all blobs successfully uploaded in this push (used to seed mirror queues).
+    pub uploaded_blob_names: Vec<String>,
     /// Local snapshot counter after successful push.
     pub snapshot_counter_after: u64,
     /// Total push duration in seconds.
@@ -551,6 +553,7 @@ pub async fn push_vault(
 
     Ok(PushReport {
         blobs_uploaded: successful_uploads.len(),
+        uploaded_blob_names: successful_uploads,
         snapshot_counter_after: new_counter,
         duration_seconds: started.elapsed().as_secs_f64(),
     })

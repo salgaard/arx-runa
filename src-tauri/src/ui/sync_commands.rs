@@ -263,6 +263,19 @@ pub async fn sync_to_cloud(
     .await
     .map_err(IpcError::from)?;
 
+    // Enqueue successfully-uploaded blobs for any active mirror destinations so
+    // sync_backup knows exactly what still needs to reach each mirror.
+    if !push_report.uploaded_blob_names.is_empty() {
+        let mirror_dests = list_destination_sessions(db)
+            .await
+            .map_err(IpcError::from)?;
+        for dest in mirror_dests.into_iter().filter(|d| d.backup_mode.is_some()) {
+            let _ = db
+                .bulk_insert_pending_backup(&push_report.uploaded_blob_names, &dest.destination_id)
+                .await;
+        }
+    }
+
     // Update cached sync status.
     *state.sync_status.write().await = SyncStatus {
         syncing: false,
@@ -767,14 +780,7 @@ pub async fn sync_backup(
     let all_blob_names: std::collections::HashSet<String> =
         chunks.iter().map(|c| c.blob_name.clone()).collect();
 
-    // Collect only the subset that still exists in local staging (to upload).
-    let mut staged_blobs: Vec<String> = Vec::new();
-    for chunk in &chunks {
-        let local_path = staging_dir.join(format!("{}.blob", chunk.blob_name));
-        if tokio::fs::try_exists(&local_path).await.unwrap_or(false) {
-            staged_blobs.push(chunk.blob_name.clone());
-        }
-    }
+    let mirror_temp_dir = staging_dir.join("mirror-temp");
 
     let app_handle = state
         .app_handle
@@ -791,47 +797,12 @@ pub async fn sync_backup(
         let transport =
             build_destination_transport(binary_path.clone(), &config_path, dest).await?;
 
-        // Per-destination effective set: start from the currently staged blobs, then
-        // add any blobs re-pulled for this destination's failure records.
-        let mut effective_staged: std::collections::HashSet<String> =
-            staged_blobs.iter().cloned().collect();
-
-        // Re-pull any blobs that previously failed to upload to this destination
-        // but are no longer in local staging (primary sync cleared them).
-        let known_failures = db
-            .list_backup_failures(&dest.destination_id)
+        // Pending-backup queue drives which blobs this destination still needs.
+        let pending_blobs = db
+            .list_pending_backups(&dest.destination_id)
             .await
             .map_err(IpcError::from)?;
-        for blob_name in &known_failures {
-            if !all_blob_names.contains(blob_name) {
-                // Blob was deleted from the vault; remove the stale failure record.
-                let _ = db
-                    .clear_backup_failure(blob_name, &dest.destination_id)
-                    .await;
-            } else if !effective_staged.contains(blob_name) {
-                let local_path = staging_dir.join(format!("{blob_name}.blob"));
-                let remote_path = blob_remote_path(blob_name);
-                match primary_transport
-                    .download_blob(&remote_path, &local_path)
-                    .await
-                {
-                    Ok(()) => {
-                        effective_staged.insert(blob_name.clone());
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            destination_id = %dest.destination_id,
-                            blob_name = %blob_name,
-                            error = %e,
-                            "re-pull of failed backup blob failed; will retry next run"
-                        );
-                    }
-                }
-            }
-        }
-
-        let blobs_to_upload: Vec<String> = effective_staged.iter().cloned().collect();
-        let blobs_total = blobs_to_upload.len() as u32;
+        let blobs_total = pending_blobs.len() as u32;
 
         let _ = progress.send(SyncProgressUpdate {
             percent: 0,
@@ -842,10 +813,52 @@ pub async fn sync_backup(
 
         let mut dest_uploaded: u32 = 0;
         let mut dest_failed: u32 = 0;
-        for blob_name in &blobs_to_upload {
-            let local_path = staging_dir.join(format!("{blob_name}.blob"));
-            let remote_path = blob_remote_path(blob_name);
 
+        for blob_name in &pending_blobs {
+            if !all_blob_names.contains(blob_name) {
+                // Blob was removed from the vault; discard the stale pending record.
+                let _ = db
+                    .clear_pending_backup(blob_name, &dest.destination_id)
+                    .await;
+                continue;
+            }
+
+            let staging_path = staging_dir.join(format!("{blob_name}.blob"));
+            let (local_path, used_temp) =
+                if tokio::fs::try_exists(&staging_path).await.unwrap_or(false) {
+                    (staging_path, false)
+                } else {
+                    // Blob was cleared from staging after primary upload; pull from primary
+                    // into a dedicated temp directory (not staging, which is primary-only).
+                    let temp_path = mirror_temp_dir.join(format!("{blob_name}.blob"));
+                    if let Err(e) = tokio::fs::create_dir_all(&mirror_temp_dir).await {
+                        tracing::warn!(
+                            destination_id = %dest.destination_id,
+                            blob_name = %blob_name,
+                            error = %e,
+                            "mirror-temp dir creation failed; skipping blob"
+                        );
+                        continue;
+                    }
+                    let remote_path = blob_remote_path(blob_name);
+                    match primary_transport
+                        .download_blob(&remote_path, &temp_path)
+                        .await
+                    {
+                        Ok(()) => (temp_path, true),
+                        Err(e) => {
+                            tracing::warn!(
+                                destination_id = %dest.destination_id,
+                                blob_name = %blob_name,
+                                error = %e,
+                                "mirror: failed to pull blob from primary; will retry next run"
+                            );
+                            continue;
+                        }
+                    }
+                };
+
+            let remote_path = blob_remote_path(blob_name);
             if let Err(e) = transport.upload_blob(&local_path, &remote_path).await {
                 tracing::warn!(
                     destination_id = %dest.destination_id,
@@ -858,10 +871,17 @@ pub async fn sync_backup(
                     .await;
                 dest_failed += 1;
             } else {
-                dest_uploaded += 1;
+                let _ = db
+                    .clear_pending_backup(blob_name, &dest.destination_id)
+                    .await;
                 let _ = db
                     .clear_backup_failure(blob_name, &dest.destination_id)
                     .await;
+                dest_uploaded += 1;
+            }
+
+            if used_temp {
+                let _ = tokio::fs::remove_file(&local_path).await;
             }
 
             let _ = progress.send(SyncProgressUpdate {
@@ -904,11 +924,11 @@ pub async fn sync_backup(
             );
         }
 
-        // Mirror mode: delete remote blobs that are no longer present in the vault.
+        // Mirror mode: delete blobs that exist on the remote but no longer in the vault.
         if dest.backup_mode == Some(BackupSyncMode::Mirror) {
             match transport.list_blobs("vault/").await {
-                Ok(remote_blobs) => {
-                    for remote_path in &remote_blobs {
+                Ok(remote_paths) => {
+                    for remote_path in &remote_paths {
                         let blob_name = remote_path
                             .strip_prefix("vault/")
                             .and_then(|s| s.strip_suffix(".blob"))

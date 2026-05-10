@@ -55,37 +55,16 @@ impl SyncActions {
         self.set_state.update(|s| s.clear());
     }
 
-    /// Calls `sync_backup` then `sync_to_cloud`, updating `SyncState` on completion.
+    /// Calls `sync_to_cloud` then `sync_backup`, updating `SyncState` on completion.
     ///
-    /// Backup destinations are pushed first while staged blobs still exist on
-    /// disk; `sync_to_cloud` removes staging files after uploading to the
-    /// primary, so reversing the order would leave mirrors empty.
+    /// Primary sync runs first so that newly staged blobs are uploaded and recorded
+    /// in `pending_backup` before the mirror pass reads the queue. This ensures new
+    /// files reach mirror destinations in the same sync run they are uploaded to the
+    /// primary.
     pub fn sync(self) {
         self.set_state.update(|s| s.syncing = true);
 
         leptos::task::spawn_local(async move {
-            let backup_channel = IpcChannel::<SyncProgressUpdate>::new();
-            if let Err(e) = invoke_command_with_channel::<SyncBackupPayload, SyncResult>(
-                "sync_backup",
-                &SyncBackupPayload {
-                    destination_id: None,
-                },
-                "progress",
-                backup_channel.inner(),
-            )
-            .await
-            {
-                self.set_state.update(|s| {
-                    s.error = Some(format!("Backup sync failed: {e}"));
-                });
-            }
-
-            if let Ok(health) =
-                invoke_command::<(), Vec<DestinationHealth>>("get_backup_health", &()).await
-            {
-                self.set_state.update(|s| s.backup_health = health);
-            }
-
             let channel = IpcChannel::<SyncProgressUpdate>::new();
             match invoke_command_with_channel::<(), SyncResult>(
                 "sync_to_cloud",
@@ -101,6 +80,26 @@ impl SyncActions {
                     self.set_state.update(|s| {
                         s.last_synced_at = Some(iso_string);
                         s.error = None;
+                    });
+
+                    let backup_channel = IpcChannel::<SyncProgressUpdate>::new();
+                    let _ = invoke_command_with_channel::<SyncBackupPayload, SyncResult>(
+                        "sync_backup",
+                        &SyncBackupPayload {
+                            destination_id: None,
+                        },
+                        "progress",
+                        backup_channel.inner(),
+                    )
+                    .await;
+
+                    let health =
+                        invoke_command::<(), Vec<DestinationHealth>>("get_backup_health", &())
+                            .await
+                            .unwrap_or_default();
+
+                    self.set_state.update(|s| {
+                        s.backup_health = health;
                         s.syncing = false;
                     });
                 }
