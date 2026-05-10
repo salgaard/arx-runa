@@ -151,7 +151,7 @@ pub(crate) fn apply_epoch_v2_migration(conn: &Connection) -> Result<(), StorageE
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "2" || version == "3" || version == "4" || version == "5" {
+    if version == "2" || version == "3" || version == "4" || version == "5" || version == "6" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -236,7 +236,7 @@ pub(crate) fn apply_sharing_v3_migration(conn: &Connection) -> Result<(), Storag
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "3" || version == "4" || version == "5" {
+    if version == "3" || version == "4" || version == "5" || version == "6" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -277,7 +277,7 @@ pub(crate) fn apply_sharing_v4_migration(conn: &Connection) -> Result<(), Storag
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "4" || version == "5" {
+    if version == "4" || version == "5" || version == "6" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -321,7 +321,7 @@ pub(crate) fn apply_backup_v5_migration(conn: &Connection) -> Result<(), Storage
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "5" {
+    if version == "5" || version == "6" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -337,6 +337,54 @@ pub(crate) fn apply_backup_v5_migration(conn: &Connection) -> Result<(), Storage
             PRIMARY KEY (blob_name, destination_id)
         );
         UPDATE manifest_meta SET value = '5' WHERE key = 'schema_version';
+        ",
+    )
+    .map_err(StorageError::from_rusqlite)?;
+
+    conn.execute_batch("COMMIT")
+        .map_err(StorageError::from_rusqlite)?;
+
+    Ok(())
+}
+
+/// Adds the `pending_backup` queue table introduced in Phase 7 (event-driven mirror sync).
+///
+/// Idempotent: if `schema_version` is already `'6'`, commits immediately and returns.
+/// Must be called after `apply_backup_v5_migration` on any vault opened from disk.
+///
+/// Migration steps (single `BEGIN IMMEDIATE` transaction):
+/// 1. Create `pending_backup` table.
+/// 2. Bump `schema_version` to `'6'`.
+pub(crate) fn apply_pending_backup_v6_migration(conn: &Connection) -> Result<(), StorageError> {
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(StorageError::from_rusqlite)?;
+
+    let version = conn
+        .query_row(
+            "SELECT value FROM manifest_meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(StorageError::from_rusqlite)?
+        .ok_or_else(|| {
+            StorageError::Database("missing manifest_meta key: schema_version".to_owned())
+        })?;
+
+    if version == "6" {
+        conn.execute_batch("COMMIT")
+            .map_err(StorageError::from_rusqlite)?;
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS pending_backup (
+            blob_name      TEXT NOT NULL,
+            destination_id TEXT NOT NULL,
+            PRIMARY KEY (blob_name, destination_id)
+        );
+        UPDATE manifest_meta SET value = '6' WHERE key = 'schema_version';
         ",
     )
     .map_err(StorageError::from_rusqlite)?;
@@ -437,9 +485,10 @@ pub(crate) fn validate_manifest_meta(conn: &Connection) -> Result<(), StorageErr
         && schema_version != "3"
         && schema_version != "4"
         && schema_version != "5"
+        && schema_version != "6"
     {
         return Err(StorageError::Database(
-            "invalid schema_version: expected 1, 2, 3, 4, or 5".to_owned(),
+            "invalid schema_version: expected 1, 2, 3, 4, 5, or 6".to_owned(),
         ));
     }
 
@@ -580,7 +629,7 @@ mod tests {
         apply_canonical_schema(&conn).expect("schema should apply");
         seed_manifest_meta(&conn, Uuid::new_v4(), 4_194_304, false).expect("seed should succeed");
         conn.execute(
-            "UPDATE manifest_meta SET value = '6' WHERE key = 'schema_version'",
+            "UPDATE manifest_meta SET value = '7' WHERE key = 'schema_version'",
             [],
         )
         .expect("test setup should update schema_version");

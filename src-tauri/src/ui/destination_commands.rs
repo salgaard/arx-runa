@@ -196,6 +196,17 @@ pub async fn add_destination(
         .await
         .map_err(IpcError::from)?;
 
+    // Seed the pending-backup queue so the new mirror receives all existing vault blobs.
+    if session.backup_mode.is_some() {
+        let chunks = db.list_sync_chunks().await.map_err(IpcError::from)?;
+        let blob_names: Vec<String> = chunks.into_iter().map(|c| c.blob_name).collect();
+        if !blob_names.is_empty() {
+            let _ = db
+                .bulk_insert_pending_backup(&blob_names, &session.destination_id)
+                .await;
+        }
+    }
+
     Ok(DestinationEntry {
         destination_id: session.destination_id,
         label: session.label,
@@ -287,6 +298,10 @@ pub async fn delete_destination(
     delete_destination_session(db, &destination_id)
         .await
         .map_err(IpcError::from)?;
+
+    let _ = db
+        .clear_pending_backups_for_destination(&destination_id)
+        .await;
 
     Ok(())
 }
