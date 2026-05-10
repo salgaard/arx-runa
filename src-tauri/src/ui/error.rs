@@ -37,6 +37,13 @@ pub enum IpcError {
     /// An unexpected internal error occurred.
     #[error("Internal error: {0}")]
     InternalError(String),
+    /// The file is staged in the epoch buffer and cannot be downloaded until flushed.
+    #[error("Pending flush: {0}")]
+    PendingFlush(String),
+    /// A push was blocked because the cloud has a newer snapshot (another device synced).
+    /// Call `pull_and_reconcile` then retry the push.
+    #[error("Sync conflict: {0}")]
+    SyncConflict(String),
 }
 
 #[allow(unreachable_patterns)]
@@ -81,6 +88,9 @@ impl From<crate::storage::StorageError> for IpcError {
             S::ConstraintViolation(_) => {
                 IpcError::AlreadyExists("A record with this identifier already exists".into())
             }
+            S::EpochBufferNotFlushed(_) => IpcError::PendingFlush(
+                "File is pending encryption — flush the epoch buffer first".into(),
+            ),
             S::Database(_) | S::Io(_) => IpcError::InternalError("An error occurred".into()),
             _ => IpcError::InternalError("An error occurred".into()),
         }
@@ -136,7 +146,9 @@ impl From<crate::storage::SyncError> for IpcError {
         tracing::error!("sync error: {:?}", error);
         use crate::storage::SyncError as Sy;
         match error {
-            Sy::Conflict(_) => IpcError::CloudError("Cloud snapshot conflict".into()),
+            Sy::Conflict(_) => {
+                IpcError::SyncConflict("Another device has synced since your last pull".into())
+            }
             Sy::Transport { .. }
             | Sy::CloudManifestUnreadable { .. }
             | Sy::PushUploadFailed { .. }
@@ -160,6 +172,9 @@ impl From<crate::storage::CloudTransportError> for IpcError {
         match error {
             C::NotFound => IpcError::NotFound("Cloud blob not found".into()),
             C::AuthenticationFailed => IpcError::CloudError("Cloud authentication failed".into()),
+            C::BucketNameTaken => {
+                IpcError::AlreadyExists("Cloud bucket name is already in use".into())
+            }
             C::Timeout | C::IoError(_) | C::RcloneProcessFailed { .. } | C::Other(_) => {
                 IpcError::CloudError("Cloud operation failed".into())
             }
@@ -194,6 +209,8 @@ mod tests {
             (IpcError::CloudError("x".into()), "cloudError"),
             (IpcError::InvalidInput("x".into()), "invalidInput"),
             (IpcError::InternalError("x".into()), "internalError"),
+            (IpcError::PendingFlush("x".into()), "pendingFlush"),
+            (IpcError::SyncConflict("x".into()), "syncConflict"),
         ];
         for (err, expected_kind) in cases {
             let value = serde_json::to_value(&err).expect("serialisation must succeed");
@@ -410,13 +427,13 @@ mod tests {
         assert_eq!(value["kind"], "alreadyExists");
     }
 
-    /// Verifies that `From<SyncError::Conflict>` emits cloudError and does not leak conflict
+    /// Verifies that `From<SyncError::Conflict>` emits syncConflict and does not leak conflict
     /// counter values into the IPC message.
     ///
     /// Note: `SyncError::Conflict` wraps a `SyncConflict` struct (not a plain string);
     /// the sentinel counter `987654321` must not appear in the sanitised message.
     #[test]
-    fn test_from_sync_error_conflict_emits_cloud_error() {
+    fn test_from_sync_error_conflict_emits_sync_conflict() {
         let err = IpcError::from(crate::storage::SyncError::Conflict(
             crate::storage::SyncConflict {
                 local_counter: 987_654_321,
@@ -426,7 +443,7 @@ mod tests {
             },
         ));
         let value = serde_json::to_value(&err).expect("serialisation must succeed");
-        assert_eq!(value["kind"], "cloudError");
+        assert_eq!(value["kind"], "syncConflict");
         let message = value["message"].as_str().expect("message must be a string");
         assert!(
             !message.contains("987654321"),
@@ -460,6 +477,24 @@ mod tests {
         assert!(
             obj.contains_key("message"),
             "JSON object must contain 'message'"
+        );
+    }
+
+    /// Verifies that `From<StorageError::EpochBufferNotFlushed>` emits `pendingFlush` kind.
+    #[test]
+    fn test_from_storage_epoch_buffer_not_flushed_emits_pending_flush() {
+        let id = uuid::Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+            .expect("test UUID must parse");
+        let err = IpcError::from(crate::storage::StorageError::EpochBufferNotFlushed(id));
+        let value = serde_json::to_value(&err).expect("serialisation must succeed");
+        assert_eq!(
+            value["kind"], "pendingFlush",
+            "EpochBufferNotFlushed must map to pendingFlush kind"
+        );
+        let message = value["message"].as_str().expect("message must be a string");
+        assert!(
+            !message.contains("aaaaaaaa"),
+            "UUID must not leak into IPC response: {message}"
         );
     }
 }

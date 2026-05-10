@@ -65,6 +65,41 @@ pub async fn open_file_dialog() -> Option<String> {
     result_val.as_string()
 }
 
+/// Opens a native file picker dialog filtered to `.arxshare` files.
+///
+/// Returns `Some(path)` when the user selects a file, `None` when cancelled.
+/// Returns `None` if running in browser dev mode (Tauri plugin unavailable).
+pub async fn open_file_dialog_arxshare() -> Option<String> {
+    if !is_tauri_context() {
+        return None;
+    }
+
+    let window = web_sys::window()?;
+    let dialog_plugin =
+        js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI_PLUGIN_DIALOG__")).ok()?;
+    let open_fn = js_sys::Reflect::get(&dialog_plugin, &JsValue::from_str("open")).ok()?;
+
+    let opts = serde_wasm_bindgen::to_value(&json!({
+        "multiple": false,
+        "directory": false,
+        "filters": [{ "name": "Arx Runa Share", "extensions": ["arxshare"] }],
+    }))
+    .ok()?;
+
+    let promise = open_fn
+        .dyn_into::<js_sys::Function>()
+        .ok()?
+        .call1(&dialog_plugin, &opts)
+        .ok()?;
+    let result = js_sys::Promise::resolve(&promise);
+    let result_val = wasm_bindgen_futures::JsFuture::from(result).await.ok()?;
+
+    if result_val.is_null() || result_val.is_undefined() {
+        return None;
+    }
+    result_val.as_string()
+}
+
 /// Opens a native directory picker dialog.
 ///
 /// Returns `Some(path)` when the user selects a directory, `None` when cancelled.

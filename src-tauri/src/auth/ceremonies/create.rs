@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use chacha20poly1305::aead::OsRng;
 use rand::Rng;
 use rusqlite::params;
@@ -13,10 +15,11 @@ use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::VaultId;
+use crate::storage::SqlCipherMetadataStore;
+use crate::storage::cloud::destination_session::insert_destination_session;
+use crate::storage::cloud::upload_vault_header;
 use crate::storage::cloud::vault_header::VaultHeader;
-use crate::storage::cloud::{VAULT_HEADER_UPLOAD_STAGING_FILE_NAME, upload_vault_header};
 use crate::storage::schema::{apply_canonical_schema, seed_manifest_meta};
-use std::path::Path;
 
 #[cfg(test)]
 use super::{STAGING_FILE_NAME, VAULT_HEADER_BLOB_NAME};
@@ -90,8 +93,9 @@ pub async fn create_vault(
         };
     }
 
-    let vault_id = VaultId::from_uuid(Uuid::new_v4());
+    let vault_id = VaultId::from_uuid(request.suggested_vault_id.unwrap_or_else(Uuid::new_v4));
 
+    let mut written_key_file_path: Option<PathBuf> = None;
     let mut key_file_bytes: Option<Zeroizing<[u8; 32]>> = None;
     let mut key_file_blake3_hex: Option<String> = None;
     if request.tier == Tier::Two {
@@ -118,6 +122,7 @@ pub async fn create_vault(
         let digest = blake3::hash(buffer.as_slice());
         key_file_blake3_hex = Some(hex::encode(digest.as_bytes()));
         key_file_bytes = Some(buffer);
+        written_key_file_path = Some(key_file_path);
     }
 
     let mut argon2_salt: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
@@ -132,8 +137,8 @@ pub async fn create_vault(
         &mut master_key,
     );
     if let Err(error) = derive_result {
-        if let Some(key_file_path) = request.target_key_file_path.as_ref() {
-            remove_file_if_exists(key_file_path).await;
+        if let Some(kfp) = written_key_file_path.as_deref() {
+            remove_file_if_exists(kfp).await;
         }
         return Err(error);
     }
@@ -141,8 +146,8 @@ pub async fn create_vault(
     let session_keys = match SessionKeys::from_master_key_bytes(&master_key) {
         Ok(keys) => keys,
         Err(error) => {
-            if let Some(key_file_path) = request.target_key_file_path.as_ref() {
-                remove_file_if_exists(key_file_path).await;
+            if let Some(kfp) = written_key_file_path.as_deref() {
+                remove_file_if_exists(kfp).await;
             }
             return Err(error);
         }
@@ -153,7 +158,15 @@ pub async fn create_vault(
     let public_key = PublicKey::from(&static_secret);
     let public_key_bytes = public_key.to_bytes();
 
-    let wrapped_private_key = wrap_with_session_kek(&session_keys, &x25519_secret_bytes)?;
+    let wrapped_private_key = match wrap_with_session_kek(&session_keys, &x25519_secret_bytes) {
+        Ok(wrapped) => wrapped,
+        Err(error) => {
+            if let Some(kfp) = written_key_file_path.as_deref() {
+                remove_file_if_exists(kfp).await;
+            }
+            return Err(error);
+        }
+    };
 
     let sqlcipher_key = sqlcipher_key_from_array(session_keys.sqlcipher_key.expose());
     let vault_db_path_owned = request.vault_db_path.clone();
@@ -179,11 +192,50 @@ pub async fn create_vault(
         .await
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     if let Err(error) = db_result {
-        if let Some(key_file_path) = request.target_key_file_path.as_ref() {
-            remove_file_if_exists(key_file_path).await;
+        if let Some(kfp) = written_key_file_path.as_deref() {
+            remove_file_if_exists(kfp).await;
         }
         remove_file_if_exists(&request.vault_db_path).await;
         return Err(error);
+    }
+
+    // Insert the primary destination into the vault DB before installing the session.
+    // Doing this inside the ceremony (before finalize_session_install) ensures the
+    // session only becomes Active if the destination row is already committed.
+    if let Some(ref dest) = request.primary_destination {
+        let dest_key = Zeroizing::new(*session_keys.sqlcipher_key.expose());
+        let dest_db = SqlCipherMetadataStore::open(&request.vault_db_path, &dest_key)
+            .await
+            .map_err(|_| AuthenticationError::VaultHeaderInvalid);
+        drop(dest_key);
+        match dest_db {
+            Ok(db) => {
+                let insert_result = insert_destination_session(&db, dest).await;
+                drop(db);
+                if let Err(error) = insert_result {
+                    tracing::error!(
+                        ?error,
+                        "Failed to insert primary destination during vault creation"
+                    );
+                    if let Some(kfp) = written_key_file_path.as_deref() {
+                        remove_file_if_exists(kfp).await;
+                    }
+                    remove_file_if_exists(&request.vault_db_path).await;
+                    return Err(AuthenticationError::VaultHeaderInvalid);
+                }
+            }
+            Err(error) => {
+                tracing::error!(
+                    ?error,
+                    "Failed to open vault DB for primary destination insertion"
+                );
+                if let Some(kfp) = written_key_file_path.as_deref() {
+                    remove_file_if_exists(kfp).await;
+                }
+                remove_file_if_exists(&request.vault_db_path).await;
+                return Err(error);
+            }
+        }
     }
 
     let header = VaultHeader {
@@ -194,21 +246,37 @@ pub async fn create_vault(
         argon2_params: argon2_params_to_json(&request.argon2_params),
         key_file_blake3: key_file_blake3_hex,
         recovery_slots: Vec::new(),
+        name: request.vault_name.clone(),
     };
 
-    let staging_dir = staging::staging_directory().await?;
-    let staging_path = staging_dir.join(VAULT_HEADER_UPLOAD_STAGING_FILE_NAME);
-    let upload_result = upload_vault_header(&header, cloud_transport, &staging_dir).await;
-    if let Err(error) = upload_result {
-        rollback_after_header_publish_failure(
-            &staging_path,
-            None,
-            request.target_key_file_path.as_deref(),
-            &request.vault_db_path,
-            "staging cleanup failed after vault-header publish failure",
-        )
-        .await;
-        return Err(map_vault_header_sync_error(error));
+    // Write vault-header.json to the local vault directory. `authenticate` reads
+    // this file from disk; local-only vaults never need the cloud copy.
+    let local_header_path = request
+        .vault_db_path
+        .parent()
+        .ok_or(AuthenticationError::VaultHeaderInvalid)?
+        .join("vault-header.json");
+    let header_json = serde_json::to_string_pretty(&header)
+        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+    if let Err(error) = tokio::fs::write(&local_header_path, &header_json).await {
+        tracing::error!(?local_header_path, %error, "Failed to write vault-header.json locally");
+        if let Some(kfp) = written_key_file_path.as_deref() {
+            remove_file_if_exists(kfp).await;
+        }
+        remove_file_if_exists(&request.vault_db_path).await;
+        return Err(AuthenticationError::VaultHeaderInvalid);
+    }
+
+    // Best-effort cloud upload. Skipped for local-only vaults (no transport configured).
+    // Non-fatal: the staging file persists for retry on next startup if the upload fails.
+    if cloud_transport.is_configured() {
+        let staging_dir = staging::staging_directory().await?;
+        if let Err(error) = upload_vault_header(&header, cloud_transport, &staging_dir).await {
+            tracing::warn!(
+                ?error,
+                "vault header cloud upload failed; local copy written, will retry on next startup"
+            );
+        }
     }
     session_manager
         .finalize_session_install(
@@ -225,26 +293,6 @@ pub async fn create_vault(
     drop(key_file_bytes);
 
     Ok(vault_id)
-}
-
-async fn rollback_after_header_publish_failure(
-    staging_path: &Path,
-    staging_cleanup_result: Option<Result<(), AuthenticationError>>,
-    target_key_file_path: Option<&Path>,
-    vault_db_path: &Path,
-    staging_cleanup_warning_message: &'static str,
-) {
-    let cleanup_result = match staging_cleanup_result {
-        Some(result) => result,
-        None => staging::remove_if_exists(staging_path).await,
-    };
-    if let Err(cleanup_error) = cleanup_result {
-        tracing::warn!(?cleanup_error, staging_cleanup_warning_message);
-    }
-    if let Some(key_file_path) = target_key_file_path {
-        remove_file_if_exists(key_file_path).await;
-    }
-    remove_file_if_exists(vault_db_path).await;
 }
 
 #[cfg(test)]
@@ -362,6 +410,9 @@ mod tests {
             argon2_params: test_params(),
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: None,
         };
 
         let result = create_vault(request, &session, &cloud).await;
@@ -387,6 +438,9 @@ mod tests {
             argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: None,
         };
         let result = create_vault(request, &session, &cloud).await;
         assert!(matches!(
@@ -411,6 +465,9 @@ mod tests {
             argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: None,
         };
         let result = create_vault(request, &session, &cloud).await;
         assert!(matches!(
@@ -438,6 +495,9 @@ mod tests {
             argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: None,
         };
 
         let result = create_vault(request, &session, &cloud).await;
@@ -476,6 +536,9 @@ mod tests {
             argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: None,
         };
 
         let result = create_vault(request, &existing_vault.session, &existing_vault.cloud).await;
@@ -501,8 +564,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_create_vault_upload_failure_preserves_no_session_and_cleans_staging_and_local_files()
-     {
+    async fn test_create_vault_upload_failure_non_fatal_session_installed_vault_intact() {
         let _lock = ceremony_lock().await;
         let temp = temp_dir();
         let session = test_session_manager();
@@ -522,25 +584,26 @@ mod tests {
             argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: None,
         };
 
         let result = create_vault(request, &session, &cloud).await;
 
-        assert!(matches!(
-            result,
-            Err(AuthenticationError::VaultHeaderInvalid)
-        ));
-        assert_eq!(
-            session.state().await,
-            crate::auth::LifecycleState::NoSession
-        );
-        assert!(!vault_db_path.exists());
-        assert!(!key_file_path.exists());
-        assert!(!tokio::fs::try_exists(&pending_path).await.unwrap_or(false));
+        // Upload failure is non-fatal: ceremony succeeds, session is active, vault intact.
+        assert!(result.is_ok());
+        assert_eq!(session.state().await, crate::auth::LifecycleState::Active);
+        assert!(vault_db_path.exists());
+        assert!(key_file_path.exists());
+        // Staging file remains because the upload failed before the remote received it.
+        assert!(tokio::fs::try_exists(&pending_path).await.unwrap_or(false));
+        let _ = staging::remove_if_exists(&pending_path).await;
+        session.lock().await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_create_vault_staging_write_failure_preserves_no_session_and_cleans_local_files() {
+    async fn test_create_vault_staging_write_failure_non_fatal_session_installed_vault_intact() {
         let _lock = ceremony_lock().await;
         let temp = temp_dir();
         let session = test_session_manager();
@@ -564,23 +627,84 @@ mod tests {
             argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: None,
         };
 
         let result = create_vault(request, &session, &cloud).await;
 
-        assert!(matches!(
-            result,
-            Err(AuthenticationError::VaultHeaderInvalid)
-        ));
-        assert_eq!(
-            session.state().await,
-            crate::auth::LifecycleState::NoSession
-        );
-        assert!(!vault_db_path.exists());
-        assert!(!key_file_path.exists());
+        // Staging write failure is non-fatal: ceremony succeeds, session is active, vault intact.
+        assert!(result.is_ok());
+        assert_eq!(session.state().await, crate::auth::LifecycleState::Active);
+        assert!(vault_db_path.exists());
+        assert!(key_file_path.exists());
         tokio::fs::remove_dir_all(&pending_path)
             .await
             .expect("directory at staging path must be removable");
+        session.lock().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_vault_with_primary_local_destination_inserts_destination_row() {
+        let _lock = ceremony_lock().await;
+        let temp = temp_dir();
+        let vault_db_path = temp.path().join("vault.db");
+        let cloud = MockCloudTransport::new();
+        let session = test_session_manager();
+
+        let dest = crate::storage::cloud::destination_session::DestinationSession {
+            destination_id: Uuid::new_v4().hyphenated().to_string(),
+            label: "Local Storage".to_owned(),
+            destination_type:
+                crate::storage::cloud::destination_session::DestinationType::LocalPath,
+            rclone_remote_name: "local_storage".to_owned(),
+            rclone_config_blob: String::new(),
+            bucket: String::new(),
+            path_prefix: String::new(),
+            is_primary: true,
+            backup_mode: None,
+        };
+        let request = CreateVaultRequest {
+            tier: Tier::One,
+            password_bytes: TEST_PASSWORD,
+            target_key_file_path: None,
+            vault_db_path: vault_db_path.clone(),
+            argon2_params: Argon2Params::DEFAULT,
+            chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+            epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: Some(dest),
+        };
+
+        let result = create_vault(request, &session, &cloud).await;
+
+        assert!(result.is_ok());
+        assert_eq!(session.state().await, crate::auth::LifecycleState::Active);
+
+        let sqlcipher_key: [u8; 32] = session
+            .with_sqlcipher_key(|k| *k)
+            .await
+            .expect("session must be active to read sqlcipher key");
+        let db = crate::storage::SqlCipherMetadataStore::open(&vault_db_path, &sqlcipher_key)
+            .await
+            .expect("vault DB must be openable after ceremony");
+        let destinations =
+            crate::storage::cloud::destination_session::list_destination_sessions(&db)
+                .await
+                .expect("listing destinations must succeed");
+        assert_eq!(
+            destinations.len(),
+            1,
+            "exactly one destination row must be inserted"
+        );
+        assert!(destinations[0].is_primary);
+        assert_eq!(
+            destinations[0].destination_type,
+            crate::storage::cloud::destination_session::DestinationType::LocalPath,
+        );
+        session.lock().await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -603,6 +727,9 @@ mod tests {
             argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: None,
         };
 
         let result = create_vault(request, &session, &cloud).await;

@@ -27,6 +27,9 @@ pub enum StorageError {
     /// A database constraint was violated.
     #[error("constraint violation: {0}")]
     ConstraintViolation(String),
+    /// The file is staged in the epoch buffer but has not yet been flushed to an encrypted blob.
+    #[error("file {0} is pending epoch flush — call flush_epoch_buffer before downloading")]
+    EpochBufferNotFlushed(uuid::Uuid),
 }
 
 impl StorageError {
@@ -264,5 +267,22 @@ mod tests {
             StorageError::from(CryptoError::ChecksumMismatch),
             StorageError::ChecksumMismatch
         ));
+    }
+
+    /// Verifies that `EpochBufferNotFlushed` formats correctly and includes the UUID.
+    #[test]
+    fn test_epoch_buffer_not_flushed_returns_correct_message() {
+        let id = uuid::Uuid::parse_str("12345678-1234-4234-8234-123456789abc")
+            .expect("test UUID must parse");
+        let error = StorageError::EpochBufferNotFlushed(id);
+        let message = error.to_string();
+        assert!(
+            message.contains("12345678-1234-4234-8234-123456789abc"),
+            "error message must include the UUID: {message}"
+        );
+        assert!(
+            message.contains("pending epoch flush"),
+            "error message must mention pending epoch flush: {message}"
+        );
     }
 }

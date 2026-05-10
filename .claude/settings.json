@@ -41,7 +41,31 @@
           },
           {
             "type": "command",
+            "command": "file=$(jq -r '.tool_input.file_path // .tool_input.path // empty'); if echo \"$file\" | grep -q '\\.rs$'; then cargo fmt --quiet; fi"
+          },
+          {
+            "type": "command",
             "command": "file=$(jq -r '.tool_input.file_path // .tool_input.path // empty'); if echo \"$file\" | grep -qE '/\\.claude/rules/'; then echo 'Reminder: .github/instructions/ counterpart may need updating — run /copilot-sync'; fi"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\": \"Hard rules: never write unencrypted sensitive data to disk. Never commit secrets. cargo fmt --all after Rust changes. Do not git add/commit — user handles it. master_key must not escape ceremony function body.\"}'"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "msg=$(jq -r '.prompt // empty'); if echo \"$msg\" | grep -qiE 'ceremon|create_vault|change_password|rotate_key'; then echo '{\"hookSpecificOutput\": \"Reminder: master_key must not escape ceremony function body — bind as Zeroizing<[u8;32]> locally only.\"}'; elif echo \"$msg\" | grep -qiE 'recovery|phrase|bip.?39|recover_with'; then echo '{\"hookSpecificOutput\": \"Reminder: BIP-39 only; AAD = b\\\\\"arx-runa recovery v1\\\\\" || vault_id_bytes; phrase returned once in Zeroizing<String>.\"}'; elif echo \"$msg\" | grep -qiE 'session|reset_timer|begin_operation|lock'; then echo '{\"hookSpecificOutput\": \"Reminder: reset_timer() on every IPC dispatch; begin_operation() guard for long ops; SessionEvent must never contain secret material.\"}'; elif echo \"$msg\" | grep -qiE 'aad|nonce|chunk.*(encrypt|decrypt)|xchacha'; then echo '{\"hookSpecificOutput\": \"Reminder: AAD = file_id || chunk_index (big-endian); 24-byte CSPRNG nonce per chunk; verify_checksum before decrypt_chunk.\"}'; fi"
           }
         ]
       }

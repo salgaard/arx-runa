@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::crypto::{KeyEncryptionKey, WrappedFileKey, unwrap_file_key};
 use crate::storage::MetadataStore;
 use crate::storage::error::StorageError;
-use crate::storage::pipeline::decrypt_file;
+use crate::storage::pipeline::{decrypt_epoch_file, decrypt_file};
 use crate::storage::types::NodeType;
 
 /// Downloads a file node from staged encrypted chunks into a destination file.
@@ -28,13 +28,38 @@ pub async fn download_file(
             "target is a directory".to_owned(),
         ));
     }
+    let chunks = metadata_store.get_chunks(node_id).await?;
+
+    if chunks.is_empty() {
+        let buffer_ids = metadata_store.get_epoch_buffer_node_ids().await?;
+        if buffer_ids.contains(&node_id) {
+            return Err(StorageError::EpochBufferNotFlushed(node_id));
+        }
+    }
+
+    if chunks
+        .first()
+        .map(|c| c.epoch_blob_id.is_some())
+        .unwrap_or(false)
+    {
+        let chunk = &chunks[0];
+        return decrypt_epoch_file(
+            destination,
+            chunk,
+            key_encryption_key,
+            blob_directory,
+            metadata_store,
+            progress,
+        )
+        .await;
+    }
+
     let wrapped_key = node.file_key_wrapped.ok_or_else(|| {
         StorageError::ConstraintViolation("file node missing wrapped key".to_owned())
     })?;
     let wrapped_file_key = WrappedFileKey(wrapped_key);
     let file_key =
         unwrap_file_key(&wrapped_file_key, key_encryption_key).map_err(StorageError::from)?;
-    let chunks = metadata_store.get_chunks(node_id).await?;
     decrypt_file(
         destination,
         *node.node_id.as_uuid(),
@@ -61,7 +86,8 @@ mod tests {
     use super::download_file;
     use crate::crypto::KeyEncryptionKey;
     use crate::storage::mock::MockMetadataStore;
-    use crate::storage::vault_ops::upload_file;
+    use crate::storage::types::{EpochBlobRecord, EpochBufferEntry};
+    use crate::storage::vault_ops::{flush_epoch_buffer, upload_file};
     use crate::storage::{ChunkRecord, MetadataStore, Node, StorageError};
 
     /// Metadata-store wrapper that overrides only `epoch_buffer_enabled`.
@@ -162,6 +188,63 @@ mod tests {
         /// Delegates snapshot increment.
         async fn increment_snapshot_counter(&self) -> Result<u64, StorageError> {
             self.inner.increment_snapshot_counter().await
+        }
+
+        /// Delegates file-node-only insert.
+        async fn insert_file_node_only(&self, node: &Node) -> Result<(), StorageError> {
+            self.inner.insert_file_node_only(node).await
+        }
+
+        /// Delegates atomic file-node-plus-epoch-buffer insert.
+        async fn insert_file_node_and_stage_epoch_entry(
+            &self,
+            node: &Node,
+            plaintext: Vec<u8>,
+        ) -> Result<(), StorageError> {
+            self.inner
+                .insert_file_node_and_stage_epoch_entry(node, plaintext)
+                .await
+        }
+
+        /// Delegates epoch entry staging.
+        async fn stage_epoch_entry(
+            &self,
+            node_id: Uuid,
+            plaintext: Vec<u8>,
+        ) -> Result<(), StorageError> {
+            self.inner.stage_epoch_entry(node_id, plaintext).await
+        }
+
+        /// Delegates epoch buffer total bytes.
+        async fn get_epoch_buffer_total_bytes(&self) -> Result<u64, StorageError> {
+            self.inner.get_epoch_buffer_total_bytes().await
+        }
+
+        /// Delegates epoch buffer entries.
+        async fn get_epoch_buffer_entries(&self) -> Result<Vec<EpochBufferEntry>, StorageError> {
+            self.inner.get_epoch_buffer_entries().await
+        }
+
+        /// Delegates epoch buffer node IDs.
+        async fn get_epoch_buffer_node_ids(&self) -> Result<Vec<Uuid>, StorageError> {
+            self.inner.get_epoch_buffer_node_ids().await
+        }
+
+        /// Delegates epoch flush commit.
+        async fn commit_epoch_flush(
+            &self,
+            record: &EpochBlobRecord,
+            extents: &[(Uuid, u32, u64, u64)],
+        ) -> Result<(), StorageError> {
+            self.inner.commit_epoch_flush(record, extents).await
+        }
+
+        /// Delegates epoch blob retrieval.
+        async fn get_epoch_blob(
+            &self,
+            epoch_blob_id: Uuid,
+        ) -> Result<EpochBlobRecord, StorageError> {
+            self.inner.get_epoch_blob(epoch_blob_id).await
         }
     }
 
@@ -328,5 +411,117 @@ mod tests {
             result,
             Err(StorageError::Database(_)) | Err(StorageError::ChecksumMismatch)
         ));
+    }
+
+    /// Verifies epoch upload/download round trip recovers original bytes.
+    #[tokio::test]
+    async fn test_upload_download_epoch_round_trip() {
+        let temp_dir = TempDir::new().expect("temporary directory should be created");
+        let source_path = temp_dir.path().join("source.bin");
+        let destination_path = temp_dir.path().join("destination.bin");
+        let staging_directory = temp_dir.path().join("staging");
+        fs::create_dir_all(&staging_directory)
+            .await
+            .expect("staging directory should be created");
+        let content = b"epoch round trip payload".to_vec();
+        write_source_file(&source_path, &content).await;
+        let store = EpochOverrideStore {
+            inner: MockMetadataStore::new(),
+            epoch_enabled: true,
+        };
+        let node_id = Uuid::new_v4();
+        let kek = KeyEncryptionKey::from_bytes([21; 32]);
+        let chunk_size_bytes: u64 = 4_194_304;
+
+        upload_file(
+            &source_path,
+            node_id,
+            None,
+            "epoch.bin",
+            1,
+            1,
+            &store,
+            &kek,
+            &staging_directory,
+            None,
+        )
+        .await
+        .expect("epoch upload should succeed");
+
+        flush_epoch_buffer(&store, &kek, &staging_directory, chunk_size_bytes, None)
+            .await
+            .expect("flush should succeed");
+
+        download_file(
+            &destination_path,
+            node_id,
+            &store,
+            &kek,
+            &staging_directory,
+            None,
+        )
+        .await
+        .expect("epoch download should succeed");
+
+        let recovered = fs::read(destination_path)
+            .await
+            .expect("destination should be readable");
+        assert_eq!(recovered, content);
+    }
+
+    /// Verifies that downloading a file staged in the epoch buffer (not yet flushed)
+    /// returns `StorageError::EpochBufferNotFlushed`.
+    #[tokio::test]
+    async fn test_download_file_returns_epoch_buffer_not_flushed_when_file_is_staged_but_not_flushed()
+     {
+        let temp_dir = TempDir::new().expect("temporary directory should be created");
+        let source_path = temp_dir.path().join("source.bin");
+        let destination_path = temp_dir.path().join("destination.bin");
+        let staging_directory = temp_dir.path().join("staging");
+        fs::create_dir_all(&staging_directory)
+            .await
+            .expect("staging directory should be created");
+
+        let content = b"staged but not flushed".to_vec();
+        write_source_file(&source_path, &content).await;
+
+        // Use epoch-enabled store so upload stages into epoch buffer.
+        let store = EpochOverrideStore {
+            inner: MockMetadataStore::new(),
+            epoch_enabled: true,
+        };
+        let node_id = Uuid::new_v4();
+        let kek = KeyEncryptionKey::from_bytes([55; 32]);
+
+        upload_file(
+            &source_path,
+            node_id,
+            None,
+            "staged.bin",
+            1,
+            1,
+            &store,
+            &kek,
+            &staging_directory,
+            None,
+        )
+        .await
+        .expect("epoch upload should succeed");
+
+        // Do NOT flush — downloading should return EpochBufferNotFlushed.
+        let result = download_file(
+            &destination_path,
+            node_id,
+            &store,
+            &kek,
+            &staging_directory,
+            None,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(StorageError::EpochBufferNotFlushed(id)) if id == node_id),
+            "expected EpochBufferNotFlushed, got: {result:?}"
+        );
     }
 }

@@ -15,15 +15,40 @@
         "powershell": "./scripts/hooks/block-sensitive-files.ps1",
         "timeoutSec": 10,
         "comment": "Block access to .env files and secrets/"
+      },
+      {
+        "type": "command",
+        "bash": "rtk hook claude"
       }
     ],
     "postToolUse": [
+      {
+        "type": "command",
+        "bash": "uvx jcodemunch-mcp hook-copilot-posttooluse",
+        "powershell": "uvx jcodemunch-mcp hook-copilot-posttooluse",
+        "timeoutSec": 30,
+        "comment": "Auto-reindex source files after edits"
+      },
+      {
+        "type": "command",
+        "bash": "uvx jdocmunch-mcp hook-posttooluse",
+        "powershell": "uvx jdocmunch-mcp hook-posttooluse",
+        "timeoutSec": 30,
+        "comment": "Auto-reindex doc files after edits"
+      },
       {
         "type": "command",
         "bash": "./scripts/hooks/run-clippy.sh",
         "powershell": "./scripts/hooks/run-clippy.ps1",
         "timeoutSec": 60,
         "comment": "Run cargo clippy on Rust file edits"
+      },
+      {
+        "type": "command",
+        "bash": "./scripts/hooks/run-fmt.sh",
+        "powershell": "./scripts/hooks/run-fmt.ps1",
+        "timeoutSec": 30,
+        "comment": "Run cargo fmt on Rust file edits"
       },
       {
         "type": "command",

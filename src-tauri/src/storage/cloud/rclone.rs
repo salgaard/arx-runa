@@ -8,7 +8,7 @@ use std::time::Duration;
 use super::destination_session::DestinationSessionPublic;
 use super::rclone_subprocess::run_rclone;
 use super::remote_path::{compose_remote_root, validate_remote_path, validate_remote_prefix};
-use super::{CloudEndpoint, CloudTransport, CloudTransportError, SyncConfig};
+use super::{CloudEndpoint, CloudTransport, CloudTransportError, DestinationType, SyncConfig};
 use async_trait::async_trait;
 use serde::Deserialize;
 
@@ -40,6 +40,9 @@ impl RcloneRunner for RealRclone {
 pub struct RcloneTransport {
     session_config_path: PathBuf,
     remote_root: String,
+    /// The `remote_name:bucket` path used for container-level operations (e.g., mkdir).
+    /// Does not include the path prefix. Empty for share-download transports.
+    bucket_root: String,
     sync_config: SyncConfig,
     runner: Arc<dyn RcloneRunner>,
 }
@@ -57,9 +60,27 @@ impl RcloneTransport {
         Ok(Self {
             session_config_path,
             remote_root,
+            bucket_root: format!("{}:{}", destination.rclone_remote_name, destination.bucket),
             sync_config,
             runner: Arc::new(RealRclone { binary_path }),
         })
+    }
+
+    /// Creates a transport for downloading a received share using embedded B2 credentials.
+    ///
+    /// `remote_root` must be the full rclone remote root string, e.g. `"arxshare-dl:bucket/prefix"`.
+    pub(crate) fn new_for_share_download(
+        binary_path: PathBuf,
+        session_config_path: PathBuf,
+        remote_root: String,
+    ) -> Self {
+        Self {
+            session_config_path,
+            remote_root,
+            bucket_root: String::new(),
+            sync_config: SyncConfig::default(),
+            runner: Arc::new(RealRclone { binary_path }),
+        }
     }
 
     #[cfg(test)]
@@ -72,6 +93,7 @@ impl RcloneTransport {
         Ok(Self {
             session_config_path,
             remote_root: build_remote_root(destination)?,
+            bucket_root: format!("{}:{}", destination.rclone_remote_name, destination.bucket),
             sync_config,
             runner,
         })
@@ -199,21 +221,125 @@ impl CloudTransport for RcloneTransport {
     }
 
     async fn cleanup_session_artifacts(&self) -> Result<(), CloudTransportError> {
-        // The session-lived rclone.conf file is managed by SessionManager,
-        // which calls destroy_session_rclone_conf() on session lock.
-        // This is a no-op here since the path is not owned by RcloneTransport.
         Ok(())
+    }
+
+    async fn ensure_container(&self) -> Result<(), CloudTransportError> {
+        let mut args = self.base_args();
+        args.push(OsString::from("mkdir"));
+        args.push(OsString::from(&self.bucket_root));
+        match self.runner.run(args, Duration::from_secs(30)).await {
+            Ok(_) => Ok(()),
+            Err(CloudTransportError::RcloneProcessFailed {
+                ref stderr_sanitised,
+                ..
+            }) if stderr_sanitised.contains("already_exists")
+                || stderr_sanitised
+                    .to_ascii_lowercase()
+                    .contains("bucket name is already in use") =>
+            {
+                Err(CloudTransportError::BucketNameTaken)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Generates scoped B2 credentials for a share recipient, if the rclone config
+    /// contains a B2 stanza.  Returns `None` for non-B2 backends.
+    async fn generate_share_credentials(
+        &self,
+        path_prefix: &str,
+        ttl_seconds: u32,
+        receipt_requested: bool,
+    ) -> Result<Option<serde_json::Value>, CloudTransportError> {
+        let conf = tokio::fs::read_to_string(&self.session_config_path)
+            .await
+            .map_err(CloudTransportError::IoError)?;
+
+        let Some((master_key_id, master_app_key)) =
+            crate::sharing::b2_api::parse_b2_api_keys_from_conf(&conf)
+        else {
+            return Ok(None);
+        };
+
+        let bucket_name = self
+            .remote_root
+            .split_once(':')
+            .and_then(|(_, rest)| rest.split('/').next())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                CloudTransportError::Other("cannot extract bucket name from remote root".to_owned())
+            })?
+            .to_owned();
+
+        let auth = crate::sharing::b2_api::b2_authorize_account(&master_key_id, &master_app_key)
+            .await
+            .map_err(|_| CloudTransportError::Other("B2 authorization failed".to_owned()))?;
+
+        let client = reqwest::Client::new();
+        let bucket_id = crate::sharing::b2_api::b2_get_bucket_id(&client, &auth, &bucket_name)
+            .await
+            .map_err(|e| {
+                CloudTransportError::Other(format!(
+                    "B2 bucket lookup failed for '{}': {}",
+                    bucket_name, e
+                ))
+            })?;
+
+        let mut capabilities = vec!["readFiles", "listBuckets"];
+        if receipt_requested {
+            capabilities.push("writeFiles");
+        }
+
+        let app_key = crate::sharing::b2_api::b2_create_application_key(
+            &client,
+            &auth,
+            &bucket_id,
+            path_prefix,
+            &capabilities,
+            ttl_seconds,
+        )
+        .await
+        .map_err(|e| {
+            CloudTransportError::Other(format!(
+                "B2 key creation failed (check that your key has writeKeys capability): {e}"
+            ))
+        })?;
+
+        tracing::debug!(key_id = %app_key.application_key_id, "created B2 scoped key");
+
+        let mut creds = serde_json::json!({
+            "provider": "b2",
+            "bucket": bucket_name,
+            "download_url": auth.download_url,
+            "key_id": app_key.application_key_id,
+            "application_key": app_key.application_key,
+            "path_prefix": path_prefix,
+        });
+
+        if receipt_requested {
+            creds["receipt_requested"] = serde_json::json!(true);
+        }
+
+        Ok(Some(creds))
     }
 }
 
 fn build_remote_root(
     destination: &DestinationSessionPublic,
 ) -> Result<String, CloudTransportError> {
-    compose_remote_root(
-        &destination.rclone_remote_name,
-        &destination.bucket,
-        &destination.path_prefix,
-    )
+    match destination.destination_type {
+        DestinationType::LocalPath | DestinationType::ExternalDrive => {
+            // Local paths are used verbatim; rclone accepts forward slashes on Windows.
+            let path = destination.path_prefix.replace('\\', "/");
+            Ok(format!("{}:{}", destination.rclone_remote_name, path))
+        }
+        _ => compose_remote_root(
+            &destination.rclone_remote_name,
+            &destination.bucket,
+            &destination.path_prefix,
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -367,5 +493,22 @@ mod tests {
             StubRclone::from(vec![]),
         );
         assert!(matches!(result, Err(CloudTransportError::Other(_))));
+    }
+
+    #[tokio::test]
+    async fn test_ensure_container_bucket_name_taken_returns_bucket_name_taken_error() {
+        let transport = transport_with(vec![Err(CloudTransportError::RcloneProcessFailed {
+            exit_code: 1,
+            stderr_sanitised: "b2 bucket already_exists".to_string(),
+        })]);
+        let result = transport.ensure_container().await;
+        assert!(matches!(result, Err(CloudTransportError::BucketNameTaken)));
+    }
+
+    #[tokio::test]
+    async fn test_ensure_container_success_returns_ok() {
+        let transport = transport_with(vec![Ok(String::new())]);
+        let result = transport.ensure_container().await;
+        assert!(result.is_ok());
     }
 }

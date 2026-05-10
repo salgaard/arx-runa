@@ -1,0 +1,14 @@
+   Compiling arx-runa v0.1.0 (C:\Users\chris\source\repos\arx-runa)
+error[E0618]: expected function, found `leptos::prelude::WriteSignal<StorageProvider>`
+   --> src\components\storage_selector.rs:104:25
+    |
+ 93 |     let (provider, set_provider) = signal(StorageProvider::Local);
+    |                    ------------ `set_provider` has type `leptos::prelude::WriteSignal<StorageProvider>`
+...
+104 |                         set_provider(provider_option);
+    |                         ^^^^^^^^^^^^-----------------
+    |                         |
+    |                         call expression requires function
+
+For more information about this error, try `rustc --explain E0618`.
+error: could not compile `arx-runa` (lib) due to 1 previous error

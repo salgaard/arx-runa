@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-vaults"
+description = "Enables the list_vaults command without any pre-configured scope."
+commands.allow = ["list_vaults"]
+
+[[permission]]
+identifier = "deny-list-vaults"
+description = "Denies the list_vaults command without any pre-configured scope."
+commands.deny = ["list_vaults"]

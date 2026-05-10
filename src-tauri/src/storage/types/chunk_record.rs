@@ -17,4 +17,10 @@ pub struct ChunkRecord {
     pub size_padded: u64,
     /// BLAKE3 checksum over encrypted blob bytes.
     pub blake3_checksum: [u8; 32],
+    /// Epoch blob identifier when this chunk is packed into an epoch blob.
+    pub epoch_blob_id: Option<Uuid>,
+    /// Byte offset within the epoch blob (set when `epoch_blob_id` is Some).
+    pub byte_offset: Option<u64>,
+    /// Byte length within the epoch blob (set when `epoch_blob_id` is Some).
+    pub byte_length: Option<u64>,
 }

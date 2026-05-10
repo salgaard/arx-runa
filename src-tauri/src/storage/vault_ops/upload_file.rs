@@ -1,14 +1,14 @@
 use std::path::Path;
 
-use tokio::fs;
-use uuid::Uuid;
-
-use crate::crypto::{KeyEncryptionKey, generate_file_key, wrap_file_key};
+use crate::crypto::{FileKey, KeyEncryptionKey, generate_file_key, wrap_file_key};
+use crate::storage::MetadataStore;
+use crate::storage::NodeId;
 use crate::storage::error::StorageError;
 use crate::storage::pipeline;
 use crate::storage::types::{Node, NodeType};
 use crate::storage::vault_ops::{RouteDecision, decide};
-use crate::storage::{MetadataStore, NodeId};
+use tokio::fs;
+use uuid::Uuid;
 
 /// Uploads a local file into staged encrypted chunks and persists manifest rows.
 ///
@@ -36,40 +36,63 @@ pub async fn upload_file(
     let chunk_size_bytes = pipeline::read_chunk_size_bytes(metadata_store).await?;
     let epoch_buffer_enabled = read_epoch_buffer_enabled(metadata_store).await?;
     let route_decision = decide(file_size, chunk_size_bytes, epoch_buffer_enabled);
-    if matches!(route_decision, RouteDecision::EpochBuffer) {
-        return Err(StorageError::ConstraintViolation(
-            "epoch buffering not yet available; deferred to Phase 4".to_owned(),
-        ));
-    }
 
-    let file_key = generate_file_key();
-    let wrapped_file_key =
-        wrap_file_key(&file_key, key_encryption_key).map_err(StorageError::from)?;
-    let mut chunks = pipeline::encrypt_file(
-        source,
-        node_id,
-        &file_key,
-        metadata_store,
-        staging_directory,
-        progress,
-    )
-    .await?;
-    pipeline::assign_node_id(&mut chunks, NodeId::new(node_id));
-    let node = Node::new(
-        node_id,
-        parent_id,
-        NodeType::File,
-        name.to_owned(),
-        created_at,
-        modified_at,
-        file_size,
-        Some(wrapped_file_key.0),
-    );
-    if let Err(error) = metadata_store.insert_file_with_chunks(&node, &chunks).await {
-        cleanup_staged_blobs(staging_directory, &chunks).await;
-        return Err(error);
+    match route_decision {
+        RouteDecision::EpochBuffer => {
+            let plaintext = tokio::fs::read(source)
+                .await
+                .map_err(|error| StorageError::Io(error.to_string()))?;
+            let file_size = plaintext.len() as u64;
+            let sentinel_file_key =
+                FileKey::from_secret_box(secrecy::SecretBox::new(Box::new([0u8; 32])));
+            let sentinel_wrapped = wrap_file_key(&sentinel_file_key, key_encryption_key)
+                .map_err(StorageError::from)?;
+            let node = Node::new(
+                node_id,
+                parent_id,
+                NodeType::File,
+                name.to_owned(),
+                created_at,
+                modified_at,
+                file_size,
+                Some(sentinel_wrapped.0),
+            );
+            metadata_store
+                .insert_file_node_and_stage_epoch_entry(&node, plaintext)
+                .await?;
+            Ok(node)
+        }
+        RouteDecision::Immediate => {
+            let file_key = generate_file_key();
+            let wrapped_file_key =
+                wrap_file_key(&file_key, key_encryption_key).map_err(StorageError::from)?;
+            let mut chunks = pipeline::encrypt_file(
+                source,
+                node_id,
+                &file_key,
+                metadata_store,
+                staging_directory,
+                progress,
+            )
+            .await?;
+            pipeline::assign_node_id(&mut chunks, NodeId::new(node_id));
+            let node = Node::new(
+                node_id,
+                parent_id,
+                NodeType::File,
+                name.to_owned(),
+                created_at,
+                modified_at,
+                file_size,
+                Some(wrapped_file_key.0),
+            );
+            if let Err(error) = metadata_store.insert_file_with_chunks(&node, &chunks).await {
+                cleanup_staged_blobs(staging_directory, &chunks).await;
+                return Err(error);
+            }
+            Ok(node)
+        }
     }
-    Ok(node)
 }
 
 /// Reads and parses `epoch_buffer_enabled` from manifest metadata.
@@ -112,6 +135,7 @@ mod tests {
     use super::upload_file;
     use crate::crypto::KeyEncryptionKey;
     use crate::storage::mock::MockMetadataStore;
+    use crate::storage::types::{EpochBlobRecord, EpochBufferEntry};
     use crate::storage::{ChunkRecord, MetadataStore, Node, StorageError};
 
     /// Metadata-store wrapper that overrides only `epoch_buffer_enabled`.
@@ -213,6 +237,63 @@ mod tests {
         async fn increment_snapshot_counter(&self) -> Result<u64, StorageError> {
             self.inner.increment_snapshot_counter().await
         }
+
+        /// Delegates file-node-only insert.
+        async fn insert_file_node_only(&self, node: &Node) -> Result<(), StorageError> {
+            self.inner.insert_file_node_only(node).await
+        }
+
+        /// Delegates atomic file-node-plus-epoch-buffer insert.
+        async fn insert_file_node_and_stage_epoch_entry(
+            &self,
+            node: &Node,
+            plaintext: Vec<u8>,
+        ) -> Result<(), StorageError> {
+            self.inner
+                .insert_file_node_and_stage_epoch_entry(node, plaintext)
+                .await
+        }
+
+        /// Delegates epoch entry staging.
+        async fn stage_epoch_entry(
+            &self,
+            node_id: Uuid,
+            plaintext: Vec<u8>,
+        ) -> Result<(), StorageError> {
+            self.inner.stage_epoch_entry(node_id, plaintext).await
+        }
+
+        /// Delegates epoch buffer total bytes.
+        async fn get_epoch_buffer_total_bytes(&self) -> Result<u64, StorageError> {
+            self.inner.get_epoch_buffer_total_bytes().await
+        }
+
+        /// Delegates epoch buffer entries.
+        async fn get_epoch_buffer_entries(&self) -> Result<Vec<EpochBufferEntry>, StorageError> {
+            self.inner.get_epoch_buffer_entries().await
+        }
+
+        /// Delegates epoch buffer node IDs.
+        async fn get_epoch_buffer_node_ids(&self) -> Result<Vec<Uuid>, StorageError> {
+            self.inner.get_epoch_buffer_node_ids().await
+        }
+
+        /// Delegates epoch flush commit.
+        async fn commit_epoch_flush(
+            &self,
+            record: &EpochBlobRecord,
+            extents: &[(Uuid, u32, u64, u64)],
+        ) -> Result<(), StorageError> {
+            self.inner.commit_epoch_flush(record, extents).await
+        }
+
+        /// Delegates epoch blob retrieval.
+        async fn get_epoch_blob(
+            &self,
+            epoch_blob_id: Uuid,
+        ) -> Result<EpochBlobRecord, StorageError> {
+            self.inner.get_epoch_blob(epoch_blob_id).await
+        }
     }
 
     /// Writes source-file bytes for upload tests.
@@ -230,9 +311,9 @@ mod tests {
             .expect("source file should be flushed");
     }
 
-    /// Verifies epoch-enabled small files are deferred to phase 4 branch.
+    /// Verifies epoch-enabled small files are staged and the node is persisted.
     #[tokio::test]
-    async fn test_upload_file_with_epoch_enabled_small_file_returns_constraint_violation() {
+    async fn test_upload_file_epoch_path_small_file_succeeds_and_stages() {
         let temp_dir = TempDir::new().expect("temporary directory should be created");
         let source_path = temp_dir.path().join("source.bin");
         let staging_directory = temp_dir.path().join("staging");
@@ -245,10 +326,11 @@ mod tests {
             epoch_enabled: true,
         };
         let key_encryption_key = KeyEncryptionKey::from_bytes([3; 32]);
+        let node_id = Uuid::new_v4();
 
         let result = upload_file(
             &source_path,
-            Uuid::new_v4(),
+            node_id,
             None,
             "small.bin",
             1,
@@ -260,11 +342,31 @@ mod tests {
         )
         .await;
 
-        assert!(matches!(
-            result,
-            Err(StorageError::ConstraintViolation(message))
-                if message.contains("epoch buffering not yet available")
-        ));
+        assert!(result.is_ok(), "epoch upload should succeed");
+        let node = result.expect("node should be returned");
+        assert_eq!(node.size_bytes, 1, "size_bytes should match file size");
+
+        let stored_node = store
+            .get_node(node_id)
+            .await
+            .expect("node should be persisted");
+        assert_eq!(stored_node.size_bytes, 1);
+
+        let chunks = store
+            .get_chunks(node_id)
+            .await
+            .expect("chunks should be readable");
+        assert!(
+            chunks.is_empty(),
+            "no standalone chunk rows for epoch-buffered files"
+        );
+
+        let buffer = store
+            .get_epoch_buffer_entries()
+            .await
+            .expect("buffer should be readable");
+        assert_eq!(buffer.len(), 1, "one entry should be staged in buffer");
+        assert_eq!(buffer[0].node_id, node_id);
     }
 
     /// Verifies epoch-enabled files at or above chunk size stay on immediate route.

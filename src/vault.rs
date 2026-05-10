@@ -5,15 +5,16 @@
 //! `use_vault_actions()` from the `VaultProvider` context.
 
 use leptos::prelude::*;
-use wasm_bindgen::JsValue;
+use leptos::task::spawn_local;
 
 use crate::components::{Button, Modal, Spinner};
 use crate::dialog::{open_file_dialog, open_save_dialog};
 use crate::drag_drop::on_file_drop;
-use crate::invoke::invoke_command;
+use crate::invoke::{invoke_command, invoke_command_with_channel};
 use crate::ipc_channel::IpcChannel;
 use crate::ipc_types::{
-    DeleteFileRequest, DownloadFileRequest, FileEntry, GetFileContentRequest, ProgressUpdate,
+    ComposeEmailWithAttachmentRequest, DeleteFileRequest, DownloadFileRequest, FileContentResponse,
+    FileEntry, GetFileContentRequest, ProgressUpdate, RevealInExplorerRequest, ShareResponse,
     UploadFileRequest,
 };
 use crate::shares::ShareModal;
@@ -110,8 +111,8 @@ fn base64_decode(encoded: &str) -> Option<Vec<u8>> {
 /// Implements Zero-Trace: clears signal state on dismiss (not just hidden).
 #[component]
 pub fn ContentViewerModal(
-    /// RwSignal holding the file content bytes (base64-encoded from backend).
-    content: RwSignal<Option<String>>,
+    /// RwSignal holding the decoded file content from the backend.
+    content: RwSignal<Option<FileContentResponse>>,
     /// Filename for display and type detection.
     filename: String,
 ) -> impl IntoView {
@@ -127,7 +128,7 @@ pub fn ContentViewerModal(
                 <div class="flex items-center justify-between mb-4">
                     <h2 class="text-lg text-bone truncate">{filename.clone()}</h2>
                     <button
-                        class="text-text-muted hover:text-bone"
+                        class="text-text-muted hover:text-bone cursor-pointer"
                         on:click=move |_| content.set(None)
                     >
                         "✕"
@@ -140,8 +141,8 @@ pub fn ContentViewerModal(
                             <div class="flex-1 overflow-auto bg-surface-overlay rounded p-4">
                                 <pre class="text-text-secondary text-sm font-mono whitespace-pre-wrap break-words">
                                     {move || {
-                                        content.get().and_then(|encoded| {
-                                            let decoded = base64_decode(&encoded)?;
+                                        content.get().and_then(|fc| {
+                                            let decoded = base64_decode(&fc.data_base64)?;
                                             String::from_utf8(decoded).ok()
                                         })
                                     }}
@@ -152,8 +153,8 @@ pub fn ContentViewerModal(
                 >
                     <div class="flex-1 flex items-center justify-center overflow-auto bg-surface-overlay rounded">
                         {move || {
-                            let encoded = content.get()?;
-                            let img_src = format!("data:image/png;base64,{}", &encoded);
+                            let fc = content.get()?;
+                            let img_src = format!("data:{};base64,{}", fc.mime_type, fc.data_base64);
                             Some(view! {
                                 <img
                                     src=img_src
@@ -191,7 +192,7 @@ pub fn Breadcrumbs(
                     let full_click = full.clone();
                     view! {
                         <button
-                            class="hover:text-rune"
+                            class="hover:text-rune cursor-pointer"
                             on:click=move |_| actions.navigate(full_click.clone())
                         >
                             {label}
@@ -218,18 +219,21 @@ pub fn FileItem(
     let vault = use_vault();
     let actions = use_vault_actions();
     let is_dir = entry.entry_type == "directory";
+    let is_pending_flush = entry.pending_flush;
 
     let entry_clone = entry.clone();
     let (show_delete_confirm, set_show_delete_confirm) = signal(false);
     let (show_share_modal, set_show_share_modal) = signal(false);
-    let (share_success_msg, set_share_success_msg) = signal::<Option<String>>(None);
-    let file_content = RwSignal::new(None::<String>);
+    let share_result = RwSignal::new(None::<ShareResponse>);
+    let file_content = RwSignal::new(None::<FileContentResponse>);
+    let (preview_loading, set_preview_loading) = signal(false);
     let (download_progress_channel, set_download_progress_channel) =
         signal::<Option<IpcChannel<ProgressUpdate>>>(None);
     let (delete_error, set_delete_error) = signal::<Option<String>>(None);
 
     let file_name = entry.name.clone();
     let can_preview = !is_dir
+        && !is_pending_flush
         && file_size_allows_preview(entry.size_bytes)
         && extension_is_previewable(&entry.name);
 
@@ -239,8 +243,8 @@ pub fn FileItem(
 
     view! {
         <>
-            <div class="flex items-center gap-3 p-2 rounded hover:bg-surface-overlay">
-                <span class="text-rune w-4 text-center">
+            <div class="flex items-center gap-4 px-3 py-3 rounded hover:bg-surface-overlay">
+                <span class="text-rune w-6 text-xl text-center">
                     {if is_dir { "📁" } else { "📄" }}
                 </span>
                 <span
@@ -260,15 +264,20 @@ pub fn FileItem(
                             && extension_is_previewable(&entry_clone.name)
                         {
                             let entry = entry_clone.clone();
+                            set_preview_loading.set(true);
                             leptos::task::spawn_local(async move {
                                 let req = GetFileContentRequest {
                                     file_id: entry.id.clone(),
                                 };
-                                match invoke_command::<GetFileContentRequest, String>("get_file_content", &req)
+                                match invoke_command::<GetFileContentRequest, FileContentResponse>("get_file_content", &req)
                                     .await
                                 {
-                                    Ok(content) => file_content.set(Some(content)),
+                                    Ok(content) => {
+                                        set_preview_loading.set(false);
+                                        file_content.set(Some(content));
+                                    }
                                     Err(err) => {
+                                        set_preview_loading.set(false);
                                         leptos::logging::error!("Failed to fetch file content: {}", err.message);
                                     }
                                 }
@@ -277,6 +286,25 @@ pub fn FileItem(
                     }
                 >
                     {entry.name.clone()}
+                    <Show
+                        when=move || is_pending_flush
+                        fallback=|| ()
+                    >
+                        <span
+                            class="ml-1 text-xs text-amber-400"
+                            title="File is queued for encryption. Flush the epoch buffer or sync to finalise."
+                        >
+                            "Encrypting…"
+                        </span>
+                    </Show>
+                    <Show
+                        when=move || preview_loading.get()
+                        fallback=|| ()
+                    >
+                        <span class="ml-2 inline-flex items-center">
+                            <Spinner size="h-3 w-3" />
+                        </span>
+                    </Show>
                 </span>
                 <span class="text-text-muted text-xs">
                     {if is_dir {
@@ -289,11 +317,27 @@ pub fn FileItem(
                     when=move || !is_dir
                     fallback=|| ()
                 >
-                    <div class="flex gap-1">
+                    <div class="flex gap-2 items-center">
                         <button
-                            class="text-text-muted hover:text-rune text-sm px-2 py-1"
-                            title="Download"
+                            class=move || {
+                                if is_pending_flush {
+                                    "text-text-muted text-xl px-2 py-1 cursor-not-allowed opacity-50"
+                                } else {
+                                    "text-text-muted hover:text-rune cursor-pointer text-xl px-2 py-1 transition-transform hover:scale-125"
+                                }
+                            }
+                            title=move || {
+                                if is_pending_flush {
+                                    "File is queued for encryption. Flush the epoch buffer or sync to finalise."
+                                } else {
+                                    "Download"
+                                }
+                            }
+                            prop:disabled=is_pending_flush
                             on:click=move |_| {
+                                if is_pending_flush {
+                                    return;
+                                }
                                 let entry = entry_stored.get_value();
                                 let actions = actions;
                                 let set_download_progress_channel = set_download_progress_channel;
@@ -306,10 +350,9 @@ pub fn FileItem(
                                         let req = DownloadFileRequest {
                                             file_id: entry.id.clone(),
                                             destination_path: dest_path,
-                                            progress: channel.inner().clone(),
                                         };
 
-                                        match invoke_command::<DownloadFileRequest, ()>("download_file", &req).await {
+                                        match invoke_command_with_channel::<DownloadFileRequest, ()>("download_file", &req, "progress", channel.inner()).await {
                                             Ok(()) => {}
                                             Err(err) => actions.set_error(err.message),
                                         }
@@ -320,17 +363,17 @@ pub fn FileItem(
                             "⬇"
                         </button>
                         <button
-                            class="text-text-muted hover:text-rune text-sm px-2 py-1"
+                            class="text-text-muted hover:text-rune cursor-pointer text-xl px-2 py-1 transition-transform hover:scale-125"
                             title="Share"
                             on:click=move |_| {
                                 set_show_share_modal.set(true);
-                                set_share_success_msg.set(None);
+                                share_result.set(None);
                             }
                         >
                             "↗"
                         </button>
                         <button
-                            class="text-text-muted hover:text-danger text-sm px-2 py-1"
+                            class="text-text-muted hover:text-danger cursor-pointer text-xl px-2 py-1 transition-transform hover:scale-125"
                             title="Delete"
                             on:click=move |_| {
                                 set_show_delete_confirm.set(true);
@@ -366,13 +409,13 @@ pub fn FileItem(
                         }}
                         <div class="flex gap-2 justify-end">
                             <button
-                                class="px-4 py-2 rounded bg-surface-overlay hover:bg-surface-overlay-hover text-bone"
+                                class="px-4 py-2 rounded bg-surface-overlay hover:bg-steel cursor-pointer text-bone transition-colors"
                                 on:click=move |_| set_show_delete_confirm.set(false)
                             >
                                 "Cancel"
                             </button>
                             <button
-                                class="px-4 py-2 rounded bg-danger hover:bg-danger-hover text-white"
+                                class="px-4 py-2 rounded bg-danger hover:bg-danger/80 cursor-pointer text-white transition-colors"
                                 on:click=move |_| {
                                     let entry = entry_stored.get_value();
                                     let current_path = vault.get_untracked().current_path;
@@ -435,32 +478,86 @@ pub fn FileItem(
                     file_id=file_id_stored.get_value()
                     _file_name=file_name_stored.get_value()
                     on_close=move || set_show_share_modal.set(false)
-                    on_success=move || {
+                    on_success=Callback::new(move |response: ShareResponse| {
                         set_show_share_modal.set(false);
-                        set_share_success_msg.set(Some("File shared successfully!".to_string()));
-                        leptos::task::spawn_local(async move {
-                            gloo_timers::future::sleep(std::time::Duration::from_secs(3)).await;
-                            set_share_success_msg.set(None);
-                        });
-                    }
+                        share_result.set(Some(response));
+                    })
                 />
             </Show>
 
-            // Share success message
-            <Show
-                when=move || share_success_msg.get().is_some()
-                fallback=|| ()
-            >
-                {move || {
-                    share_success_msg.get().map(|msg| {
-                        view! {
-                            <div class="fixed bottom-4 right-4 px-4 py-2 bg-rune text-bone rounded text-sm shadow-lg">
-                                {msg}
-                            </div>
-                        }
-                    })
-                }}
-            </Show>
+            // Share result panel
+            {move || share_result.get().map(|result| {
+                let package_path = result.package_path.clone();
+                let file_name = std::path::Path::new(&package_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&package_path)
+                    .to_owned();
+                let contact_email = result.contact_email.clone();
+                let file_name_hint = file_name.clone();
+
+                view! {
+                    <div class="p-4 bg-stone border border-steel rounded mb-4">
+                        <p class="text-bone font-semibold mb-2">"Share package ready"</p>
+                        <p class="text-text-secondary text-sm mb-3">{file_name}</p>
+                        <div class="flex gap-2 flex-wrap">
+                            <button
+                                class="px-3 py-1 text-sm text-bone bg-steel rounded cursor-pointer hover:bg-rune/20 transition-colors"
+                                on:click={
+                                    let path = package_path.clone();
+                                    move |_| {
+                                        let path = path.clone();
+                                        spawn_local(async move {
+                                            let _ = invoke_command::<RevealInExplorerRequest, ()>(
+                                                "reveal_in_explorer",
+                                                &RevealInExplorerRequest { path },
+                                            ).await;
+                                        });
+                                    }
+                                }
+                            >
+                                "Reveal in Explorer"
+                            </button>
+                            {contact_email.clone().map(|email| {
+                                let email_clone = email.clone();
+                                let path_clone = package_path.clone();
+                                view! {
+                                    <button
+                                        class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors"
+                                        on:click=move |_| {
+                                            let req = ComposeEmailWithAttachmentRequest {
+                                                package_path: path_clone.clone(),
+                                                recipient_email: email_clone.clone(),
+                                            };
+                                            spawn_local(async move {
+                                                let _ = invoke_command::<ComposeEmailWithAttachmentRequest, ()>(
+                                                    "compose_email_with_attachment",
+                                                    &req,
+                                                ).await;
+                                            });
+                                        }
+                                    >
+                                        "Compose email"
+                                    </button>
+                                }
+                            })}
+                            <button
+                                class="px-3 py-1 text-sm text-text-secondary cursor-pointer hover:text-bone transition-colors"
+                                on:click=move |_| share_result.set(None)
+                            >
+                                "Close"
+                            </button>
+                        </div>
+                        {contact_email.map(|_| view! {
+                            <p class="text-text-secondary text-xs mt-3">
+                                "Remember to attach "
+                                <span class="text-bone font-mono">{file_name_hint}</span>
+                                " to the email before sending."
+                            </p>
+                        })}
+                    </div>
+                }
+            })}
         </>
     }
 }
@@ -488,53 +585,104 @@ pub fn FileList(
 
 /// File drop zone that accepts dragged files and initiates upload.
 ///
-/// Subscribes to `onDragDropEvent` on mount and unsubscribes in `on_cleanup`.
-/// Uses `UploadFileRequest` per file; progress channel is wired in Phase 6.5.
+/// Subscribes to `onDragDropEvent` once in the component body (not inside an
+/// `Effect`) and unsubscribes via `on_cleanup`.  Using `Effect::new` caused
+/// the listener to be re-registered on each effect re-run; if the async Tauri
+/// unlisten promise had not yet resolved, the previous listener was never
+/// removed, leaving two active listeners that both triggered `upload_file`.
+/// Shows a progress modal for the most-recently-started upload.
 #[component]
 pub fn DropZone(children: Children) -> impl IntoView {
     let vault = use_vault();
     let vault_actions = use_vault_actions();
+    let (upload_channel, set_upload_channel) = signal::<Option<IpcChannel<ProgressUpdate>>>(None);
 
-    Effect::new(move |_| {
-        let vault_actions = vault_actions;
-        let unsub = on_file_drop(move |paths| {
-            let current_path = vault.get_untracked().current_path;
-            for source_path in paths {
-                let file_name = source_path.split(['/', '\\']).next_back().unwrap_or("file");
-                let vault_path = join_vault_path(&current_path, file_name);
-                let upload_path = current_path.clone();
-                let req = UploadFileRequest {
-                    source_path: source_path.clone(),
-                    vault_path,
-                    progress: JsValue::undefined(),
-                };
-                let va = vault_actions;
-                leptos::task::spawn_local(async move {
-                    match invoke_command::<UploadFileRequest, ()>("upload_file", &req).await {
-                        Ok(()) => va.navigate(upload_path),
-                        Err(err) => va.set_error(err.message),
+    // Register the listener once in the component body (not inside Effect::new).
+    // Effect::new can re-run if any tracked signal changes, and if the async
+    // promise that stores the Tauri unlisten function hasn't resolved before
+    // the cleanup fires, the old listener leaks — leaving two active listeners
+    // that both invoke upload_file on each drop.
+    let unsub = on_file_drop(move |paths| {
+        // If the component has been unmounted (user navigated away) the signals
+        // are disposed; try_get_untracked() returns None in that case so we can
+        // bail out safely instead of panicking.  Also guards against a second
+        // listener or Tauri double-fire while an upload is already in progress.
+        let Some(in_flight) = upload_channel.try_get_untracked() else {
+            return;
+        };
+        if in_flight.is_some() {
+            return;
+        }
+        let Some(vault_state) = vault.try_get_untracked() else {
+            return;
+        };
+        let current_path = vault_state.current_path;
+        for source_path in paths {
+            let file_name = source_path.split(['/', '\\']).next_back().unwrap_or("file");
+            let vault_path = join_vault_path(&current_path, file_name)
+                .trim_start_matches('/')
+                .to_owned();
+            let upload_path = current_path.clone();
+            let req = UploadFileRequest {
+                source_path: source_path.clone(),
+                vault_path,
+            };
+            let va = vault_actions;
+            let channel = IpcChannel::<ProgressUpdate>::new();
+            set_upload_channel.set(Some(channel.clone()));
+            leptos::task::spawn_local(async move {
+                match invoke_command_with_channel::<UploadFileRequest, FileEntry>(
+                    "upload_file",
+                    &req,
+                    "progress",
+                    channel.inner(),
+                )
+                .await
+                {
+                    Ok(_) => va.navigate(upload_path),
+                    Err(err) => {
+                        set_upload_channel.set(None);
+                        va.set_error(err.message);
                     }
-                });
-            }
-        });
-        on_cleanup(unsub);
+                }
+            });
+        }
     });
+    on_cleanup(unsub);
 
     view! {
-        <div class="relative w-full h-full">
-            {children()}
-        </div>
+        <>
+            <div class="relative w-full h-full">
+                {children()}
+            </div>
+            <Show when=move || upload_channel.get().is_some() fallback=|| ()>
+                {move || {
+                    upload_channel.get().map(|ch| {
+                        view! {
+                            <ProgressModal
+                                channel=ch
+                                title="Uploading file"
+                                on_close=move || set_upload_channel.set(None)
+                            />
+                        }
+                    })
+                }}
+            </Show>
+        </>
     }
 }
 
 // ─── UploadButton ────────────────────────────────────────────────────────────
 
 /// Upload button that opens a native file picker and uploads the selected file.
+///
+/// Shows a progress modal while the upload is in flight.
 #[component]
 pub fn UploadButton() -> impl IntoView {
     let vault = use_vault();
     let vault_actions = use_vault_actions();
     let (loading, set_loading) = signal(false);
+    let (upload_channel, set_upload_channel) = signal::<Option<IpcChannel<ProgressUpdate>>>(None);
 
     let on_click = move |_| {
         let vault_actions = vault_actions;
@@ -545,15 +693,25 @@ pub fn UploadButton() -> impl IntoView {
             };
             let current_path = vault.get_untracked().current_path;
             let file_name = source_path.split(['/', '\\']).next_back().unwrap_or("file");
-            let vault_path = join_vault_path(&current_path, file_name);
+            let vault_path = join_vault_path(&current_path, file_name)
+                .trim_start_matches('/')
+                .to_owned();
             set_loading.set(true);
+            let channel = IpcChannel::<ProgressUpdate>::new();
+            set_upload_channel.set(Some(channel.clone()));
             let req = UploadFileRequest {
                 source_path,
                 vault_path,
-                progress: JsValue::undefined(),
             };
-            match invoke_command::<UploadFileRequest, ()>("upload_file", &req).await {
-                Ok(()) => vault_actions.navigate(current_path),
+            match invoke_command_with_channel::<UploadFileRequest, FileEntry>(
+                "upload_file",
+                &req,
+                "progress",
+                channel.inner(),
+            )
+            .await
+            {
+                Ok(_) => vault_actions.navigate(current_path),
                 Err(err) => vault_actions.set_error(err.message),
             }
             set_loading.set(false);
@@ -561,7 +719,22 @@ pub fn UploadButton() -> impl IntoView {
     };
 
     view! {
-        <Button loading=loading on_click=on_click>"Upload File"</Button>
+        <>
+            <Button loading=loading on_click=on_click>"Upload File"</Button>
+            <Show when=move || upload_channel.get().is_some() fallback=|| ()>
+                {move || {
+                    upload_channel.get().map(|ch| {
+                        view! {
+                            <ProgressModal
+                                channel=ch
+                                title="Uploading file"
+                                on_close=move || set_upload_channel.set(None)
+                            />
+                        }
+                    })
+                }}
+            </Show>
+        </>
     }
 }
 
@@ -594,15 +767,20 @@ pub fn VaultBrowser() -> impl IntoView {
                 <p class="text-danger text-sm">{e}</p>
             })}
 
-            <Show when=move || vault.read().loading>
+            <Show
+                when=move || vault.read().loading
+                fallback=move || {
+                    view! {
+                        <DropZone>
+                            <FileList entries=Signal::derive(move || vault.read().files.clone()) />
+                        </DropZone>
+                    }
+                }
+            >
                 <div class="flex justify-center p-8">
                     <Spinner size="h-8 w-8" />
                 </div>
             </Show>
-
-            <DropZone>
-                <FileList entries=Signal::derive(move || vault.read().files.clone()) />
-            </DropZone>
         </div>
     }
 }

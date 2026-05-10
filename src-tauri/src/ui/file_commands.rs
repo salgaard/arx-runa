@@ -13,18 +13,65 @@ use tauri::ipc::Channel;
 use uuid::Uuid;
 
 use crate::crypto::KeyEncryptionKey;
+use crate::storage::cloud::sync::fetch_missing_file_blobs;
 use crate::storage::vault_ops::{
     delete_file as vault_delete, download_file as vault_download, upload_file as vault_upload,
 };
-use crate::storage::{MetadataStore, NodeType};
+use crate::storage::{MetadataStore, Node, NodeType};
 use crate::ui::commands_common::{ProgressChannel, require_active_session};
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
 use crate::ui::types::{FileContent, FileEntry, ProgressUpdate, RemoteFileEntry};
 use crate::ui::validation::{normalise_vault_path, validate_file_id, validate_vault_path};
-use crate::ui::vault_paths::{resolve_singleton_vault, vault_staging_dir};
+use crate::ui::vault_paths::vault_staging_dir;
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
+
+/// Gets the root directory UUID, creating the root node and persisting `root_id`
+/// in manifest meta if it does not yet exist.
+async fn get_or_create_root(db: &dyn MetadataStore) -> Result<Uuid, IpcError> {
+    if let Some(id) = db.get_meta("root_id").await.map_err(IpcError::from)? {
+        return Uuid::parse_str(&id)
+            .map_err(|_| IpcError::InternalError("root_id is not a valid UUID".into()));
+    }
+    let root_id = Uuid::new_v4();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let root_node = Node::new(
+        root_id,
+        None,
+        NodeType::Directory,
+        "root".to_owned(),
+        now,
+        now,
+        0,
+        None,
+    );
+    db.insert_node(&root_node).await.map_err(IpcError::from)?;
+    db.set_meta("root_id", &root_id.hyphenated().to_string())
+        .await
+        .map_err(IpcError::from)?;
+    Ok(root_id)
+}
+
+/// Resolves the parent directory UUID from a normalised, slash-stripped vault path.
+///
+/// An empty parent component (file at root) triggers [`get_or_create_root`].
+/// A non-empty parent must be a directory node UUID.
+async fn resolve_parent_uuid(vault_path: &str, db: &dyn MetadataStore) -> Result<Uuid, IpcError> {
+    let parent = match vault_path.rfind('/') {
+        Some(pos) => &vault_path[..pos],
+        None => "",
+    };
+    if parent.is_empty() {
+        get_or_create_root(db).await
+    } else {
+        Uuid::parse_str(parent)
+            .map_err(|_| IpcError::InvalidInput("Parent directory path must be a UUID".into()))
+    }
+}
 
 /// Converts a Unix timestamp (seconds since 1970-01-01T00:00:00Z) to an ISO 8601 string.
 ///
@@ -77,7 +124,10 @@ fn detect_mime_type(bytes: &[u8]) -> &'static str {
 }
 
 /// Maps a storage [`Node`](crate::storage::Node) to a [`FileEntry`] for IPC response.
-fn node_to_file_entry(node: &crate::storage::Node) -> FileEntry {
+///
+/// Pass `pending_flush: true` when the node is staged in the epoch buffer and
+/// has not yet been encrypted into a blob.
+fn node_to_file_entry(node: &crate::storage::Node, pending_flush: bool) -> FileEntry {
     FileEntry {
         id: node.node_id.as_uuid().hyphenated().to_string(),
         name: node.name.clone(),
@@ -90,23 +140,27 @@ fn node_to_file_entry(node: &crate::storage::Node) -> FileEntry {
         parent_id: node
             .parent_id
             .map(|id| id.as_uuid().hyphenated().to_string()),
+        pending_flush,
     }
 }
 
-/// Resolves the singleton vault and returns the vault identifier string.
+/// Returns the vault identifier for the currently active session.
 ///
-/// Returns `IpcError::VaultLocked` when no vault is found on disk.
-fn require_vault_id() -> Result<String, IpcError> {
-    let (vault_id, _, _) = resolve_singleton_vault()?
-        .ok_or_else(|| IpcError::VaultLocked("No vault found on this device".into()))?;
-    Ok(vault_id)
+/// Returns `IpcError::VaultLocked` when the session is not active or the vault
+/// ID is unavailable.
+async fn require_vault_id(state: &AppState) -> Result<String, IpcError> {
+    state
+        .session_manager
+        .active_vault_id()
+        .await
+        .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))
 }
 
 /// Copies the KEK out of the session guard and wraps it in a `KeyEncryptionKey`.
 ///
 /// The raw bytes are moved directly into the `SecretBox` heap buffer so no
 /// cleartext copy remains on the stack longer than necessary.
-async fn extract_kek(state: &AppState) -> Result<KeyEncryptionKey, IpcError> {
+pub(crate) async fn extract_kek(state: &AppState) -> Result<KeyEncryptionKey, IpcError> {
     let kek_raw: [u8; 32] = state
         .session_manager
         .with_key_encryption_key(|k| *k)
@@ -162,14 +216,23 @@ pub async fn list_directory(
         .list_children(parent_uuid)
         .await
         .map_err(IpcError::from)?;
-    Ok(children.iter().map(node_to_file_entry).collect())
+    let pending_ids: std::collections::HashSet<uuid::Uuid> = db
+        .get_epoch_buffer_node_ids()
+        .await
+        .map_err(IpcError::from)?
+        .into_iter()
+        .collect();
+    Ok(children
+        .iter()
+        .map(|node| node_to_file_entry(node, pending_ids.contains(node.node_id.as_uuid())))
+        .collect())
 }
 
 /// Encrypt and upload a file to the vault.
 ///
-/// Progress is streamed via the `progress` channel.  The file is placed at the
-/// vault root (`parent_id = None`) for Phase 6.5; path-based placement is
-/// deferred.
+/// `vault_path` is the full vault-relative destination path (e.g. `/file.txt` or
+/// `/<dir-uuid>/file.txt`).  The parent directory is resolved to a UUID; the root
+/// node is created on first use and its UUID persisted as `root_id`.
 #[tauri::command]
 pub async fn upload_file(
     source_path: PathBuf,
@@ -181,6 +244,7 @@ pub async fn upload_file(
     require_active_session(&state).await?;
 
     let vault_path = normalise_vault_path(&vault_path);
+    let vault_path = vault_path.trim_start_matches('/');
     if vault_path.is_empty() {
         return Err(IpcError::InvalidInput(
             "Vault path is required for upload".into(),
@@ -194,7 +258,7 @@ pub async fn upload_file(
         .ok_or_else(|| IpcError::InvalidInput("Source path has no valid file name".into()))?
         .to_owned();
 
-    let vault_id = require_vault_id()?;
+    let vault_id = require_vault_id(&state).await?;
     let staging_dir = vault_staging_dir(&vault_id);
 
     let db_guard = state.database.read().await;
@@ -210,8 +274,6 @@ pub async fn upload_file(
         .unwrap_or_default()
         .as_secs() as i64;
 
-    // Wrap the Tauri channel in a ProgressChannel to gracefully handle
-    // closed connections (M3: Streaming Progress Channel Validation)
     let progress_ch = ProgressChannel::new(progress);
     let progress_fn = {
         let progress = progress_ch.clone();
@@ -226,22 +288,24 @@ pub async fn upload_file(
         }
     };
 
+    let parent_id = resolve_parent_uuid(vault_path, db).await?;
+
     let node = vault_upload(
         &source_path,
         node_id,
-        None, // parent_id — root placement for Phase 6.5
+        Some(parent_id),
         &name,
         now,
         now,
         db,
         &kek,
-        &staging_dir,
+        &staging_dir.join("pending"),
         Some(&progress_fn),
     )
     .await
     .map_err(IpcError::from)?;
 
-    Ok(node_to_file_entry(&node))
+    Ok(node_to_file_entry(&node, false))
 }
 
 /// Download and decrypt a file from the vault to a local destination path.
@@ -261,7 +325,7 @@ pub async fn download_file(
     let node_uuid =
         Uuid::parse_str(&file_id).map_err(|_| IpcError::InvalidInput("Invalid file ID".into()))?;
 
-    let vault_id = require_vault_id()?;
+    let vault_id = require_vault_id(&state).await?;
     let staging_dir = vault_staging_dir(&vault_id);
 
     let db_guard = state.database.read().await;
@@ -270,6 +334,10 @@ pub async fn download_file(
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
 
     let kek = extract_kek(&state).await?;
+
+    // Download any blobs uploaded to cloud that were pruned from local staging.
+    let cloud = state.cloud_transport.read().await.clone();
+    fetch_missing_file_blobs(node_uuid, db, &staging_dir, cloud.as_ref()).await?;
 
     // Wrap the Tauri channel in a ProgressChannel to gracefully handle
     // closed connections (M3: Streaming Progress Channel Validation)
@@ -313,7 +381,7 @@ pub async fn delete_file(file_id: String, state: State<'_, AppState>) -> Result<
     let node_uuid =
         Uuid::parse_str(&file_id).map_err(|_| IpcError::InvalidInput("Invalid file ID".into()))?;
 
-    let vault_id = require_vault_id()?;
+    let vault_id = require_vault_id(&state).await?;
     let staging_dir = vault_staging_dir(&vault_id);
 
     let db_guard = state.database.read().await;
@@ -357,10 +425,14 @@ pub async fn get_file_content(
         ));
     }
 
-    let vault_id = require_vault_id()?;
+    let vault_id = require_vault_id(&state).await?;
     let staging_dir = vault_staging_dir(&vault_id);
 
     let kek = extract_kek(&state).await?;
+
+    // Download any blobs uploaded to cloud that were pruned from local staging.
+    let cloud = state.cloud_transport.read().await.clone();
+    fetch_missing_file_blobs(node_uuid, db, &staging_dir, cloud.as_ref()).await?;
 
     // Decrypt into a temporary file; the TempDir and its contents are removed
     // on drop, keeping the plaintext off permanent storage.
@@ -419,6 +491,58 @@ pub async fn list_remote(
         .collect();
 
     Ok(entries)
+}
+
+/// Flush all files staged in the epoch buffer into encrypted blobs.
+///
+/// Reports encryption progress via the `progress` channel.  Acquiring the flush
+/// mutex ensures at most one flush runs at a time even when called concurrently.
+#[tauri::command]
+pub async fn flush_epoch_buffer(
+    progress: Channel<ProgressUpdate>,
+    state: State<'_, AppState>,
+) -> Result<(), IpcError> {
+    state.session_manager.reset_timer().await;
+    require_active_session(&state).await?;
+
+    let vault_id = require_vault_id(&state).await?;
+    let staging_dir = vault_staging_dir(&vault_id);
+
+    let db_guard = state.database.read().await;
+    let db = db_guard
+        .as_ref()
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+
+    let kek = extract_kek(&state).await?;
+    let chunk_size_bytes = crate::storage::pipeline::read_chunk_size_bytes(db)
+        .await
+        .map_err(IpcError::from)?;
+
+    let progress_ch = ProgressChannel::new(progress);
+    let progress_fn = {
+        let progress = progress_ch.clone();
+        move |bytes_flushed: u64, bytes_total: u64| {
+            let percent = (bytes_flushed * 100 / bytes_total.max(1)) as u8;
+            let _ = progress.try_send_if_open(ProgressUpdate {
+                percent,
+                bytes_processed: bytes_flushed,
+                bytes_total,
+                status: "Flushing".into(),
+            });
+        }
+    };
+
+    let _flush_guard = state.flush_mutex.lock().await;
+
+    crate::storage::vault_ops::flush_epoch_buffer(
+        db,
+        &kek,
+        &staging_dir,
+        chunk_size_bytes,
+        Some(&progress_fn),
+    )
+    .await
+    .map_err(IpcError::from)
 }
 
 #[cfg(test)]

@@ -3,94 +3,199 @@
 use leptos::prelude::*;
 use std::sync::Arc;
 
+use crate::components::DestinationSelector;
 use crate::invoke::invoke_command;
-use crate::ipc_types::{AddDestinationRequest, DeleteDestinationRequest, DestinationEntry};
+use crate::ipc_types::{
+    AddDestinationRequest, DeleteDestinationRequest, DestinationEntry, DestinationHealth,
+    DestinationSessionConfig, SetPrimaryDestinationRequest,
+};
+use crate::state::use_sync;
 
 // ─── DestinationItem ──────────────────────────────────────────────────────────
 
-/// Single destination row with delete button and confirmation dialog.
+/// Single destination row showing role badge, backup mode, and action buttons.
+///
+/// Primary destinations show a badge and have Delete hidden (must promote another
+/// destination first). Non-primary destinations show a "Set as Primary" button.
 #[component]
 fn DestinationItem(
     entry: DestinationEntry,
-    on_delete: Arc<dyn Fn() + Send + Sync>,
+    on_refresh: Arc<dyn Fn() + Send + Sync>,
+    #[prop(default = 0u32)] pending_failures: u32,
 ) -> impl IntoView {
+    let is_primary = entry.is_primary;
+    let backup_mode_label = match entry.backup_mode.as_deref() {
+        Some("mirror") => "Mirror",
+        Some("accumulating") => "Accumulating",
+        _ => "",
+    };
+
     let show_confirm = RwSignal::new(false);
     let is_deleting = RwSignal::new(false);
+    let is_promoting = RwSignal::new(false);
 
     view! {
-        <div class="flex items-center justify-between p-3 border border-steel rounded bg-iron hover:bg-iron-light transition-colors">
+        <div class="flex items-center justify-between p-3 border border-steel rounded bg-iron hover:bg-surface-overlay transition-colors">
             <div class="flex-1">
-                <p class="font-semibold text-bone">{entry.label.clone()}</p>
+                <div class="flex items-center gap-2">
+                    <p class="font-semibold text-bone">{entry.label.clone()}</p>
+                    {if is_primary {
+                        view! {
+                            <span class="px-2 py-0.5 text-xs font-medium bg-rune text-bone rounded">
+                                "Primary"
+                            </span>
+                        }
+                        .into_any()
+                    } else {
+                        ().into_any()
+                    }}
+                    {if pending_failures > 0 {
+                        view! {
+                            <span class="px-2 py-0.5 text-xs font-medium bg-danger/20 text-danger rounded">
+                                {format!(
+                                    "{} backup failure{}",
+                                    pending_failures,
+                                    if pending_failures == 1 { "" } else { "s" },
+                                )}
+                            </span>
+                        }
+                        .into_any()
+                    } else {
+                        ().into_any()
+                    }}
+                </div>
                 <p class="text-sm text-text-secondary">
                     {format!("{} ({})", entry.destination_type, entry.provider)}
+                    {if !is_primary && !backup_mode_label.is_empty() {
+                        format!(" · {backup_mode_label}")
+                    } else {
+                        String::new()
+                    }}
                 </p>
             </div>
-            <button
-                class="px-3 py-1 text-sm text-bone bg-rune rounded hover:bg-rune-dark transition-colors disabled:opacity-50"
-                on:click=move |_| {
-                    show_confirm.set(true);
-                }
-                disabled=move || is_deleting.get() || show_confirm.get()
-            >
-                "Delete"
-            </button>
 
-            {move || {
-                if show_confirm.get() {
-                    let destination_id = entry.destination_id.clone();
-                    let on_delete_ref = on_delete.clone();
-                    view! {
-                        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                            <div class="bg-stone p-6 rounded border border-steel">
-                                <p class="mb-4 text-bone">
-                                    "Are you sure you want to delete this destination?"
-                                </p>
-                                <div class="flex gap-3">
-                                    <button
-                                        class="px-4 py-2 bg-steel text-bone rounded hover:bg-steel-light transition-colors"
-                                        on:click=move |_| {
-                                            show_confirm.set(false);
+            {if !is_primary {
+                let destination_id_promote = entry.destination_id.clone();
+                let destination_id_delete = entry.destination_id.clone();
+                let on_refresh_promote = on_refresh.clone();
+                let on_refresh_delete = on_refresh.clone();
+                view! {
+                    <div class="flex items-center gap-2">
+                        <button
+                            class="px-3 py-1 text-sm text-bone bg-steel rounded cursor-pointer hover:bg-steel/80 transition-colors disabled:opacity-50"
+                            on:click=move |_| {
+                                is_promoting.set(true);
+                                let dest_id = destination_id_promote.clone();
+                                let on_ref = on_refresh_promote.clone();
+                                leptos::task::spawn_local(async move {
+                                    match invoke_command::<SetPrimaryDestinationRequest, ()>(
+                                        "set_primary_destination_cmd",
+                                        &SetPrimaryDestinationRequest { destination_id: dest_id },
+                                    )
+                                    .await
+                                    {
+                                        Ok(()) => {
+                                            is_promoting.set(false);
+                                            crate::components::use_toast()
+                                                .success("Primary destination updated.".to_string());
+                                            on_ref();
                                         }
-                                    >
-                                        "Cancel"
-                                    </button>
-                                    <button
-                                        class="px-4 py-2 bg-rune text-bone rounded hover:bg-rune-dark transition-colors disabled:opacity-50"
-                                        on:click=move |_| {
-                                            is_deleting.set(true);
-                                            let dest_id = destination_id.clone();
-                                            let on_del = on_delete_ref.clone();
-                                            leptos::task::spawn_local(async move {
-                                                match invoke_command::<DeleteDestinationRequest, ()>(
-                                                    "delete_destination",
-                                                    &DeleteDestinationRequest { destination_id: dest_id },
-                                                )
-                                                .await
-                                                {
-                                                    Ok(()) => {
-                                                        is_deleting.set(false);
+                                        Err(e) => {
+                                            is_promoting.set(false);
+                                            crate::components::use_toast()
+                                                .error(format!("Failed to set primary: {e}"));
+                                        }
+                                    }
+                                });
+                            }
+                            disabled=move || is_promoting.get() || is_deleting.get() || show_confirm.get()
+                        >
+                            {move || if is_promoting.get() { "Promoting…" } else { "Set as Primary" }}
+                        </button>
+
+                        <button
+                            class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
+                            on:click=move |_| {
+                                show_confirm.set(true);
+                            }
+                            disabled=move || is_deleting.get() || is_promoting.get() || show_confirm.get()
+                        >
+                            "Delete"
+                        </button>
+
+                        {move || {
+                            if show_confirm.get() {
+                                let dest_id = destination_id_delete.clone();
+                                let on_del = on_refresh_delete.clone();
+                                view! {
+                                    <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                                        <div class="bg-stone p-6 rounded border border-steel">
+                                            <p class="mb-4 text-bone">
+                                                "Are you sure you want to delete this destination?"
+                                            </p>
+                                            <div class="flex gap-3">
+                                                <button
+                                                    class="px-4 py-2 bg-steel text-bone rounded cursor-pointer hover:bg-rune/20 transition-colors"
+                                                    on:click=move |_| {
                                                         show_confirm.set(false);
-                                                        on_del();
                                                     }
-                                                    Err(_) => {
-                                                        is_deleting.set(false);
-                                                        // TODO: Show error message to user
+                                                >
+                                                    "Cancel"
+                                                </button>
+                                                <button
+                                                    class="px-4 py-2 bg-rune text-bone rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
+                                                    on:click=move |_| {
+                                                        is_deleting.set(true);
+                                                        let id = dest_id.clone();
+                                                        let cb = on_del.clone();
+                                                        leptos::task::spawn_local(async move {
+                                                            match invoke_command::<
+                                                                DeleteDestinationRequest,
+                                                                (),
+                                                            >(
+                                                                "delete_destination",
+                                                                &DeleteDestinationRequest {
+                                                                    destination_id: id,
+                                                                },
+                                                            )
+                                                            .await
+                                                            {
+                                                                Ok(()) => {
+                                                                    is_deleting.set(false);
+                                                                    show_confirm.set(false);
+                                                                    cb();
+                                                                }
+                                                                Err(e) => {
+                                                                    is_deleting.set(false);
+                                                                    show_confirm.set(false);
+                                                                    crate::components::use_toast()
+                                                                        .error(format!(
+                                                                            "Failed to delete: {e}"
+                                                                        ));
+                                                                }
+                                                            }
+                                                        });
                                                     }
-                                                }
-                                            });
-                                        }
-                                        disabled=move || is_deleting.get()
-                                    >
-                                        {move || if is_deleting.get() { "Deleting…" } else { "Delete" }}
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    }
-                    .into_any()
-                } else {
-                    ().into_any()
+                                                    disabled=move || is_deleting.get()
+                                                >
+                                                    {move || {
+                                                        if is_deleting.get() { "Deleting…" } else { "Delete" }
+                                                    }}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                                .into_any()
+                            } else {
+                                ().into_any()
+                            }
+                        }}
+                    </div>
                 }
+                .into_any()
+            } else {
+                ().into_any()
             }}
         </div>
     }
@@ -98,24 +203,38 @@ fn DestinationItem(
 
 // ─── AddDestinationForm ───────────────────────────────────────────────────────
 
-/// Form to add a new destination.
+/// Form to add a new backup destination.
 #[component]
 fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
     let label = RwSignal::new(String::new());
-    let destination_type = RwSignal::new("local".to_string());
-    let path = RwSignal::new(String::new());
+    let backup_mode = RwSignal::new("mirror".to_string());
     let is_adding = RwSignal::new(false);
-    let error = RwSignal::new(String::new());
+    let validation_error = RwSignal::new(String::new());
+
+    let config: RwSignal<DestinationSessionConfig> = RwSignal::new(DestinationSessionConfig {
+        label: String::new(),
+        destination_type: "local_path".to_string(),
+        provider: "local".to_string(),
+        bucket: String::new(),
+        region: String::new(),
+        endpoint: String::new(),
+        path_prefix: String::new(),
+        rclone_config_blob: String::new(),
+        is_primary: false,
+        backup_mode: None,
+    });
+
+    let field_class = "w-full px-3 py-2 bg-stone border border-steel rounded text-bone placeholder-text-secondary focus:outline-none focus:border-bone";
 
     view! {
         <div class="border border-steel rounded bg-iron p-4">
             <h3 class="text-lg font-semibold text-bone mb-3">"Add Destination"</h3>
 
             {move || {
-                if !error.get().is_empty() {
+                if !validation_error.get().is_empty() {
                     view! {
-                        <div class="mb-3 p-2 bg-rune text-bone text-sm rounded">
-                            {error.get()}
+                        <div class="mb-3 p-2 bg-danger/20 text-danger text-sm rounded">
+                            {validation_error.get()}
                         </div>
                     }
                     .into_any()
@@ -124,97 +243,76 @@ fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
                 }
             }}
 
-            <div class="space-y-3">
+            <div class="space-y-4">
                 <div>
                     <label class="block text-sm text-text-secondary mb-1">"Name"</label>
                     <input
                         type="text"
                         placeholder="My backup"
-                        class="w-full px-3 py-2 bg-stone border border-steel rounded text-bone placeholder-text-secondary focus:outline-none focus:border-bone"
+                        class=field_class
                         prop:value=move || label.get()
                         on:input=move |ev| {
                             label.set(event_target_value(&ev));
+                            validation_error.set(String::new());
                         }
                         disabled=move || is_adding.get()
                     />
                 </div>
 
                 <div>
-                    <label class="block text-sm text-text-secondary mb-1">"Type"</label>
+                    <label class="block text-sm text-text-secondary mb-1">"Backup Mode"</label>
                     <select
-                        class="w-full px-3 py-2 bg-stone border border-steel rounded text-bone focus:outline-none focus:border-bone"
-                        prop:value=move || destination_type.get()
+                        class=field_class
+                        prop:value=move || backup_mode.get()
                         on:change=move |ev| {
-                            destination_type.set(event_target_value(&ev));
+                            backup_mode.set(event_target_value(&ev));
                         }
                         disabled=move || is_adding.get()
                     >
-                        <option value="local">"Local Path"</option>
-                        <option value="rclone">"Rclone Remote"</option>
+                        <option value="mirror">"Mirror — keep destination in sync with source"</option>
+                        <option value="accumulating">"Accumulating — retain deleted files"</option>
                     </select>
                 </div>
 
-                <div>
-                    <label class="block text-sm text-text-secondary mb-1">
-                        {move || {
-                            if destination_type.get() == "local" {
-                                "Path"
-                            } else {
-                                "Remote"
-                            }
-                        }}
-                    </label>
-                    <input
-                        type="text"
-                        placeholder=move || {
-                            if destination_type.get() == "local" {
-                                "/path/to/backup"
-                            } else {
-                                "s3:my-bucket/backups"
-                            }
-                        }
-                        class="w-full px-3 py-2 bg-stone border border-steel rounded text-bone placeholder-text-secondary focus:outline-none focus:border-bone"
-                        prop:value=move || path.get()
-                        on:input=move |ev| {
-                            path.set(event_target_value(&ev));
-                        }
-                        disabled=move || is_adding.get()
-                    />
-                </div>
+                <DestinationSelector on_change=move |c| config.set(c) />
 
                 <button
-                    class="w-full px-4 py-2 bg-rune text-bone rounded hover:bg-rune-dark transition-colors disabled:opacity-50"
+                    class="w-full px-4 py-2 bg-rune text-bone rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
                     on:click=move |_| {
-                        if label.get().trim().is_empty() {
-                            error.set("Destination name is required".to_string());
-                            return;
-                        }
-                        if path.get().trim().is_empty() {
-                            error.set("Path/remote is required".to_string());
+                        let lbl = label.get();
+                        if lbl.trim().is_empty() {
+                            validation_error.set("Destination name is required".to_string());
                             return;
                         }
 
                         is_adding.set(true);
-                        error.set(String::new());
+                        validation_error.set(String::new());
 
-                        let req = AddDestinationRequest {
-                            label: label.get(),
-                            destination_type: destination_type.get(),
-                            path_or_remote: path.get(),
-                        };
+                        let mut final_config = config.get();
+                        final_config.label = lbl.clone();
+                        final_config.is_primary = false;
+                        final_config.backup_mode = Some(backup_mode.get());
 
+                        let req = AddDestinationRequest { config: final_config };
                         let on_added_ref = on_added.clone();
                         leptos::task::spawn_local(async move {
-                            match invoke_command::<AddDestinationRequest, ()>("add_destination", &req).await {
-                                Ok(()) => {
+                            match invoke_command::<AddDestinationRequest, DestinationEntry>(
+                                "add_destination",
+                                &req,
+                            )
+                            .await
+                            {
+                                Ok(_entry) => {
                                     is_adding.set(false);
                                     label.set(String::new());
-                                    path.set(String::new());
+                                    crate::components::use_toast()
+                                        .success(format!("Destination \"{}\" added.", lbl));
                                     on_added_ref();
                                 }
                                 Err(e) => {
                                     is_adding.set(false);
-                                    error.set(format!("Failed to add destination: {}", e));
+                                    crate::components::use_toast()
+                                        .error(format!("Failed to add destination: {}", e));
                                 }
                             }
                         });
@@ -233,24 +331,24 @@ fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
 /// List of configured destinations with add and delete controls.
 #[component]
 pub fn DestinationList() -> impl IntoView {
-    let destinations = LocalResource::new(|| async move {
-        invoke_command::<(), Vec<DestinationEntry>>("list_destinations", &()).await
+    let refresh_count = RwSignal::new(0u32);
+    let sync_state = use_sync();
+
+    // LocalResource re-runs automatically when refresh_count changes because
+    // it is accessed inside the synchronous closure that LocalResource tracks.
+    let destinations = LocalResource::new(move || {
+        let _trigger = refresh_count.get();
+        async move { invoke_command::<(), Vec<DestinationEntry>>("list_destinations", &()).await }
     });
 
-    let refresh_count = RwSignal::new(0);
-
-    let on_add: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-        refresh_count.set(refresh_count.get() + 1);
+    let health_data = LocalResource::new(move || {
+        let _trigger = refresh_count.get();
+        let _sync_at = sync_state.with(|s| s.last_synced_at.clone());
+        async move { invoke_command::<(), Vec<DestinationHealth>>("get_backup_health", &()).await }
     });
 
-    let on_delete: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-        refresh_count.set(refresh_count.get() + 1);
-    });
-
-    // Re-fetch when refresh_count changes
-    Effect::new(move |_| {
-        let _ = refresh_count.get();
-        destinations.refetch();
+    let on_refresh: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        refresh_count.update(|n| *n += 1);
     });
 
     view! {
@@ -262,7 +360,7 @@ pub fn DestinationList() -> impl IntoView {
                 </p>
             </div>
 
-            <AddDestinationForm on_added=on_add.clone() />
+            <AddDestinationForm on_added=on_refresh.clone() />
 
             <div>
                 <h3 class="text-lg font-semibold text-bone mb-3">"Configured Destinations"</h3>
@@ -270,18 +368,28 @@ pub fn DestinationList() -> impl IntoView {
                     view! { <p class="text-text-secondary">"Loading destinations…"</p> }
                 }>
                     {move || {
+                        let health: Vec<DestinationHealth> = health_data
+                            .get()
+                            .and_then(|r| r.ok())
+                            .unwrap_or_default();
                         destinations.get().map(|result| match result {
                             Ok(entries) if !entries.is_empty() => {
-                                let on_delete_ref = on_delete.clone();
+                                let on_refresh_ref = on_refresh.clone();
                                 view! {
                                     <div class="space-y-2">
                                         {entries
                                             .into_iter()
                                             .map(|entry| {
+                                                let failures = health
+                                                    .iter()
+                                                    .find(|h| h.destination_id == entry.destination_id)
+                                                    .map(|h| h.pending_failure_blobs)
+                                                    .unwrap_or(0);
                                                 view! {
                                                     <DestinationItem
                                                         entry
-                                                        on_delete=on_delete_ref.clone()
+                                                        on_refresh=on_refresh_ref.clone()
+                                                        pending_failures=failures
                                                     />
                                                 }
                                             })
@@ -290,8 +398,20 @@ pub fn DestinationList() -> impl IntoView {
                                 }
                                 .into_any()
                             }
-                            Ok(_) => view! { <p class="text-text-secondary">"No destinations configured yet."</p> }.into_any(),
-                            Err(e) => view! { <p class="text-rune">{"Error loading destinations: "}{e.to_string()}</p> }.into_any(),
+                            Ok(_) => {
+                                view! {
+                                    <p class="text-text-secondary">"No destinations configured yet."</p>
+                                }
+                                .into_any()
+                            }
+                            Err(e) => {
+                                view! {
+                                    <p class="text-danger">
+                                        {"Error loading destinations: "}{e.to_string()}
+                                    </p>
+                                }
+                                .into_any()
+                            }
                         })
                     }}
                 </Suspense>

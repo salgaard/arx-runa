@@ -4,35 +4,16 @@ paths:
   - "src-tauri/src/storage/sharing.rs"
 ---
 
-# Sharing module — rules
+# Sharing
 
-**Design specification**: `docs/architecture/designs/file-sharing/design.md`
+> Design: `docs/architecture/designs/file-sharing/design.md`
 
-## Trait boundaries
-- `SharingStore` is the sharing storage boundary in `sharing::store`.
-- Never extend `MetadataStore` with sharing-specific methods.
-
-## Identity ownership
-- `sharing::` treats `vault_identity` as read-only.
-- Identity generation stays in `auth::ceremonies::create::create_vault`.
-
-## Fingerprint contract
-- Fingerprint is the first 8 bytes of `SHA-256(public_key)`.
-- Render fingerprint as 16 lowercase hex characters.
-
-## Logging and debug hygiene
-- Never log X25519 public-key bytes.
-- `Debug` output must not print raw public-key bytes.
-
-## HPKE error hygiene
-- All HPKE open failures (KEM decap, CTX commitment mismatch, stream decrypt) emit `SharingError::AuthenticationFailed` with no source context.
-- Error message text must not include `enc`, ciphertext, or CTX tag bytes.
-- `SharingError::AuthenticationFailed` maps to `IpcError::AuthenticationFailed` with a fixed user-safe string; `ipc` adapters must never include KEM/CTX context bytes in the user-facing message.
-
-## Storage placement
-- Contacts CRUD lives in `storage::sharing`.
-- Do not colocate sharing CRUD in `storage::sqlcipher`; mirror the destination-session split pattern.
-
-## Revocation contract
-- Revocation blob deletion runs as a sequential loop; on failure, `SharingError::RevocationPartial { failed_index }` is returned with `shares.revoked_at` unchanged so the operation can be retried.
-- Strong revocation rotates `file_key` and `file_share_id` atomically at the manifest layer (`replace_file_key_and_chunks`) before shared-folder cleanup.
+- `SharingStore` is the sharing storage boundary in `sharing::store`; never extend `MetadataStore` with sharing-specific methods
+- `sharing::` treats `vault_identity` as read-only; identity generation stays in `auth::ceremonies::create::create_vault`
+- Fingerprint: first 8 bytes of `SHA-256(public_key)`, rendered as 16 lowercase hex chars
+- Never log X25519 public-key bytes; `Debug` must not print raw public-key bytes
+- All HPKE open failures (KEM decap, CTX commitment mismatch, stream decrypt) emit `SharingError::AuthenticationFailed` with no source context; error text must not include `enc`, ciphertext, or CTX tag bytes
+- `SharingError::AuthenticationFailed` → `IpcError::AuthenticationFailed` with fixed user-safe string; `ipc` adapters must never include KEM/CTX context bytes
+- Contacts CRUD in `storage::sharing`; do not colocate in `storage::sqlcipher` — mirror destination-session split
+- Revocation blob deletion: sequential loop; on failure return `SharingError::RevocationPartial { failed_index }` with `shares.revoked_at` unchanged (retryable)
+- Strong revocation: rotate `file_key` and `file_share_id` atomically at manifest layer (`replace_file_key_and_chunks`) before shared-folder cleanup

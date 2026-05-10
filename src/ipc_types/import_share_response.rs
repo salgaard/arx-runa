@@ -6,8 +6,10 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportShareResponse {
+    /// Share identifier extracted from the package.
+    pub share_id: String,
     /// Display name of the file that was imported.
     pub file_name: String,
-    /// Vault-relative path where the file now resides.
-    pub vault_path: String,
+    /// Display name of the sender if they are a known contact, `None` otherwise.
+    pub sender_name: Option<String>,
 }

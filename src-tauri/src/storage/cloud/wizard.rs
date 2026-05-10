@@ -369,6 +369,170 @@ fn extract_remote_blob_from_dump(
     Ok(format!("{}\n", lines.join("\n")))
 }
 
+/// Which cloud provider to use for an OAuth setup flow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OAuthProvider {
+    /// Google Drive (rclone type `drive`).
+    GoogleDrive,
+    /// Microsoft OneDrive personal (rclone type `onedrive`).
+    OneDrive,
+}
+
+/// Return value of `begin_oauth_setup` — the live subprocess and all metadata
+/// needed for polling, cancellation, and insertion into `AppState.oauth_setups`.
+pub struct OAuthSetupBegun {
+    /// Opaque identifier for this setup, used for polling and cancellation.
+    pub setup_id: String,
+    /// Local rclone auth URL the frontend must open in the system browser.
+    pub auth_url: String,
+    /// Live rclone subprocess waiting for the OAuth browser callback.
+    pub child: tokio::process::Child,
+    /// Temporary rclone config file written by this subprocess.
+    pub temp_config_path: PathBuf,
+    /// Rclone remote name written into the temp config.
+    pub remote_name: String,
+}
+
+/// Spawns rclone for an OAuth provider setup flow.
+///
+/// Reads rclone stderr line-by-line until the local auth URL
+/// (`http://127.0.0.1:…`) is found, then spawns a background drain task so
+/// the pipe buffer cannot stall the rclone process.  The caller must insert the
+/// returned handle into `AppState.oauth_setups`.
+pub async fn begin_oauth_setup(
+    provider: OAuthProvider,
+    binary_path: &std::path::Path,
+) -> Result<OAuthSetupBegun, CloudTransportError> {
+    use std::ffi::OsStr;
+    use tokio::io::AsyncBufReadExt as _;
+    use tokio::io::BufReader;
+
+    let setup_id = Uuid::new_v4().hyphenated().to_string();
+    let remote_name = format!("arx-runa-{}", Uuid::new_v4());
+    let temp_config_path = std::env::temp_dir().join(format!("arx-runa-oauth-{setup_id}.conf"));
+
+    let rclone_type = match provider {
+        OAuthProvider::GoogleDrive => "drive",
+        OAuthProvider::OneDrive => "onedrive",
+    };
+
+    let mut extra_args: Vec<&OsStr> = Vec::new();
+    let scope_flag;
+    if provider == OAuthProvider::GoogleDrive {
+        scope_flag = OsString::from("scope=drive");
+        extra_args.push(scope_flag.as_os_str());
+    }
+
+    let mut command = tokio::process::Command::new(binary_path);
+    command
+        .args([
+            OsStr::new("config"),
+            OsStr::new("create"),
+            OsStr::new(&remote_name),
+            OsStr::new(rclone_type),
+        ])
+        .args(&extra_args)
+        .args([
+            OsStr::new("--non-interactive"),
+            OsStr::new("--config"),
+            temp_config_path.as_os_str(),
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = command.spawn().map_err(CloudTransportError::from)?;
+
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| CloudTransportError::Other("failed to capture rclone stderr".to_owned()))?;
+
+    let mut reader = BufReader::new(stderr).lines();
+    let mut auth_url = None;
+    while let Some(line) = reader
+        .next_line()
+        .await
+        .map_err(|error| CloudTransportError::Other(format!("reading rclone stderr: {error}")))?
+    {
+        if line.contains("http://127.0.0.1:") {
+            auth_url = line
+                .rfind("http://127.0.0.1:")
+                .map(|index| line[index..].trim().to_owned());
+            break;
+        }
+    }
+    let auth_url = auth_url.ok_or_else(|| {
+        CloudTransportError::Other("rclone did not emit an auth URL on stderr".to_owned())
+    })?;
+
+    tokio::spawn(async move { while let Ok(Some(_)) = reader.next_line().await {} });
+
+    Ok(OAuthSetupBegun {
+        setup_id,
+        auth_url,
+        child,
+        temp_config_path,
+        remote_name,
+    })
+}
+
+/// Runs `rclone config dump` against the given temp config and extracts the
+/// credential INI stanza for `remote_name`.
+///
+/// The caller receives the raw blob and is responsible for passing it to
+/// `add_destination`; nothing is persisted here.
+pub async fn complete_oauth_setup(
+    binary_path: &std::path::Path,
+    temp_config_path: &std::path::Path,
+    remote_name: &str,
+) -> Result<String, CloudTransportError> {
+    let mut dump_output = run_rclone(
+        binary_path,
+        vec![
+            OsString::from("config"),
+            OsString::from("dump"),
+            OsString::from("--config"),
+            temp_config_path.as_os_str().to_os_string(),
+        ],
+        Duration::from_secs(15),
+    )
+    .await?;
+
+    let blob = match extract_remote_blob_from_dump(&dump_output, remote_name) {
+        Ok(blob) => blob,
+        Err(error) => {
+            dump_output.zeroize();
+            return Err(error);
+        }
+    };
+    dump_output.zeroize();
+
+    if let Err(error) = destroy_session_rclone_conf(temp_config_path).await {
+        tracing::warn!(error = %error, "failed to remove oauth temp config");
+    }
+
+    Ok(blob)
+}
+
+/// Kills the rclone subprocess and removes the temporary config file.
+///
+/// Safe to call even if the process has already exited.
+pub async fn cancel_oauth_setup(
+    child: &mut tokio::process::Child,
+    temp_config_path: &std::path::Path,
+) {
+    if let Err(error) = child.start_kill() {
+        tracing::warn!(error = %error, "cancel_oauth_setup: failed to kill rclone child");
+    }
+    if let Err(error) = tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+        tracing::warn!(error = %error, "cancel_oauth_setup: failed to reap rclone child");
+    }
+    if let Err(error) = destroy_session_rclone_conf(temp_config_path).await {
+        tracing::warn!(error = %error, "cancel_oauth_setup: failed to remove temp config");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;

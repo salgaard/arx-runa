@@ -31,6 +31,7 @@ use crate::storage::metadata_store::MetadataStore;
 use crate::storage::sqlcipher::{SqlCipherMetadataStore, read_snapshot_state_from_database};
 use crate::storage::types::SyncChunkRecord;
 use crate::storage::validation::validate_blob_name_uuid_v4;
+use uuid::Uuid;
 
 const CONFLICT_PROBE_DB_FILE_NAME: &str = "manifest-backup-conflict-probe.db";
 const PENDING_DELETIONS_BATCH_LIMIT: usize = 128;
@@ -256,7 +257,7 @@ async fn upload_blob_task(
             CloudTransportError::Other(error.to_string())
         }
     })?;
-    let local_path = blob_staging_path(staging_dir, &blob_name);
+    let local_path = pending_blob_path(staging_dir, &blob_name);
     cloud_transport
         .upload_blob(&local_path, &remote_path)
         .await?;
@@ -278,7 +279,7 @@ async fn download_blob_task(
             CloudTransportError::Other(error.to_string()),
         )
     })?;
-    let local_path = blob_staging_path(staging_dir, &blob_name);
+    let local_path = cache_blob_path(staging_dir, &blob_name);
     cloud_transport
         .download_blob(&remote_path, &local_path)
         .await
@@ -384,6 +385,62 @@ pub(crate) async fn drive_blob_downloads(
     }
 }
 
+/// Downloads any blobs required to decrypt `node_id` that are missing from `staging_dir`.
+///
+/// After a push sync the local blob files are removed; this restores only the
+/// blobs needed for the requested file rather than pulling the entire vault.
+/// Handles both regular multi-chunk files and epoch-packed files.
+/// No-ops when all required blobs are already present locally.
+pub(crate) async fn fetch_missing_file_blobs(
+    node_id: Uuid,
+    db: &dyn MetadataStore,
+    staging_dir: &Path,
+    cloud_transport: &dyn CloudTransport,
+) -> Result<(), SyncError> {
+    use std::collections::HashMap;
+
+    let chunks = db.get_chunks(node_id).await?;
+    let mut needed: HashMap<String, [u8; 32]> = HashMap::new();
+
+    for chunk in &chunks {
+        let (blob_name, checksum) = if let Some(epoch_id) = chunk.epoch_blob_id {
+            let epoch = db.get_epoch_blob(epoch_id).await?;
+            (epoch.blob_name, epoch.blake3_checksum)
+        } else {
+            (chunk.blob_name.clone(), chunk.blake3_checksum)
+        };
+        needed.entry(blob_name).or_insert(checksum);
+    }
+
+    for (blob_name, blake3_checksum) in needed {
+        // Skip if blob is already present in either pending/ or cache/.
+        if tokio::fs::try_exists(&pending_blob_path(staging_dir, &blob_name)).await?
+            || tokio::fs::try_exists(&cache_blob_path(staging_dir, &blob_name)).await?
+        {
+            continue;
+        }
+        download_blob_task(
+            SyncChunkRecord {
+                blob_name,
+                blake3_checksum,
+            },
+            cloud_transport,
+            staging_dir,
+        )
+        .await
+        .map_err(|e| match e {
+            DownloadTaskError::Transport(_, err) => SyncError::Transport { source: err },
+            DownloadTaskError::Verification(name) => SyncError::Transport {
+                source: CloudTransportError::Other(format!(
+                    "Blob checksum mismatch after download: {name}"
+                )),
+            },
+        })?;
+    }
+
+    Ok(())
+}
+
 /// Pushes staged vault blobs, then uploads manifest backup and vault header.
 ///
 /// The optional `progress` callback is invoked with
@@ -413,7 +470,7 @@ pub async fn push_vault(
 
     if let Some(cloud_state) =
         read_cloud_snapshot_state(cloud_transport, staging_dir, manifest_key, sqlcipher_key).await?
-        && cloud_state.snapshot_counter != local_counter
+        && cloud_state.snapshot_counter > local_counter
     {
         return Err(SyncError::Conflict(SyncConflict {
             local_counter,
@@ -427,7 +484,7 @@ pub async fn push_vault(
     let mut upload_blobs = Vec::new();
     for chunk in chunks {
         validate_blob_name_uuid_v4(&chunk.blob_name)?;
-        let local_path = blob_staging_path(staging_dir, &chunk.blob_name);
+        let local_path = pending_blob_path(staging_dir, &chunk.blob_name);
         if tokio::fs::try_exists(&local_path).await? {
             upload_blobs.push(chunk.blob_name);
         }
@@ -527,17 +584,27 @@ pub async fn pull_vault(
 
     for chunk in chunks {
         validate_blob_name_uuid_v4(&chunk.blob_name)?;
-        let local_path = blob_staging_path(staging_dir, &chunk.blob_name);
-        if tokio::fs::try_exists(&local_path).await? {
-            if verify_blob_checksum(&local_path, &chunk.blake3_checksum).await? {
+        let cache_path = cache_blob_path(staging_dir, &chunk.blob_name);
+        if tokio::fs::try_exists(&cache_path).await? {
+            if verify_blob_checksum(&cache_path, &chunk.blake3_checksum).await? {
                 blobs_skipped_present += 1;
             } else {
-                remove_file_if_present(&local_path).await?;
+                remove_file_if_present(&cache_path).await?;
                 chunks_to_fetch.push(chunk);
             }
-        } else {
-            chunks_to_fetch.push(chunk);
+            continue;
         }
+        // Also check the pending directory: blobs staged locally for upload but not yet on
+        // cloud (e.g. device B's changes after a conflict). If the checksum matches they are
+        // already correct on-disk and don't need to be downloaded.
+        let pending_path = pending_blob_path(staging_dir, &chunk.blob_name);
+        if tokio::fs::try_exists(&pending_path).await?
+            && let Ok(true) = verify_blob_checksum(&pending_path, &chunk.blake3_checksum).await
+        {
+            blobs_skipped_present += 1;
+            continue;
+        }
+        chunks_to_fetch.push(chunk);
     }
 
     let total_to_fetch = chunks_to_fetch.len();
@@ -604,8 +671,16 @@ pub async fn delete_vault_from_cloud(
     Ok(report)
 }
 
-fn blob_staging_path(staging_dir: &Path, blob_name: &str) -> PathBuf {
-    staging_dir.join(format!("{blob_name}.blob"))
+/// Returns the path for a locally-encrypted blob awaiting upload.
+fn pending_blob_path(staging_dir: &Path, blob_name: &str) -> PathBuf {
+    staging_dir
+        .join("pending")
+        .join(format!("{blob_name}.blob"))
+}
+
+/// Returns the path for a blob fetched from cloud for local viewing/decryption.
+fn cache_blob_path(staging_dir: &Path, blob_name: &str) -> PathBuf {
+    staging_dir.join("cache").join(format!("{blob_name}.blob"))
 }
 
 fn build_blob_remote_path(blob_name: &str) -> Result<String, SyncError> {
@@ -679,7 +754,7 @@ async fn verify_blob_checksum(
     Ok(checksum.as_bytes() == expected_checksum)
 }
 
-async fn drain_pending_deletions(
+pub(crate) async fn drain_pending_deletions(
     metadata_store: &SqlCipherMetadataStore,
     cloud_transport: &dyn CloudTransport,
 ) -> Result<usize, SyncError> {
@@ -708,6 +783,19 @@ async fn drain_pending_deletions(
 
             match cloud_transport.delete_blob(&remote_path).await {
                 Ok(()) => {
+                    metadata_store.mark_deletion_complete(&blob_name).await?;
+                    completed += 1;
+                    batch_completed += 1;
+                }
+                Err(CloudTransportError::NotFound) => {
+                    // Blob was never uploaded to the cloud (e.g. deleted locally
+                    // before the first sync). The desired state is already achieved.
+                    tracing::debug!(
+                        blob_name = %blob_name,
+                        remote_path = %remote_path,
+                        "blob not found in cloud during pending deletion drain; \
+                         treating as already deleted"
+                    );
                     metadata_store.mark_deletion_complete(&blob_name).await?;
                     completed += 1;
                     batch_completed += 1;
@@ -804,6 +892,7 @@ mod tests {
             },
             key_file_blake3: None,
             recovery_slots: Vec::new(),
+            name: None,
         }
     }
 
@@ -838,6 +927,9 @@ mod tests {
             blob_name: blob_name.to_owned(),
             size_padded: 4_194_304,
             blake3_checksum: compute_checksum(payload).0,
+            epoch_blob_id: None,
+            byte_offset: None,
+            byte_length: None,
         };
         store.insert_chunks(&[chunk]).await?;
         Ok(file_id)
@@ -981,8 +1073,11 @@ mod tests {
             .delete_node(deleted_file_id)
             .await
             .expect("delete should enqueue pending deletion");
+        tokio::fs::create_dir_all(temp.path().join("pending"))
+            .await
+            .expect("pending dir should be created");
         tokio::fs::write(
-            blob_staging_path(temp.path(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            pending_blob_path(temp.path(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
             b"encrypted-payload",
         )
         .await
@@ -1110,6 +1205,9 @@ mod tests {
             .upload_blob(&upload_path, &remote_path)
             .await
             .expect("mock upload should succeed");
+        tokio::fs::create_dir_all(temp.path().join("cache"))
+            .await
+            .expect("cache dir should be created");
 
         let result = drive_blob_downloads(
             vec![SyncChunkRecord {
@@ -1123,7 +1221,7 @@ mod tests {
         .await;
 
         assert!(matches!(result, Err((verification, _)) if verification == vec![blob_name]));
-        assert!(!blob_staging_path(temp.path(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").exists());
+        assert!(!cache_blob_path(temp.path(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").exists());
     }
 
     #[tokio::test]
@@ -1279,6 +1377,109 @@ mod tests {
                 .await
                 .expect("pending deletions should load")
                 .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pull_vault_pending_deletion_not_found_in_cloud_clears_queue() {
+        // Scenario: file deleted locally before first sync. The blob was never
+        // uploaded, so the cloud returns NotFound. drain_pending_deletions must
+        // treat this as idempotent success and clear the row.
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key_bytes = [23u8; 32];
+        let store = setup_store(&db_path, &key_bytes)
+            .await
+            .expect("store should be created");
+        let cloud = MockCloudTransport::new();
+        let file_id = insert_single_chunk(
+            &store,
+            "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+            b"never-uploaded",
+        )
+        .await
+        .expect("chunk insert should succeed");
+        store
+            .delete_node(file_id)
+            .await
+            .expect("delete should enqueue pending deletion");
+        cloud
+            .inject_failure(
+                "vault/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.blob",
+                CloudTransportErrorKind::NotFound,
+            )
+            .await;
+
+        pull_vault(
+            temp.path(),
+            &SqlcipherKey::from_bytes([1; 32]),
+            &ManifestKey::from_bytes([2; 32]),
+            &store,
+            &cloud,
+            temp.path(),
+            &SyncConfig::default(),
+            None,
+        )
+        .await
+        .expect("pull should succeed");
+
+        assert!(
+            store
+                .list_pending_deletions(10)
+                .await
+                .expect("pending deletions should load")
+                .is_empty(),
+            "NotFound from cloud should clear the pending deletion row"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pull_vault_skips_cloud_download_for_blob_present_in_pending_directory() {
+        // Scenario: device B has a locally-staged blob in pending/ that was never uploaded
+        // (conflict detected before push). After merge_from_probe_db both device B's and
+        // device A's chunk records coexist in the DB. pull_vault must recognise device B's
+        // own pending blob by falling back to pending_blob_path so it does not attempt a
+        // cloud download that would fail (the blob has never been uploaded).
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key_bytes = [30u8; 32];
+        let store = setup_store(&db_path, &key_bytes)
+            .await
+            .expect("store should be created");
+        let cloud = MockCloudTransport::new();
+        let payload = b"locally-staged-blob";
+        let blob_name = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+        let _file_id = insert_single_chunk(&store, blob_name, payload)
+            .await
+            .expect("chunk insert should succeed");
+
+        tokio::fs::create_dir_all(temp.path().join("pending"))
+            .await
+            .expect("pending dir should be created");
+        tokio::fs::write(pending_blob_path(temp.path(), blob_name), payload)
+            .await
+            .expect("pending blob should be written");
+
+        let report = pull_vault(
+            &db_path,
+            &SqlcipherKey::from_bytes([1; 32]),
+            &ManifestKey::from_bytes([2; 32]),
+            &store,
+            &cloud,
+            temp.path(),
+            &SyncConfig::default(),
+            None,
+        )
+        .await
+        .expect("pull should succeed without attempting cloud download for pending blob");
+
+        assert_eq!(
+            report.blobs_downloaded, 0,
+            "pending blob should not be downloaded from cloud"
+        );
+        assert_eq!(
+            report.blobs_skipped_present, 1,
+            "pending blob should be counted as already present"
         );
     }
 }

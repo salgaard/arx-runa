@@ -33,6 +33,7 @@ futures-util = "0.3"
 thiserror = "2"
 async-trait = "0.1"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 regex = "1"
 tauri-plugin-shell = "2"
 
@@ -61,6 +62,9 @@ tokio-stream = "0.1"
 walkdir = "2"
 dirs = "6"
 tempfile = "3"
+
+# --- HTTP (B2 API for scoped share credentials) ---
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 udev = "0.9"

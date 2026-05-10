@@ -2,7 +2,37 @@
     "version": "2.0.0",
     "tasks": [
         {
+            // Starts the trunk dev server in the background; used as preLaunchTask by the CodeLLDB debug config.
+            // beginsPattern fires when trunk starts compiling; endsPattern fires when it is ready to serve.
+            "label": "ui:dev",
+            "type": "shell",
+            "command": "trunk",
+            "args": ["serve", "--port", "1420"],
+            "isBackground": true,
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^.*$",
+                    "file": 1,
+                    "location": 2,
+                    "message": 3
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": ".",
+                    "endsPattern": ".*1420.*"
+                }
+            },
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated"
+            }
+        },
+        {
             // Builds the native Tauri binary that the Windows debugger launches.
+            // dependsOn ui:dev so trunk is serving at :1420 before cargo build starts.
             "label": "build:tauri-debug",
             "type": "shell",
             "command": "cargo",
@@ -11,6 +41,7 @@
                 "--manifest-path",
                 "src-tauri/Cargo.toml"
             ],
+            "dependsOn": ["ui:dev"],
             "options": {
                 "cwd": "${workspaceFolder}"
             },

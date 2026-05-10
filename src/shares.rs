@@ -4,10 +4,12 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
 
+use crate::dialog::{open_file_dialog_arxshare, open_save_dialog};
 use crate::invoke::invoke_command;
 use crate::ipc_types::{
-    ContactEntry, ImportShareRequest, ReceivedShareEntry, RevokeShareRequest, ShareEntry,
-    ShareFileRequest,
+    ContactEntry, DownloadReceivedShareRequest, DownloadReceivedShareResponse, ImportShareRequest,
+    ImportShareResponse, ReceivedShareEntry, RevokeShareRequest, ShareEntry, ShareFileRequest,
+    ShareResponse,
 };
 use crate::utils::format_fingerprint;
 
@@ -23,7 +25,7 @@ pub fn SharesPage() -> impl IntoView {
             <div class="flex justify-between items-center">
                 <h1 class="text-2xl font-bold text-bone">"Shares"</h1>
                 <A href="/">
-                    <button class="px-3 py-1 text-sm text-bone bg-rune rounded hover:bg-rune-dark transition-colors">
+                    <button class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors">
                         "← Back to Vault"
                     </button>
                 </A>
@@ -33,9 +35,9 @@ pub fn SharesPage() -> impl IntoView {
                 <button
                     class=move || {
                         if active_tab.get() == "sent" {
-                            "px-4 py-2 border-b-2 border-rune text-bone font-semibold"
+                            "px-4 py-2 border-b-2 border-rune text-bone font-semibold cursor-pointer"
                         } else {
-                            "px-4 py-2 text-text-secondary hover:text-bone transition-colors"
+                            "px-4 py-2 text-text-secondary cursor-pointer hover:text-bone transition-colors"
                         }
                     }
                     on:click=move |_| active_tab.set("sent")
@@ -45,9 +47,9 @@ pub fn SharesPage() -> impl IntoView {
                 <button
                     class=move || {
                         if active_tab.get() == "received" {
-                            "px-4 py-2 border-b-2 border-rune text-bone font-semibold"
+                            "px-4 py-2 border-b-2 border-rune text-bone font-semibold cursor-pointer"
                         } else {
-                            "px-4 py-2 text-text-secondary hover:text-bone transition-colors"
+                            "px-4 py-2 text-text-secondary cursor-pointer hover:text-bone transition-colors"
                         }
                     }
                     on:click=move |_| active_tab.set("received")
@@ -99,13 +101,51 @@ fn SentSharesList() -> impl IntoView {
         });
     });
 
+    let checking_receipts = RwSignal::new(false);
+
+    // Auto-check receipts once on mount.
+    Effect::new(move |_| {
+        let shares_clone = shares;
+        let checking_clone = checking_receipts;
+        spawn_local(async move {
+            checking_clone.set(true);
+            if let Ok(entries) =
+                invoke_command::<(), Vec<ShareEntry>>("check_share_receipts", &()).await
+            {
+                shares_clone.set(entries);
+            }
+            checking_clone.set(false);
+        });
+    });
+
+    let handle_check_receipts = move |_| {
+        checking_receipts.set(true);
+        spawn_local(async move {
+            if let Ok(entries) =
+                invoke_command::<(), Vec<ShareEntry>>("check_share_receipts", &()).await
+            {
+                shares.set(entries)
+            }
+            checking_receipts.set(false);
+        });
+    };
+
     view! {
         <div class="flex flex-col gap-4">
+            <div class="flex justify-end">
+                <button
+                    class="px-3 py-1 text-sm text-bone bg-steel rounded cursor-pointer hover:bg-rune/20 transition-colors disabled:opacity-50"
+                    on:click=handle_check_receipts
+                    disabled=move || checking_receipts.get()
+                >
+                    {move || if checking_receipts.get() { "Checking…" } else { "Refresh receipt status" }}
+                </button>
+            </div>
             {move || {
                 if loading.get() {
                     view! { <p class="text-text-secondary">"Loading shares…"</p> }.into_any()
                 } else if let Some(err) = error.get() {
-                    view! { <p class="text-red-400">"Error: " {err}</p> }.into_any()
+                    view! { <p class="text-danger">"Error: " {err}</p> }.into_any()
                 } else if shares.get().is_empty() {
                     view! { <p class="text-text-secondary">"No shares yet."</p> }.into_any()
                 } else {
@@ -138,6 +178,8 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
     let revoking = RwSignal::new(false);
     let share_id = share.share_id.clone();
     let contact_name = share.contact_name.clone();
+    let receipt_received_at = share.receipt_received_at.clone();
+    let import_receipt_received_at = share.import_receipt_received_at.clone();
 
     view! {
         <div class="p-4 bg-iron border border-steel rounded">
@@ -146,10 +188,23 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                     <p class="text-bone font-semibold">{share.file_name.clone()}</p>
                     <p class="text-text-secondary text-sm">"Shared with: " {contact_name.clone()}</p>
                     <p class="text-text-secondary text-xs mt-1">{share.created_at.clone()}</p>
+                    {if let Some(ts) = receipt_received_at {
+                        view! {
+                            <p class="text-success-text text-xs mt-1">"Downloaded " {ts}</p>
+                        }.into_any()
+                    } else if let Some(ts) = import_receipt_received_at {
+                        view! {
+                            <p class="text-text-secondary text-xs mt-1">"Received " {ts}</p>
+                        }.into_any()
+                    } else {
+                        view! {
+                            <p class="text-text-secondary text-xs mt-1">"Awaiting receipt"</p>
+                        }.into_any()
+                    }}
                     {move || {
                         if share.revoked {
                             view! {
-                                <p class="text-red-400 text-sm mt-2">"(Revoked)"</p>
+                                <p class="text-danger text-sm mt-2">"(Revoked)"</p>
                             }.into_any()
                         } else {
                             ().into_any()
@@ -160,7 +215,7 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                     if !share.revoked {
                         view! {
                             <button
-                                class="px-3 py-1 text-sm text-bone bg-red-900 rounded hover:bg-red-700 transition-colors disabled:opacity-50"
+                                class="px-3 py-1 text-sm text-danger bg-danger/20 rounded cursor-pointer hover:bg-danger/30 transition-colors disabled:opacity-50"
                                 on:click=move |_| show_confirm.set(true)
                                 disabled=move || revoking.get()
                             >
@@ -179,11 +234,11 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                     let contact_name_for_confirm = contact_name.clone();
 
                     view! {
-                        <div class="mt-4 p-3 bg-red-900/20 border border-red-700 rounded">
+                        <div class="mt-4 p-3 bg-danger/10 border border-danger rounded">
                             <p class="text-bone text-sm mb-3">"Revoke access for " {contact_name_for_confirm} "?"</p>
                             <div class="flex gap-2">
                                 <button
-                                    class="px-3 py-1 text-sm bg-red-900 text-bone rounded hover:bg-red-700 transition-colors"
+                                    class="px-3 py-1 text-sm bg-danger/20 text-danger rounded cursor-pointer hover:bg-danger/30 transition-colors"
                                     on:click=move |_| {
                                         revoking.set(true);
                                         let share_id_clone = share_id_for_revoke.clone();
@@ -213,7 +268,7 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                                     "Confirm Revoke"
                                 </button>
                                 <button
-                                    class="px-3 py-1 text-sm bg-steel text-bone rounded hover:bg-steel-light transition-colors"
+                                    class="px-3 py-1 text-sm bg-steel text-bone rounded cursor-pointer hover:bg-rune/20 transition-colors"
                                     on:click=move |_| show_confirm.set(false)
                                     disabled=move || revoking.get()
                                 >
@@ -240,6 +295,39 @@ fn ReceivedSharesList() -> impl IntoView {
     let error = RwSignal::new(None::<String>);
     let refresh_key = RwSignal::new(0);
 
+    let importing_file = RwSignal::new(false);
+    let import_error = RwSignal::new(None::<String>);
+
+    let handle_import_file = move |_| {
+        importing_file.set(true);
+        import_error.set(None);
+        let shares_clone = shares;
+        let loading_clone = loading;
+        let refresh = refresh_key;
+
+        spawn_local(async move {
+            let _ = (shares_clone, loading_clone);
+            if let Some(path) = open_file_dialog_arxshare().await {
+                match invoke_command::<ImportShareRequest, ImportShareResponse>(
+                    "import_share",
+                    &ImportShareRequest {
+                        share_package_path: path,
+                    },
+                )
+                .await
+                {
+                    Ok(_) => {
+                        refresh.set(refresh.get() + 1);
+                    }
+                    Err(e) => {
+                        import_error.set(Some(e.to_string()));
+                    }
+                }
+            }
+            importing_file.set(false);
+        });
+    };
+
     // Load shares on mount and when refresh_key changes
     Effect::new(move |_| {
         let _ = refresh_key.get(); // Dependency for refresh
@@ -264,11 +352,24 @@ fn ReceivedSharesList() -> impl IntoView {
 
     view! {
         <div class="flex flex-col gap-4">
+            <div class="flex items-center gap-3">
+                <button
+                    class="px-3 py-2 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
+                    on:click=handle_import_file
+                    disabled=move || importing_file.get()
+                >
+                    {move || if importing_file.get() { "Importing…" } else { "Import from file" }}
+                </button>
+                {move || import_error.get().map(|e| view! {
+                    <p class="text-danger text-sm">{e}</p>
+                })}
+            </div>
+
             {move || {
                 if loading.get() {
                     view! { <p class="text-text-secondary">"Loading shares…"</p> }.into_any()
                 } else if let Some(err) = error.get() {
-                    view! { <p class="text-red-400">"Error: " {err}</p> }.into_any()
+                    view! { <p class="text-danger">"Error: " {err}</p> }.into_any()
                 } else if shares.get().is_empty() {
                     view! { <p class="text-text-secondary">"No received shares yet."</p> }.into_any()
                 } else {
@@ -279,7 +380,7 @@ fn ReceivedSharesList() -> impl IntoView {
                                     view! {
                                         <ReceivedShareItem
                                             share=share.clone()
-                                            on_import=move || {
+                                            on_refresh=move || {
                                                 refresh_key.set(refresh_key.get() + 1);
                                             }
                                         />
@@ -298,31 +399,44 @@ fn ReceivedSharesList() -> impl IntoView {
 #[component]
 fn ReceivedShareItem(
     share: ReceivedShareEntry,
-    #[prop(into)] on_import: Callback<()>,
+    #[prop(into)] on_refresh: Callback<()>,
 ) -> impl IntoView {
-    let importing = RwSignal::new(false);
+    let downloading = RwSignal::new(false);
+    let download_error = RwSignal::new(None::<String>);
+    let download_success = RwSignal::new(None::<String>);
 
-    let handle_import = move |_| {
-        importing.set(true);
+    let display_file_name = share.file_name.clone();
+    let display_sender_name = share.sender_name.clone();
+    let display_imported_at = share.imported_at.clone();
+
+    let handle_download = move |_| {
+        downloading.set(true);
+        download_error.set(None);
+        download_success.set(None);
         let share_id = share.share_id.clone();
+        let file_name = share.file_name.clone();
 
         spawn_local(async move {
-            match invoke_command::<ImportShareRequest, ()>(
-                "import_share",
-                &ImportShareRequest {
-                    share_package_path: share_id.clone(),
-                },
-            )
-            .await
-            {
-                Ok(_) => {
-                    on_import.run(());
-                }
-                Err(_e) => {
-                    // Error handled by IPC layer
+            if let Some(dest_path) = open_save_dialog(Some(&file_name)).await {
+                match invoke_command::<DownloadReceivedShareRequest, DownloadReceivedShareResponse>(
+                    "download_received_share",
+                    &DownloadReceivedShareRequest {
+                        share_id: share_id.clone(),
+                        destination_path: dest_path,
+                    },
+                )
+                .await
+                {
+                    Ok(resp) => {
+                        download_success.set(Some(format!("Saved: {}", resp.file_name)));
+                        on_refresh.run(());
+                    }
+                    Err(e) => {
+                        download_error.set(Some(e.to_string()));
+                    }
                 }
             }
-            importing.set(false);
+            downloading.set(false);
         });
     };
 
@@ -330,22 +444,28 @@ fn ReceivedShareItem(
         <div class="p-4 bg-iron border border-steel rounded">
             <div class="flex justify-between items-start">
                 <div>
-                    <p class="text-bone font-semibold">{share.file_name.clone()}</p>
-                    {share.sender_name.clone().map(|sender| {
+                    <p class="text-bone font-semibold">{display_file_name}</p>
+                    {display_sender_name.map(|sender| {
                         view! {
                             <p class="text-text-secondary text-sm">"From: " {sender}</p>
                         }
                     })}
-                    <p class="text-text-secondary text-xs mt-1">{share.imported_at.clone()}</p>
+                    <p class="text-text-secondary text-xs mt-1">{display_imported_at}</p>
                 </div>
                 <button
-                    class="px-3 py-1 text-sm text-bone bg-rune rounded hover:bg-rune-dark transition-colors disabled:opacity-50"
-                    on:click=handle_import
-                    disabled=move || importing.get()
+                    class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
+                    on:click=handle_download
+                    disabled=move || downloading.get()
                 >
-                    {move || if importing.get() { "Importing…" } else { "Import" }}
+                    {move || if downloading.get() { "Downloading…" } else { "Download" }}
                 </button>
             </div>
+            {move || download_error.get().map(|e| view! {
+                <p class="text-danger text-sm mt-2">{e}</p>
+            })}
+            {move || download_success.get().map(|msg| view! {
+                <p class="text-success-text text-sm mt-2">{msg}</p>
+            })}
         </div>
     }
 }
@@ -358,11 +478,10 @@ pub fn ShareModal(
     file_id: String,
     _file_name: String,
     #[prop(into)] on_close: Callback<()>,
-    #[prop(into)] on_success: Callback<()>,
+    #[prop(into)] on_success: Callback<ShareResponse>,
 ) -> impl IntoView {
     let selected_contact_id = RwSignal::new(None::<String>);
     let expiration_days = RwSignal::new(None::<String>);
-    let request_receipt = RwSignal::new(false);
     let contacts = RwSignal::new(Vec::<ContactEntry>::new());
     let loading_contacts = RwSignal::new(true);
     let sharing = RwSignal::new(false);
@@ -401,18 +520,19 @@ pub fn ShareModal(
         let expiry_opt = expiration_days.get().and_then(|s| s.parse::<u32>().ok());
 
         spawn_local(async move {
-            match invoke_command::<ShareFileRequest, ()>(
+            match invoke_command::<ShareFileRequest, ShareResponse>(
                 "share_file",
                 &ShareFileRequest {
                     file_id: file_id_clone,
                     contact_id: contact_id.clone(),
                     expiration_days: expiry_opt,
+                    request_receipt: true,
                 },
             )
             .await
             {
-                Ok(_) => {
-                    on_success.run(());
+                Ok(response) => {
+                    on_success.run(response);
                 }
                 Err(e) => {
                     error.set(Some(e.to_string()));
@@ -498,23 +618,12 @@ pub fn ShareModal(
                             disabled=move || sharing.get()
                         />
                     </div>
-
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input
-                            type="checkbox"
-                            class="rounded"
-                            checked=move || request_receipt.get()
-                            on:change=move |e| request_receipt.set(event_target_checked(&e))
-                            disabled=move || sharing.get()
-                        />
-                        <span class="text-sm text-bone">"Request receipt"</span>
-                    </label>
                 </div>
 
                 {move || {
                     error.get().map(|msg| {
                         view! {
-                            <div class="p-2 bg-red-900 text-red-100 rounded text-sm mb-4">
+                            <div class="p-2 bg-danger/20 text-danger rounded text-sm mb-4">
                                 {msg}
                             </div>
                         }
@@ -523,14 +632,14 @@ pub fn ShareModal(
 
                 <div class="flex gap-2">
                     <button
-                        class="flex-1 px-4 py-2 bg-rune text-bone rounded hover:bg-rune-dark transition-colors disabled:opacity-50"
+                        class="flex-1 px-4 py-2 bg-rune text-bone rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
                         on:click=handle_share
                         disabled=move || sharing.get() || selected_contact_id.get().is_none()
                     >
                         {move || if sharing.get() { "Sharing…" } else { "Share" }}
                     </button>
                     <button
-                        class="flex-1 px-4 py-2 bg-steel text-bone rounded hover:bg-steel-light transition-colors"
+                        class="flex-1 px-4 py-2 bg-steel text-bone rounded cursor-pointer hover:bg-rune/20 transition-colors"
                         on:click=move |_| on_close.run(())
                         disabled=move || sharing.get()
                     >
@@ -567,30 +676,18 @@ mod tests {
         let _ = ShareModal;
     }
 
-    /// Verifies that `ReceivedShareItem` invokes the import callback on successful
-    /// import. The `on_import` callback should be called with `run(())` after a
-    /// successful `invoke_command("import_share", ...)` response.
+    /// Verifies that `ReceivedShareItem` invokes the refresh callback on successful
+    /// download. The `on_refresh` callback should be called with `run(())` after a
+    /// successful `invoke_command("download_received_share", ...)` response.
     #[test]
-    fn test_received_share_item_import_refreshes_vault() {
+    fn test_received_share_item_download_refreshes_list() {
         // Structural test: ReceivedShareItem should compile
         // In an integration test environment, we would:
         // 1. Create a mock ReceivedShareEntry
         // 2. Mount ReceivedShareItem with a callback that tracks invocation
-        // 3. Mock invoke_command to return Ok(())
-        // 4. Click the Import button
+        // 3. Mock invoke_command to return Ok(DownloadReceivedShareResponse { file_name: "..." })
+        // 4. Click the Download button (after selecting a save path)
         // 5. Verify the callback was invoked (which triggers refresh_key increment)
-        //
-        // The import logic in handle_import closure is:
-        // ```
-        // match invoke_command(...).await {
-        //     Ok(_) => {
-        //         on_import_clone.run(());  // Callback invoked on success
-        //     }
-        //     Err(_e) => { /* error handled */ }
-        // }
-        // ```
-        // In SentSharesList, on_import increments refresh_key which triggers Effect
-        // to reload the shares list.
         let _ = ReceivedShareItem;
     }
 

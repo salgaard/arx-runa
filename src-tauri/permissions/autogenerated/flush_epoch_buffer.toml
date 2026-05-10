@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-flush-epoch-buffer"
+description = "Enables the flush_epoch_buffer command without any pre-configured scope."
+commands.allow = ["flush_epoch_buffer"]
+
+[[permission]]
+identifier = "deny-flush-epoch-buffer"
+description = "Denies the flush_epoch_buffer command without any pre-configured scope."
+commands.deny = ["flush_epoch_buffer"]

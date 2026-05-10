@@ -9,12 +9,11 @@ model: haiku
 
 You assign files to shard groups for review orchestration and produce lightweight digest summaries for cross-shard review.
 
-## Inputs
+## Input Contract
 
-- Resolved Rust file list from orchestrator scope resolution.
-- `RULES_INDEX` — rule IDs and scope fields.
-- `DESIGN_INDEX` — design invariant IDs and scope fields.
-- `PLAN_DIGEST` — `in_progress_phases` and `deferred_phases` fields.
+Required: `files` (resolved Rust file paths). No files → return `SHARD_MAP_ERROR` with blocking reason.
+
+Optional: `RULES_INDEX` (absent → `rule_ids` empty per shard) · `DESIGN_INDEX` (absent → `design_ids` empty) · `PLAN_DIGEST` (absent → phase fields empty). Shard mapping is deterministic from file paths alone.
 
 ## Shard mapping
 
@@ -23,13 +22,9 @@ You assign files to shard groups for review orchestration and produce lightweigh
 - `shard-storage`: `src-tauri/src/storage/**`
 - `shard-default`: remaining `src-tauri/src/**`
 
-## Security trigger keywords
+Security trigger keywords: `unsafe`, `RefCell`, `UnsafeCell`, `Secret`, `Zeroizing`, `password`, `auth`, `token`, `session`, `nonce`, `hkdf`, `argon2`, `ipc`
 
-`unsafe`, `RefCell`, `UnsafeCell`, `Secret`, `Zeroizing`, `password`, `auth`, `token`, `session`, `nonce`, `hkdf`, `argon2`, `ipc`
-
-## Output contract (mandatory)
-
-### SHARD_MAP
+## Output Contract (Mandatory)
 
 ```text
 SHARD_MAP {
@@ -47,19 +42,17 @@ SHARD_MAP {
 }
 ```
 
-### SHARD_DIGEST_SUMMARY[]
-
-One entry per shard. Match `RULES_INDEX` and `DESIGN_INDEX` scope fields against each shard's scopes. IDs only — no verbatim text.
+One SHARD_DIGEST_SUMMARY per shard. Match RULES_INDEX and DESIGN_INDEX scope fields against each shard's scopes (IDs only — no verbatim text):
 
 ```text
 SHARD_DIGEST_SUMMARY [
   {
     shard_id: "<shard-id>"
     scopes: ["auth" | "crypto" | "storage" | "global" | ...]
-    rule_ids: ["<R-NNN>", ...]
-    design_ids: ["<D-NNN>", ...]
-    implemented_phases: ["<phase>"]
-    deferred_phases: ["<phase>"]
+    rule_ids: ["<R-NNN>", ...] or []
+    design_ids: ["<D-NNN>", ...] or []
+    implemented_phases: ["<phase>"] or []
+    deferred_phases: ["<phase>"] or []
   }
 ]
 ```
@@ -70,3 +63,5 @@ If input is empty or invalid:
 SHARD_MAP_ERROR
 Reason: <why scope could not be mapped>
 ```
+
+Peer: consumed by orchestrators and `cross-shard-reviewer`.

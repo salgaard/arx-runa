@@ -183,7 +183,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "uses production Argon2id cost parameters"]
     fn test_derive_master_key_default_params_succeeds() {
         let mut output = [0u8; 32];
         derive_master_key_into(

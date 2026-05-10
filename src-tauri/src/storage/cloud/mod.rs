@@ -38,8 +38,9 @@ pub use vault_header_io::{
     download_vault_header, upload_vault_header,
 };
 pub use wizard::{
-    GoogleDriveRuntimePaths, GoogleDriveSetupRequest, GoogleDriveSetupResult, OpenerLike,
-    S3SetupRequest, setup_google_drive, setup_s3_provider,
+    GoogleDriveRuntimePaths, GoogleDriveSetupRequest, GoogleDriveSetupResult, OAuthProvider,
+    OAuthSetupBegun, OpenerLike, S3SetupRequest, begin_oauth_setup, cancel_oauth_setup,
+    complete_oauth_setup, setup_google_drive, setup_s3_provider,
 };
 
 /// Errors produced by [`CloudTransport`] implementations.
@@ -47,6 +48,8 @@ pub use wizard::{
 pub enum CloudTransportError {
     #[error("blob not found at remote path")]
     NotFound,
+    #[error("bucket name is already taken by another account")]
+    BucketNameTaken,
     #[error("cloud transport authentication failed")]
     AuthenticationFailed,
     #[error("cloud transport operation timed out")]
@@ -85,11 +88,44 @@ pub trait CloudTransport: Send + Sync {
     /// Lists cloud-relative remote paths under a prefix.
     async fn list_blobs(&self, remote_prefix: &str) -> Result<Vec<String>, CloudTransportError>;
 
+    /// Returns `true` when this transport is backed by a real cloud backend.
+    ///
+    /// The default implementation returns `true`. `NoOpCloudTransport` overrides
+    /// this to return `false` so callers can skip cloud operations that are
+    /// meaningless for local-only vaults without attempting a round-trip that
+    /// will always fail.
+    fn is_configured(&self) -> bool {
+        true
+    }
+
     /// Cleans up session-scoped artifacts (e.g., rclone.conf temp files).
     ///
     /// Called on session lock or timeout to remove sensitive files from disk.
     /// Implementations must be idempotent (file not found is not an error).
     async fn cleanup_session_artifacts(&self) -> Result<(), CloudTransportError> {
         Ok(())
+    }
+
+    /// Creates the storage container (bucket/folder) if it does not already exist.
+    ///
+    /// The default implementation is a no-op for transports that do not support
+    /// container creation (e.g., local or external-drive transports).
+    async fn ensure_container(&self) -> Result<(), CloudTransportError> {
+        Ok(())
+    }
+
+    /// Generates scoped credentials for a recipient to download a shared prefix.
+    ///
+    /// Returns `None` when the backend does not support credential generation
+    /// (e.g., local-only transports).  Callers must treat `None` as "fall back
+    /// to path-prefix-only endpoint".
+    async fn generate_share_credentials(
+        &self,
+        path_prefix: &str,
+        ttl_seconds: u32,
+        receipt_requested: bool,
+    ) -> Result<Option<serde_json::Value>, CloudTransportError> {
+        let _ = (path_prefix, ttl_seconds, receipt_requested);
+        Ok(None)
     }
 }

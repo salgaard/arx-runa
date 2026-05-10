@@ -25,10 +25,13 @@ pub async fn delete_file(
         ));
     }
     let chunks = metadata_store.get_chunks(node_id).await?;
-    let mut validated_blob_paths = Vec::with_capacity(chunks.len());
+    let mut validated_blob_paths = Vec::with_capacity(chunks.len() * 3);
     for chunk in &chunks {
         validate_blob_name_uuid_v4(&chunk.blob_name)?;
-        validated_blob_paths.push(staging_directory.join(format!("{}.blob", chunk.blob_name)));
+        let blob_file = format!("{}.blob", chunk.blob_name);
+        validated_blob_paths.push(staging_directory.join("pending").join(&blob_file));
+        validated_blob_paths.push(staging_directory.join("cache").join(&blob_file));
+        validated_blob_paths.push(staging_directory.join(&blob_file));
     }
     metadata_store.delete_node(node_id).await?;
     for blob_path in validated_blob_paths {
@@ -162,6 +165,85 @@ mod tests {
             Err(StorageError::Database(
                 "unused test helper method".to_owned(),
             ))
+        }
+        /// Fails for this test helper.
+        async fn insert_file_node_only(
+            &self,
+            _node: &crate::storage::types::Node,
+        ) -> Result<(), crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn insert_file_node_and_stage_epoch_entry(
+            &self,
+            _node: &crate::storage::types::Node,
+            _plaintext: Vec<u8>,
+        ) -> Result<(), crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn stage_epoch_entry(
+            &self,
+            _node_id: uuid::Uuid,
+            _plaintext: Vec<u8>,
+        ) -> Result<(), crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn get_epoch_buffer_total_bytes(
+            &self,
+        ) -> Result<u64, crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn get_epoch_buffer_entries(
+            &self,
+        ) -> Result<Vec<crate::storage::types::EpochBufferEntry>, crate::storage::error::StorageError>
+        {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn commit_epoch_flush(
+            &self,
+            _record: &crate::storage::types::EpochBlobRecord,
+            _extents: &[(uuid::Uuid, u32, u64, u64)],
+        ) -> Result<(), crate::storage::error::StorageError> {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Fails for this test helper.
+        async fn get_epoch_blob(
+            &self,
+            _epoch_blob_id: uuid::Uuid,
+        ) -> Result<crate::storage::types::EpochBlobRecord, crate::storage::error::StorageError>
+        {
+            Err(crate::storage::error::StorageError::Database(
+                "unused test helper method".to_owned(),
+            ))
+        }
+
+        /// Returns an empty list for this test helper.
+        async fn get_epoch_buffer_node_ids(
+            &self,
+        ) -> Result<Vec<uuid::Uuid>, crate::storage::error::StorageError> {
+            Ok(vec![])
         }
     }
 
@@ -404,6 +486,9 @@ mod tests {
                 blob_name: "not-a-canonical-uuid-v4".to_owned(),
                 size_padded: 4096,
                 blake3_checksum: [0; 32],
+                epoch_blob_id: None,
+                byte_offset: None,
+                byte_length: None,
             },
             delete_called: Arc::new(AtomicBool::new(false)),
         };

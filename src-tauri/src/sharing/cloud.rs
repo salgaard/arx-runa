@@ -26,6 +26,8 @@ pub(crate) struct CreateShareOutput {
     pub file_share_id: String,
     /// HPKE-sealed share package wire bytes to deliver to the recipient.
     pub wire_bytes: Vec<u8>,
+    /// B2 scoped key identifier stored for later revocation, if one was generated.
+    pub download_key_id: Option<String>,
 }
 
 /// Data parameters for a [`create_share`] call.
@@ -38,6 +40,8 @@ pub(crate) struct CreateShareRequest {
     pub expires_at: Option<i64>,
     /// Current time as Unix seconds (used for `created_at`).
     pub now_unix_seconds: i64,
+    /// Whether the recipient should be asked to send a receipt after downloading.
+    pub receipt_requested: bool,
 }
 
 /// Creates an outgoing file share for a single recipient.
@@ -63,6 +67,7 @@ pub(crate) async fn create_share(
         contact_id,
         expires_at,
         now_unix_seconds,
+        receipt_requested,
     } = request;
     let file_id_str = file_id.hyphenated().to_string();
 
@@ -94,6 +99,21 @@ pub(crate) async fn create_share(
 
             let source_path = staging_directory.join(format!("{}.blob", chunk.blob_name));
 
+            // If the local staging blob was cleaned up after cloud sync, fetch it back.
+            if !source_path.exists() {
+                let remote = format!("vault/{}.blob", chunk.blob_name);
+                if let Err(e) = cloud.download_blob(&remote, &source_path).await {
+                    cleanup_temp_files(&temp_local_paths).await;
+                    for uploaded in &uploaded_remote_paths {
+                        let _ = cloud.delete_blob(uploaded).await;
+                    }
+                    return Err(SharingError::CloudOperation(format!(
+                        "blob not in staging and cloud download failed (chunk {}): {}",
+                        chunk.chunk_index, e
+                    )));
+                }
+            }
+
             if let Err(io_err) = tokio::fs::copy(&source_path, &local_copy_path).await {
                 cleanup_temp_files(&temp_local_paths).await;
                 for remote in &uploaded_remote_paths {
@@ -123,10 +143,32 @@ pub(crate) async fn create_share(
         }
     }
 
-    // Path prefix for the shared blobs. All file shares use the standard namespace pattern
-    // `shared/{file_share_id}/` per the file-sharing design contract. The recipient's cloud
-    // configuration is used to resolve this path at download time.
-    let cloud_endpoint = serde_json::json!({ "path_prefix": format!("shared/{}/", file_share_id) });
+    let cloud_path_prefix = format!("shared/{}/", file_share_id);
+
+    let (cloud_endpoint, download_key_id) = match cloud
+        .generate_share_credentials(&cloud_path_prefix, 7 * 24 * 3600, receipt_requested)
+        .await
+    {
+        Ok(Some(mut creds)) => {
+            if receipt_requested {
+                creds["receipt_requested"] = serde_json::json!(true);
+            }
+            let key_id = creds["key_id"].as_str().map(str::to_owned);
+            (creds, key_id)
+        }
+        Ok(None) => (
+            serde_json::json!({ "path_prefix": cloud_path_prefix }),
+            None,
+        ),
+        Err(e) => {
+            return Err(SharingError::CloudOperation(format!(
+                "B2 application key creation failed: {}. \
+                 Sharing requires a B2 key with writeKeys capability \
+                 (or the master application key).",
+                e
+            )));
+        }
+    };
 
     let recipient_contact = sharing_store
         .get_contact(contact_id)
@@ -145,17 +187,19 @@ pub(crate) async fn create_share(
     .await?;
 
     let share_id = Uuid::new_v4().hyphenated().to_string();
-    let cloud_path = format!("shared/{}/", file_share_id);
 
     let share_record = ShareRecord {
         share_id: share_id.clone(),
         file_id: file_id_str,
         contact_id,
         file_share_id: file_share_id.clone(),
-        cloud_path,
+        cloud_path: cloud_path_prefix.clone(),
         created_at: now_unix_seconds,
         expires_at,
         revoked_at: None,
+        download_key_id: download_key_id.clone(),
+        receipt_requested,
+        receipt_received_at: None,
     };
 
     sharing_store.insert_share(&share_record).await?;
@@ -164,6 +208,7 @@ pub(crate) async fn create_share(
         share_id,
         file_share_id,
         wire_bytes: wire,
+        download_key_id,
     })
 }
 
@@ -186,24 +231,102 @@ pub(crate) async fn fetch_received_share_to_local(
     sharing_store: &dyn SharingStore,
     cloud: &dyn CloudTransport,
     staging_directory: &Path,
+    rclone_binary_path: Option<std::path::PathBuf>,
 ) -> Result<Vec<PathBuf>, SharingError> {
     let received_share = sharing_store.get_received_share(share_id).await?;
+
+    // Ensure the staging directory exists before writing the rclone conf file or
+    // receiving any blob downloads into it.
+    crate::storage::staging::ensure_staging_directory(staging_directory)
+        .await
+        .map_err(|e| SharingError::CloudOperation(format!("staging directory: {e}")))?;
+
+    // If the share has embedded B2 scoped credentials, build a temporary rclone
+    // transport so the download bypasses the vault owner's own cloud config.
+    let b2_transport: Option<crate::storage::cloud::RcloneTransport> = if let (
+        Some(bin),
+        Some("b2"),
+    ) = (
+        rclone_binary_path.as_deref(),
+        received_share
+            .cloud_endpoint
+            .get("provider")
+            .and_then(|v| v.as_str()),
+    ) {
+        let key_id = received_share
+            .cloud_endpoint
+            .get("key_id")
+            .and_then(|v| v.as_str())
+            .ok_or(SharingError::InvalidSharePackage)?;
+        let app_key = received_share
+            .cloud_endpoint
+            .get("application_key")
+            .and_then(|v| v.as_str())
+            .ok_or(SharingError::InvalidSharePackage)?;
+        let bucket = received_share
+            .cloud_endpoint
+            .get("bucket")
+            .and_then(|v| v.as_str())
+            .ok_or(SharingError::InvalidSharePackage)?;
+        let path_prefix = received_share
+            .cloud_endpoint
+            .get("path_prefix")
+            .and_then(|v| v.as_str())
+            .ok_or(SharingError::InvalidSharePackage)?;
+
+        let conf_content =
+            format!("[arxshare-dl]\ntype = b2\naccount = {key_id}\nkey = {app_key}\n");
+        let conf_path = staging_directory.join(format!("dl-{share_id}.conf"));
+        tokio::fs::write(&conf_path, conf_content.as_bytes())
+            .await
+            .map_err(|e| SharingError::CloudOperation(format!("temp conf write failed: {e}")))?;
+
+        // Trim any trailing slash from path_prefix so that remote_target's
+        // "{remote_root}/{remote_path}" join does not produce a double slash.
+        let remote_root = format!("arxshare-dl:{bucket}/{}", path_prefix.trim_end_matches('/'));
+        Some(
+            crate::storage::cloud::RcloneTransport::new_for_share_download(
+                bin.to_path_buf(),
+                conf_path,
+                remote_root,
+            ),
+        )
+    } else {
+        None
+    };
+
+    // If no scoped transport was built and the share has no provider field, the
+    // sender did not embed credentials (non-B2 backend).  Using the recipient's
+    // own transport would target the wrong bucket and silently produce nothing.
+    if b2_transport.is_none() && received_share.cloud_endpoint.get("provider").is_none() {
+        return Err(SharingError::CloudOperation(
+            "share download requires sender cloud credentials; \
+             only Backblaze B2 shares support cross-user download"
+                .into(),
+        ));
+    }
+
+    let effective_cloud: &dyn CloudTransport = match &b2_transport {
+        Some(t) => t,
+        None => cloud,
+    };
 
     let path_prefix = received_share
         .cloud_endpoint
         .get("path_prefix")
         .and_then(|v| v.as_str())
-        .ok_or(SharingError::InvalidSharePackage)?;
-
-    if path_prefix.is_empty() {
-        return Err(SharingError::InvalidSharePackage);
-    }
+        .unwrap_or("");
 
     let mut local_paths: Vec<PathBuf> = Vec::new();
 
     for (i, chunk_uuid) in received_share.chunk_uuids.iter().enumerate() {
         if !is_uuid_v4_str(chunk_uuid) {
             cleanup_temp_files(&local_paths).await;
+            if b2_transport.is_some() {
+                let _ =
+                    tokio::fs::remove_file(staging_directory.join(format!("dl-{share_id}.conf")))
+                        .await;
+            }
             return Err(SharingError::InvalidSharePackage);
         }
 
@@ -214,17 +337,56 @@ pub(crate) async fn fetch_received_share_to_local(
             return Err(SharingError::InvalidSharePackage);
         }
 
-        let remote_path = format!("{}{}.blob", path_prefix, chunk_uuid);
+        // When using a B2 scoped transport the remote root already includes the
+        // path_prefix, so we address blobs relative to the remote root.
+        let remote_path = if b2_transport.is_some() {
+            format!("{chunk_uuid}.blob")
+        } else {
+            if path_prefix.is_empty() {
+                cleanup_temp_files(&local_paths).await;
+                return Err(SharingError::InvalidSharePackage);
+            }
+            format!("{path_prefix}{chunk_uuid}.blob")
+        };
 
-        if let Err(transport_err) = cloud.download_blob(&remote_path, &local_path).await {
+        if let Err(transport_err) = effective_cloud
+            .download_blob(&remote_path, &local_path)
+            .await
+        {
             cleanup_temp_files(&local_paths).await;
+            if b2_transport.is_some() {
+                let _ =
+                    tokio::fs::remove_file(staging_directory.join(format!("dl-{share_id}.conf")))
+                        .await;
+            }
             return Err(SharingError::CloudOperation(format!(
                 "download failed (chunk {}): {}",
                 i, transport_err
             )));
         }
 
+        // Guard against rclone reporting success (exit 0) without writing the
+        // blob file.  Without this check the missing file would only be
+        // discovered later as a cryptic "decrypt failed: file not found" error.
+        if !tokio::fs::try_exists(&local_path).await.unwrap_or(false) {
+            cleanup_temp_files(&local_paths).await;
+            if b2_transport.is_some() {
+                let _ =
+                    tokio::fs::remove_file(staging_directory.join(format!("dl-{share_id}.conf")))
+                        .await;
+            }
+            return Err(SharingError::CloudOperation(format!(
+                "blob not written by transport after reporting success (chunk {})",
+                i
+            )));
+        }
+
         local_paths.push(local_path);
+    }
+
+    // Clean up temp rclone conf after successful download.
+    if b2_transport.is_some() {
+        let _ = tokio::fs::remove_file(staging_directory.join(format!("dl-{share_id}.conf"))).await;
     }
 
     Ok(local_paths)
@@ -365,7 +527,10 @@ mod tests {
                 chunk_count: 1,
                 chunk_size: 4096,
                 chunk_uuids: vec!["../../../etc/passwd".to_owned()],
-                cloud_endpoint: serde_json::json!({ "path_prefix": "shared/test/" }),
+                cloud_endpoint: serde_json::json!({
+                    "provider": "webdav",
+                    "path_prefix": "shared/test/"
+                }),
                 expires_at: None,
                 imported_at: 0,
             },
@@ -373,7 +538,7 @@ mod tests {
         let cloud = MockCloudTransport::new();
         let staging = std::path::Path::new("/tmp/staging");
 
-        let result = fetch_received_share_to_local("share-1", &store, &cloud, staging).await;
+        let result = fetch_received_share_to_local("share-1", &store, &cloud, staging, None).await;
 
         assert!(
             matches!(result, Err(SharingError::InvalidSharePackage)),
@@ -396,7 +561,8 @@ mod tests {
                 chunk_count: 1,
                 chunk_size: 4096,
                 chunk_uuids: vec![Uuid::new_v4().hyphenated().to_string()],
-                cloud_endpoint: serde_json::json!({}),
+                // provider present so credentials guard passes; path_prefix absent triggers InvalidSharePackage
+                cloud_endpoint: serde_json::json!({ "provider": "webdav" }),
                 expires_at: None,
                 imported_at: 0,
             },
@@ -404,7 +570,7 @@ mod tests {
         let cloud = MockCloudTransport::new();
         let staging = std::path::Path::new("/tmp/staging");
 
-        let result = fetch_received_share_to_local("share-2", &store, &cloud, staging).await;
+        let result = fetch_received_share_to_local("share-2", &store, &cloud, staging, None).await;
 
         assert!(
             matches!(result, Err(SharingError::InvalidSharePackage)),
@@ -427,7 +593,7 @@ mod tests {
                 chunk_count: 1,
                 chunk_size: 4096,
                 chunk_uuids: vec![Uuid::new_v4().hyphenated().to_string()],
-                cloud_endpoint: serde_json::json!({ "path_prefix": "" }),
+                cloud_endpoint: serde_json::json!({ "provider": "webdav", "path_prefix": "" }),
                 expires_at: None,
                 imported_at: 0,
             },
@@ -435,7 +601,7 @@ mod tests {
         let cloud = MockCloudTransport::new();
         let staging = std::path::Path::new("/tmp/staging");
 
-        let result = fetch_received_share_to_local("share-3", &store, &cloud, staging).await;
+        let result = fetch_received_share_to_local("share-3", &store, &cloud, staging, None).await;
 
         assert!(
             matches!(result, Err(SharingError::InvalidSharePackage)),
@@ -459,7 +625,11 @@ mod tests {
                 chunk_count: 1,
                 chunk_size: 4096,
                 chunk_uuids: vec![valid_chunk_uuid.clone()],
-                cloud_endpoint: serde_json::json!({ "path_prefix": "shared/file-share-id-123/" }),
+                // provider present (non-B2) so the no-credentials early-return is skipped
+                cloud_endpoint: serde_json::json!({
+                    "provider": "webdav",
+                    "path_prefix": "shared/file-share-id-123/"
+                }),
                 expires_at: None,
                 imported_at: 0,
             },
@@ -467,13 +637,49 @@ mod tests {
         let cloud = MockCloudTransport::new();
         let staging = std::path::Path::new("/tmp/staging");
 
-        let result = fetch_received_share_to_local("share-4", &store, &cloud, staging).await;
+        let result = fetch_received_share_to_local("share-4", &store, &cloud, staging, None).await;
 
-        // We expect a CloudOperation error (not found) because MockCloudTransport is empty,
-        // but this proves the path_prefix validation passed and we reached the download step
+        // MockCloudTransport has no blobs so the download fails, but path_prefix
+        // validation passed and the no-credentials guard was not triggered.
         assert!(
             matches!(result, Err(SharingError::CloudOperation(_))),
             "expected CloudOperation error (blob not found), got {result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_rejects_share_without_provider_credentials() {
+        let store = MockSharingStoreForFetch {
+            received_share: ReceivedShare {
+                share_id: "share-5".to_owned(),
+                sender_contact_id: None,
+                sender_public_key: X25519PublicKey::new([0u8; 32]),
+                file_id: Uuid::new_v4().hyphenated().to_string(),
+                file_name: "test.txt".to_owned(),
+                file_key_wrapped: [0u8; 72],
+                chunk_count: 1,
+                chunk_size: 4096,
+                chunk_uuids: vec![Uuid::new_v4().hyphenated().to_string()],
+                // Only path_prefix stored — sender used a non-B2 backend and
+                // generate_share_credentials returned None.
+                cloud_endpoint: serde_json::json!({ "path_prefix": "shared/file-share-id-456/" }),
+                expires_at: None,
+                imported_at: 0,
+            },
+        };
+        let cloud = MockCloudTransport::new();
+        let staging = std::path::Path::new("/tmp/staging");
+
+        let result = fetch_received_share_to_local("share-5", &store, &cloud, staging, None).await;
+
+        match result {
+            Err(SharingError::CloudOperation(msg)) => {
+                assert!(
+                    msg.contains("sender cloud credentials"),
+                    "expected credentials error, got: {msg}"
+                );
+            }
+            other => panic!("expected CloudOperation(credentials), got {other:?}"),
+        }
     }
 }

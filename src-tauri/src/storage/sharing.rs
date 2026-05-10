@@ -285,12 +285,15 @@ impl SharingStore for SqlCipherMetadataStore {
         let created_at = share.created_at;
         let expires_at = share.expires_at;
         let revoked_at = share.revoked_at;
+        let download_key_id = share.download_key_id.clone();
+        let receipt_requested = share.receipt_requested as i64;
+        let receipt_received_at = share.receipt_received_at;
 
         self.with_connection_blocking(move |connection| {
             connection
                 .execute(
-                    "INSERT INTO shares (share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                    params![share_id, file_id, contact_id_text, file_share_id, cloud_path, created_at, expires_at, revoked_at],
+                    "INSERT INTO shares (share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    params![share_id, file_id, contact_id_text, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at],
                 )
                 .map_err(StorageError::from_rusqlite)?;
             Ok(())
@@ -306,7 +309,7 @@ impl SharingStore for SqlCipherMetadataStore {
             .with_connection_blocking(move |connection| {
                 connection
                     .query_row(
-                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at FROM shares WHERE share_id = ?1",
+                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at FROM shares WHERE share_id = ?1",
                         params![share_id_owned],
                         map_share_row,
                     )
@@ -326,7 +329,7 @@ impl SharingStore for SqlCipherMetadataStore {
             .with_connection_blocking(move |connection| {
                 let mut statement = connection
                     .prepare(
-                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at FROM shares WHERE file_id = ?1 ORDER BY created_at ASC, share_id ASC",
+                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at FROM shares WHERE file_id = ?1 ORDER BY created_at ASC, share_id ASC",
                     )
                     .map_err(StorageError::from_rusqlite)?;
                 let mapped_rows = statement
@@ -353,7 +356,7 @@ impl SharingStore for SqlCipherMetadataStore {
             .with_connection_blocking(move |connection| {
                 let mut statement = connection
                     .prepare(
-                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at FROM shares WHERE file_id = ?1 AND revoked_at IS NULL ORDER BY created_at ASC, share_id ASC",
+                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at FROM shares WHERE file_id = ?1 AND revoked_at IS NULL ORDER BY created_at ASC, share_id ASC",
                     )
                     .map_err(StorageError::from_rusqlite)?;
                 let mapped_rows = statement
@@ -380,7 +383,7 @@ impl SharingStore for SqlCipherMetadataStore {
             .with_connection_blocking(move |connection| {
                 let mut statement = connection
                     .prepare(
-                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at FROM shares WHERE file_share_id = ?1 AND revoked_at IS NULL ORDER BY created_at ASC, share_id ASC",
+                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at FROM shares WHERE file_share_id = ?1 AND revoked_at IS NULL ORDER BY created_at ASC, share_id ASC",
                     )
                     .map_err(StorageError::from_rusqlite)?;
                 let mapped_rows = statement
@@ -549,14 +552,17 @@ fn map_received_share_error(error: StorageError) -> SharingError {
 
 /// Raw row tuple from a `shares` SELECT.
 type ShareRow = (
-    String,      // share_id
-    String,      // file_id
-    String,      // contact_id
-    String,      // file_share_id
-    String,      // cloud_path
-    i64,         // created_at
-    Option<i64>, // expires_at
-    Option<i64>, // revoked_at
+    String,         // 0 share_id
+    String,         // 1 file_id
+    String,         // 2 contact_id
+    String,         // 3 file_share_id
+    String,         // 4 cloud_path
+    i64,            // 5 created_at
+    Option<i64>,    // 6 expires_at
+    Option<i64>,    // 7 revoked_at
+    Option<String>, // 8 download_key_id
+    bool,           // 9 receipt_requested (stored as INTEGER 0/1)
+    Option<i64>,    // 10 receipt_received_at
 );
 
 /// Maps a single rusqlite row into the raw `ShareRow` tuple.
@@ -570,6 +576,9 @@ fn map_share_row(row: &Row<'_>) -> rusqlite::Result<ShareRow> {
         row.get::<_, i64>(5)?,
         row.get::<_, Option<i64>>(6)?,
         row.get::<_, Option<i64>>(7)?,
+        row.get::<_, Option<String>>(8)?,
+        row.get::<_, bool>(9)?,
+        row.get::<_, Option<i64>>(10)?,
     ))
 }
 
@@ -584,6 +593,9 @@ fn parse_share_row(row: ShareRow) -> Result<ShareRecord, SharingError> {
         created_at,
         expires_at,
         revoked_at,
+        download_key_id,
+        receipt_requested,
+        receipt_received_at,
     ) = row;
     let contact_uuid = Uuid::parse_str(&contact_id_text)
         .map_err(|_| SharingError::InvalidContactId(contact_id_text.clone()))?;
@@ -596,6 +608,9 @@ fn parse_share_row(row: ShareRow) -> Result<ShareRecord, SharingError> {
         created_at,
         expires_at,
         revoked_at,
+        download_key_id,
+        receipt_requested,
+        receipt_received_at,
     })
 }
 
@@ -1124,6 +1139,9 @@ mod tests {
             created_at: 1_700_000_000 + marker as i64,
             expires_at: None,
             revoked_at: None,
+            download_key_id: None,
+            receipt_requested: false,
+            receipt_received_at: None,
         }
     }
 
@@ -1157,6 +1175,39 @@ mod tests {
         assert_eq!(fetched.created_at, share.created_at);
         assert_eq!(fetched.expires_at, share.expires_at);
         assert_eq!(fetched.revoked_at, share.revoked_at);
+        assert_eq!(fetched.download_key_id, share.download_key_id);
+        assert_eq!(fetched.receipt_requested, share.receipt_requested);
+        assert_eq!(fetched.receipt_received_at, share.receipt_received_at);
+    }
+
+    /// Verifies the three new v3 fields round-trip correctly.
+    #[tokio::test]
+    async fn test_sharing_store_share_v3_fields_round_trip() {
+        let (_directory, store) = create_store().await;
+        let contact = sample_contact("Bob", Some("bob@example.com"), 2);
+        store
+            .insert_contact(&contact)
+            .await
+            .expect("contact insert should succeed");
+        let file_id = Uuid::new_v4().hyphenated().to_string();
+        seed_node(&store, &file_id).await;
+        let mut share = sample_share(&file_id, contact.contact_id, 0x02);
+        share.download_key_id = Some("key-id-abc123".to_owned());
+        share.receipt_requested = true;
+        share.receipt_received_at = Some(1_800_000_000);
+
+        store
+            .insert_share(&share)
+            .await
+            .expect("insert should succeed");
+
+        let fetched = store
+            .get_share(&share.share_id)
+            .await
+            .expect("get should succeed");
+        assert_eq!(fetched.download_key_id, Some("key-id-abc123".to_owned()));
+        assert!(fetched.receipt_requested);
+        assert_eq!(fetched.receipt_received_at, Some(1_800_000_000));
     }
 
     /// Verifies `list_shares_by_file` returns only shares matching the given file identifier.

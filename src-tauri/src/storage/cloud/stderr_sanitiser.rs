@@ -1,6 +1,6 @@
 //! Rclone stderr redaction helper.
 
-const SENSITIVE_KEYWORDS: [&str; 6] = ["token", "key", "secret", "password", "credential", "auth"];
+const SENSITIVE_KEYWORDS: [&str; 5] = ["token", "key=", "secret", "password", "credential"];
 
 /// Drops stderr lines containing sensitive credential-like keywords.
 pub fn sanitise_stderr(raw: &str) -> String {
@@ -36,7 +36,28 @@ mod tests {
 
     #[test]
     fn test_sanitise_stderr_is_case_insensitive() {
-        assert_eq!(sanitise_stderr("AUTH failed\nsafe"), "safe");
+        assert_eq!(sanitise_stderr("TOKEN=abc123\nsafe"), "safe");
+    }
+
+    #[test]
+    fn test_sanitise_stderr_preserves_auth_error_lines() {
+        assert_eq!(
+            sanitise_stderr("Failed to authorize account\nsafe"),
+            "Failed to authorize account\nsafe"
+        );
+    }
+
+    #[test]
+    fn test_sanitise_stderr_drops_key_assignment_lines() {
+        assert_eq!(sanitise_stderr("key=abc123\nsafe"), "safe");
+    }
+
+    #[test]
+    fn test_sanitise_stderr_preserves_key_error_description_lines() {
+        assert_eq!(
+            sanitise_stderr("invalid applicationKeyId\nsafe"),
+            "invalid applicationKeyId\nsafe"
+        );
     }
 
     #[test]

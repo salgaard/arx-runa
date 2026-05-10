@@ -105,6 +105,11 @@ pub fn use_session_actions() -> SessionActions {
 /// Provides `ReadSignal<SessionState>` + `SessionActions` to descendants
 /// and polls `get_session_status` every 5 seconds until unmount.
 ///
+/// On mount, performs a single initial `get_session_status` call to sync frontend
+/// state with the backend before the polling loop begins. This recovers from hot
+/// reloads and app restarts where the backend session remains active but the
+/// frontend WASM state has been reset to defaults.
+///
 /// The stop flag is checked at three points in the loop:
 ///   1. At the top of the while condition.
 ///   2. After `invoke_command` resolves and before `set_state.update()`, preventing
@@ -123,13 +128,23 @@ pub fn SessionProvider(children: Children) -> impl IntoView {
     let (is_unlocked, set_is_unlocked) = signal(false);
 
     leptos::task::spawn_local(async move {
+        // Initial sync: check backend session state once at mount.
+        // Handles hot reloads and app restarts where the backend session remains
+        // active but frontend WASM state has been reset to defaults.
+        if !stop_poll.load(Ordering::Relaxed)
+            && let Ok(status) = invoke_command::<(), SessionStatus>("get_session_status", &()).await
+            && !stop_poll.load(Ordering::Relaxed)
+        {
+            set_state.update(|s| s.apply_status(status));
+        }
+
         loop {
             if stop_poll.load(Ordering::Relaxed) {
                 break;
             }
 
             // Only poll when unlocked; otherwise just wait and check again
-            if !is_unlocked.get() {
+            if !is_unlocked.get_untracked() {
                 gloo_timers::future::TimeoutFuture::new(5_000).await;
                 continue;
             }

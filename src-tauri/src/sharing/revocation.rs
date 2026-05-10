@@ -214,6 +214,9 @@ pub(crate) async fn strong_revoke_share(
             created_at: now_unix_seconds,
             expires_at: recipient.expires_at,
             revoked_at: None,
+            download_key_id: None,
+            receipt_requested: false,
+            receipt_received_at: None,
         };
         sharing_store.insert_share(&new_share_record).await?;
 
@@ -474,6 +477,9 @@ mod tests {
             created_at: 1_000_000,
             expires_at: None,
             revoked_at: None,
+            download_key_id: None,
+            receipt_requested: false,
+            receipt_received_at: None,
         }
     }
 

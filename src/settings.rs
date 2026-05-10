@@ -84,7 +84,7 @@ fn ChangePasswordForm() -> impl IntoView {
             {move || {
                 if success.get() {
                     view! {
-                        <div class="mb-4 p-3 bg-green-900 text-green-100 rounded">
+                        <div class="mb-4 p-3 bg-success/20 text-success-text rounded">
                             "Password changed successfully"
                         </div>
                     }
@@ -97,7 +97,7 @@ fn ChangePasswordForm() -> impl IntoView {
             {move || {
                 error.get().map(|e| {
                     view! {
-                        <div class="mb-4 p-3 bg-red-900 text-red-100 rounded">
+                        <div class="mb-4 p-3 bg-danger/20 text-danger rounded">
                             {e}
                         </div>
                     }
@@ -111,7 +111,7 @@ fn ChangePasswordForm() -> impl IntoView {
                     </label>
                     <input
                         type="password"
-                        class="w-full px-3 py-2 bg-steel border border-bone rounded text-bone placeholder-steel-light"
+                        class="w-full px-3 py-2 bg-surface-overlay border border-border-default rounded text-bone focus:outline-none focus:ring-2 focus:ring-rune"
                         placeholder="Enter current password"
                         prop:value=move || current_pw.get()
                         on:change=move |ev| {
@@ -126,7 +126,7 @@ fn ChangePasswordForm() -> impl IntoView {
                     </label>
                     <input
                         type="password"
-                        class="w-full px-3 py-2 bg-steel border border-bone rounded text-bone placeholder-steel-light"
+                        class="w-full px-3 py-2 bg-surface-overlay border border-border-default rounded text-bone focus:outline-none focus:ring-2 focus:ring-rune"
                         placeholder="Enter new password"
                         prop:value=move || new_pw.get()
                         on:change=move |ev| {
@@ -141,7 +141,7 @@ fn ChangePasswordForm() -> impl IntoView {
                     </label>
                     <input
                         type="password"
-                        class="w-full px-3 py-2 bg-steel border border-bone rounded text-bone placeholder-steel-light"
+                        class="w-full px-3 py-2 bg-surface-overlay border border-border-default rounded text-bone focus:outline-none focus:ring-2 focus:ring-rune"
                         placeholder="Confirm new password"
                         prop:value=move || confirm_pw.get()
                         on:change=move |ev| {
@@ -229,7 +229,7 @@ fn RotateKeyFileForm() -> impl IntoView {
                         {move || {
                             if success.get() {
                                 view! {
-                                    <div class="mb-4 p-3 bg-green-900 text-green-100 rounded">
+                                    <div class="mb-4 p-3 bg-success/20 text-success-text rounded">
                                         "Key file rotated successfully"
                                     </div>
                                 }
@@ -242,7 +242,7 @@ fn RotateKeyFileForm() -> impl IntoView {
                         {move || {
                             error.get().map(|e| {
                                 view! {
-                                    <div class="mb-4 p-3 bg-red-900 text-red-100 rounded">
+                                    <div class="mb-4 p-3 bg-danger/20 text-danger rounded">
                                         {e}
                                     </div>
                                 }
@@ -339,13 +339,13 @@ fn DeleteVaultForm() -> impl IntoView {
         });
     };
 
-    let vault_name = move || session.read().vault_id.clone().unwrap_or_default();
+    let vault_name = move || session.with_untracked(|s| s.vault_id.clone().unwrap_or_default());
     let is_confirmed = move || confirmation_input.get() == vault_name();
     let delete_button_disabled = move || loading.get() || !is_confirmed();
 
     view! {
-        <div class="p-6 bg-stone border border-red-900 rounded-lg shadow-sm">
-            <h3 class="text-lg font-semibold text-red-200 mb-4">"Delete Vault"</h3>
+        <div class="p-6 bg-stone border border-danger rounded-lg shadow-sm">
+            <h3 class="text-lg font-semibold text-danger mb-4">"Delete Vault"</h3>
 
             <p class="text-sm text-bone mb-4">
                 "This action is permanent and cannot be undone. All local and remote data will be deleted."
@@ -354,7 +354,7 @@ fn DeleteVaultForm() -> impl IntoView {
             {move || {
                 error.get().map(|e| {
                     view! {
-                        <div class="mb-4 p-3 bg-red-900 text-red-100 rounded">
+                        <div class="mb-4 p-3 bg-danger/20 text-danger rounded">
                             {e}
                         </div>
                     }
@@ -368,7 +368,7 @@ fn DeleteVaultForm() -> impl IntoView {
                     </label>
                     <input
                         type="text"
-                        class="w-full px-3 py-2 bg-steel border border-bone rounded text-bone placeholder-steel-light"
+                        class="w-full px-3 py-2 bg-surface-overlay border border-border-default rounded text-bone focus:outline-none focus:ring-2 focus:ring-rune"
                         placeholder="Enter vault name to confirm"
                         prop:value=move || confirmation_input.get()
                         on:change=move |ev| {
@@ -400,7 +400,7 @@ pub fn SettingsPage() -> impl IntoView {
         <div class="flex flex-col gap-6 p-6 max-w-2xl mx-auto">
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-2xl font-bold text-bone">"Vault Settings"</h2>
-                <div class="text-sm text-rune hover:text-rune-dark">
+                <div class="text-sm text-rune cursor-pointer hover:text-bone transition-colors">
                     <A href="/">"← Back to Vault"</A>
                 </div>
             </div>

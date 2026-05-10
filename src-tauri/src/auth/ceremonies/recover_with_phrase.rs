@@ -88,8 +88,14 @@ pub async fn recover_with_phrase(
     }
     let master_key = recovered_master_key.ok_or(AuthenticationError::InvalidCredentials)?;
     let session_keys = SessionKeys::from_master_key_bytes(&master_key)?;
-    let sqlcipher_key = sqlcipher_key_from_array(session_keys.sqlcipher_key.expose());
     let manifest_key_bytes = Zeroizing::new(*session_keys.manifest_key.expose());
+    let sqlcipher_key = {
+        use crate::crypto::SqlcipherKey;
+        use secrecy::SecretBox;
+        let mut boxed = Box::new([0u8; 32]);
+        boxed.copy_from_slice(session_keys.sqlcipher_key.expose());
+        SqlcipherKey::from_secret_box(SecretBox::new(boxed))
+    };
     let storage_staging_dir = storage::staging::default_staging_directory()
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     storage::staging::ensure_staging_directory(&storage_staging_dir)
@@ -171,6 +177,9 @@ mod tests {
             argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: None,
         };
         let vault_id = create_vault(request, &session, &cloud)
             .await
@@ -403,6 +412,9 @@ mod tests {
             argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: None,
         };
         let _vault_b_id = create_vault(request, &session_b, &cloud_b)
             .await
@@ -451,6 +463,9 @@ mod tests {
             argon2_params: Argon2Params::DEFAULT,
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: None,
         };
         create_vault(seed_request, &active_session, &seed_cloud)
             .await

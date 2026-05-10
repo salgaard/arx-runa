@@ -9,6 +9,7 @@ pub mod destination_commands;
 pub mod error;
 pub mod file_commands;
 pub mod sharing_commands;
+pub mod shell_commands;
 pub mod state;
 pub mod sync_commands;
 pub mod types;
@@ -29,18 +30,19 @@ pub use file_commands::{
     delete_file, download_file, get_file_content, list_directory, list_remote, upload_file,
 };
 
-// Sync commands (5)
+// Sync commands (7)
 pub use sync_commands::{
-    get_sync_status, migrate_vault, recover_from_cloud, sync_backup, sync_to_cloud,
+    get_backup_health, get_sync_status, migrate_vault, pull_and_reconcile, recover_from_cloud,
+    sync_backup, sync_to_cloud,
 };
 
 // Destination commands (3)
 pub use destination_commands::{add_destination, delete_destination, list_destinations};
 
-// Sharing commands (8)
+// Sharing commands (9)
 pub use sharing_commands::{
-    add_contact, export_public_key, import_share, list_contacts, list_received_shares, list_shares,
-    revoke_share, share_file,
+    add_contact, export_public_key, get_own_public_key_b64, import_share, list_contacts,
+    list_received_shares, list_shares, revoke_share, share_file,
 };
 
 #[cfg(test)]

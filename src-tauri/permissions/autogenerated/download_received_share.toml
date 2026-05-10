@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-download-received-share"
+description = "Enables the download_received_share command without any pre-configured scope."
+commands.allow = ["download_received_share"]
+
+[[permission]]
+identifier = "deny-download-received-share"
+description = "Denies the download_received_share command without any pre-configured scope."
+commands.deny = ["download_received_share"]

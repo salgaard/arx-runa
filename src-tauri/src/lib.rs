@@ -25,16 +25,26 @@ struct DeviceEventPayload {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-/// Starts the Arx Runa Tauri runtime with all 31 registered commands.
+/// Starts the Arx Runa Tauri runtime with all 45 registered commands.
 pub fn run() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
     if let Err(error) = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(crate::ui::AppState::construct_default())
         .invoke_handler(tauri::generate_handler![
-            // Auth (9) — added check/retry pending operations
+            // Auth (13)
             ui::auth_commands::authenticate,
+            ui::auth_commands::check_cloud_configured,
+            ui::auth_commands::configure_cloud,
             ui::auth_commands::create_vault,
+            ui::auth_commands::list_vaults,
             ui::auth_commands::change_password,
             ui::auth_commands::rotate_key_file,
             ui::auth_commands::delete_vault,
@@ -42,32 +52,48 @@ pub fn run() {
             ui::auth_commands::get_session_status,
             ui::auth_commands::check_pending_vault_operations,
             ui::auth_commands::retry_pending_vault_operation,
-            // Files (6)
+            ui::auth_commands::recover_vault_from_cloud,
+            // Files (7)
             ui::file_commands::list_directory,
             ui::file_commands::upload_file,
             ui::file_commands::download_file,
             ui::file_commands::delete_file,
             ui::file_commands::get_file_content,
             ui::file_commands::list_remote,
-            // Sync (5)
+            ui::file_commands::flush_epoch_buffer,
+            // Sync (7)
             ui::sync_commands::sync_to_cloud,
             ui::sync_commands::recover_from_cloud,
+            ui::sync_commands::pull_and_reconcile,
             ui::sync_commands::get_sync_status,
             ui::sync_commands::migrate_vault,
             ui::sync_commands::sync_backup,
-            // Destinations (3)
+            ui::sync_commands::get_backup_health,
+            // Destinations (8)
             ui::destination_commands::add_destination,
             ui::destination_commands::list_destinations,
             ui::destination_commands::delete_destination,
-            // Sharing (8)
+            ui::destination_commands::set_primary_destination_cmd,
+            ui::destination_commands::begin_google_drive_setup,
+            ui::destination_commands::begin_onedrive_setup,
+            ui::destination_commands::poll_oauth_setup,
+            ui::destination_commands::cancel_oauth_setup_cmd,
+            // Sharing (9)
             ui::sharing_commands::export_public_key,
+            ui::sharing_commands::get_own_public_key_b64,
             ui::sharing_commands::add_contact,
             ui::sharing_commands::list_contacts,
             ui::sharing_commands::share_file,
             ui::sharing_commands::import_share,
+            ui::sharing_commands::check_share_receipts,
+            ui::sharing_commands::download_received_share,
             ui::sharing_commands::revoke_share,
             ui::sharing_commands::list_shares,
             ui::sharing_commands::list_received_shares,
+            // Shell (3)
+            ui::shell_commands::reveal_in_explorer,
+            ui::shell_commands::compose_email_with_attachment,
+            ui::shell_commands::open_url,
         ])
         .setup(|app| {
             use tauri::Emitter as _;
@@ -102,6 +128,17 @@ pub fn run() {
                     }
                 }
             }));
+
+            if let (Some(window), Some(icon)) =
+                (app.get_webview_window("main"), app.default_window_icon())
+            {
+                let _ = window.set_icon(icon.clone());
+            }
+
+            #[cfg(debug_assertions)]
+            if let Some(window) = app.get_webview_window("main") {
+                window.open_devtools();
+            }
 
             Ok(())
         })

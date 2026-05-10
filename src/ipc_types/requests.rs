@@ -1,7 +1,6 @@
 //! IPC request payload types — serialised argument structs for every Tauri command.
 
 use serde::Serialize;
-use wasm_bindgen::JsValue;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::ipc_types::DestinationSessionConfig;
@@ -22,6 +21,9 @@ pub struct AuthenticateRequest {
     pub password: String,
     /// Absolute path to the key file, or `None` for Tier 1 (password-only) vaults.
     pub key_file_path: Option<String>,
+    /// Target vault identifier; `None` falls back to singleton discovery.
+    #[zeroize(skip)]
+    pub vault_id: Option<String>,
 }
 
 /// Argument payload for the `create_vault` Tauri command.
@@ -45,6 +47,19 @@ pub struct CreateVaultRequest {
     pub epoch_buffer_enabled: bool,
 }
 
+/// Argument payload for the `recover_vault_from_cloud` Tauri command.
+#[derive(Debug, Clone, Serialize, Zeroize, ZeroizeOnDrop)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoverVaultFromCloudRequest {
+    /// Vault password (zeroize immediately after IPC call resolves).
+    pub password: String,
+    /// Absolute path to the key file, or `None` for Tier 1 (password-only) vaults.
+    pub key_file_path: Option<String>,
+    /// Cloud destination where the vault currently lives.
+    #[zeroize(skip)]
+    pub primary_destination: DestinationSessionConfig,
+}
+
 /// Argument payload for the `upload_file` Tauri command.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,11 +68,6 @@ pub struct UploadFileRequest {
     pub source_path: String,
     /// Vault-relative destination path.
     pub vault_path: String,
-    /// Serialised `IpcChannel` handle for streaming progress updates.
-    ///
-    /// Skipped during serde serialisation; the channel is wired in Phase 6.5.
-    #[serde(skip)]
-    pub progress: JsValue,
 }
 
 /// Argument payload for the `delete_file` Tauri command.
@@ -76,11 +86,6 @@ pub struct DownloadFileRequest {
     pub file_id: String,
     /// Absolute path to the destination file on the local filesystem.
     pub destination_path: String,
-    /// Serialised `IpcChannel` handle for streaming progress updates.
-    ///
-    /// Skipped during serde serialisation; the channel is wired at the UI layer.
-    #[serde(skip)]
-    pub progress: JsValue,
 }
 
 /// Argument payload for the `get_file_content` Tauri command.
@@ -95,12 +100,8 @@ pub struct GetFileContentRequest {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AddDestinationRequest {
-    /// Human-readable label for the destination.
-    pub label: String,
-    /// Destination type: `"local_path"` or `"rclone_remote"`.
-    pub destination_type: String,
-    /// Path (local) or remote name (rclone config). Treated as opaque by frontend.
-    pub path_or_remote: String,
+    /// Full destination configuration matching the backend `DestinationSessionConfig`.
+    pub config: DestinationSessionConfig,
 }
 
 /// Argument payload for the `delete_destination` Tauri command.
@@ -108,6 +109,14 @@ pub struct AddDestinationRequest {
 #[serde(rename_all = "camelCase")]
 pub struct DeleteDestinationRequest {
     /// Unique destination identifier to delete.
+    pub destination_id: String,
+}
+
+/// Argument payload for the `set_primary_destination_cmd` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetPrimaryDestinationRequest {
+    /// Unique identifier of the destination to promote to primary.
     pub destination_id: String,
 }
 
@@ -149,6 +158,14 @@ pub struct AddContactRequest {
     pub email: Option<String>,
 }
 
+/// Argument payload for the `export_public_key` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportPublicKeyRequest {
+    /// Absolute path where the 32-byte raw public key will be written.
+    pub destination_path: String,
+}
+
 /// Argument payload for the `share_file` Tauri command.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -159,6 +176,8 @@ pub struct ShareFileRequest {
     pub contact_id: String,
     /// Optional expiration period in days from now.
     pub expiration_days: Option<u32>,
+    /// Whether to request a delivery receipt from the recipient.
+    pub request_receipt: bool,
 }
 
 /// Argument payload for the `revoke_share` Tauri command.
@@ -169,10 +188,78 @@ pub struct RevokeShareRequest {
     pub share_id: String,
 }
 
+/// Argument payload for the `configure_cloud` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigureCloudRequest {
+    /// Cloud provider identifier (e.g. `"s3"`, `"b2"`, `"google_drive"`).
+    pub provider: String,
+    /// Storage bucket name.
+    pub bucket: String,
+    /// Cloud region identifier.
+    pub region: String,
+    /// Custom endpoint URL, or empty string for the provider default.
+    pub endpoint: String,
+    /// Path prefix within the bucket.
+    pub path_prefix: String,
+}
+
 /// Argument payload for the `import_share` Tauri command.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportShareRequest {
     /// Absolute path to the share package file (.arxshare).
     pub share_package_path: String,
+}
+
+/// Argument payload for the `download_received_share` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadReceivedShareRequest {
+    /// Unique share ID of the received share to download.
+    pub share_id: String,
+    /// Absolute path to the destination file on the local filesystem.
+    pub destination_path: String,
+}
+
+/// Argument payload for the `compose_email_with_attachment` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposeEmailWithAttachmentRequest {
+    /// Absolute filesystem path to the `.arxshare` package to attach.
+    pub package_path: String,
+    /// Email address of the recipient.
+    pub recipient_email: String,
+}
+
+/// Argument payload for the `reveal_in_explorer` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevealInExplorerRequest {
+    /// Absolute filesystem path to reveal in the OS file explorer.
+    pub path: String,
+}
+
+/// Argument payload for the `poll_oauth_setup` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PollOauthSetupRequest {
+    /// Opaque setup ID returned by `begin_google_drive_setup` or `begin_onedrive_setup`.
+    pub setup_id: String,
+}
+
+/// Argument payload for the `cancel_oauth_setup_cmd` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelOauthSetupRequest {
+    /// Opaque setup ID returned by `begin_google_drive_setup` or `begin_onedrive_setup`.
+    pub setup_id: String,
+}
+
+/// Argument payload for the `open_url` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenUrlRequest {
+    /// URL to open in the default system browser.
+    pub url: String,
 }

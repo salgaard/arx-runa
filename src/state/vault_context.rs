@@ -151,6 +151,7 @@ mod tests {
             size_bytes: 1024,
             modified_at: "2024-01-01T00:00:00Z".to_string(),
             parent_id: None,
+            pending_flush: false,
         }
     }
 

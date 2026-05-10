@@ -40,6 +40,9 @@ pub(crate) struct SharePackagePayload {
     pub sender_public_key: String,
     /// Cloud endpoint metadata for locating the shared blobs.
     pub cloud_endpoint: serde_json::Value,
+    /// Total file size in bytes (used by recipient to truncate last-chunk padding on decrypt).
+    #[serde(default)]
+    pub file_size: u64,
     /// Optional Unix timestamp when the share expires.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<i64>,
@@ -107,6 +110,7 @@ pub(crate) async fn create_share_package(
         sender_public_key: base64::engine::general_purpose::STANDARD
             .encode(owner_public_key.as_bytes()),
         cloud_endpoint,
+        file_size: node.size_bytes,
         expires_at,
     };
 
@@ -149,6 +153,11 @@ pub(crate) async fn import_share_package(
     let wrapped = wrap_file_key(&file_key, key_encryption_key)
         .map_err(|_| SharingError::Backend("file key wrap failed".to_owned()))?;
 
+    let mut cloud_endpoint = payload.cloud_endpoint;
+    if payload.file_size > 0 {
+        cloud_endpoint["_file_size"] = serde_json::json!(payload.file_size);
+    }
+
     let row = ReceivedShare {
         share_id: payload.share_id,
         sender_contact_id: None,
@@ -159,7 +168,7 @@ pub(crate) async fn import_share_package(
         chunk_count: payload.chunk_count,
         chunk_size: payload.chunk_size,
         chunk_uuids: payload.chunk_uuids,
-        cloud_endpoint: payload.cloud_endpoint,
+        cloud_endpoint,
         expires_at: payload.expires_at,
         imported_at: now_unix_seconds,
     };
@@ -324,6 +333,47 @@ mod tests {
         async fn increment_snapshot_counter(&self) -> Result<u64, StorageError> {
             unimplemented!()
         }
+        async fn insert_file_node_only(&self, _node: &Node) -> Result<(), StorageError> {
+            unimplemented!()
+        }
+        async fn insert_file_node_and_stage_epoch_entry(
+            &self,
+            _node: &Node,
+            _plaintext: Vec<u8>,
+        ) -> Result<(), StorageError> {
+            unimplemented!()
+        }
+        async fn stage_epoch_entry(
+            &self,
+            _node_id: Uuid,
+            _plaintext: Vec<u8>,
+        ) -> Result<(), StorageError> {
+            unimplemented!()
+        }
+        async fn get_epoch_buffer_total_bytes(&self) -> Result<u64, StorageError> {
+            unimplemented!()
+        }
+        async fn get_epoch_buffer_entries(
+            &self,
+        ) -> Result<Vec<crate::storage::types::EpochBufferEntry>, StorageError> {
+            unimplemented!()
+        }
+        async fn commit_epoch_flush(
+            &self,
+            _record: &crate::storage::types::EpochBlobRecord,
+            _extents: &[(Uuid, u32, u64, u64)],
+        ) -> Result<(), StorageError> {
+            unimplemented!()
+        }
+        async fn get_epoch_blob(
+            &self,
+            _epoch_blob_id: Uuid,
+        ) -> Result<crate::storage::types::EpochBlobRecord, StorageError> {
+            unimplemented!()
+        }
+        async fn get_epoch_buffer_node_ids(&self) -> Result<Vec<Uuid>, StorageError> {
+            Ok(vec![])
+        }
     }
 
     struct FakeSharingStore {
@@ -435,6 +485,9 @@ mod tests {
             blob_name: Uuid::new_v4().hyphenated().to_string(),
             size_padded: 4_194_304,
             blake3_checksum: [0x55; 32],
+            epoch_blob_id: None,
+            byte_offset: None,
+            byte_length: None,
         }]
     }
 

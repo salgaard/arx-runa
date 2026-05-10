@@ -3,9 +3,11 @@
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
+use std::sync::Arc;
 
+use crate::dialog::open_save_dialog;
 use crate::invoke::invoke_command;
-use crate::ipc_types::{AddContactRequest, ContactEntry};
+use crate::ipc_types::{AddContactRequest, ContactEntry, ExportPublicKeyRequest};
 use crate::utils::format_fingerprint;
 
 // ─── ContactList (main component) ──────────────────────────────────────────
@@ -13,12 +15,17 @@ use crate::utils::format_fingerprint;
 /// Main contacts page: displays contact list and add contact form.
 #[component]
 pub fn ContactList() -> impl IntoView {
+    let refresh_trigger = RwSignal::new(0u32);
+
+    let on_added: Arc<dyn Fn() + Send + Sync> =
+        Arc::new(move || refresh_trigger.update(|n| *n += 1));
+
     view! {
         <div class="flex flex-col gap-6">
             <div class="flex justify-between items-center">
                 <h1 class="text-2xl font-bold text-bone">"Contacts"</h1>
                 <A href="/">
-                    <button class="px-3 py-1 text-sm text-bone bg-rune rounded hover:bg-rune-dark transition-colors">
+                    <button class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors">
                         "← Back to Vault"
                     </button>
                 </A>
@@ -32,13 +39,13 @@ pub fn ContactList() -> impl IntoView {
 
                 <div class="flex flex-col gap-4">
                     <h2 class="text-xl font-semibold text-bone">"Add Contact"</h2>
-                    <AddContactForm />
+                    <AddContactForm on_added=on_added.clone() />
                 </div>
             </div>
 
             <div class="flex flex-col gap-4">
                 <h2 class="text-xl font-semibold text-bone">"Your Contacts"</h2>
-                <ContactListPanel />
+                <ContactListPanel refresh_trigger />
             </div>
         </div>
     }
@@ -51,29 +58,70 @@ pub fn ContactList() -> impl IntoView {
 fn ExportKeyButton() -> impl IntoView {
     let key_data = RwSignal::new(None::<String>);
     let show_modal = RwSignal::new(false);
+    let error_message = RwSignal::new(None::<String>);
+    let save_status = RwSignal::new(None::<String>);
 
     let on_export = move |_| {
+        error_message.set(None);
         spawn_local(async move {
-            // TODO: Implement actual export via IPC invoke_command
-            // For now, this is a placeholder that will call the backend
-            // The modal will show the key and provide a copy button
+            match invoke_command::<(), String>("get_own_public_key_b64", &()).await {
+                Ok(b64) => {
+                    key_data.set(Some(b64));
+                    show_modal.set(true);
+                }
+                Err(e) => {
+                    error_message.set(Some(e.to_string()));
+                }
+            }
         });
     };
 
     let on_modal_close = move |_| {
-        // Zeroize the key from the signal when the modal closes
         key_data.set(None);
         show_modal.set(false);
+        save_status.set(None);
+    };
+
+    let on_save_to_file = move |_| {
+        let Some(key_b64) = key_data.get() else {
+            return;
+        };
+        // key_b64 is captured only to verify we have key data; actual file write goes via backend
+        let _ = key_b64;
+        save_status.set(None);
+        spawn_local(async move {
+            let Some(path) = open_save_dialog(Some("arx-runa.pub")).await else {
+                return;
+            };
+            match invoke_command::<ExportPublicKeyRequest, ()>(
+                "export_public_key",
+                &ExportPublicKeyRequest {
+                    destination_path: path,
+                },
+            )
+            .await
+            {
+                Ok(()) => {
+                    save_status.set(Some("Key saved successfully.".into()));
+                }
+                Err(e) => {
+                    save_status.set(Some(format!("Save failed: {e}")));
+                }
+            }
+        });
     };
 
     view! {
         <div class="flex flex-col gap-2">
             <button
-                class="px-4 py-2 bg-rune text-bone rounded hover:bg-rune-dark transition-colors"
+                class="px-4 py-2 bg-rune text-bone rounded cursor-pointer hover:bg-rune/80 transition-colors"
                 on:click=on_export
             >
                 "Export Public Key"
             </button>
+            {move || error_message.get().map(|msg| view! {
+                <p class="text-danger text-sm">{msg}</p>
+            })}
             {move || {
                 if show_modal.get() {
                     view! {
@@ -81,24 +129,40 @@ fn ExportKeyButton() -> impl IntoView {
                             <div class="bg-stone p-6 rounded border border-steel max-w-md w-full mx-4">
                                 <h3 class="text-lg font-semibold text-bone mb-4">"Your Public Key"</h3>
                                 <p class="text-text-secondary text-sm mb-4">"Share this key with contacts to receive files."</p>
-                                        {move || {
+                                {move || {
                                     key_data.get().map(|key| {
+                                        let fingerprint = format_fingerprint(&key);
                                         view! {
                                             <textarea
                                                 class="w-full h-24 p-2 bg-iron border border-steel text-bone text-sm rounded font-mono"
                                                 prop:readOnly=true
                                                 prop:value=key.clone()
                                             />
-                                            <p class="mt-2 text-text-secondary text-sm">"Select all and copy manually to clipboard"</p>
+                                            <p class="mt-2 text-text-secondary text-sm">"Select all and copy manually to clipboard."</p>
+                                            <p class="mt-2 text-text-secondary text-xs">
+                                                "Fingerprint: "
+                                                <span class="font-mono text-bone">{fingerprint}</span>
+                                            </p>
                                         }
                                     })
                                 }}
-                                <button
-                                    class="mt-4 px-4 py-2 bg-steel text-bone rounded hover:bg-steel-light transition-colors w-full"
-                                    on:click=on_modal_close
-                                >
-                                    "Close"
-                                </button>
+                                {move || save_status.get().map(|msg| view! {
+                                    <p class="mt-2 text-sm text-bone">{msg}</p>
+                                })}
+                                <div class="mt-4 flex gap-2">
+                                    <button
+                                        class="flex-1 px-4 py-2 bg-rune text-bone rounded cursor-pointer hover:bg-rune/80 transition-colors"
+                                        on:click=on_save_to_file
+                                    >
+                                        "Save to File"
+                                    </button>
+                                    <button
+                                        class="flex-1 px-4 py-2 bg-steel text-bone rounded cursor-pointer hover:bg-rune/20 transition-colors"
+                                        on:click=on_modal_close
+                                    >
+                                        "Close"
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     }.into_any()
@@ -114,17 +178,17 @@ fn ExportKeyButton() -> impl IntoView {
 
 /// Form to add a new contact from a public key file.
 #[component]
-fn AddContactForm() -> impl IntoView {
+fn AddContactForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
     let display_name = RwSignal::new(String::new());
     let email = RwSignal::new(String::new());
     let public_key_path = RwSignal::new(String::new());
-    let error_message = RwSignal::new(None::<String>);
+    let validation_error = RwSignal::new(None::<String>);
     let loading = RwSignal::new(false);
 
     let on_submit = move |_| {
         let name = display_name.get().trim().to_string();
         if name.is_empty() {
-            error_message.set(Some("Display name is required".to_string()));
+            validation_error.set(Some("Display name is required".to_string()));
             return;
         }
 
@@ -135,13 +199,14 @@ fn AddContactForm() -> impl IntoView {
             .then(|| email.get().trim().to_string());
         let path = public_key_path.get().trim().to_string();
         if path.is_empty() {
-            error_message.set(Some("Public key file path is required".to_string()));
+            validation_error.set(Some("Public key file path is required".to_string()));
             return;
         }
 
         loading.set(true);
-        error_message.set(None);
+        validation_error.set(None);
 
+        let on_added = on_added.clone();
         spawn_local(async move {
             match invoke_command::<AddContactRequest, ContactEntry>(
                 "add_contact",
@@ -154,14 +219,14 @@ fn AddContactForm() -> impl IntoView {
             .await
             {
                 Ok(_) => {
-                    // Clear form on success
                     display_name.set(String::new());
                     email.set(String::new());
                     public_key_path.set(String::new());
-                    // TODO: Trigger list refresh
+                    crate::components::use_toast().success(format!("Contact \"{}\" added.", name));
+                    on_added();
                 }
                 Err(e) => {
-                    error_message.set(Some(e.to_string()));
+                    crate::components::use_toast().error(e.to_string());
                 }
             }
             loading.set(false);
@@ -177,7 +242,7 @@ fn AddContactForm() -> impl IntoView {
                     class="w-full px-3 py-2 bg-stone border border-steel text-bone rounded"
                     placeholder="Contact name"
                     value=move || display_name.get()
-                    on:input=move |e| display_name.set(event_target_value(&e))
+                    on:input=move |e| { display_name.set(event_target_value(&e)); validation_error.set(None); }
                     disabled=move || loading.get()
                 />
             </div>
@@ -201,15 +266,15 @@ fn AddContactForm() -> impl IntoView {
                     class="w-full px-3 py-2 bg-stone border border-steel text-bone rounded"
                     placeholder="/path/to/public_key"
                     value=move || public_key_path.get()
-                    on:input=move |e| public_key_path.set(event_target_value(&e))
+                    on:input=move |e| { public_key_path.set(event_target_value(&e)); validation_error.set(None); }
                     disabled=move || loading.get()
                 />
             </div>
 
             {move || {
-                error_message.get().map(|msg| {
+                validation_error.get().map(|msg| {
                     view! {
-                        <div class="p-2 bg-red-900 text-red-100 rounded text-sm">
+                        <div class="p-2 bg-danger/20 text-danger rounded text-sm">
                             {msg}
                         </div>
                     }
@@ -217,7 +282,7 @@ fn AddContactForm() -> impl IntoView {
             }}
 
             <button
-                class="px-4 py-2 bg-rune text-bone rounded hover:bg-rune-dark transition-colors disabled:opacity-50"
+                class="px-4 py-2 bg-rune text-bone rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
                 on:click=on_submit
                 disabled=move || loading.get()
             >
@@ -231,13 +296,14 @@ fn AddContactForm() -> impl IntoView {
 
 /// Displays a list of contacts.
 #[component]
-fn ContactListPanel() -> impl IntoView {
+fn ContactListPanel(refresh_trigger: RwSignal<u32>) -> impl IntoView {
     let contacts = RwSignal::new(Vec::<ContactEntry>::new());
     let loading = RwSignal::new(true);
     let error = RwSignal::new(None::<String>);
 
-    // Load contacts on mount
+    // Load contacts on mount and whenever refresh_trigger changes
     Effect::new(move |_| {
+        let _ = refresh_trigger.get();
         let contacts_clone = contacts;
         let loading_clone = loading;
         let error_clone = error;
@@ -263,7 +329,7 @@ fn ContactListPanel() -> impl IntoView {
                 if loading.get() {
                     view! { <p class="text-text-secondary">"Loading contacts…"</p> }.into_any()
                 } else if let Some(err) = error.get() {
-                    view! { <p class="text-red-400">"Error: " {err}</p> }.into_any()
+                    view! { <p class="text-danger">"Error: " {err}</p> }.into_any()
                 } else if contacts.get().is_empty() {
                     view! { <p class="text-text-secondary">"No contacts yet. Add one above."</p> }.into_any()
                 } else {

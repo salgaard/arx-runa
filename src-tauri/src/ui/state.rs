@@ -1,5 +1,7 @@
 //! Shared application state for Tauri IPC commands.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -13,6 +15,20 @@ use crate::storage::CloudTransportError;
 use crate::storage::SqlCipherMetadataStore;
 use crate::storage::cloud::CloudTransport;
 use crate::ui::types::SyncStatus;
+
+/// In-flight rclone OAuth subprocess handle.
+///
+/// Created by `begin_google_drive_setup` / `begin_onedrive_setup`, consumed by
+/// `poll_oauth_setup` or `cancel_oauth_setup`.  The `child` field has its stderr
+/// already taken; a drain task is spawned at begin time.
+pub struct OAuthSetupHandle {
+    /// Live rclone subprocess waiting for the OAuth browser callback.
+    pub child: tokio::process::Child,
+    /// Temporary rclone config file written by this subprocess.
+    pub temp_config_path: PathBuf,
+    /// Rclone remote name used for this setup (e.g. `arx-runa-<uuid>`).
+    pub remote_name: String,
+}
 
 /// Shared application state injected into every Tauri command via `tauri::State`.
 ///
@@ -37,6 +53,13 @@ pub struct AppState {
     pub(crate) app_handle: OnceLock<tauri::AppHandle>,
     /// Active vault identifier, mirrors SessionManager for quick IPC reads.
     pub(crate) active_vault_id: Arc<RwLock<Option<String>>>,
+    /// Mutex ensuring at most one epoch-buffer flush runs at a time.
+    pub(crate) flush_mutex: Arc<tokio::sync::Mutex<()>>,
+    /// In-flight OAuth setup subprocesses keyed by opaque setup ID.
+    ///
+    /// Uses `tokio::sync::Mutex` so it can be held across `.await` points
+    /// inside `poll_oauth_setup`.
+    pub(crate) oauth_setups: Arc<tokio::sync::Mutex<HashMap<String, OAuthSetupHandle>>>,
 }
 
 /// No-op cloud transport used until Phase 6.5 wires a real `RcloneTransport`.
@@ -84,6 +107,10 @@ impl CloudTransport for NoOpCloudTransport {
             "cloud transport not configured".into(),
         ))
     }
+
+    fn is_configured(&self) -> bool {
+        false
+    }
 }
 
 impl AppState {
@@ -119,6 +146,8 @@ impl AppState {
             sync_status: Arc::new(RwLock::new(SyncStatus::default())),
             app_handle: OnceLock::new(),
             active_vault_id: Arc::new(RwLock::new(None)),
+            flush_mutex: Arc::new(tokio::sync::Mutex::new(())),
+            oauth_setups: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
 

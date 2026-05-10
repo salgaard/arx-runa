@@ -15,4 +15,7 @@ pub struct SyncResult {
     pub files_deleted: u32,
     /// Conflicts detected that require user attention.
     pub conflicts: Vec<SyncConflict>,
+    /// Number of backup blob uploads that failed and remain pending (sync_backup only).
+    #[serde(default)]
+    pub backup_failures: u32,
 }

@@ -18,6 +18,11 @@ pub struct FileEntry {
     pub modified_at: String,
     /// Identifier of the parent directory, or `None` if this entry is at the vault root.
     pub parent_id: Option<String>,
+    /// Whether this file is staged in the epoch buffer and not yet encrypted into a blob.
+    ///
+    /// Downloads are not possible until `flush_epoch_buffer` has been called.
+    /// Always `false` for directory entries.
+    pub pending_flush: bool,
 }
 
 impl FileEntry {
@@ -40,6 +45,7 @@ mod tests {
             size_bytes: 0,
             modified_at: "2024-01-01T00:00:00Z".to_string(),
             parent_id: None,
+            pending_flush: false,
         }
     }
 
