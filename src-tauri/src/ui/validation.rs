@@ -10,8 +10,10 @@ use uuid::Uuid;
 
 use crate::ui::error::IpcError;
 
-/// Allowlist regex for vault-relative paths.
-const VAULT_PATH_ALLOWLIST: &str = r"^[a-zA-Z0-9 ._/\-]*$";
+/// Allowlist regex for vault-relative paths. Permits Unicode letters and
+/// digits (`\p{L}\p{N}`) so filenames with Danish and other non-ASCII
+/// characters are accepted.
+const VAULT_PATH_ALLOWLIST: &str = r"^[\p{L}\p{N} ._/\-]*$";
 
 /// Minimum chunk size in bytes (128 KiB).
 const MIN_CHUNK_SIZE_BYTES: u64 = 131_072;
@@ -40,7 +42,7 @@ fn vault_path_regex() -> &'static Regex {
 /// - Backslashes (`\`)
 /// - Absolute paths (leading `/`)
 /// - Path traversal sequences (`..`)
-/// - Characters outside the allowlist `[a-zA-Z0-9 ._/-]`
+/// - Characters outside the allowlist `[\p{L}\p{N} ._/-]` (Unicode letters/digits allowed)
 /// - ASCII control characters (U+0000–U+001F)
 pub(crate) fn validate_vault_path(path: &str) -> Result<(), IpcError> {
     if path.contains('\\') {
@@ -183,6 +185,21 @@ mod tests {
     fn test_validate_vault_path_rejects_percent_encoded_traversal() {
         // '%' is not in the allowlist, so this is caught by the regex
         assert!(validate_vault_path("%2E%2E/foo").is_err());
+    }
+
+    #[test]
+    fn test_validate_vault_path_accepts_danish_lowercase_letters() {
+        assert!(validate_vault_path("filer/æresdoktor.pdf").is_ok());
+    }
+
+    #[test]
+    fn test_validate_vault_path_accepts_danish_uppercase_letters() {
+        assert!(validate_vault_path("Ø-rapport/Årsopgørelse.txt").is_ok());
+    }
+
+    #[test]
+    fn test_validate_vault_path_accepts_mixed_unicode_filename() {
+        assert!(validate_vault_path("dokumenter/mødereferat 2024.docx").is_ok());
     }
 
     // --- validate_file_id ---

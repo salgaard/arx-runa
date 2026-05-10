@@ -78,15 +78,16 @@ fn validate_local_path(path_prefix: &str) -> Result<(), IpcError> {
         }
 
         // Next component after home must match OneDrive folder patterns
-        let next = components[home_components.len()];
-        let next_str = next.as_os_str().to_string_lossy();
-
         #[cfg(target_os = "windows")]
         {
+            let next = components[home_components.len()];
+            let next_str = next.as_os_str().to_string_lossy();
             next_str.to_lowercase().starts_with("onedrive")
         }
         #[cfg(target_os = "macos")]
         {
+            let next = components[home_components.len()];
+            let next_str = next.as_os_str().to_string_lossy();
             // macOS: ~/Library/CloudStorage/OneDrive*
             if next_str != "Library" {
                 return false;

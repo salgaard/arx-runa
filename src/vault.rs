@@ -640,7 +640,10 @@ pub fn DropZone(children: Children) -> impl IntoView {
                 .await
                 {
                     Ok(_) => va.navigate(upload_path),
-                    Err(err) => va.set_error(err.message),
+                    Err(err) => {
+                        set_upload_channel.set(None);
+                        va.set_error(err.message);
+                    }
                 }
             });
         }
