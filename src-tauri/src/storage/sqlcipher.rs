@@ -195,6 +195,187 @@ impl SqlCipherMetadataStore {
         .await
     }
 
+    /// Retrieves a standalone chunk record by its blob name.
+    ///
+    /// Returns `None` when no standalone chunk has this blob name (the blob may
+    /// belong to an epoch blob instead).  Intentionally SQLCipher-specific; this
+    /// method is not exposed on [`MetadataStore`].
+    pub(crate) async fn get_chunk_by_blob_name(
+        &self,
+        blob_name: &str,
+    ) -> Result<Option<ChunkRecord>, StorageError> {
+        let blob_name = blob_name.to_owned();
+        self.with_connection_blocking(move |conn| {
+            conn.query_row(
+                "SELECT chunk_id, node_id, chunk_index, blob_name, size_padded, blake3_checksum,
+                        epoch_blob_id, byte_offset, byte_length
+                 FROM chunks WHERE blob_name = ?1",
+                params![blob_name],
+                read_chunk,
+            )
+            .optional()
+            .map_err(StorageError::from_rusqlite)
+        })
+        .await
+    }
+
+    /// Retrieves an epoch blob record by its blob name.
+    ///
+    /// Returns `None` when no epoch blob row matches.  Intentionally
+    /// SQLCipher-specific; this method is not exposed on [`MetadataStore`].
+    pub(crate) async fn get_epoch_blob_by_blob_name(
+        &self,
+        blob_name: &str,
+    ) -> Result<Option<EpochBlobRecord>, StorageError> {
+        let blob_name = blob_name.to_owned();
+        self.with_connection_blocking(move |conn| {
+            conn.query_row(
+                "SELECT epoch_blob_id, blob_name, file_key_wrapped, size_padded, blake3_checksum
+                 FROM epoch_blobs WHERE blob_name = ?1",
+                params![blob_name],
+                |row| {
+                    let epoch_blob_id_str: String = row.get(0)?;
+                    let blob_name: String = row.get(1)?;
+                    let file_key_wrapped: Vec<u8> = row.get(2)?;
+                    let size_padded_i64: i64 = row.get(3)?;
+                    let checksum_vec: Vec<u8> = row.get(4)?;
+                    Ok((
+                        epoch_blob_id_str,
+                        blob_name,
+                        file_key_wrapped,
+                        size_padded_i64,
+                        checksum_vec,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(StorageError::from_rusqlite)?
+            .map(
+                |(
+                    epoch_blob_id_str,
+                    blob_name,
+                    file_key_wrapped,
+                    size_padded_i64,
+                    checksum_vec,
+                )| {
+                    let epoch_blob_id = Uuid::parse_str(&epoch_blob_id_str).map_err(|e| {
+                        StorageError::Database(format!("invalid epoch_blob_id: {e}"))
+                    })?;
+                    let size_padded = size_padded_i64 as u64;
+                    let blake3_checksum: [u8; 32] = checksum_vec.try_into().map_err(|_| {
+                        StorageError::Database(
+                            "expected 32-byte checksum in epoch_blobs".to_owned(),
+                        )
+                    })?;
+                    Ok(EpochBlobRecord {
+                        epoch_blob_id,
+                        blob_name,
+                        file_key_wrapped,
+                        size_padded,
+                        blake3_checksum,
+                    })
+                },
+            )
+            .transpose()
+        })
+        .await
+    }
+
+    /// Retrieves all chunk records packed into a given epoch blob.
+    ///
+    /// `blob_name`, `size_padded`, and `blake3_checksum` are resolved from the
+    /// parent epoch blob row.  Intentionally SQLCipher-specific; this method is
+    /// not exposed on [`MetadataStore`].
+    pub(crate) async fn get_chunks_for_epoch_blob(
+        &self,
+        epoch_blob_id: Uuid,
+    ) -> Result<Vec<ChunkRecord>, StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let mut statement = conn
+                .prepare(
+                    "SELECT c.chunk_id, c.node_id, c.chunk_index,
+                            eb.blob_name  AS blob_name,
+                            eb.size_padded AS size_padded,
+                            eb.blake3_checksum AS blake3_checksum,
+                            c.epoch_blob_id, c.byte_offset, c.byte_length
+                     FROM chunks c
+                     JOIN epoch_blobs eb ON c.epoch_blob_id = eb.epoch_blob_id
+                     WHERE c.epoch_blob_id = ?1
+                     ORDER BY c.chunk_index ASC",
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            let rows = statement
+                .query_map(params![epoch_blob_id.hyphenated().to_string()], read_chunk)
+                .map_err(StorageError::from_rusqlite)?;
+            let mut records = Vec::new();
+            for row in rows {
+                records.push(row.map_err(StorageError::from_rusqlite)?);
+            }
+            Ok(records)
+        })
+        .await
+    }
+
+    /// Inserts an epoch blob row and its chunk rows without clearing `epoch_buffer`.
+    ///
+    /// This is the reconcile-time counterpart to `commit_epoch_flush`: it
+    /// re-registers a previously-built epoch blob — whose blob file still exists
+    /// in the staging pending directory — into a freshly-replaced manifest DB.
+    /// Nodes referenced by `extents` must already exist in the database.
+    ///
+    /// `extents` is `(node_id, chunk_index, byte_offset, byte_length)` per file
+    /// packed into the epoch blob.  Intentionally SQLCipher-specific; this method
+    /// is not exposed on [`MetadataStore`].
+    pub(crate) async fn reinsert_epoch_blob(
+        &self,
+        record: &EpochBlobRecord,
+        extents: &[(Uuid, u32, u64, u64)],
+    ) -> Result<(), StorageError> {
+        let record = record.clone();
+        let extents = extents.to_vec();
+        self.with_connection_blocking(move |conn| {
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            let epoch_blob_id_text = record.epoch_blob_id.hyphenated().to_string();
+            tx.execute(
+                "INSERT INTO epoch_blobs (epoch_blob_id, blob_name, file_key_wrapped, size_padded, blake3_checksum)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    epoch_blob_id_text,
+                    record.blob_name,
+                    record.file_key_wrapped,
+                    i64::try_from(record.size_padded)
+                        .map_err(|e| StorageError::Database(e.to_string()))?,
+                    record.blake3_checksum.to_vec()
+                ],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+            for (node_id, chunk_index, byte_offset, byte_length) in &extents {
+                let chunk_id = Uuid::new_v4().hyphenated().to_string();
+                let node_id_text = node_id.hyphenated().to_string();
+                let size_padded_i64 = i64::try_from(record.size_padded)
+                    .map_err(|e| StorageError::Database(e.to_string()))?;
+                tx.execute(
+                    "INSERT INTO chunks (chunk_id, node_id, chunk_index, blob_name, size_padded, blake3_checksum, epoch_blob_id, byte_offset, byte_length)
+                     VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        chunk_id,
+                        node_id_text,
+                        i64::from(*chunk_index),
+                        size_padded_i64,
+                        record.blake3_checksum.to_vec(),
+                        epoch_blob_id_text,
+                        *byte_offset as i64,
+                        *byte_length as i64
+                    ],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            }
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Rolls back `snapshot_counter` to `previous_value` when and only when the
     /// currently stored value is `previous_value + 1`.
     ///
