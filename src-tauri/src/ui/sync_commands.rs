@@ -23,6 +23,7 @@ use crate::storage::cloud::{
     CloudEndpoint, CloudTransport, DestinationSessionPublic, RcloneTransport, SyncConfig,
     pull_vault, push_vault,
 };
+use crate::storage::device_id::get_or_create_device_id;
 use crate::storage::staging::write_owner_only;
 use crate::ui::commands_common::{ProgressChannel, require_active_session};
 use crate::ui::error::IpcError;
@@ -754,13 +755,32 @@ pub async fn sync_backup(
     let all_sessions = list_destination_sessions(db)
         .await
         .map_err(IpcError::from)?;
-    let backup_dests: Vec<_> = all_sessions
+    let current_device_id = get_or_create_device_id().await.map_err(IpcError::from)?;
+
+    let backup_dests: Vec<DestinationSession> = all_sessions
         .into_iter()
         .filter(|d| !d.is_primary)
         .filter(|d| {
             destination_id
                 .as_ref()
                 .is_none_or(|id| &d.destination_id == id)
+        })
+        .filter(|d| {
+            if matches!(
+                d.destination_type,
+                DestinationType::LocalPath | DestinationType::ExternalDrive
+            ) {
+                let owned = d.device_id.as_deref() == Some(current_device_id.as_str());
+                if !owned {
+                    tracing::debug!(
+                        destination_id = %d.destination_id,
+                        "skipping local/external destination — belongs to a different device"
+                    );
+                }
+                owned
+            } else {
+                true
+            }
         })
         .collect();
 

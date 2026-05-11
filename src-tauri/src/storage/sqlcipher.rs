@@ -21,9 +21,10 @@ use crate::crypto::SqlcipherKey;
 use crate::storage::error::StorageError;
 use crate::storage::metadata_store::MetadataStore;
 use crate::storage::schema::{
-    apply_backup_v5_migration, apply_canonical_schema, apply_epoch_v2_migration,
-    apply_pending_backup_v6_migration, apply_sharing_v3_migration, apply_sharing_v4_migration,
-    seed_manifest_meta, validate_manifest_meta, validate_schema_integrity, verify_sqlcipher_key,
+    apply_backup_v5_migration, apply_canonical_schema, apply_device_id_v7_migration,
+    apply_epoch_v2_migration, apply_pending_backup_v6_migration, apply_sharing_v3_migration,
+    apply_sharing_v4_migration, seed_manifest_meta, validate_manifest_meta,
+    validate_schema_integrity, verify_sqlcipher_key,
 };
 use crate::storage::types::{
     ChunkRecord, EpochBlobRecord, EpochBufferEntry, Node, NodeId, NodeType, SyncChunkRecord,
@@ -64,6 +65,7 @@ pub(crate) struct DestinationSessionRow {
     pub path_prefix: String,
     pub is_primary: bool,
     pub backup_mode: Option<String>,
+    pub device_id: Option<String>,
 }
 
 impl SqlCipherMetadataStore {
@@ -78,6 +80,7 @@ impl SqlCipherMetadataStore {
             apply_sharing_v4_migration(&conn)?;
             apply_backup_v5_migration(&conn)?;
             apply_pending_backup_v6_migration(&conn)?;
+            apply_device_id_v7_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             Ok(conn)
@@ -109,6 +112,7 @@ impl SqlCipherMetadataStore {
             apply_sharing_v4_migration(&conn)?;
             apply_backup_v5_migration(&conn)?;
             apply_pending_backup_v6_migration(&conn)?;
+            apply_device_id_v7_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             validate_create_immutable_meta_matches(
@@ -255,6 +259,7 @@ impl SqlCipherMetadataStore {
         path_prefix: String,
         is_primary: bool,
         backup_mode: Option<String>,
+        device_id: Option<String>,
     ) -> Result<(), StorageError> {
         let created_at = unix_timestamp_now()?;
         self.with_connection_blocking(move |conn| {
@@ -280,8 +285,8 @@ impl SqlCipherMetadataStore {
             tx.execute(
                 "INSERT INTO destination_sessions (
                     destination_id, label, destination_type, rclone_remote_name, rclone_config_blob,
-                    bucket, path_prefix, is_primary, backup_mode, created_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    bucket, path_prefix, is_primary, backup_mode, created_at, device_id
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     destination_id,
                     label,
@@ -293,6 +298,7 @@ impl SqlCipherMetadataStore {
                     if is_primary { 1 } else { 0 },
                     backup_mode,
                     created_at,
+                    device_id,
                 ],
             )
             .map_err(StorageError::from_rusqlite)?;
@@ -314,7 +320,8 @@ impl SqlCipherMetadataStore {
             let mut statement = conn
                 .prepare(
                     "SELECT destination_id, label, destination_type, rclone_remote_name,
-                            rclone_config_blob, bucket, path_prefix, is_primary, backup_mode
+                            rclone_config_blob, bucket, path_prefix, is_primary, backup_mode,
+                            device_id
                      FROM destination_sessions
                      ORDER BY created_at ASC, destination_id ASC",
                 )
@@ -331,6 +338,7 @@ impl SqlCipherMetadataStore {
                         path_prefix: row.get(6)?,
                         is_primary: row.get::<_, i64>(7)? == 1,
                         backup_mode: row.get(8)?,
+                        device_id: row.get(9)?,
                     })
                 })
                 .map_err(StorageError::from_rusqlite)?;
@@ -354,7 +362,8 @@ impl SqlCipherMetadataStore {
         self.with_connection_blocking(move |conn| {
             conn.query_row(
                 "SELECT destination_id, label, destination_type, rclone_remote_name,
-                        rclone_config_blob, bucket, path_prefix, is_primary, backup_mode
+                        rclone_config_blob, bucket, path_prefix, is_primary, backup_mode,
+                        device_id
                  FROM destination_sessions
                  WHERE is_primary = 1
                  LIMIT 1",
@@ -370,6 +379,7 @@ impl SqlCipherMetadataStore {
                         path_prefix: row.get(6)?,
                         is_primary: row.get::<_, i64>(7)? == 1,
                         backup_mode: row.get(8)?,
+                        device_id: row.get(9)?,
                     })
                 },
             )

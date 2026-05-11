@@ -83,6 +83,10 @@ pub struct DestinationSession {
     pub path_prefix: String,
     pub is_primary: bool,
     pub backup_mode: Option<BackupSyncMode>,
+    /// Device that created this destination; `None` for cloud destinations and
+    /// pre-v7 rows.  `LocalPath`/`ExternalDrive` destinations are only used on
+    /// the device whose ID matches this field.
+    pub device_id: Option<String>,
 }
 
 /// Public destination session shape that excludes credential-bearing configuration blobs.
@@ -140,6 +144,7 @@ pub async fn insert_destination_session(
                 .as_ref()
                 .map(BackupSyncMode::as_sql_tag)
                 .map(str::to_owned),
+            session.device_id,
         )
         .await
 }
@@ -275,6 +280,7 @@ fn destination_session_from_row(
         path_prefix: row.path_prefix,
         is_primary: row.is_primary,
         backup_mode,
+        device_id: row.device_id,
     })
 }
 
@@ -348,6 +354,7 @@ mod tests {
             path_prefix: "vault".to_owned(),
             is_primary,
             backup_mode: Some(BackupSyncMode::Mirror),
+            device_id: None,
         }
     }
 
@@ -510,6 +517,7 @@ mod tests {
                 "bucket".to_owned(),
                 "vault".to_owned(),
                 false,
+                None,
                 None,
             )
             .await

@@ -122,6 +122,7 @@ async fn setup_s3_provider_with_endpoint_saver(
         path_prefix: input.path_prefix.clone(),
         is_primary: input.is_primary,
         backup_mode: input.backup_mode.clone(),
+        device_id: None,
     };
 
     let persist_result = insert_destination_with_primary_endpoint(
@@ -231,6 +232,7 @@ async fn setup_google_drive_with_remote_name(
             path_prefix: input.path_prefix.clone(),
             is_primary: input.is_primary,
             backup_mode: input.backup_mode.clone(),
+            device_id: None,
         };
 
         let primary_endpoint = if destination.is_primary {
