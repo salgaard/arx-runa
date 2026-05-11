@@ -287,23 +287,12 @@ async fn reinsert_pending_state(
             }
         };
 
-        let new_node_id = NodeId::new(uuid::Uuid::new_v4());
         let new_node = Node {
-            node_id: new_node_id,
             parent_id: Some(parent_id),
             name: final_name,
             ..file.node.clone()
         };
-        let new_chunks: Vec<ChunkRecord> = file
-            .chunks
-            .iter()
-            .map(|c| ChunkRecord {
-                chunk_id: uuid::Uuid::new_v4(),
-                node_id: new_node_id,
-                ..c.clone()
-            })
-            .collect();
-        db.insert_file_with_chunks(&new_node, &new_chunks)
+        db.insert_file_with_chunks(&new_node, &file.chunks)
             .await
             .map_err(IpcError::from)?;
     }
@@ -332,16 +321,14 @@ async fn reinsert_pending_state(
                 }
             };
 
-            let new_node_id = NodeId::new(uuid::Uuid::new_v4());
             let new_node = Node {
-                node_id: new_node_id,
                 parent_id: Some(parent_id),
                 name: final_name,
                 ..node.clone()
             };
             db.insert_node(&new_node).await.map_err(IpcError::from)?;
             extents.push((
-                *new_node_id.as_uuid(),
+                *node.node_id.as_uuid(),
                 *chunk_index,
                 *byte_offset,
                 *byte_length,
