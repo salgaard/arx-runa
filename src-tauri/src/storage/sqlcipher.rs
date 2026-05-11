@@ -856,6 +856,14 @@ impl SqlCipherMetadataStore {
 
             drop(probe_conn);
 
+            tracing::debug!(
+                cloud_counter,
+                probe_epoch_blobs = epoch_blobs.len(),
+                probe_nodes = nodes.len(),
+                probe_chunks = chunks.len(),
+                "merge_from_probe_db: probe snapshot read"
+            );
+
             conn.execute_batch("PRAGMA foreign_keys = OFF;")
                 .map_err(StorageError::from_rusqlite)?;
 
@@ -864,24 +872,27 @@ impl SqlCipherMetadataStore {
                     .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
                     .map_err(StorageError::from_rusqlite)?;
 
+                let mut epoch_blobs_inserted: usize = 0;
                 for (epoch_blob_id, blob_name, file_key_wrapped, size_padded, blake3_checksum) in
                     &epoch_blobs
                 {
-                    tx.execute(
-                        "INSERT OR IGNORE INTO epoch_blobs \
-                         (epoch_blob_id, blob_name, file_key_wrapped, size_padded, \
-                         blake3_checksum) VALUES (?1, ?2, ?3, ?4, ?5)",
-                        params![
-                            epoch_blob_id,
-                            blob_name,
-                            file_key_wrapped,
-                            size_padded,
-                            blake3_checksum
-                        ],
-                    )
-                    .map_err(StorageError::from_rusqlite)?;
+                    epoch_blobs_inserted += tx
+                        .execute(
+                            "INSERT OR IGNORE INTO epoch_blobs \
+                             (epoch_blob_id, blob_name, file_key_wrapped, size_padded, \
+                             blake3_checksum) VALUES (?1, ?2, ?3, ?4, ?5)",
+                            params![
+                                epoch_blob_id,
+                                blob_name,
+                                file_key_wrapped,
+                                size_padded,
+                                blake3_checksum
+                            ],
+                        )
+                        .map_err(StorageError::from_rusqlite)?;
                 }
 
+                let mut nodes_inserted: usize = 0;
                 for (
                     node_id,
                     parent_id,
@@ -893,24 +904,26 @@ impl SqlCipherMetadataStore {
                     file_key_wrapped,
                 ) in &nodes
                 {
-                    tx.execute(
-                        "INSERT OR IGNORE INTO nodes \
-                         (node_id, parent_id, node_type, name, created_at, modified_at, \
-                         size_bytes, file_key_wrapped) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                        params![
-                            node_id,
-                            parent_id,
-                            node_type,
-                            name,
-                            created_at,
-                            modified_at,
-                            size_bytes,
-                            file_key_wrapped
-                        ],
-                    )
-                    .map_err(StorageError::from_rusqlite)?;
+                    nodes_inserted += tx
+                        .execute(
+                            "INSERT OR IGNORE INTO nodes \
+                             (node_id, parent_id, node_type, name, created_at, modified_at, \
+                             size_bytes, file_key_wrapped) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                            params![
+                                node_id,
+                                parent_id,
+                                node_type,
+                                name,
+                                created_at,
+                                modified_at,
+                                size_bytes,
+                                file_key_wrapped
+                            ],
+                        )
+                        .map_err(StorageError::from_rusqlite)?;
                 }
 
+                let mut chunks_inserted: usize = 0;
                 for (
                     chunk_id,
                     node_id,
@@ -923,27 +936,39 @@ impl SqlCipherMetadataStore {
                     byte_length,
                 ) in &chunks
                 {
-                    tx.execute(
-                        "INSERT OR IGNORE INTO chunks \
-                         (chunk_id, node_id, chunk_index, blob_name, size_padded, \
-                         blake3_checksum, epoch_blob_id, byte_offset, byte_length) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                        params![
-                            chunk_id,
-                            node_id,
-                            chunk_index,
-                            blob_name,
-                            size_padded,
-                            blake3_checksum,
-                            epoch_blob_id,
-                            byte_offset,
-                            byte_length
-                        ],
-                    )
-                    .map_err(StorageError::from_rusqlite)?;
+                    chunks_inserted += tx
+                        .execute(
+                            "INSERT OR IGNORE INTO chunks \
+                             (chunk_id, node_id, chunk_index, blob_name, size_padded, \
+                             blake3_checksum, epoch_blob_id, byte_offset, byte_length) \
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                            params![
+                                chunk_id,
+                                node_id,
+                                chunk_index,
+                                blob_name,
+                                size_padded,
+                                blake3_checksum,
+                                epoch_blob_id,
+                                byte_offset,
+                                byte_length
+                            ],
+                        )
+                        .map_err(StorageError::from_rusqlite)?;
                 }
 
                 tx.commit().map_err(StorageError::from_rusqlite)?;
+
+                tracing::info!(
+                    epoch_blobs_inserted,
+                    epoch_blobs_total = epoch_blobs.len(),
+                    nodes_inserted,
+                    nodes_total = nodes.len(),
+                    chunks_inserted,
+                    chunks_total = chunks.len(),
+                    "merge_from_probe_db: merge complete"
+                );
+
                 Ok(())
             })();
 
