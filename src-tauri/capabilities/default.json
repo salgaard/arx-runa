@@ -50,6 +50,10 @@
     "allow-list-received-shares",
     "allow-compose-email-with-attachment",
     "allow-reveal-in-explorer",
+    "allow-begin-google-drive-setup",
+    "allow-begin-onedrive-setup",
+    "allow-open-url",
+    "allow-poll-oauth-setup",
     {
       "identifier": "shell:allow-execute",
       "allow": [

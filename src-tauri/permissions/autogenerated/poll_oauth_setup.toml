@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-poll-oauth-setup"
+description = "Enables the poll_oauth_setup command without any pre-configured scope."
+commands.allow = ["poll_oauth_setup"]
+
+[[permission]]
+identifier = "deny-poll-oauth-setup"
+description = "Denies the poll_oauth_setup command without any pre-configured scope."
+commands.deny = ["poll_oauth_setup"]

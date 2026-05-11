@@ -395,6 +395,26 @@ pub struct OAuthSetupBegun {
     pub remote_name: String,
 }
 
+/// Extracts the rclone local OAuth auth URL from a single line of rclone output.
+///
+/// rclone emits two lines containing `http://127.0.0.1:`: a notice about
+/// setting the redirect URL and the actual auth URL with `auth?state=`.  Only
+/// the latter is accepted; the URL is extracted cleanly by stopping at the
+/// first whitespace or quote character.
+fn extract_rclone_auth_url(line: &str) -> Option<String> {
+    let url_start = line.rfind("http://127.0.0.1:")?;
+    let rest = &line[url_start..];
+    let url_end = rest
+        .find(|c: char| c.is_whitespace() || c == '"')
+        .unwrap_or(rest.len());
+    let url = &rest[..url_end];
+    if url.contains("auth?state=") {
+        Some(url.to_owned())
+    } else {
+        None
+    }
+}
+
 /// Spawns rclone for an OAuth provider setup flow.
 ///
 /// Reads rclone stderr line-by-line until the local auth URL
@@ -420,9 +440,14 @@ pub async fn begin_oauth_setup(
 
     let mut extra_args: Vec<&OsStr> = Vec::new();
     let scope_flag;
+    let drive_type_flag;
     if provider == OAuthProvider::GoogleDrive {
         scope_flag = OsString::from("scope=drive");
         extra_args.push(scope_flag.as_os_str());
+    }
+    if provider == OAuthProvider::OneDrive {
+        drive_type_flag = OsString::from("drive_type=personal");
+        extra_args.push(drive_type_flag.as_os_str());
     }
 
     let mut command = tokio::process::Command::new(binary_path);
@@ -434,41 +459,62 @@ pub async fn begin_oauth_setup(
             OsStr::new(rclone_type),
         ])
         .args(&extra_args)
-        .args([
-            OsStr::new("--non-interactive"),
-            OsStr::new("--config"),
-            temp_config_path.as_os_str(),
-        ])
+        .args([OsStr::new("--config"), temp_config_path.as_os_str()])
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
     let mut child = command.spawn().map_err(CloudTransportError::from)?;
 
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| CloudTransportError::Other("failed to capture rclone stdout".to_owned()))?;
     let stderr = child
         .stderr
         .take()
         .ok_or_else(|| CloudTransportError::Other("failed to capture rclone stderr".to_owned()))?;
 
-    let mut reader = BufReader::new(stderr).lines();
-    let mut auth_url = None;
-    while let Some(line) = reader
-        .next_line()
-        .await
-        .map_err(|error| CloudTransportError::Other(format!("reading rclone stderr: {error}")))?
-    {
-        if line.contains("http://127.0.0.1:") {
-            auth_url = line
-                .rfind("http://127.0.0.1:")
-                .map(|index| line[index..].trim().to_owned());
-            break;
+    let mut stdout_reader = BufReader::new(stdout).lines();
+    let mut stderr_reader = BufReader::new(stderr).lines();
+    let mut stdout_done = false;
+    let mut stderr_done = false;
+    let mut auth_url: Option<String> = None;
+
+    loop {
+        tokio::select! {
+            line = stdout_reader.next_line(), if !stdout_done => {
+                match line.map_err(|e| CloudTransportError::Other(format!("reading rclone stdout: {e}")))? {
+                    None => { stdout_done = true; }
+                    Some(l) => {
+                        if let Some(url) = extract_rclone_auth_url(&l) {
+                            auth_url = Some(url);
+                            break;
+                        }
+                    }
+                }
+            }
+            line = stderr_reader.next_line(), if !stderr_done => {
+                match line.map_err(|e| CloudTransportError::Other(format!("reading rclone stderr: {e}")))? {
+                    None => { stderr_done = true; }
+                    Some(l) => {
+                        if let Some(url) = extract_rclone_auth_url(&l) {
+                            auth_url = Some(url);
+                            break;
+                        }
+                    }
+                }
+            }
+            else => { break; }
         }
     }
-    let auth_url = auth_url.ok_or_else(|| {
-        CloudTransportError::Other("rclone did not emit an auth URL on stderr".to_owned())
-    })?;
 
-    tokio::spawn(async move { while let Ok(Some(_)) = reader.next_line().await {} });
+    tokio::spawn(async move { while let Ok(Some(_)) = stdout_reader.next_line().await {} });
+    tokio::spawn(async move { while let Ok(Some(_)) = stderr_reader.next_line().await {} });
+
+    let auth_url = auth_url.ok_or_else(|| {
+        CloudTransportError::Other("rclone did not emit an auth URL on stdout or stderr".to_owned())
+    })?;
 
     Ok(OAuthSetupBegun {
         setup_id,
