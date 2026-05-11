@@ -20,8 +20,8 @@ use crate::storage::cloud::sync::drain_pending_deletions;
 use crate::storage::cloud::vault_header::VaultHeader;
 use crate::storage::cloud::vault_header_io::VAULT_HEADER_BLOB_NAME;
 use crate::storage::cloud::{
-    CloudEndpoint, CloudTransport, DestinationSessionPublic, RcloneTransport, SyncConfig,
-    pull_vault, push_vault,
+    CloudEndpoint, CloudTransport, CloudTransportError, DestinationSessionPublic, RcloneTransport,
+    SyncConfig, pull_vault, push_vault,
 };
 use crate::storage::device_id::get_or_create_device_id;
 use crate::storage::staging::write_owner_only;
@@ -966,6 +966,9 @@ pub async fn sync_backup(
                             }
                         }
                     }
+                }
+                Err(CloudTransportError::NotFound) => {
+                    // Destination has no vault/ prefix yet (new or empty). No orphans to delete.
                 }
                 Err(e) => {
                     tracing::warn!(

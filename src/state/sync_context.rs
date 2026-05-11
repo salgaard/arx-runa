@@ -7,6 +7,7 @@ use serde::Serialize;
 use crate::invoke::{invoke_command, invoke_command_with_channel};
 use crate::ipc_channel::IpcChannel;
 use crate::ipc_types::{DestinationHealth, ReconcileResult, SyncProgressUpdate, SyncResult};
+use crate::state::vault_context::VaultActions;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,6 +48,7 @@ impl SyncState {
 #[derive(Clone, Copy)]
 pub struct SyncActions {
     set_state: WriteSignal<SyncState>,
+    vault: VaultActions,
 }
 
 impl SyncActions {
@@ -102,6 +104,7 @@ impl SyncActions {
                         s.backup_health = health;
                         s.syncing = false;
                     });
+                    self.vault.refresh();
                 }
                 Err(e) => {
                     if e.kind == "syncConflict" {
@@ -179,7 +182,9 @@ pub fn use_sync_actions() -> SyncActions {
 pub fn SyncProvider(children: Children) -> impl IntoView {
     let (state, set_state) = signal(SyncState::default());
     provide_context(state);
-    provide_context(SyncActions { set_state });
+    let vault = use_context::<VaultActions>()
+        .expect("VaultProvider must wrap SyncProvider — check provider order in src/app.rs");
+    provide_context(SyncActions { set_state, vault });
 
     // Poll get_sync_status every 5 seconds
     Effect::new(move |_| {
