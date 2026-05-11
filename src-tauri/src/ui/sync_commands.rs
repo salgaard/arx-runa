@@ -24,6 +24,7 @@ use crate::storage::cloud::{
     SyncConfig, pull_vault, push_vault,
 };
 use crate::storage::device_id::get_or_create_device_id;
+use crate::storage::metadata_store::MetadataStore;
 use crate::storage::staging::write_owner_only;
 use crate::ui::commands_common::{ProgressChannel, require_active_session};
 use crate::ui::error::IpcError;
@@ -405,17 +406,20 @@ pub async fn pull_and_reconcile(
         .active_vault_id()
         .await
         .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
-    let (vault_id, _, _) = resolve_vault_by_id(&vault_id)?;
+    let (vault_id, vault_db_path, _) = resolve_vault_by_id(&vault_id)?;
 
     let staging_dir = vault_staging_dir(&vault_id);
     let probe_path = staging_dir.join("probe-reconcile.db");
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
-        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
-    let cloud_transport = state.cloud_transport.read().await.clone();
+    // Quick liveness check — drop immediately so the write lock can be acquired later.
+    {
+        let db_guard = state.database.read().await;
+        if db_guard.as_ref().is_none() {
+            return Err(IpcError::VaultLocked("Vault is locked".into()));
+        }
+    }
 
+    let cloud_transport = state.cloud_transport.read().await.clone();
     let sqlcipher_key = extract_sqlcipher_key(&state.session_manager).await?;
     let manifest_key_bytes: [u8; 32] = state
         .session_manager
@@ -447,14 +451,76 @@ pub async fn pull_and_reconcile(
     .await
     .map_err(|e| IpcError::CloudError(format!("manifest download: {e}")))?;
 
-    // Merge probe rows into the local store; returns the cloud snapshot_counter.
-    let sqlcipher_key_bytes = sqlcipher_key.with_exposed(|b| *b);
-    let cloud_counter = db
-        .merge_from_probe_db(&probe_path, sqlcipher_key_bytes)
-        .await
-        .map_err(IpcError::from)?;
+    let _ = progress.send(SyncProgressUpdate {
+        percent: 25,
+        current_file: Some("Replacing local manifest".to_owned()),
+        files_processed: 0,
+        files_total: 1,
+    });
 
-    let _ = tokio::fs::remove_file(&probe_path).await;
+    // Replace the local vault DB with the downloaded cloud manifest so that
+    // device2 adopts the authoritative cloud state (including its root node
+    // UUID and complete file hierarchy) rather than attempting a partial merge
+    // that fails when devices have divergent root UUIDs.
+    let sqlcipher_key_bytes = sqlcipher_key.with_exposed(|b| *b);
+    {
+        let mut db_write = state.database.write().await;
+        // Drop the existing store — closes the SQLite connection and
+        // checkpoints the WAL so the underlying file can be replaced.
+        *db_write = None;
+
+        // Remove stale WAL/SHM files that a dirty shutdown may have left.
+        let _ = tokio::fs::remove_file(vault_db_path.with_extension("db-wal")).await;
+        let _ = tokio::fs::remove_file(vault_db_path.with_extension("db-shm")).await;
+
+        // Replace the vault DB atomically.  Rust's rename on Windows uses
+        // MoveFileExW(MOVEFILE_REPLACE_EXISTING), which handles an existing
+        // destination without a separate delete step.
+        //
+        // On Windows, antivirus or search-indexer processes may hold the file
+        // open after SQLite closes it.  Retry on SHARING_VIOLATION (os error
+        // 32) with exponential backoff totalling ~34 s before giving up.  On
+        // failure the existing vault.db is still intact, so the vault is
+        // re-opened to avoid leaving the database handle in a broken state.
+        let mut last_replace_err: Option<std::io::Error> = None;
+        'replace: for delay_ms in [0u64, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 15_000] {
+            if delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            }
+            match tokio::fs::rename(&probe_path, &vault_db_path).await {
+                Ok(()) => {
+                    last_replace_err = None;
+                    break 'replace;
+                }
+                Err(e) if e.raw_os_error() == Some(32) => {
+                    last_replace_err = Some(e);
+                }
+                Err(_cross_device_err) => {
+                    match tokio::fs::copy(&probe_path, &vault_db_path).await {
+                        Ok(_) => {
+                            let _ = tokio::fs::remove_file(&probe_path).await;
+                            last_replace_err = None;
+                        }
+                        Err(e) => last_replace_err = Some(e),
+                    }
+                    break 'replace;
+                }
+            }
+        }
+        if let Some(e) = last_replace_err {
+            if let Ok(recovered) =
+                SqlCipherMetadataStore::open(&vault_db_path, &sqlcipher_key_bytes).await
+            {
+                *db_write = Some(recovered);
+            }
+            return Err(IpcError::InternalError(format!("replace vault DB: {e}")));
+        }
+
+        let new_db = SqlCipherMetadataStore::open(&vault_db_path, &sqlcipher_key_bytes)
+            .await
+            .map_err(IpcError::from)?;
+        *db_write = Some(new_db);
+    }
 
     let _ = progress.send(SyncProgressUpdate {
         percent: 50,
@@ -463,13 +529,31 @@ pub async fn pull_and_reconcile(
         files_total: 0,
     });
 
-    let pending_deletions_drained = drain_pending_deletions(db, &*cloud_transport)
-        .await
-        .map_err(|e| IpcError::CloudError(format!("drain deletions: {e}")))?;
+    // Read cloud_counter from the newly opened DB (it matches the manifest backup counter).
+    let (pending_deletions_drained, cloud_counter) = {
+        let db_guard = state.database.read().await;
+        let db = db_guard
+            .as_ref()
+            .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
 
-    db.advance_snapshot_counter_to(cloud_counter)
-        .await
-        .map_err(IpcError::from)?;
+        let drained = drain_pending_deletions(db, &*cloud_transport)
+            .await
+            .map_err(|e| IpcError::CloudError(format!("drain deletions: {e}")))?;
+
+        let counter = db
+            .get_meta("snapshot_counter")
+            .await
+            .map_err(IpcError::from)?
+            .ok_or_else(|| {
+                IpcError::InternalError("snapshot_counter missing from manifest".into())
+            })?
+            .parse::<u64>()
+            .map_err(|_| {
+                IpcError::InternalError("snapshot_counter is not a valid integer".into())
+            })?;
+
+        (drained, counter)
+    };
 
     let _ = progress.send(SyncProgressUpdate {
         percent: 100,
