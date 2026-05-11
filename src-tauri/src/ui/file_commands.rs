@@ -216,6 +216,12 @@ pub async fn list_directory(
         .list_children(parent_uuid)
         .await
         .map_err(IpcError::from)?;
+    tracing::debug!(
+        path = normalised,
+        parent_uuid = %parent_uuid,
+        children_count = children.len(),
+        "list_directory result"
+    );
     let pending_ids: std::collections::HashSet<uuid::Uuid> = db
         .get_epoch_buffer_node_ids()
         .await
