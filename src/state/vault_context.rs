@@ -37,6 +37,7 @@ impl VaultState {
 /// superseded it, preventing stale IPC responses from overwriting current state.
 #[derive(Clone, Copy)]
 pub struct VaultActions {
+    read_state: ReadSignal<VaultState>,
     set_state: WriteSignal<VaultState>,
     /// Concurrency guard for `navigate()`. Incremented synchronously on each call;
     /// the in-flight future checks equality before committing state.
@@ -92,6 +93,15 @@ impl VaultActions {
         });
     }
 
+    /// Re-fetches the current directory from the backend, updating `files` in place.
+    ///
+    /// Call after any operation that may have changed the remote manifest (e.g. after
+    /// a successful `pull_and_reconcile`) so the file list reflects the merged state.
+    pub fn refresh(self) {
+        let path = self.read_state.read_untracked().current_path.clone();
+        self.navigate(path);
+    }
+
     /// Writes a user-displayable error message to `VaultState::error`.
     ///
     /// Call this on upload or operation failure instead of silently discarding
@@ -133,6 +143,7 @@ pub fn VaultProvider(children: Children) -> impl IntoView {
     let nav_generation: RwSignal<u32> = RwSignal::new(0u32);
     provide_context(state);
     provide_context(VaultActions {
+        read_state: state,
         set_state,
         nav_generation,
     });

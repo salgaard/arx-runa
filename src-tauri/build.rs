@@ -42,6 +42,10 @@ fn main() {
             "sync_backup",
             "sync_to_cloud",
             "upload_file",
+            "begin_google_drive_setup",
+            "begin_onedrive_setup",
+            "open_url",
+            "poll_oauth_setup",
         ]),
     ))
     .expect("failed to build tauri application");

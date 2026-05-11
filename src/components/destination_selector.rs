@@ -15,7 +15,7 @@ use crate::dialog::open_directory_dialog;
 use crate::invoke::invoke_command;
 use crate::ipc_types::{
     BeginOauthSetupResponse, CancelOauthSetupRequest, DestinationSessionConfig, OauthPollResponse,
-    OpenUrlRequest, PollOauthSetupRequest,
+    PollOauthSetupRequest,
 };
 
 // ─── Destination kind ────────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ enum OAuthFlowState {
     /// `begin_*_setup` IPC call is in flight.
     Starting,
     /// rclone is running; user is completing the browser flow.
-    WaitingForBrowser { setup_id: String },
+    WaitingForBrowser { setup_id: String, auth_url: String },
     /// OAuth completed; blob ready — `on_change` has been fired.
     Completed,
     /// OAuth failed.
@@ -76,6 +76,7 @@ struct DestinationFields<'a> {
     b2_path_prefix: &'a str,
     custom_rclone_config: &'a str,
     oauth_blob: &'a str,
+    oauth_path: &'a str,
 }
 
 /// Derives a `DestinationSessionConfig` for the given kind.
@@ -130,7 +131,7 @@ fn build_config_for_kind(
             bucket: String::new(),
             region: String::new(),
             endpoint: String::new(),
-            path_prefix: String::new(),
+            path_prefix: f.oauth_path.to_string(),
             rclone_config_blob: f.oauth_blob.to_string(),
             is_primary: true,
             backup_mode: None,
@@ -142,7 +143,7 @@ fn build_config_for_kind(
             bucket: String::new(),
             region: String::new(),
             endpoint: String::new(),
-            path_prefix: String::new(),
+            path_prefix: f.oauth_path.to_string(),
             rclone_config_blob: f.oauth_blob.to_string(),
             is_primary: true,
             backup_mode: None,
@@ -193,6 +194,7 @@ pub fn DestinationSelector(
     let (b2_bucket, set_b2_bucket) = signal(String::new());
     let (b2_path_prefix, set_b2_path_prefix) = signal(String::new());
     let (custom_rclone_config, set_custom_rclone_config) = signal(String::new());
+    let (oauth_path, set_oauth_path) = signal(String::from("arx-runa"));
     let (oauth_state, set_oauth_state) = signal(OAuthFlowState::Idle);
 
     let on_change_notify = on_change.clone();
@@ -214,6 +216,7 @@ pub fn DestinationSelector(
                 b2_path_prefix: &b2_path_prefix.get(),
                 custom_rclone_config: &custom_rclone_config.get(),
                 oauth_blob: "",
+                oauth_path: "",
             },
         );
         on_change_notify(config);
@@ -238,7 +241,7 @@ pub fn DestinationSelector(
     // Cancel any in-progress OAuth when the user switches destination kind.
     let handle_kind_change = move |new_kind: DestinationKind| {
         let current_state = oauth_state.get_untracked();
-        if let OAuthFlowState::WaitingForBrowser { setup_id } = current_state {
+        if let OAuthFlowState::WaitingForBrowser { setup_id, .. } = current_state {
             leptos::task::spawn_local(async move {
                 let _ = invoke_command::<_, ()>(
                     "cancel_oauth_setup_cmd",
@@ -255,6 +258,7 @@ pub fn DestinationSelector(
         let on_change_clone = on_change.clone();
         move |provider_kind: DestinationKind| {
             let on_change_inner = on_change_clone.clone();
+            let captured_oauth_path = oauth_path.get_untracked();
             set_oauth_state.set(OAuthFlowState::Starting);
             leptos::task::spawn_local(async move {
                 let command = match provider_kind {
@@ -275,17 +279,11 @@ pub fn DestinationSelector(
                     }
                 };
 
-                let _ = invoke_command::<_, ()>(
-                    "open_url",
-                    &OpenUrlRequest {
-                        url: response.auth_url.clone(),
-                    },
-                )
-                .await;
-
                 let setup_id = response.setup_id.clone();
+                let auth_url = response.auth_url.clone();
                 set_oauth_state.set(OAuthFlowState::WaitingForBrowser {
                     setup_id: setup_id.clone(),
+                    auth_url,
                 });
 
                 loop {
@@ -333,6 +331,7 @@ pub fn DestinationSelector(
                                     b2_path_prefix: "",
                                     custom_rclone_config: "",
                                     oauth_blob: &rclone_config_blob,
+                                    oauth_path: &captured_oauth_path,
                                 },
                             );
                             on_change_inner(config);
@@ -346,7 +345,7 @@ pub fn DestinationSelector(
 
     let cancel_oauth = move |_| {
         let current_state = oauth_state.get_untracked();
-        if let OAuthFlowState::WaitingForBrowser { setup_id } = current_state {
+        if let OAuthFlowState::WaitingForBrowser { setup_id, .. } = current_state {
             leptos::task::spawn_local(async move {
                 let _ = invoke_command::<_, ()>(
                     "cancel_oauth_setup_cmd",
@@ -549,6 +548,22 @@ pub fn DestinationSelector(
                                     <div class="p-3 bg-surface-overlay border border-border-default rounded-lg">
                                         <p class="text-xs text-text-secondary">{scope_note}</p>
                                     </div>
+                                    <div class="space-y-1">
+                                        <label class="text-xs text-text-secondary">"Folder name"</label>
+                                        <input
+                                            type="text"
+                                            placeholder="arx-runa"
+                                            prop:value=move || oauth_path.get()
+                                            on:input=move |ev| {
+                                                use leptos::prelude::event_target_value;
+                                                set_oauth_path.set(event_target_value(&ev));
+                                            }
+                                            class=field_class
+                                        />
+                                        <p class="text-xs text-text-secondary">
+                                            "Subfolder to create inside your cloud drive. Leave blank to use the drive root."
+                                        </p>
+                                    </div>
                                     {error_msg.map(|msg| view! {
                                         <div class="p-3 bg-surface-overlay border border-red-500 rounded-lg">
                                             <p class="text-xs text-red-400">{msg}</p>
@@ -570,7 +585,7 @@ pub fn DestinationSelector(
                                 <span class="text-xs text-text-secondary">"Starting authorization…"</span>
                             </div>
                         }.into_any(),
-                        OAuthFlowState::WaitingForBrowser { .. } => view! {
+                        OAuthFlowState::WaitingForBrowser { auth_url, .. } => view! {
                             <div class="mt-2 space-y-3">
                                 <div class="p-3 bg-surface-overlay border border-border-default rounded-lg flex items-center gap-2">
                                     <div class="w-4 h-4 border-2 border-rune border-t-transparent rounded-full animate-spin" />
@@ -578,6 +593,17 @@ pub fn DestinationSelector(
                                         "Waiting for browser authorization — complete sign-in then return here"
                                     </span>
                                 </div>
+                                <p class="text-xs text-text-secondary">
+                                    "If your browser did not open, "
+                                    <a
+                                        href=auth_url
+                                        target="_blank"
+                                        class="text-rune underline hover:no-underline"
+                                    >
+                                        "click here to authorize"
+                                    </a>
+                                    "."
+                                </p>
                                 <button
                                     type="button"
                                     on:click=cancel_oauth

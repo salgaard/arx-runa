@@ -664,6 +664,7 @@ mod tests {
             path_prefix: String::new(),
             is_primary: true,
             backup_mode: None,
+            device_id: None,
         };
         let request = CreateVaultRequest {
             tier: Tier::One,

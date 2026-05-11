@@ -4,6 +4,7 @@
 //! pipeline.
 
 pub mod cloud;
+pub mod device_id;
 pub mod error;
 pub mod metadata_store;
 pub mod pipeline;

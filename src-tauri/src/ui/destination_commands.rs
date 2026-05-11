@@ -14,6 +14,7 @@ use crate::storage::cloud::destination_session::{
 use crate::storage::cloud::{
     OAuthProvider, begin_oauth_setup, cancel_oauth_setup, complete_oauth_setup,
 };
+use crate::storage::device_id::get_or_create_device_id;
 use crate::ui::auth_commands::rclone_conf_path;
 use crate::ui::commands_common::require_active_session;
 use crate::ui::error::IpcError;
@@ -167,12 +168,16 @@ pub async fn add_destination(
     // Derive a collision-resistant rclone remote name from the UUID prefix.
     let rclone_remote_name = format!("arx_{}", &destination_id[..8]);
 
-    let rclone_config_blob = match destination_type {
+    let (rclone_config_blob, device_id) = match destination_type {
         DestinationType::LocalPath | DestinationType::ExternalDrive => {
             validate_local_path(&config.path_prefix)?;
-            format!("[{}]\ntype = local\nnounc = true\n", rclone_remote_name)
+            let id = get_or_create_device_id().await.map_err(IpcError::from)?;
+            (
+                format!("[{}]\ntype = local\nnounc = true\n", rclone_remote_name),
+                Some(id),
+            )
         }
-        DestinationType::Cloud => config.rclone_config_blob.clone(),
+        DestinationType::Cloud => (config.rclone_config_blob.clone(), None),
     };
 
     let session = DestinationSession {
@@ -185,6 +190,7 @@ pub async fn add_destination(
         path_prefix: config.path_prefix.clone(),
         is_primary: config.is_primary,
         backup_mode,
+        device_id,
     };
 
     let db_guard = state.database.read().await;

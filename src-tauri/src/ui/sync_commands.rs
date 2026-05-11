@@ -20,10 +20,13 @@ use crate::storage::cloud::sync::drain_pending_deletions;
 use crate::storage::cloud::vault_header::VaultHeader;
 use crate::storage::cloud::vault_header_io::VAULT_HEADER_BLOB_NAME;
 use crate::storage::cloud::{
-    CloudEndpoint, CloudTransport, DestinationSessionPublic, RcloneTransport, SyncConfig,
-    pull_vault, push_vault,
+    CloudEndpoint, CloudTransport, CloudTransportError, DestinationSessionPublic, RcloneTransport,
+    SyncConfig, pull_vault, push_vault,
 };
+use crate::storage::device_id::get_or_create_device_id;
+use crate::storage::metadata_store::MetadataStore;
 use crate::storage::staging::write_owner_only;
+use crate::storage::types::{ChunkRecord, EpochBlobRecord, Node, NodeId, NodeType};
 use crate::ui::commands_common::{ProgressChannel, require_active_session};
 use crate::ui::error::IpcError;
 use crate::ui::file_commands::extract_kek;
@@ -37,6 +40,308 @@ use crate::ui::vault_paths::{resolve_vault_by_id, vault_db_path, vault_staging_d
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Conflict-reconcile helpers
+// ---------------------------------------------------------------------------
+
+/// A locally pending file with standalone chunks awaiting upload.
+struct PendingStandaloneFile {
+    /// Full path from vault root, e.g. `["docs", "report.txt"]`.
+    path: Vec<String>,
+    node: Node,
+    chunks: Vec<ChunkRecord>,
+}
+
+/// All locally pending files that share a single epoch blob awaiting upload.
+struct PendingEpochBlob {
+    epoch_blob: EpochBlobRecord,
+    /// `(path, node, chunk_index, byte_offset, byte_length)` per packed file.
+    files: Vec<(Vec<String>, Node, u32, u64, u64)>,
+}
+
+/// Locally pending state captured before a manifest DB replacement.
+struct PendingLocalState {
+    standalone: Vec<PendingStandaloneFile>,
+    epoch_blobs: Vec<PendingEpochBlob>,
+}
+
+/// Walks up the node tree to build the path from the vault root.
+///
+/// Returns path components not including the invisible root node name, e.g.
+/// `["docs", "report.txt"]` for a file inside a `docs/` directory.
+async fn build_node_path(
+    db: &SqlCipherMetadataStore,
+    node: &Node,
+) -> Result<Vec<String>, IpcError> {
+    let mut path = vec![node.name.clone()];
+    let mut parent_id = node.parent_id;
+    while let Some(pid) = parent_id {
+        let parent = db.get_node(*pid.as_uuid()).await.map_err(IpcError::from)?;
+        if parent.parent_id.is_none() {
+            break; // reached root; root name is not a user-visible path component
+        }
+        path.push(parent.name.clone());
+        parent_id = parent.parent_id;
+    }
+    path.reverse();
+    Ok(path)
+}
+
+/// Resolves the `NodeId` of a directory in `db` matching `dir_path`, creating
+/// missing intermediate directories as needed.
+async fn resolve_or_create_parent(
+    db: &SqlCipherMetadataStore,
+    dir_path: &[String],
+) -> Result<NodeId, IpcError> {
+    let root_id_str = db
+        .get_meta("root_id")
+        .await
+        .map_err(IpcError::from)?
+        .ok_or_else(|| IpcError::InternalError("root_id missing from manifest".into()))?;
+    let root_uuid = uuid::Uuid::parse_str(&root_id_str)
+        .map_err(|e| IpcError::InternalError(format!("invalid root_id: {e}")))?;
+    let mut current_id = NodeId::new(root_uuid);
+
+    for component in dir_path {
+        let children = db
+            .list_children(*current_id.as_uuid())
+            .await
+            .map_err(IpcError::from)?;
+        match children.into_iter().find(|n| &n.name == component) {
+            Some(child) if child.node_type == NodeType::Directory => {
+                current_id = child.node_id;
+            }
+            Some(_) => {
+                return Err(IpcError::InternalError(format!(
+                    "path conflict: '{component}' exists as a file in the cloud manifest"
+                )));
+            }
+            None => {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                let new_dir = Node {
+                    node_id: NodeId::new(uuid::Uuid::new_v4()),
+                    parent_id: Some(current_id),
+                    node_type: NodeType::Directory,
+                    name: component.clone(),
+                    created_at: now,
+                    modified_at: now,
+                    size_bytes: 0,
+                    file_key_wrapped: None,
+                };
+                db.insert_node(&new_dir).await.map_err(IpcError::from)?;
+                current_id = new_dir.node_id;
+            }
+        }
+    }
+    Ok(current_id)
+}
+
+/// Appends `" (conflicted copy)"` before the extension, or at the end when no
+/// extension is present.
+fn conflict_name(original: &str) -> String {
+    match original.rfind('.') {
+        Some(dot) => format!("{} (conflicted copy){}", &original[..dot], &original[dot..]),
+        None => format!("{original} (conflicted copy)"),
+    }
+}
+
+/// Scans `staging_dir/pending/` and returns the locally pending state that
+/// must be preserved across a manifest DB replacement.
+async fn collect_pending_local_state(
+    db: &SqlCipherMetadataStore,
+    staging_dir: &std::path::Path,
+) -> Result<PendingLocalState, IpcError> {
+    use std::collections::HashMap;
+    use uuid::Uuid;
+
+    let pending_dir = staging_dir.join("pending");
+    let mut blob_names: Vec<String> = Vec::new();
+
+    match tokio::fs::read_dir(&pending_dir).await {
+        Ok(mut entries) => {
+            while let Some(entry) = entries
+                .next_entry()
+                .await
+                .map_err(|e| IpcError::InternalError(format!("read pending dir: {e}")))?
+            {
+                let file_name = entry.file_name();
+                let file_name_str = file_name.to_string_lossy();
+                if let Some(stem) = file_name_str.strip_suffix(".blob")
+                    && Uuid::parse_str(stem).is_ok()
+                {
+                    blob_names.push(stem.to_owned());
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PendingLocalState {
+                standalone: Vec::new(),
+                epoch_blobs: Vec::new(),
+            });
+        }
+        Err(e) => {
+            return Err(IpcError::InternalError(format!("open pending dir: {e}")));
+        }
+    }
+
+    let mut standalone_by_node: HashMap<NodeId, (Vec<String>, Node, Vec<ChunkRecord>)> =
+        HashMap::new();
+    type EpochFiles = Vec<(Vec<String>, Node, u32, u64, u64)>;
+    let mut epoch_map: HashMap<Uuid, (EpochBlobRecord, EpochFiles)> = HashMap::new();
+
+    for blob_name in blob_names {
+        if let Some(chunk) = db
+            .get_chunk_by_blob_name(&blob_name)
+            .await
+            .map_err(IpcError::from)?
+        {
+            let node_id = chunk.node_id;
+            if standalone_by_node.contains_key(&node_id) {
+                continue;
+            }
+            let node = db
+                .get_node(*node_id.as_uuid())
+                .await
+                .map_err(IpcError::from)?;
+            let path = build_node_path(db, &node).await?;
+            let chunks = db
+                .get_chunks(*node_id.as_uuid())
+                .await
+                .map_err(IpcError::from)?;
+            standalone_by_node.insert(node_id, (path, node, chunks));
+        } else if let Some(epoch_blob) = db
+            .get_epoch_blob_by_blob_name(&blob_name)
+            .await
+            .map_err(IpcError::from)?
+        {
+            let epoch_blob_id = epoch_blob.epoch_blob_id;
+            if epoch_map.contains_key(&epoch_blob_id) {
+                continue;
+            }
+            let packed_chunks = db
+                .get_chunks_for_epoch_blob(epoch_blob_id)
+                .await
+                .map_err(IpcError::from)?;
+            let mut files = Vec::new();
+            for chunk in packed_chunks {
+                let node = db
+                    .get_node(*chunk.node_id.as_uuid())
+                    .await
+                    .map_err(IpcError::from)?;
+                let path = build_node_path(db, &node).await?;
+                let byte_offset = chunk.byte_offset.unwrap_or(0);
+                let byte_length = chunk.byte_length.unwrap_or(0);
+                files.push((path, node, chunk.chunk_index, byte_offset, byte_length));
+            }
+            epoch_map.insert(epoch_blob_id, (epoch_blob, files));
+        }
+        // Orphaned blob with no DB entry — skip silently.
+    }
+
+    let standalone = standalone_by_node
+        .into_values()
+        .map(|(path, node, chunks)| PendingStandaloneFile { path, node, chunks })
+        .collect();
+    let epoch_blobs = epoch_map
+        .into_values()
+        .map(|(epoch_blob, files)| PendingEpochBlob { epoch_blob, files })
+        .collect();
+
+    Ok(PendingLocalState {
+        standalone,
+        epoch_blobs,
+    })
+}
+
+/// Re-inserts `pending` into `db` (which now holds the cloud manifest) so the
+/// subsequent sync picks them up and uploads the still-present staging blobs.
+///
+/// Files whose name collides with an existing cloud entry are renamed with a
+/// `" (conflicted copy)"` suffix.
+async fn reinsert_pending_state(
+    db: &SqlCipherMetadataStore,
+    pending: &PendingLocalState,
+) -> Result<(), IpcError> {
+    for file in &pending.standalone {
+        let dir_path = if file.path.len() > 1 {
+            &file.path[..file.path.len() - 1]
+        } else {
+            &[]
+        };
+        let parent_id = resolve_or_create_parent(db, dir_path).await?;
+        let filename = file.path.last().cloned().unwrap_or_default();
+
+        let final_name = {
+            let children = db
+                .list_children(*parent_id.as_uuid())
+                .await
+                .map_err(IpcError::from)?;
+            if children.iter().any(|n| n.name == filename) {
+                conflict_name(&filename)
+            } else {
+                filename
+            }
+        };
+
+        let new_node = Node {
+            parent_id: Some(parent_id),
+            name: final_name,
+            ..file.node.clone()
+        };
+        db.insert_file_with_chunks(&new_node, &file.chunks)
+            .await
+            .map_err(IpcError::from)?;
+    }
+
+    for epoch_entry in &pending.epoch_blobs {
+        let mut extents: Vec<(uuid::Uuid, u32, u64, u64)> = Vec::new();
+
+        for (path, node, chunk_index, byte_offset, byte_length) in &epoch_entry.files {
+            let dir_path = if path.len() > 1 {
+                &path[..path.len() - 1]
+            } else {
+                &[]
+            };
+            let parent_id = resolve_or_create_parent(db, dir_path).await?;
+            let filename = path.last().cloned().unwrap_or_default();
+
+            let final_name = {
+                let children = db
+                    .list_children(*parent_id.as_uuid())
+                    .await
+                    .map_err(IpcError::from)?;
+                if children.iter().any(|n| n.name == filename) {
+                    conflict_name(&filename)
+                } else {
+                    filename
+                }
+            };
+
+            let new_node = Node {
+                parent_id: Some(parent_id),
+                name: final_name,
+                ..node.clone()
+            };
+            db.insert_node(&new_node).await.map_err(IpcError::from)?;
+            extents.push((
+                *node.node_id.as_uuid(),
+                *chunk_index,
+                *byte_offset,
+                *byte_length,
+            ));
+        }
+
+        db.reinsert_epoch_blob(&epoch_entry.epoch_blob, &extents)
+            .await
+            .map_err(IpcError::from)?;
+    }
+
+    Ok(())
+}
 
 /// Returns the bundled rclone binary path, falling back to `rclone` on PATH.
 pub(crate) fn rclone_binary_path(handle: &tauri::AppHandle) -> PathBuf {
@@ -404,17 +709,30 @@ pub async fn pull_and_reconcile(
         .active_vault_id()
         .await
         .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
-    let (vault_id, _, _) = resolve_vault_by_id(&vault_id)?;
+    let (vault_id, vault_db_path, _) = resolve_vault_by_id(&vault_id)?;
 
     let staging_dir = vault_staging_dir(&vault_id);
     let probe_path = staging_dir.join("probe-reconcile.db");
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
-        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
-    let cloud_transport = state.cloud_transport.read().await.clone();
+    // Quick liveness check — drop immediately so the write lock can be acquired later.
+    {
+        let db_guard = state.database.read().await;
+        if db_guard.as_ref().is_none() {
+            return Err(IpcError::VaultLocked("Vault is locked".into()));
+        }
+    }
 
+    // Capture locally pending state before the DB is replaced so re-insertion
+    // can restore it into the cloud manifest afterwards.
+    let pending_local_state = {
+        let db_guard = state.database.read().await;
+        let db = db_guard
+            .as_ref()
+            .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+        collect_pending_local_state(db, &staging_dir).await?
+    };
+
+    let cloud_transport = state.cloud_transport.read().await.clone();
     let sqlcipher_key = extract_sqlcipher_key(&state.session_manager).await?;
     let manifest_key_bytes: [u8; 32] = state
         .session_manager
@@ -446,14 +764,86 @@ pub async fn pull_and_reconcile(
     .await
     .map_err(|e| IpcError::CloudError(format!("manifest download: {e}")))?;
 
-    // Merge probe rows into the local store; returns the cloud snapshot_counter.
-    let sqlcipher_key_bytes = sqlcipher_key.with_exposed(|b| *b);
-    let cloud_counter = db
-        .merge_from_probe_db(&probe_path, sqlcipher_key_bytes)
-        .await
-        .map_err(IpcError::from)?;
+    let _ = progress.send(SyncProgressUpdate {
+        percent: 25,
+        current_file: Some("Replacing local manifest".to_owned()),
+        files_processed: 0,
+        files_total: 1,
+    });
 
-    let _ = tokio::fs::remove_file(&probe_path).await;
+    // Replace the local vault DB with the downloaded cloud manifest so that
+    // device2 adopts the authoritative cloud state (including its root node
+    // UUID and complete file hierarchy) rather than attempting a partial merge
+    // that fails when devices have divergent root UUIDs.
+    let sqlcipher_key_bytes = sqlcipher_key.with_exposed(|b| *b);
+    {
+        let mut db_write = state.database.write().await;
+        // Drop the existing store — closes the SQLite connection and
+        // checkpoints the WAL so the underlying file can be replaced.
+        *db_write = None;
+
+        // Remove stale WAL/SHM files that a dirty shutdown may have left.
+        let _ = tokio::fs::remove_file(vault_db_path.with_extension("db-wal")).await;
+        let _ = tokio::fs::remove_file(vault_db_path.with_extension("db-shm")).await;
+
+        // Replace the vault DB atomically.  Rust's rename on Windows uses
+        // MoveFileExW(MOVEFILE_REPLACE_EXISTING), which handles an existing
+        // destination without a separate delete step.
+        //
+        // On Windows, antivirus or search-indexer processes may hold the file
+        // open after SQLite closes it.  Retry on SHARING_VIOLATION (os error
+        // 32) with exponential backoff totalling ~34 s before giving up.  On
+        // failure the existing vault.db is still intact, so the vault is
+        // re-opened to avoid leaving the database handle in a broken state.
+        let mut last_replace_err: Option<std::io::Error> = None;
+        'replace: for delay_ms in [0u64, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 15_000] {
+            if delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            }
+            match tokio::fs::rename(&probe_path, &vault_db_path).await {
+                Ok(()) => {
+                    last_replace_err = None;
+                    break 'replace;
+                }
+                Err(e) if e.raw_os_error() == Some(32) => {
+                    last_replace_err = Some(e);
+                }
+                Err(_cross_device_err) => {
+                    match tokio::fs::copy(&probe_path, &vault_db_path).await {
+                        Ok(_) => {
+                            let _ = tokio::fs::remove_file(&probe_path).await;
+                            last_replace_err = None;
+                        }
+                        Err(e) => last_replace_err = Some(e),
+                    }
+                    break 'replace;
+                }
+            }
+        }
+        if let Some(e) = last_replace_err {
+            if let Ok(recovered) =
+                SqlCipherMetadataStore::open(&vault_db_path, &sqlcipher_key_bytes).await
+            {
+                *db_write = Some(recovered);
+            }
+            return Err(IpcError::InternalError(format!("replace vault DB: {e}")));
+        }
+
+        let new_db = SqlCipherMetadataStore::open(&vault_db_path, &sqlcipher_key_bytes)
+            .await
+            .map_err(IpcError::from)?;
+        *db_write = Some(new_db);
+    }
+
+    // Re-register pending local files into the new (cloud) manifest DB so the
+    // subsequent sync picks them up and uploads the still-present staging blobs.
+    {
+        let db_guard = state.database.read().await;
+        let db = db_guard
+            .as_ref()
+            .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+        reinsert_pending_state(db, &pending_local_state).await?;
+    }
 
     let _ = progress.send(SyncProgressUpdate {
         percent: 50,
@@ -462,13 +852,31 @@ pub async fn pull_and_reconcile(
         files_total: 0,
     });
 
-    let pending_deletions_drained = drain_pending_deletions(db, &*cloud_transport)
-        .await
-        .map_err(|e| IpcError::CloudError(format!("drain deletions: {e}")))?;
+    // Read cloud_counter from the newly opened DB (it matches the manifest backup counter).
+    let (pending_deletions_drained, cloud_counter) = {
+        let db_guard = state.database.read().await;
+        let db = db_guard
+            .as_ref()
+            .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
 
-    db.advance_snapshot_counter_to(cloud_counter)
-        .await
-        .map_err(IpcError::from)?;
+        let drained = drain_pending_deletions(db, &*cloud_transport)
+            .await
+            .map_err(|e| IpcError::CloudError(format!("drain deletions: {e}")))?;
+
+        let counter = db
+            .get_meta("snapshot_counter")
+            .await
+            .map_err(IpcError::from)?
+            .ok_or_else(|| {
+                IpcError::InternalError("snapshot_counter missing from manifest".into())
+            })?
+            .parse::<u64>()
+            .map_err(|_| {
+                IpcError::InternalError("snapshot_counter is not a valid integer".into())
+            })?;
+
+        (drained, counter)
+    };
 
     let _ = progress.send(SyncProgressUpdate {
         percent: 100,
@@ -754,13 +1162,32 @@ pub async fn sync_backup(
     let all_sessions = list_destination_sessions(db)
         .await
         .map_err(IpcError::from)?;
-    let backup_dests: Vec<_> = all_sessions
+    let current_device_id = get_or_create_device_id().await.map_err(IpcError::from)?;
+
+    let backup_dests: Vec<DestinationSession> = all_sessions
         .into_iter()
         .filter(|d| !d.is_primary)
         .filter(|d| {
             destination_id
                 .as_ref()
                 .is_none_or(|id| &d.destination_id == id)
+        })
+        .filter(|d| {
+            if matches!(
+                d.destination_type,
+                DestinationType::LocalPath | DestinationType::ExternalDrive
+            ) {
+                let owned = d.device_id.as_deref() == Some(current_device_id.as_str());
+                if !owned {
+                    tracing::debug!(
+                        destination_id = %d.destination_id,
+                        "skipping local/external destination — belongs to a different device"
+                    );
+                }
+                owned
+            } else {
+                true
+            }
         })
         .collect();
 
@@ -946,6 +1373,9 @@ pub async fn sync_backup(
                             }
                         }
                     }
+                }
+                Err(CloudTransportError::NotFound) => {
+                    // Destination has no vault/ prefix yet (new or empty). No orphans to delete.
                 }
                 Err(e) => {
                     tracing::warn!(

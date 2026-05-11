@@ -143,10 +143,10 @@ impl From<crate::sharing::SharingError> for IpcError {
 impl From<crate::storage::SyncError> for IpcError {
     /// Maps sync errors to sanitised IPC error variants without leaking internal details.
     fn from(error: crate::storage::SyncError) -> Self {
-        tracing::error!("sync error: {:?}", error);
         use crate::storage::SyncError as Sy;
         match error {
-            Sy::Conflict(_) => {
+            Sy::Conflict(ref c) => {
+                tracing::info!("sync conflict: {:?}", c);
                 IpcError::SyncConflict("Another device has synced since your last pull".into())
             }
             Sy::Transport { .. }
@@ -154,12 +154,19 @@ impl From<crate::storage::SyncError> for IpcError {
             | Sy::PushUploadFailed { .. }
             | Sy::PushManifestBackupFailed { .. }
             | Sy::VaultHeaderUploadFailed { .. }
-            | Sy::PullIncomplete { .. } => IpcError::CloudError("Cloud operation failed".into()),
+            | Sy::PullIncomplete { .. } => {
+                tracing::error!("sync error: {:?}", error);
+                IpcError::CloudError("Cloud operation failed".into())
+            }
             Sy::Storage { source } => IpcError::from(source),
             Sy::Io(_) | Sy::ManifestBackup { .. } | Sy::RollbackFailed { .. } => {
+                tracing::error!("sync error: {:?}", error);
                 IpcError::InternalError("An error occurred".into())
             }
-            _ => IpcError::InternalError("An error occurred".into()),
+            _ => {
+                tracing::error!("sync error: {:?}", error);
+                IpcError::InternalError("An error occurred".into())
+            }
         }
     }
 }

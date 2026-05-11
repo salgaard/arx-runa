@@ -112,6 +112,7 @@ fn destination_from_config(config: &DestinationSessionConfig) -> DestinationSess
         path_prefix: config.path_prefix.clone(),
         is_primary: config.is_primary,
         backup_mode,
+        device_id: None,
     }
 }
 
