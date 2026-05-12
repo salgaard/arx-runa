@@ -61,6 +61,8 @@ pub enum CloudTransportError {
         exit_code: i32,
         stderr_sanitised: String,
     },
+    #[error("sharing is not supported by this cloud provider: {0}")]
+    SharingNotSupported(String),
     #[error("cloud transport error: {0}")]
     Other(String),
 }

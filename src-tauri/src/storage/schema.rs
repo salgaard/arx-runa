@@ -157,6 +157,7 @@ pub(crate) fn apply_epoch_v2_migration(conn: &Connection) -> Result<(), StorageE
         || version == "5"
         || version == "6"
         || version == "7"
+        || version == "8"
     {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
@@ -242,7 +243,13 @@ pub(crate) fn apply_sharing_v3_migration(conn: &Connection) -> Result<(), Storag
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "3" || version == "4" || version == "5" || version == "6" || version == "7" {
+    if version == "3"
+        || version == "4"
+        || version == "5"
+        || version == "6"
+        || version == "7"
+        || version == "8"
+    {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -283,7 +290,7 @@ pub(crate) fn apply_sharing_v4_migration(conn: &Connection) -> Result<(), Storag
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "4" || version == "5" || version == "6" || version == "7" {
+    if version == "4" || version == "5" || version == "6" || version == "7" || version == "8" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -327,7 +334,7 @@ pub(crate) fn apply_backup_v5_migration(conn: &Connection) -> Result<(), Storage
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "5" || version == "6" || version == "7" {
+    if version == "5" || version == "6" || version == "7" || version == "8" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -377,7 +384,7 @@ pub(crate) fn apply_pending_backup_v6_migration(conn: &Connection) -> Result<(),
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "6" || version == "7" {
+    if version == "6" || version == "7" || version == "8" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -425,7 +432,7 @@ pub(crate) fn apply_device_id_v7_migration(conn: &Connection) -> Result<(), Stor
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "7" {
+    if version == "7" || version == "8" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -434,6 +441,59 @@ pub(crate) fn apply_device_id_v7_migration(conn: &Connection) -> Result<(), Stor
     conn.execute_batch(
         "ALTER TABLE destination_sessions ADD COLUMN device_id TEXT;
          UPDATE manifest_meta SET value = '7' WHERE key = 'schema_version';",
+    )
+    .map_err(StorageError::from_rusqlite)?;
+
+    conn.execute_batch("COMMIT")
+        .map_err(StorageError::from_rusqlite)?;
+
+    Ok(())
+}
+
+/// Adds the `sharing_config` table and `download_folder_id` column (schema v8).
+///
+/// Idempotent: if `schema_version` is already `'8'`, commits immediately and returns.
+/// Must be called after `apply_device_id_v7_migration` on any vault opened from disk.
+///
+/// Migration steps (single `BEGIN IMMEDIATE` transaction):
+/// 1. Create `sharing_config` table for provider-specific sharing setup (e.g. GDrive SA JSON).
+/// 2. Add nullable `download_folder_id TEXT` column to `shares` (Drive folder ID for revocation).
+/// 3. Bump `schema_version` to `'8'`.
+pub(crate) fn apply_gdrive_sharing_v8_migration(conn: &Connection) -> Result<(), StorageError> {
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(StorageError::from_rusqlite)?;
+
+    let version = conn
+        .query_row(
+            "SELECT value FROM manifest_meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(StorageError::from_rusqlite)?
+        .ok_or_else(|| {
+            StorageError::Database("missing manifest_meta key: schema_version".to_owned())
+        })?;
+
+    if version == "8" {
+        conn.execute_batch("COMMIT")
+            .map_err(StorageError::from_rusqlite)?;
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS sharing_config (
+            config_id      TEXT PRIMARY KEY,
+            destination_id TEXT,
+            provider       TEXT NOT NULL CHECK (provider IN ('gdrive')),
+            config_json    TEXT NOT NULL CHECK (json_valid(config_json)),
+            created_at     INTEGER NOT NULL,
+            updated_at     INTEGER NOT NULL
+        );
+        ALTER TABLE shares ADD COLUMN download_folder_id TEXT;
+        UPDATE manifest_meta SET value = '8' WHERE key = 'schema_version';
+        ",
     )
     .map_err(StorageError::from_rusqlite)?;
 
@@ -535,9 +595,10 @@ pub(crate) fn validate_manifest_meta(conn: &Connection) -> Result<(), StorageErr
         && schema_version != "5"
         && schema_version != "6"
         && schema_version != "7"
+        && schema_version != "8"
     {
         return Err(StorageError::Database(
-            "invalid schema_version: expected 1, 2, 3, 4, 5, 6, or 7".to_owned(),
+            "invalid schema_version: expected 1, 2, 3, 4, 5, 6, 7, or 8".to_owned(),
         ));
     }
 
@@ -678,7 +739,7 @@ mod tests {
         apply_canonical_schema(&conn).expect("schema should apply");
         seed_manifest_meta(&conn, Uuid::new_v4(), 4_194_304, false).expect("seed should succeed");
         conn.execute(
-            "UPDATE manifest_meta SET value = '8' WHERE key = 'schema_version'",
+            "UPDATE manifest_meta SET value = '99' WHERE key = 'schema_version'",
             [],
         )
         .expect("test setup should update schema_version");

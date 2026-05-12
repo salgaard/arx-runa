@@ -263,3 +263,11 @@ pub struct OpenUrlRequest {
     /// URL to open in the default system browser.
     pub url: String,
 }
+
+/// Argument payload for the `set_gdrive_service_account` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetGdriveServiceAccountRequest {
+    /// Absolute path to the GCP service account JSON key file.
+    pub sa_json_path: String,
+}

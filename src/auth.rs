@@ -542,7 +542,7 @@ pub fn VaultCreationPage(
                                 </span>
                             </div>
                             <div class="flex justify-between">
-                                <span class="text-text-secondary">"Version history:"</span>
+                                <span class="text-text-secondary">"Small-file packing:"</span>
                                 <span class="text-bone font-medium">
                                     {move || if epoch_buffer_enabled.get() { "Enabled" } else { "Disabled" }}
                                 </span>

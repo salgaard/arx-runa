@@ -78,7 +78,7 @@ pub fn run() {
             ui::destination_commands::begin_onedrive_setup,
             ui::destination_commands::poll_oauth_setup,
             ui::destination_commands::cancel_oauth_setup_cmd,
-            // Sharing (9)
+            // Sharing (11)
             ui::sharing_commands::export_public_key,
             ui::sharing_commands::get_own_public_key_b64,
             ui::sharing_commands::add_contact,
@@ -90,6 +90,8 @@ pub fn run() {
             ui::sharing_commands::revoke_share,
             ui::sharing_commands::list_shares,
             ui::sharing_commands::list_received_shares,
+            ui::sharing_commands::set_gdrive_service_account,
+            ui::sharing_commands::has_gdrive_service_account,
             // Shell (3)
             ui::shell_commands::reveal_in_explorer,
             ui::shell_commands::compose_email_with_attachment,

@@ -292,7 +292,7 @@ pub fn FileItem(
                     >
                         <span
                             class="ml-1 text-xs text-amber-400"
-                            title="File is queued for encryption. Flush the epoch buffer or sync to finalise."
+                            title="File is queued for packing. Press Sync to upload."
                         >
                             "Encrypting…"
                         </span>
@@ -328,7 +328,7 @@ pub fn FileItem(
                             }
                             title=move || {
                                 if is_pending_flush {
-                                    "File is queued for encryption. Flush the epoch buffer or sync to finalise."
+                                    "File is queued for packing. Press Sync to upload."
                                 } else {
                                     "Download"
                                 }

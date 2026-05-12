@@ -128,6 +128,14 @@ fn validate_local_path(path_prefix: &str) -> Result<(), IpcError> {
     Ok(())
 }
 
+/// Extracts the rclone backend type (e.g. `"drive"`, `"b2"`) from a config blob.
+fn rclone_type_from_blob(blob: &str) -> Option<String> {
+    blob.lines()
+        .filter_map(|l| l.split_once('='))
+        .find(|(k, _)| k.trim() == "type")
+        .map(|(_, v)| v.trim().to_owned())
+}
+
 /// Add a new destination session (primary or backup) to the vault.
 ///
 /// Credentials are encrypted and stored in SQLCipher — `rclone_config_blob` is
@@ -213,11 +221,13 @@ pub async fn add_destination(
         }
     }
 
+    let rclone_type = rclone_type_from_blob(&config.rclone_config_blob);
     Ok(DestinationEntry {
         destination_id: session.destination_id,
         label: session.label,
         destination_type: config.destination_type,
         provider: config.provider,
+        rclone_type,
         bucket: session.bucket,
         is_primary: session.is_primary,
         backup_mode: config.backup_mode,
@@ -258,11 +268,13 @@ pub async fn list_destinations(
                 BackupSyncMode::Accumulating => "accumulating".to_owned(),
             });
 
+            let rclone_type = rclone_type_from_blob(&session.rclone_config_blob);
             DestinationEntry {
                 destination_id: session.destination_id,
                 label: session.label,
                 destination_type: destination_type_str,
                 provider: session.rclone_remote_name,
+                rclone_type,
                 bucket: session.bucket,
                 is_primary: session.is_primary,
                 backup_mode: backup_mode_str,

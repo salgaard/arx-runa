@@ -10,7 +10,6 @@ fn resolve_rclone_binary() -> PathBuf {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_rclone_transport_round_trip_with_local_remote() {
     if std::env::var("ARX_RCLONE_INTEGRATION").ok().as_deref() != Some("1") {
         return;

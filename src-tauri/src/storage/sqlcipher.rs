@@ -18,9 +18,9 @@ use crate::storage::error::StorageError;
 use crate::storage::metadata_store::MetadataStore;
 use crate::storage::schema::{
     apply_backup_v5_migration, apply_canonical_schema, apply_device_id_v7_migration,
-    apply_epoch_v2_migration, apply_pending_backup_v6_migration, apply_sharing_v3_migration,
-    apply_sharing_v4_migration, seed_manifest_meta, validate_manifest_meta,
-    validate_schema_integrity, verify_sqlcipher_key,
+    apply_epoch_v2_migration, apply_gdrive_sharing_v8_migration, apply_pending_backup_v6_migration,
+    apply_sharing_v3_migration, apply_sharing_v4_migration, seed_manifest_meta,
+    validate_manifest_meta, validate_schema_integrity, verify_sqlcipher_key,
 };
 use crate::storage::types::{
     ChunkRecord, EpochBlobRecord, EpochBufferEntry, Node, NodeId, NodeType, SyncChunkRecord,
@@ -77,6 +77,7 @@ impl SqlCipherMetadataStore {
             apply_backup_v5_migration(&conn)?;
             apply_pending_backup_v6_migration(&conn)?;
             apply_device_id_v7_migration(&conn)?;
+            apply_gdrive_sharing_v8_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             Ok(conn)
@@ -109,6 +110,7 @@ impl SqlCipherMetadataStore {
             apply_backup_v5_migration(&conn)?;
             apply_pending_backup_v6_migration(&conn)?;
             apply_device_id_v7_migration(&conn)?;
+            apply_gdrive_sharing_v8_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             validate_create_immutable_meta_matches(
@@ -880,6 +882,46 @@ impl SqlCipherMetadataStore {
             conn.execute_batch("DROP TABLE manifest_meta;")
                 .map_err(StorageError::from_rusqlite)?;
             Ok(())
+        })
+        .await
+    }
+
+    /// Upserts a Google Drive Service Account JSON into `sharing_config`.
+    ///
+    /// Replaces any existing `gdrive` row in-place.  `config_json` is never
+    /// logged; callers must zeroize it after this call returns.
+    #[allow(dead_code)] // TODO(phase-6): called from set_gdrive_service_account command
+    pub(crate) async fn upsert_gdrive_sharing_config(
+        &self,
+        destination_id: Option<String>,
+        config_json: String,
+        now_unix_seconds: i64,
+    ) -> Result<(), StorageError> {
+        let config_id = Uuid::new_v4().hyphenated().to_string();
+        self.with_connection_blocking(move |conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO sharing_config \
+                 (config_id, destination_id, provider, config_json, created_at, updated_at) \
+                 VALUES (?1, ?2, 'gdrive', ?3, ?4, ?4)",
+                params![config_id, destination_id, config_json, now_unix_seconds],
+            )
+            .map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Returns the stored Google Drive Service Account JSON, or `None` if not configured.
+    #[allow(dead_code)] // TODO(phase-6): called from has_gdrive_service_account and sync_commands
+    pub(crate) async fn get_gdrive_sharing_config(&self) -> Result<Option<String>, StorageError> {
+        self.with_connection_blocking(move |conn| {
+            conn.query_row(
+                "SELECT config_json FROM sharing_config WHERE provider = 'gdrive' LIMIT 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(StorageError::from_rusqlite)
         })
         .await
     }
@@ -1904,6 +1946,16 @@ impl MetadataStore for SqlCipherMetadataStore {
                 ids.push(node_id);
             }
             Ok(ids)
+        })
+        .await
+    }
+
+    async fn get_epoch_buffer_count(&self) -> Result<u32, StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM epoch_buffer", [], |row| row.get(0))
+                .map_err(StorageError::from_rusqlite)?;
+            Ok(count as u32)
         })
         .await
     }

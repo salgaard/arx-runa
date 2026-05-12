@@ -40,8 +40,8 @@ pub use requests::{
     DownloadFileRequest, DownloadReceivedShareRequest, ExportPublicKeyRequest,
     GetFileContentRequest, ImportShareRequest, ListDirectoryRequest, OpenUrlRequest,
     PollOauthSetupRequest, RecoverVaultFromCloudRequest, RevealInExplorerRequest,
-    RevokeShareRequest, RotateKeyFileRequest, SetPrimaryDestinationRequest, ShareFileRequest,
-    UploadFileRequest,
+    RevokeShareRequest, RotateKeyFileRequest, SetGdriveServiceAccountRequest,
+    SetPrimaryDestinationRequest, ShareFileRequest, UploadFileRequest,
 };
 pub use session_status::SessionStatus;
 pub use share_entry::ShareEntry;

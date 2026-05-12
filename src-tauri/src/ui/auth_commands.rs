@@ -231,6 +231,15 @@ async fn try_build_and_swap_rclone_transport(state: &AppState, db: &SqlCipherMet
         SyncConfig::default(),
     ) {
         Ok(transport) => {
+            // Load the Google Drive SA JSON (if configured) so generate_share_credentials
+            // can grant SA reader permissions without a separate DB lookup at share time.
+            let sa_config = db
+                .get_gdrive_sharing_config()
+                .await
+                .ok()
+                .flatten()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+            let transport = transport.with_sharing_config(sa_config);
             state.swap_cloud_transport(Arc::new(transport)).await;
         }
         Err(error) => {

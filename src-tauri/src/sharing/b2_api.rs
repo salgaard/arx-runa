@@ -209,38 +209,57 @@ pub(crate) async fn b2_delete_key(
     Ok(())
 }
 
-/// Parses B2 master API key credentials from a rclone.conf INI string.
+/// Parses B2 master API key credentials from a rclone.conf INI string,
+/// scoped to the stanza with the given remote name.
 ///
-/// Returns `Some((account, key))` for the first stanza with `type = b2`.
-/// The bucket is intentionally excluded — it is derived from the rclone remote root path,
-/// not the config stanza, because standard rclone B2 remotes do not embed a `bucket` line.
-/// Returns `None` if no B2 stanza with both `account` and `key` is found.
-pub(crate) fn parse_b2_api_keys_from_conf(conf: &str) -> Option<(String, String)> {
+/// Returns `Some((account, key))` only if the named stanza exists and has
+/// `type = b2` with both `account` and `key` present.  Returns `None` for
+/// non-B2 remotes or when the named stanza is absent, making it safe to call
+/// on a multi-remote config that also contains Google Drive or OneDrive stanzas.
+pub(crate) fn parse_b2_api_keys_for_remote(
+    conf: &str,
+    remote_name: &str,
+) -> Option<(String, String)> {
+    let mut in_target = false;
+    let mut is_b2 = false;
     let mut account: Option<String> = None;
     let mut key: Option<String> = None;
-    let mut in_b2_section = false;
 
     for line in conf.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            in_b2_section = false;
+            if in_target
+                && is_b2
+                && let (Some(a), Some(k)) = (account, key)
+            {
+                return Some((a, k));
+            }
+            let name = &trimmed[1..trimmed.len() - 1];
+            in_target = name == remote_name;
+            is_b2 = false;
             account = None;
             key = None;
             continue;
         }
-        if let Some((k, v)) = trimmed.split_once('=') {
+        if in_target && let Some((k, v)) = trimmed.split_once('=') {
             let k = k.trim();
             let v = v.trim();
             match k {
-                "type" if v == "b2" => in_b2_section = true,
-                "account" if in_b2_section => account = Some(v.to_owned()),
-                "key" if in_b2_section => key = Some(v.to_owned()),
+                "type" if v == "b2" => is_b2 = true,
+                "account" => account = Some(v.to_owned()),
+                "key" => key = Some(v.to_owned()),
                 _ => {}
             }
+            if is_b2 && let (Some(a), Some(k)) = (&account, &key) {
+                return Some((a.clone(), k.clone()));
+            }
         }
-        if in_b2_section && let (Some(a), Some(k)) = (&account, &key) {
-            return Some((a.clone(), k.clone()));
-        }
+    }
+    if in_target
+        && is_b2
+        && let (Some(a), Some(k)) = (account, key)
+    {
+        return Some((a, k));
     }
     None
 }
@@ -286,31 +305,62 @@ pub(crate) fn parse_b2_credentials_from_conf(conf: &str) -> Option<(String, Stri
 mod tests {
     use super::*;
 
-    /// Verifies that a B2 section with only account and key is parsed by `parse_b2_api_keys_from_conf`.
+    /// Verifies that a B2 section with only account and key is parsed by `parse_b2_api_keys_for_remote`.
     #[test]
-    fn test_parse_b2_api_keys_from_conf_parses_account_and_key_without_bucket() {
+    fn test_parse_b2_api_keys_for_remote_parses_account_and_key_without_bucket() {
         let conf = "[remote]\ntype = b2\naccount = ACC123\nkey = SECRETKEY\n";
         assert_eq!(
-            parse_b2_api_keys_from_conf(conf),
+            parse_b2_api_keys_for_remote(conf, "remote"),
             Some(("ACC123".to_owned(), "SECRETKEY".to_owned()))
         );
     }
 
-    /// Verifies that `parse_b2_api_keys_from_conf` also works when bucket is present.
+    /// Verifies that `parse_b2_api_keys_for_remote` also works when bucket is present.
     #[test]
-    fn test_parse_b2_api_keys_from_conf_parses_when_bucket_present() {
+    fn test_parse_b2_api_keys_for_remote_parses_when_bucket_present() {
         let conf = "[remote]\ntype = b2\naccount = ACC123\nkey = SECRETKEY\nbucket = my-bucket\n";
         assert_eq!(
-            parse_b2_api_keys_from_conf(conf),
+            parse_b2_api_keys_for_remote(conf, "remote"),
             Some(("ACC123".to_owned(), "SECRETKEY".to_owned()))
         );
     }
 
-    /// Verifies that `parse_b2_api_keys_from_conf` returns None for a non-B2 section.
+    /// Verifies that `parse_b2_api_keys_for_remote` finds credentials for the named B2 stanza.
     #[test]
-    fn test_parse_b2_api_keys_from_conf_returns_none_for_non_b2_section() {
-        let conf = "[remote]\ntype = s3\naccount = ACC123\nkey = SECRETKEY\n";
-        assert_eq!(parse_b2_api_keys_from_conf(conf), None);
+    fn test_parse_b2_api_keys_for_remote_returns_credentials_for_named_b2_stanza() {
+        let conf = "[backblaze_b2]\ntype = b2\naccount = ACC123\nkey = SECRETKEY\n";
+        assert_eq!(
+            parse_b2_api_keys_for_remote(conf, "backblaze_b2"),
+            Some(("ACC123".to_owned(), "SECRETKEY".to_owned()))
+        );
+    }
+
+    /// Verifies that `parse_b2_api_keys_for_remote` returns None for a non-B2 named stanza.
+    #[test]
+    fn test_parse_b2_api_keys_for_remote_returns_none_for_non_b2_named_stanza() {
+        let conf = "[gdrive]\ntype = drive\nclient_id = XYZ\nclient_secret = ABC\n";
+        assert_eq!(parse_b2_api_keys_for_remote(conf, "gdrive"), None);
+    }
+
+    /// Verifies that `parse_b2_api_keys_for_remote` returns None when the named stanza
+    /// does not exist but a different B2 stanza does — the multi-destination case.
+    #[test]
+    fn test_parse_b2_api_keys_for_remote_ignores_b2_stanza_for_different_remote_name() {
+        let conf = "[gdrive]\ntype = drive\nclient_id = XYZ\n\
+                    [backblaze_b2]\ntype = b2\naccount = ACC123\nkey = SECRETKEY\n";
+        assert_eq!(parse_b2_api_keys_for_remote(conf, "gdrive"), None);
+    }
+
+    /// Verifies that `parse_b2_api_keys_for_remote` still finds B2 credentials in a
+    /// multi-remote config when the named remote is the B2 one.
+    #[test]
+    fn test_parse_b2_api_keys_for_remote_finds_b2_in_multi_remote_config() {
+        let conf = "[gdrive]\ntype = drive\nclient_id = XYZ\n\
+                    [backblaze_b2]\ntype = b2\naccount = ACC123\nkey = SECRETKEY\n";
+        assert_eq!(
+            parse_b2_api_keys_for_remote(conf, "backblaze_b2"),
+            Some(("ACC123".to_owned(), "SECRETKEY".to_owned()))
+        );
     }
 
     /// Verifies that a well-formed B2 section is parsed correctly.

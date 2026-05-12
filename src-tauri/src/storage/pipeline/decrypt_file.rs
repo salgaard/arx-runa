@@ -237,7 +237,7 @@ pub async fn decrypt_epoch_file(
 
     let record = metadata_store.get_epoch_blob(epoch_blob_id).await?;
 
-    let blob_path = blob_directory.join(format!("{}.blob", record.blob_name));
+    let blob_path = resolve_blob_path(blob_directory, &record.blob_name).await;
     let encrypted_bytes = tokio::fs::read(&blob_path)
         .await
         .map_err(|error| StorageError::Io(error.to_string()))?;
@@ -862,6 +862,205 @@ mod tests {
             .await
             .expect("destination should be readable");
         assert_eq!(recovered, plaintext);
+    }
+
+    /// MetadataStore that returns a fixed EpochBlobRecord for get_epoch_blob.
+    struct EpochMetaStore {
+        record: crate::storage::types::EpochBlobRecord,
+    }
+
+    #[async_trait]
+    impl MetadataStore for EpochMetaStore {
+        async fn insert_node(&self, _: &Node) -> Result<(), StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn insert_chunks(&self, _: &[ChunkRecord]) -> Result<(), StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn insert_file_with_chunks(
+            &self,
+            _: &Node,
+            _: &[ChunkRecord],
+        ) -> Result<(), StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn get_node(&self, _: Uuid) -> Result<Node, StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn list_children(&self, _: Uuid) -> Result<Vec<Node>, StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn get_chunks(&self, _: Uuid) -> Result<Vec<ChunkRecord>, StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn rename_node(&self, _: Uuid, _: &str, _: i64) -> Result<(), StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn move_node(&self, _: Uuid, _: Option<Uuid>, _: i64) -> Result<(), StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn delete_node(&self, _: Uuid) -> Result<(), StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn list_pending_deletions(&self, _: usize) -> Result<Vec<String>, StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn mark_deletion_complete(&self, _: &str) -> Result<(), StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn get_meta(&self, _: &str) -> Result<Option<String>, StorageError> {
+            Ok(None)
+        }
+
+        async fn set_meta(&self, _: &str, _: &str) -> Result<(), StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn increment_snapshot_counter(&self) -> Result<u64, StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn insert_file_node_only(&self, _: &Node) -> Result<(), StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn insert_file_node_and_stage_epoch_entry(
+            &self,
+            _: &Node,
+            _: Vec<u8>,
+        ) -> Result<(), StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn stage_epoch_entry(&self, _: Uuid, _: Vec<u8>) -> Result<(), StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn get_epoch_buffer_total_bytes(&self) -> Result<u64, StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn get_epoch_buffer_entries(
+            &self,
+        ) -> Result<Vec<crate::storage::types::EpochBufferEntry>, StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn commit_epoch_flush(
+            &self,
+            _: &crate::storage::types::EpochBlobRecord,
+            _: &[(Uuid, u32, u64, u64)],
+        ) -> Result<(), StorageError> {
+            Err(StorageError::Database("unused".to_owned()))
+        }
+
+        async fn get_epoch_blob(
+            &self,
+            _epoch_blob_id: Uuid,
+        ) -> Result<crate::storage::types::EpochBlobRecord, StorageError> {
+            Ok(self.record.clone())
+        }
+
+        async fn get_epoch_buffer_node_ids(&self) -> Result<Vec<Uuid>, StorageError> {
+            Ok(vec![])
+        }
+    }
+
+    /// Verifies that decrypt_epoch_file succeeds when the blob is in the pending/ subdirectory,
+    /// which is the normal location after a cloud fetch.
+    #[tokio::test]
+    async fn test_decrypt_epoch_file_blob_in_pending_subdir_returns_correct_bytes() {
+        use crate::crypto::{
+            ChunkIndex, FileId, KeyEncryptionKey, compute_checksum, encrypt_chunk,
+            generate_file_key, wrap_file_key,
+        };
+        use crate::storage::pipeline::decrypt_epoch_file;
+        use crate::storage::types::EpochBlobRecord;
+        use zeroize::Zeroizing;
+
+        let temp = TempDir::new().expect("temp dir should be created");
+        let staging_dir = temp.path().join("staging");
+        let pending_dir = staging_dir.join("pending");
+        fs::create_dir_all(&pending_dir)
+            .await
+            .expect("pending dir should be created");
+
+        let kek = KeyEncryptionKey::from_bytes([0xAB; 32]);
+        let file_key = generate_file_key();
+        let wrapped = wrap_file_key(&file_key, &kek).expect("wrap should succeed");
+
+        let plaintext_a = vec![0x11u8; 300];
+        let plaintext_b = vec![0x22u8; 200];
+        let chunk_size: usize = 4_194_304;
+
+        let mut packed: Zeroizing<Vec<u8>> = Zeroizing::new(Vec::new());
+        packed.extend_from_slice(&plaintext_a);
+        packed.extend_from_slice(&plaintext_b);
+        packed.resize(chunk_size, 0u8);
+
+        let epoch_blob_id = Uuid::new_v4();
+        let blob_name = epoch_blob_id.hyphenated().to_string();
+
+        let encrypted = encrypt_chunk(
+            packed.to_vec(),
+            &file_key,
+            &FileId::from_uuid(epoch_blob_id),
+            ChunkIndex::new(0),
+        )
+        .expect("encrypt should succeed");
+
+        let blake3_checksum = compute_checksum(&encrypted).0;
+        let size_padded = encrypted.len() as u64;
+
+        // Write blob to pending/ (simulating cloud fetch)
+        let blob_path = pending_dir.join(format!("{blob_name}.blob"));
+        fs::write(&blob_path, &encrypted)
+            .await
+            .expect("blob should be written");
+
+        let record = EpochBlobRecord {
+            epoch_blob_id,
+            blob_name,
+            file_key_wrapped: wrapped.0.to_vec(),
+            size_padded,
+            blake3_checksum,
+        };
+
+        // Extract the second file (plaintext_b) from the epoch blob
+        let chunk = ChunkRecord {
+            chunk_id: Uuid::new_v4(),
+            node_id: Uuid::new_v4().into(),
+            chunk_index: 0,
+            blob_name: record.blob_name.clone(),
+            size_padded: record.size_padded,
+            blake3_checksum: record.blake3_checksum,
+            epoch_blob_id: Some(epoch_blob_id),
+            byte_offset: Some(plaintext_a.len() as u64),
+            byte_length: Some(plaintext_b.len() as u64),
+        };
+
+        let meta_store = EpochMetaStore { record };
+        let destination = temp.path().join("out.bin");
+
+        decrypt_epoch_file(&destination, &chunk, &kek, &staging_dir, &meta_store, None)
+            .await
+            .expect("decrypt_epoch_file should succeed");
+
+        let recovered = fs::read(&destination)
+            .await
+            .expect("destination should be readable");
+        assert_eq!(recovered, plaintext_b);
     }
 
     /// Verifies size-padded mismatches are rejected.

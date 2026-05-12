@@ -54,6 +54,9 @@
     "allow-begin-onedrive-setup",
     "allow-open-url",
     "allow-poll-oauth-setup",
+    "allow-has-gdrive-service-account",
+    "allow-set-gdrive-service-account",
+    "allow-cancel-oauth-setup-cmd",
     {
       "identifier": "shell:allow-execute",
       "allow": [

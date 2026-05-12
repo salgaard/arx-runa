@@ -46,6 +46,9 @@ fn main() {
             "begin_onedrive_setup",
             "open_url",
             "poll_oauth_setup",
+            "has_gdrive_service_account",
+            "set_gdrive_service_account",
+            "cancel_oauth_setup_cmd",
         ]),
     ))
     .expect("failed to build tauri application");

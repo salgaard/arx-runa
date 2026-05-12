@@ -215,6 +215,7 @@ pub(crate) async fn strong_revoke_share(
             expires_at: recipient.expires_at,
             revoked_at: None,
             download_key_id: None,
+            download_folder_id: None,
             receipt_requested: false,
             receipt_received_at: None,
         };
@@ -478,6 +479,7 @@ mod tests {
             expires_at: None,
             revoked_at: None,
             download_key_id: None,
+            download_folder_id: None,
             receipt_requested: false,
             receipt_received_at: None,
         }
