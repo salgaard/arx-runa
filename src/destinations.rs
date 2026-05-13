@@ -18,46 +18,36 @@ use crate::state::use_sync;
 /// Step-by-step modal for setting up a Google Drive Service Account for sharing.
 ///
 /// Guides the user through creating a GCP Service Account and selecting the
-/// downloaded JSON key file.  Calls `on_done` after a successful save so the
-/// parent can refresh its sharing-status display.
+/// downloaded JSON key file.  Calls `on_file_picked` with the selected path then
+/// closes itself via `on_close`.  The caller is responsible for invoking the
+/// backend and handling errors.
 #[component]
-fn GdriveShareSetupModal(
-    on_done: impl Fn() + Clone + Send + Sync + 'static,
+pub(crate) fn GdriveShareSetupModal(
+    on_file_picked: impl Fn(String) + Clone + Send + Sync + 'static,
     on_close: impl Fn() + Clone + Send + Sync + 'static,
 ) -> impl IntoView {
-    let is_saving = RwSignal::new(false);
-    let error: RwSignal<Option<String>> = RwSignal::new(None);
+    let is_picking = RwSignal::new(false);
 
-    let on_done = Arc::new(on_done);
+    let on_file_picked = Arc::new(on_file_picked);
     let on_close = Arc::new(on_close);
     let on_close_btn = on_close.clone();
+    let on_close_cancel = on_close.clone();
 
-    let pick_and_save = {
-        let on_done = on_done.clone();
+    let pick_and_notify = {
+        let on_file_picked = on_file_picked.clone();
+        let on_close = on_close.clone();
         move |_| {
-            is_saving.set(true);
-            error.set(None);
-            let on_done = on_done.clone();
+            is_picking.set(true);
+            let on_file_picked = on_file_picked.clone();
+            let on_close = on_close.clone();
             leptos::task::spawn_local(async move {
                 let path = open_file_dialog().await;
+                is_picking.set(false);
                 let Some(path) = path else {
-                    is_saving.set(false);
                     return;
                 };
-                match invoke_command::<_, ()>(
-                    "set_gdrive_service_account",
-                    &SetGdriveServiceAccountRequest { sa_json_path: path },
-                )
-                .await
-                {
-                    Ok(()) => {
-                        on_done();
-                    }
-                    Err(e) => {
-                        is_saving.set(false);
-                        error.set(Some(format!("Could not save key: {e}")));
-                    }
-                }
+                on_file_picked(path);
+                on_close();
             });
         }
     };
@@ -178,11 +168,6 @@ fn GdriveShareSetupModal(
                         </li>
                     </ol>
 
-                    {move || {
-                        error.get().map(|e| {
-                            view! { <p class="text-danger text-sm">{e}</p> }
-                        })
-                    }}
                 </div>
 
                 // Footer
@@ -206,16 +191,16 @@ fn GdriveShareSetupModal(
                     <div class="flex gap-3">
                         <button
                             class="px-4 py-2 text-sm bg-steel text-bone rounded cursor-pointer hover:bg-steel/80 transition-colors"
-                            on:click=move |_| on_close()
+                            on:click=move |_| on_close_cancel()
                         >
                             "Cancel"
                         </button>
                         <button
                             class="px-4 py-2 text-sm bg-rune text-bone rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
-                            on:click=pick_and_save
-                            disabled=move || is_saving.get()
+                            on:click=pick_and_notify
+                            disabled=move || is_picking.get()
                         >
-                            {move || if is_saving.get() { "Saving…" } else { "Select JSON Key File" }}
+                            {move || if is_picking.get() { "Selecting…" } else { "Select JSON Key File" }}
                         </button>
                     </div>
                 </div>
@@ -282,14 +267,28 @@ fn GdriveShareStatus() -> impl IntoView {
 
             {move || {
                 if show_modal.get() {
-                    let on_done = move || {
-                        show_modal.set(false);
-                        refresh.update(|n| *n += 1);
-                        crate::components::use_toast()
-                            .success("Google Drive sharing enabled.".to_string());
+                    let on_file_picked = move |path: String| {
+                        leptos::task::spawn_local(async move {
+                            match invoke_command::<_, ()>(
+                                "set_gdrive_service_account",
+                                &SetGdriveServiceAccountRequest { sa_json_path: path },
+                            )
+                            .await
+                            {
+                                Ok(()) => {
+                                    refresh.update(|n| *n += 1);
+                                    crate::components::use_toast()
+                                        .success("Google Drive sharing enabled.".to_string());
+                                }
+                                Err(e) => {
+                                    crate::components::use_toast()
+                                        .error(format!("Could not save key: {e}"));
+                                }
+                            }
+                        });
                     };
                     let on_close = move || show_modal.set(false);
-                    view! { <GdriveShareSetupModal on_done=on_done on_close=on_close /> }.into_any()
+                    view! { <GdriveShareSetupModal on_file_picked=on_file_picked on_close=on_close /> }.into_any()
                 } else {
                     ().into_any()
                 }
@@ -658,13 +657,27 @@ fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
         // Sharing setup modal — launched from the optional step above.
         {move || {
             if show_gdrive_sharing_modal.get() {
-                let on_done = move || {
-                    show_gdrive_sharing_modal.set(false);
-                    crate::components::use_toast()
-                        .success("Google Drive sharing enabled.".to_string());
+                let on_file_picked = move |path: String| {
+                    leptos::task::spawn_local(async move {
+                        match invoke_command::<_, ()>(
+                            "set_gdrive_service_account",
+                            &SetGdriveServiceAccountRequest { sa_json_path: path },
+                        )
+                        .await
+                        {
+                            Ok(()) => {
+                                crate::components::use_toast()
+                                    .success("Google Drive sharing enabled.".to_string());
+                            }
+                            Err(e) => {
+                                crate::components::use_toast()
+                                    .error(format!("Could not save key: {e}"));
+                            }
+                        }
+                    });
                 };
                 let on_close = move || show_gdrive_sharing_modal.set(false);
-                view! { <GdriveShareSetupModal on_done=on_done on_close=on_close /> }.into_any()
+                view! { <GdriveShareSetupModal on_file_picked=on_file_picked on_close=on_close /> }.into_any()
             } else {
                 ().into_any()
             }

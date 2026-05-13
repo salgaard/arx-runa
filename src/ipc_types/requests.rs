@@ -212,6 +212,14 @@ pub struct ImportShareRequest {
     pub share_package_path: String,
 }
 
+/// Argument payload for the `get_received_share_content` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetReceivedShareContentRequest {
+    /// Unique share ID of the received share to preview.
+    pub share_id: String,
+}
+
 /// Argument payload for the `download_received_share` Tauri command.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

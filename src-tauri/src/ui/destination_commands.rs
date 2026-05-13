@@ -382,9 +382,6 @@ pub async fn set_primary_destination_cmd(
 pub async fn begin_google_drive_setup(
     state: State<'_, AppState>,
 ) -> Result<BeginOauthSetupResponse, IpcError> {
-    state.session_manager.reset_timer().await;
-    require_active_session(&state).await?;
-
     let app_handle = state
         .app_handle
         .get()
@@ -426,9 +423,6 @@ pub async fn begin_google_drive_setup(
 pub async fn begin_onedrive_setup(
     state: State<'_, AppState>,
 ) -> Result<BeginOauthSetupResponse, IpcError> {
-    state.session_manager.reset_timer().await;
-    require_active_session(&state).await?;
-
     let app_handle = state
         .app_handle
         .get()

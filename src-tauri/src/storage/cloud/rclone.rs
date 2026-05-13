@@ -239,6 +239,18 @@ impl CloudTransport for RcloneTransport {
         Ok(())
     }
 
+    async fn ensure_folder(&self, remote_prefix: &str) -> Result<(), CloudTransportError> {
+        let remote_prefix = validate_remote_path(remote_prefix)?;
+        let mut args = self.base_args();
+        args.push(OsString::from("mkdir"));
+        args.push(OsString::from(self.remote_target(remote_prefix)));
+        tracing::debug!(remote_prefix = %remote_prefix, "rclone mkdir");
+        self.runner
+            .run(args, Duration::from_secs(30))
+            .await
+            .map(|_| ())
+    }
+
     async fn ensure_container(&self) -> Result<(), CloudTransportError> {
         let mut args = self.base_args();
         args.push(OsString::from("mkdir"));

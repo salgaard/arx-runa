@@ -5,7 +5,8 @@
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use base64::Engine;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use rusqlite::OptionalExtension;
 use secrecy::SecretBox;
 use tauri::State;
@@ -20,10 +21,11 @@ use crate::sharing::{
 use crate::storage::{MetadataStore, StorageError};
 use crate::ui::commands_common::require_active_session;
 use crate::ui::error::IpcError;
+use crate::ui::file_commands::detect_mime_type;
 use crate::ui::state::AppState;
 use crate::ui::types::{
-    ContactEntry, DownloadReceivedShareResponse, ImportShareResponse, ReceivedShareEntry,
-    ShareEntry, ShareResponse,
+    ContactEntry, DownloadReceivedShareResponse, FileContent, ImportShareResponse,
+    ReceivedShareEntry, ShareEntry, ShareResponse,
 };
 use crate::ui::validation::validate_file_id;
 use crate::ui::vault_paths::vault_staging_dir;
@@ -754,11 +756,17 @@ pub async fn list_received_shares(
         } else {
             None
         };
+        let size_bytes = rs
+            .cloud_endpoint
+            .get("_file_size")
+            .and_then(|v| v.as_u64())
+            .unwrap_or_else(|| (rs.chunk_count as u64).saturating_mul(rs.chunk_size as u64));
         entries.push(ReceivedShareEntry {
             share_id: rs.share_id,
             file_name: rs.file_name,
             sender_name,
             imported_at: unix_ts_to_iso8601(rs.imported_at),
+            size_bytes,
         });
     }
 
@@ -915,6 +923,132 @@ pub async fn download_received_share(
     }
 
     Ok(DownloadReceivedShareResponse { file_name })
+}
+
+/// Decrypts a received share into memory and returns the content for in-app preview.
+///
+/// Rejects files larger than 50 MiB to keep memory use bounded.
+#[tauri::command]
+pub async fn get_received_share_content(
+    share_id: String,
+    state: State<'_, AppState>,
+) -> Result<FileContent, IpcError> {
+    state.session_manager.reset_timer().await;
+    require_active_session(&state).await?;
+
+    let vault_id = state
+        .active_vault_id
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| IpcError::VaultLocked("No active vault".into()))?;
+    let staging_dir = vault_staging_dir(&vault_id);
+    let kek = extract_kek(&state).await?;
+    let transport = state.cloud_transport.read().await.clone();
+
+    let rclone_bin: Option<PathBuf> = state.app_handle.get().map(|h| {
+        use tauri::Manager as _;
+        let name = if cfg!(target_os = "windows") {
+            "rclone.exe"
+        } else {
+            "rclone"
+        };
+        if let Ok(dir) = h.path().resource_dir() {
+            let c = dir.join("bin").join(name);
+            if c.exists() {
+                return c;
+            }
+        }
+        PathBuf::from(name)
+    });
+
+    const FIFTY_MIB: u64 = 50 * 1024 * 1024;
+
+    let (file_key, file_id_uuid, chunk_uuids, chunk_count, chunk_size, file_size, local_blobs) = {
+        let db_guard = state.database.read().await;
+        let db = db_guard
+            .as_ref()
+            .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+        let sharing = db as &dyn SharingStore;
+
+        let share = sharing
+            .get_received_share(&share_id)
+            .await
+            .map_err(IpcError::from)?;
+
+        let file_size = share
+            .cloud_endpoint
+            .get("_file_size")
+            .and_then(|v| v.as_u64())
+            .unwrap_or_else(|| (share.chunk_count as u64).saturating_mul(share.chunk_size as u64));
+
+        if file_size > FIFTY_MIB {
+            return Err(IpcError::InvalidInput(
+                "File exceeds 50 MiB in-app viewing limit".into(),
+            ));
+        }
+
+        let file_key = unwrap_file_key(&WrappedFileKey(share.file_key_wrapped), &kek)
+            .map_err(|_| IpcError::InternalError("File key unwrap failed".into()))?;
+        let file_id_uuid = Uuid::parse_str(&share.file_id)
+            .map_err(|_| IpcError::InternalError("Invalid file ID in received share".into()))?;
+
+        let local_blobs = crate::sharing::cloud::fetch_received_share_to_local(
+            &share_id,
+            sharing,
+            &*transport,
+            &staging_dir,
+            rclone_bin,
+        )
+        .await
+        .map_err(IpcError::from)?;
+
+        (
+            file_key,
+            file_id_uuid,
+            share.chunk_uuids,
+            share.chunk_count,
+            share.chunk_size,
+            file_size,
+            local_blobs,
+        )
+    };
+
+    let temp_dir = tempfile::tempdir()
+        .map_err(|e| IpcError::InternalError(format!("Failed to create temp dir: {e}")))?;
+    let temp_path = temp_dir.path().join("content");
+
+    let decrypt_result = decrypt_received_share_blobs(
+        &temp_path,
+        file_id_uuid,
+        &file_key,
+        file_size,
+        chunk_count,
+        chunk_size,
+        &chunk_uuids,
+        &staging_dir,
+    )
+    .await;
+
+    for blob_path in &local_blobs {
+        let _ = tokio::fs::remove_file(blob_path).await;
+    }
+
+    decrypt_result.map_err(|e| IpcError::InternalError(format!("decrypt failed: {e}")))?;
+
+    let bytes = tokio::fs::read(&temp_path)
+        .await
+        .map_err(|e| IpcError::InternalError(format!("Failed to read decrypted content: {e}")))?;
+
+    let mime_type = detect_mime_type(&bytes).to_owned();
+    let size_bytes = bytes.len() as u64;
+    let data_base64 = BASE64_STANDARD.encode(&bytes);
+
+    Ok(FileContent {
+        mime_type,
+        data_base64,
+        size_bytes,
+    })
 }
 
 /// Seals and uploads a delivery receipt blob to the sender's B2 prefix.

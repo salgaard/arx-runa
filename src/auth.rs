@@ -11,12 +11,13 @@ use wasm_bindgen::prelude::*;
 use zeroize::Zeroize;
 
 use crate::components::{Button, ChunkSizeSelector, DestinationSelector, EpochBufferToggle, Input};
+use crate::destinations::GdriveShareSetupModal;
 use crate::dialog::{open_directory_dialog, open_file_dialog};
 use crate::invoke::invoke_command;
 use crate::ipc_types::VaultSummary;
 use crate::ipc_types::{
     AuthResponse, AuthenticateRequest, CreateVaultRequest, DestinationSessionConfig,
-    RecoverVaultFromCloudRequest, SessionStatus,
+    RecoverVaultFromCloudRequest, SessionStatus, SetGdriveServiceAccountRequest,
 };
 use crate::state::use_session_actions;
 
@@ -337,6 +338,16 @@ pub fn VaultCreationPage(
 
     // ── Destination signal (updated by DestinationSelector via callback) ──────
     let (primary_destination, set_primary_destination) = signal(default_local_destination());
+    let is_gdrive_selected = move || {
+        primary_destination
+            .read()
+            .rclone_config_blob
+            .contains("type = drive")
+    };
+
+    // ── Google Drive sharing (deferred until after vault creation) ────────────
+    let (pending_sa_path, set_pending_sa_path) = signal::<Option<String>>(None);
+    let show_gdrive_sharing_modal = RwSignal::new(false);
 
     // ── Submit state ──────────────────────────────────────────────────────────
     let (loading, set_loading) = signal(false);
@@ -394,6 +405,19 @@ pub fn VaultCreationPage(
             set_loading.set(false);
             match result {
                 Ok(resp) => {
+                    if let Some(sa_path) = pending_sa_path.get_untracked() {
+                        if let Err(e) = invoke_command::<_, ()>(
+                            "set_gdrive_service_account",
+                            &SetGdriveServiceAccountRequest {
+                                sa_json_path: sa_path,
+                            },
+                        )
+                        .await
+                        {
+                            crate::components::use_toast()
+                                .warning(format!("Vault created, but sharing setup failed: {e}"));
+                        }
+                    }
                     crate::components::use_toast().success(format!(
                         "Vault '{}' created successfully!",
                         vault_name_value
@@ -510,6 +534,33 @@ pub fn VaultCreationPage(
                         <DestinationSelector
                             on_change=move |config| set_primary_destination.set(config)
                         />
+                        <Show when=is_gdrive_selected>
+                            <div class="mt-3 p-3 border border-steel/60 rounded bg-stone/40 text-sm">
+                                <p class="font-medium text-bone mb-1">"File sharing (optional)"</p>
+                                <p class="text-text-secondary mb-2">
+                                    "To share files from this vault, you need a GCP Service Account key. "
+                                    "You can set this up now or later from the Destinations page."
+                                </p>
+                                {move || {
+                                    if pending_sa_path.get().is_some() {
+                                        view! {
+                                            <p class="text-green-400 text-sm">"✓ Service account key selected"</p>
+                                        }
+                                        .into_any()
+                                    } else {
+                                        view! {
+                                            <button
+                                                class="text-rune hover:text-rune/80 underline text-sm cursor-pointer"
+                                                on:click=move |_| show_gdrive_sharing_modal.set(true)
+                                            >
+                                                "Set up sharing →"
+                                            </button>
+                                        }
+                                        .into_any()
+                                    }
+                                }}
+                            </div>
+                        </Show>
                     </div>
 
                     // ── Review Section ────────────────────────────────────────────────
@@ -571,6 +622,18 @@ pub fn VaultCreationPage(
                     </div>
                 </div>
             </div>
+            {move || {
+                if show_gdrive_sharing_modal.get() {
+                    let on_file_picked = move |path: String| {
+                        set_pending_sa_path.set(Some(path));
+                    };
+                    let on_close = move || show_gdrive_sharing_modal.set(false);
+                    view! { <GdriveShareSetupModal on_file_picked=on_file_picked on_close=on_close /> }
+                        .into_any()
+                } else {
+                    ().into_any()
+                }
+            }}
         </div>
     }
 }

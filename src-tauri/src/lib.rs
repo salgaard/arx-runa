@@ -87,6 +87,7 @@ pub fn run() {
             ui::sharing_commands::import_share,
             ui::sharing_commands::check_share_receipts,
             ui::sharing_commands::download_received_share,
+            ui::sharing_commands::get_received_share_content,
             ui::sharing_commands::revoke_share,
             ui::sharing_commands::list_shares,
             ui::sharing_commands::list_received_shares,

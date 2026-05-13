@@ -35,6 +35,7 @@ use crate::storage::cloud::{
         BackupSyncMode, DestinationSession, DestinationType, build_session_rclone_conf,
         destroy_session_rclone_conf, get_primary_destination,
     },
+    validate_single_remote_stanza,
     vault_header::VaultHeader,
 };
 use secrecy::SecretBox;
@@ -187,11 +188,11 @@ async fn validate_storage_destination(
         }
     }
 
-    cloud_transport
-        .list_blobs(test_path)
-        .await
-        .map_err(|err| IpcError::InvalidInput(format_cloud_error(&err, config)))
-        .map(|_| ())
+    // NotFound is acceptable: Drive creates the path-prefix folder lazily on first upload.
+    match cloud_transport.list_blobs(test_path).await {
+        Ok(_) | Err(crate::storage::cloud::CloudTransportError::NotFound) => Ok(()),
+        Err(err) => Err(IpcError::InvalidInput(format_cloud_error(&err, config))),
+    }
 }
 
 /// Best-effort: writes rclone.conf from the DB and installs an `RcloneTransport`.
@@ -400,7 +401,14 @@ pub async fn create_vault(
                     .await
                     .map_err(|e| IpcError::InternalError(format!("config dir: {e}")))?;
             }
-            write_owner_only(&conf_path, dest_session.rclone_config_blob.as_bytes())
+            // Normalise the blob section header to match rclone_remote_name so rclone can
+            // find the remote, regardless of what section name the OAuth flow used.
+            let normalised_blob = validate_single_remote_stanza(
+                &dest_session.rclone_config_blob,
+                &dest_session.rclone_remote_name,
+            )
+            .map_err(|e| IpcError::InvalidInput(format!("Invalid rclone config: {e}")))?;
+            write_owner_only(&conf_path, normalised_blob.as_bytes())
                 .await
                 .map_err(IpcError::from)?;
             let dest_public = DestinationSessionPublic::from(&dest_session);
@@ -994,7 +1002,12 @@ pub async fn recover_vault_from_cloud(
             .await
             .map_err(|e| IpcError::InternalError(format!("config dir: {e}")))?;
     }
-    write_owner_only(&conf_path, dest_session.rclone_config_blob.as_bytes())
+    let normalised_blob = validate_single_remote_stanza(
+        &dest_session.rclone_config_blob,
+        &dest_session.rclone_remote_name,
+    )
+    .map_err(|e| IpcError::InvalidInput(format!("Invalid rclone config: {e}")))?;
+    write_owner_only(&conf_path, normalised_blob.as_bytes())
         .await
         .map_err(IpcError::from)?;
 

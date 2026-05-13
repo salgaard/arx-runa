@@ -494,6 +494,12 @@ pub async fn push_vault(
 
     fisher_yates_shuffle_with_system_rng(&mut upload_blobs)?;
     let total_upload_blobs = upload_blobs.len();
+    if !upload_blobs.is_empty() {
+        cloud_transport
+            .ensure_folder("vault")
+            .await
+            .map_err(|source| SyncError::Transport { source })?;
+    }
     if let Some(cb) = progress {
         cb(0, total_upload_blobs as u32, None);
     }

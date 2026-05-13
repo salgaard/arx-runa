@@ -19,8 +19,8 @@ use crate::storage::metadata_store::MetadataStore;
 use crate::storage::schema::{
     apply_backup_v5_migration, apply_canonical_schema, apply_device_id_v7_migration,
     apply_epoch_v2_migration, apply_gdrive_sharing_v8_migration, apply_pending_backup_v6_migration,
-    apply_sharing_v3_migration, apply_sharing_v4_migration, seed_manifest_meta,
-    validate_manifest_meta, validate_schema_integrity, verify_sqlcipher_key,
+    apply_shares_cascade_v9_migration, apply_sharing_v3_migration, apply_sharing_v4_migration,
+    seed_manifest_meta, validate_manifest_meta, validate_schema_integrity, verify_sqlcipher_key,
 };
 use crate::storage::types::{
     ChunkRecord, EpochBlobRecord, EpochBufferEntry, Node, NodeId, NodeType, SyncChunkRecord,
@@ -78,6 +78,7 @@ impl SqlCipherMetadataStore {
             apply_pending_backup_v6_migration(&conn)?;
             apply_device_id_v7_migration(&conn)?;
             apply_gdrive_sharing_v8_migration(&conn)?;
+            apply_shares_cascade_v9_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             Ok(conn)
@@ -111,6 +112,7 @@ impl SqlCipherMetadataStore {
             apply_pending_backup_v6_migration(&conn)?;
             apply_device_id_v7_migration(&conn)?;
             apply_gdrive_sharing_v8_migration(&conn)?;
+            apply_shares_cascade_v9_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             validate_create_immutable_meta_matches(
@@ -1651,7 +1653,18 @@ impl MetadataStore for SqlCipherMetadataStore {
                  INSERT OR IGNORE INTO pending_deletions (blob_name, queued_at)
                  SELECT c.blob_name, ?2
                  FROM chunks c
-                 INNER JOIN subtree s ON c.node_id = s.node_id",
+                 INNER JOIN subtree s ON c.node_id = s.node_id
+                 WHERE c.blob_name IS NOT NULL
+                 UNION
+                 SELECT eb.blob_name, ?2
+                 FROM epoch_blobs eb
+                 INNER JOIN chunks c ON c.epoch_blob_id = eb.epoch_blob_id
+                 INNER JOIN subtree s ON c.node_id = s.node_id
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM chunks c2
+                     WHERE c2.epoch_blob_id = eb.epoch_blob_id
+                       AND c2.node_id NOT IN (SELECT node_id FROM subtree)
+                 )",
                 params![node_id.hyphenated().to_string(), queued_at],
             )
             .map_err(StorageError::from_rusqlite)?;
@@ -1677,7 +1690,7 @@ impl MetadataStore for SqlCipherMetadataStore {
             let limit = i64::try_from(limit).map_err(|error| StorageError::Database(error.to_string()))?;
             let mut statement = conn
                 .prepare(
-                    "SELECT blob_name FROM pending_deletions ORDER BY queued_at ASC, blob_name ASC LIMIT ?1",
+                    "SELECT blob_name FROM pending_deletions WHERE blob_name IS NOT NULL ORDER BY queued_at ASC, blob_name ASC LIMIT ?1",
                 )
                 .map_err(StorageError::from_rusqlite)?;
             let rows = statement

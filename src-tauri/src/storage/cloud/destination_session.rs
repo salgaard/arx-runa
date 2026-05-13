@@ -291,7 +291,7 @@ fn stanza_header_regex() -> &'static Regex {
     })
 }
 
-fn validate_single_remote_stanza(
+pub(crate) fn validate_single_remote_stanza(
     rclone_config_blob: &str,
     expected_remote_name: &str,
 ) -> Result<String, StorageError> {
