@@ -553,14 +553,30 @@ pub async fn revoke_share(share_id: String, state: State<'_, AppState>) -> Resul
                         crate::sharing::gdrive_api::parse_gdrive_oauth_from_conf(&conf, &name)
                 {
                     let client = reqwest::Client::new();
-                    match crate::sharing::gdrive_api::gdrive_refresh_token(
-                        &client,
-                        &client_id,
-                        &client_secret,
-                        &refresh_token,
-                    )
-                    .await
-                    {
+                    let token_result = if client_id.is_empty() {
+                        crate::sharing::gdrive_api::parse_gdrive_access_token_from_conf(
+                            &conf, &name,
+                        )
+                        .map(
+                            |access_token| crate::sharing::gdrive_api::GdriveAccessToken {
+                                access_token,
+                            },
+                        )
+                        .ok_or_else(|| {
+                            crate::sharing::gdrive_api::GdriveApiError::TokenRefresh(
+                                "access token not found in config".to_owned(),
+                            )
+                        })
+                    } else {
+                        crate::sharing::gdrive_api::gdrive_refresh_token(
+                            &client,
+                            &client_id,
+                            &client_secret,
+                            &refresh_token,
+                        )
+                        .await
+                    };
+                    match token_result {
                         Ok(token) => {
                             if let Err(error) =
                                 crate::sharing::gdrive_api::gdrive_delete_permission(

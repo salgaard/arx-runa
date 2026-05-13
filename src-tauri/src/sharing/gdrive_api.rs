@@ -110,8 +110,8 @@ fn build_gdrive_result(
     token_json: Option<String>,
     root_folder_id: Option<String>,
 ) -> Option<(String, String, String, Option<String>)> {
-    let cid = client_id?;
-    let csecret = client_secret?;
+    let cid = client_id.unwrap_or_default();
+    let csecret = client_secret.unwrap_or_default();
     let token_str = token_json?;
     let refresh_token = serde_json::from_str::<serde_json::Value>(&token_str)
         .ok()?
@@ -119,6 +119,43 @@ fn build_gdrive_result(
         .as_str()?
         .to_owned();
     Some((cid, csecret, refresh_token, root_folder_id))
+}
+
+/// Extracts the current `access_token` from a rclone.conf INI string for the named Drive remote.
+///
+/// Used when no `client_id`/`client_secret` are present (rclone built-in app), so the token
+/// cannot be refreshed via the OAuth endpoint. Relies on rclone having written a fresh token
+/// during a recent operation.
+pub(crate) fn parse_gdrive_access_token_from_conf(conf: &str, remote_name: &str) -> Option<String> {
+    let mut in_target = false;
+    let mut token_json: Option<String> = None;
+
+    for line in conf.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            if in_target {
+                break;
+            }
+            let name = &trimmed[1..trimmed.len() - 1];
+            in_target = name == remote_name;
+            continue;
+        }
+        if in_target {
+            if let Some((k, v)) = trimmed.split_once('=') {
+                if k.trim() == "token" {
+                    token_json = Some(v.trim().to_owned());
+                }
+            }
+        }
+    }
+
+    let token_str = token_json?;
+    serde_json::from_str::<serde_json::Value>(&token_str)
+        .ok()?
+        .get("access_token")?
+        .as_str()?
+        .to_owned()
+        .into()
 }
 
 /// Exchanges a refresh token for a short-lived access token.
