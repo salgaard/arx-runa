@@ -128,14 +128,49 @@ pub struct ChangePasswordRequest {
     pub current_password: String,
     /// New vault password (zeroise immediately after IPC call resolves).
     pub new_password: String,
+    /// Optional BIP-39 recovery phrase. When supplied the recovery slot is
+    /// re-wrapped under the new master key so the phrase stays valid.
+    /// When `None` the recovery slot is cleared.
+    pub recovery_phrase: Option<String>,
 }
 
 /// Argument payload for the `rotate_key_file` Tauri command.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Zeroize, ZeroizeOnDrop)]
 #[serde(rename_all = "camelCase")]
 pub struct RotateKeyFileRequest {
     /// Absolute destination path for the new key file.
     pub new_key_file_destination: String,
+    /// Optional BIP-39 recovery phrase. When supplied the recovery slot is
+    /// re-wrapped under the new master key so the phrase stays valid.
+    /// When `None` the recovery slot is cleared.
+    pub recovery_phrase: Option<String>,
+}
+
+/// Argument payload for the `setup_recovery` Tauri command.
+#[derive(Debug, Clone, Serialize, Zeroize, ZeroizeOnDrop)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupRecoveryRequest {
+    /// Current vault password (zeroise immediately after IPC call resolves).
+    pub password: String,
+    /// Absolute path to the key file, or `None` for Tier 1 vaults.
+    #[zeroize(skip)]
+    pub key_file_path: Option<String>,
+}
+
+/// Argument payload for the `recover_vault_with_phrase` Tauri command.
+#[derive(Debug, Clone, Serialize, Zeroize, ZeroizeOnDrop)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoverVaultWithPhraseRequest {
+    /// Vault identifier of the vault to recover.
+    #[zeroize(skip)]
+    pub vault_id: String,
+    /// BIP-39 recovery phrase (zeroise immediately after IPC call resolves).
+    pub phrase: String,
+    /// New vault password to re-key to after phrase recovery.
+    pub new_password: String,
+    /// Absolute path for the newly generated key file (Tier 2 only; `None` for Tier 1).
+    #[zeroize(skip)]
+    pub new_key_file_path: Option<String>,
 }
 
 /// Argument payload for the `delete_vault` Tauri command.

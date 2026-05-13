@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-setup-recovery"
+description = "Enables the setup_recovery command without any pre-configured scope."
+commands.allow = ["setup_recovery"]
+
+[[permission]]
+identifier = "deny-setup-recovery"
+description = "Denies the setup_recovery command without any pre-configured scope."
+commands.deny = ["setup_recovery"]

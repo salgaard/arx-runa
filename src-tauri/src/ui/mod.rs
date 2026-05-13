@@ -19,10 +19,10 @@ pub(crate) mod vault_paths;
 pub use error::IpcError;
 pub use state::AppState;
 
-// Auth commands (7)
+// Auth commands (9)
 pub use auth_commands::{
     authenticate, change_password, create_vault, delete_vault, get_session_status, lock_session,
-    rotate_key_file,
+    recover_vault_with_phrase, rotate_key_file, setup_recovery,
 };
 
 // File commands (6)

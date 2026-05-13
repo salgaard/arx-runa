@@ -791,7 +791,12 @@ pub fn VaultBrowser() -> impl IntoView {
     let sharing_supported = Signal::derive(move || {
         destinations_resource
             .get()
-            .and_then(|entries| entries.iter().find(|e| e.is_primary).map(|e| e.sharing_supported))
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|e| e.is_primary)
+                    .map(|e| e.sharing_supported)
+            })
             .unwrap_or(false)
     });
 

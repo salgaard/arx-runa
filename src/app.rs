@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use leptos_router::StaticSegment;
 use leptos_router::components::{Route, Router, Routes};
 
-use crate::auth::{LoginPage, VaultCreationPage, VaultRecoveryPage};
+use crate::auth::{LoginPage, RecoverWithPhrasePage, VaultCreationPage, VaultRecoveryPage};
 use crate::components::{ToastProvider, inject_toast_styles};
 use crate::contacts::ContactList;
 use crate::destinations::DestinationList;
@@ -56,6 +56,8 @@ fn AppRouter() -> impl IntoView {
     let create_vault_intent = RwSignal::new(false);
     // Whether the user clicked "Recover vault from cloud".
     let recover_intent = RwSignal::new(false);
+    // Which vault the user wants to recover using their recovery phrase.
+    let recover_with_phrase_intent: RwSignal<Option<VaultSummary>> = RwSignal::new(None);
 
     // Lock transition: clear vault and sync state when session becomes inactive.
     Effect::new(move |prev: Option<bool>| {
@@ -67,6 +69,7 @@ fn AppRouter() -> impl IntoView {
             selected_vault.set(None);
             create_vault_intent.set(false);
             recover_intent.set(false);
+            recover_with_phrase_intent.set(None);
         }
         now
     });
@@ -101,11 +104,21 @@ fn AppRouter() -> impl IntoView {
                 <VaultRecoveryPage on_back=move || recover_intent.set(false) />
             }
             .into_any()
+        } else if let Some(vault) = recover_with_phrase_intent.get() {
+            view! {
+                <RecoverWithPhrasePage
+                    vault=vault
+                    on_back=move || recover_with_phrase_intent.set(None)
+                />
+            }
+            .into_any()
         } else if let Some(vault) = selected_vault.get() {
+            let vault_for_recover = vault.clone();
             view! {
                 <LoginPage
                     vault=vault
                     on_back=move || selected_vault.set(None)
+                    on_recover=move || recover_with_phrase_intent.set(Some(vault_for_recover.clone()))
                 />
             }
             .into_any()

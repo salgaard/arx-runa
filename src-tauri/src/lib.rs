@@ -39,7 +39,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(crate::ui::AppState::construct_default())
         .invoke_handler(tauri::generate_handler![
-            // Auth (13)
+            // Auth (15)
             ui::auth_commands::authenticate,
             ui::auth_commands::check_cloud_configured,
             ui::auth_commands::configure_cloud,
@@ -47,6 +47,8 @@ pub fn run() {
             ui::auth_commands::list_vaults,
             ui::auth_commands::change_password,
             ui::auth_commands::rotate_key_file,
+            ui::auth_commands::setup_recovery,
+            ui::auth_commands::recover_vault_with_phrase,
             ui::auth_commands::delete_vault,
             ui::auth_commands::lock_session,
             ui::auth_commands::get_session_status,

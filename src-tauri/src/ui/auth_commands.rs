@@ -21,9 +21,11 @@ use zeroize::Zeroizing;
 use crate::auth::LifecycleState;
 use crate::auth::ceremonies::{
     Argon2MigrationIntent, ChangePasswordRequest, CreateVaultRequest, PendingOperation,
-    PendingVaultHeader, RecoverVaultRequest, RotateKeyFileRequest, Tier,
-    change_password as ceremony_change_password, create_vault as ceremony_create_vault,
-    recover_vault as ceremony_recover_vault, rotate_key_file as ceremony_rotate_key_file,
+    PendingVaultHeader, RecoverVaultRequest, RecoverWithPhraseRequest, RotateKeyFileRequest,
+    SetupRecoveryRequest, Tier, change_password as ceremony_change_password,
+    create_vault as ceremony_create_vault, recover_vault as ceremony_recover_vault,
+    recover_with_phrase as ceremony_recover_with_phrase,
+    rotate_key_file as ceremony_rotate_key_file, setup_recovery as ceremony_setup_recovery,
 };
 use crate::auth::kdf::Argon2Params;
 use crate::auth::key_source::FileKeySource;
@@ -545,6 +547,7 @@ pub async fn create_vault(
 pub async fn change_password(
     mut current_password: String,
     mut new_password: String,
+    recovery_phrase: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), IpcError> {
     state.session_manager.reset_timer().await;
@@ -579,7 +582,7 @@ pub async fn change_password(
         current_password_bytes: &current_bytes,
         new_password_bytes: &new_bytes,
         current_key_source: None,
-        recovery_phrase: None,
+        recovery_phrase: recovery_phrase.as_deref(),
         argon2_params: Argon2Params::DEFAULT,
         argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
         vault_db_path: db_path,
@@ -616,6 +619,7 @@ pub async fn rotate_key_file(
     mut current_password: String,
     current_key_file_path: PathBuf,
     new_key_file_destination: PathBuf,
+    recovery_phrase: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), IpcError> {
     state.session_manager.reset_timer().await;
@@ -655,7 +659,7 @@ pub async fn rotate_key_file(
         password_bytes: &password_bytes,
         current_key_source: &current_key_source,
         target_new_key_file_path: new_key_file_destination,
-        recovery_phrase: None,
+        recovery_phrase: recovery_phrase.as_deref(),
         argon2_params: Argon2Params::DEFAULT,
         argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
         vault_db_path: db_path,
@@ -681,6 +685,183 @@ pub async fn rotate_key_file(
     }
 
     Ok(())
+}
+
+/// Configure a BIP-39 recovery phrase for the active vault.
+///
+/// Requires an active session. Returns the 24-word phrase exactly once —
+/// it is never stored and must be displayed and then zeroed by the caller.
+#[tauri::command]
+pub async fn setup_recovery(
+    mut password: String,
+    key_file_path: Option<PathBuf>,
+    state: State<'_, AppState>,
+) -> Result<String, IpcError> {
+    state.session_manager.reset_timer().await;
+    require_active_session(&state).await?;
+
+    let password_bytes = sanitise_password(&mut password);
+    validate_password(std::str::from_utf8(&password_bytes).unwrap_or(""))?;
+
+    let (_, db_path, header_path) = {
+        let vault_id = state
+            .session_manager
+            .active_vault_id()
+            .await
+            .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
+        resolve_vault_by_id(&vault_id)?
+    };
+    let header_json = tokio::fs::read_to_string(&header_path)
+        .await
+        .map_err(|_| IpcError::InternalError("Failed to read vault header".into()))?;
+    let mut header: VaultHeader = serde_json::from_str(&header_json)
+        .map_err(|_| IpcError::InternalError("Vault header corrupted".into()))?;
+
+    let vault_id_uuid = Uuid::parse_str(&header.vault_id)
+        .map_err(|_| IpcError::InternalError("Vault header corrupted".into()))?;
+    let vault_id_crypto = VaultId::from_uuid(vault_id_uuid);
+
+    let key_source = key_file_path.map(FileKeySource::new);
+    let key_source_ref: Option<&(dyn crate::auth::KeySource + Send + Sync)> =
+        key_source.as_ref().map(|ks| ks as &_);
+    let cloud_transport_arc = state.cloud_transport.read().await.clone();
+
+    let request = SetupRecoveryRequest {
+        current_password_bytes: &password_bytes,
+        current_key_source: key_source_ref,
+        argon2_params: Argon2Params::DEFAULT,
+        argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
+        vault_db_path: db_path,
+    };
+
+    let phrase = ceremony_setup_recovery(
+        request,
+        &state.session_manager,
+        cloud_transport_arc.as_ref(),
+        &mut header,
+        &vault_id_crypto,
+    )
+    .await
+    .map_err(IpcError::from)?;
+
+    if let Ok(json) = serde_json::to_string_pretty(&header)
+        && let Err(error) = tokio::fs::write(&header_path, json).await
+    {
+        tracing::warn!(
+            ?error,
+            "Failed to persist updated vault-header.json after setup_recovery"
+        );
+    }
+
+    Ok(phrase.to_string())
+}
+
+/// Recover vault access using a BIP-39 phrase, re-keying to new credentials.
+///
+/// Does NOT require an active session. On success the vault is unlocked and
+/// the session uses the supplied new password (and new key file for Tier 2).
+/// The caller must ensure the cloud transport is configured before calling.
+#[tauri::command]
+pub async fn recover_vault_with_phrase(
+    vault_id: String,
+    phrase: String,
+    mut new_password: String,
+    new_key_file_path: Option<PathBuf>,
+    state: State<'_, AppState>,
+) -> Result<AuthResponse, IpcError> {
+    state.session_manager.reset_timer().await;
+
+    let new_password_bytes = sanitise_password(&mut new_password);
+    validate_password(std::str::from_utf8(&new_password_bytes).unwrap_or(""))?;
+
+    let (_, db_path, header_path) = resolve_vault_by_id(&vault_id)?;
+
+    let header_json = tokio::fs::read_to_string(&header_path)
+        .await
+        .map_err(|_| IpcError::InternalError("Failed to read vault header".into()))?;
+    let header_local: VaultHeader = serde_json::from_str(&header_json)
+        .map_err(|_| IpcError::InternalError("Vault header corrupted".into()))?;
+    let vault_name = header_local
+        .name
+        .clone()
+        .unwrap_or_else(|| vault_id.clone());
+
+    // The ceremony requires a fresh DB path; remove the existing one if present.
+    if db_path.exists() {
+        tokio::fs::remove_file(&db_path).await.map_err(|e| {
+            IpcError::InternalError(format!("Failed to remove existing vault DB: {e}"))
+        })?;
+    }
+
+    let cloud_transport_arc = state.cloud_transport.read().await.clone();
+
+    let request = RecoverWithPhraseRequest {
+        phrase: &phrase,
+        vault_db_path: db_path.clone(),
+        new_password_bytes: &new_password_bytes,
+        new_key_file_path,
+        argon2_params: Argon2Params::DEFAULT,
+        argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
+    };
+
+    let (recovered_vault_id, updated_header) = ceremony_recover_with_phrase(
+        request,
+        &state.session_manager,
+        cloud_transport_arc.as_ref(),
+    )
+    .await
+    .map_err(IpcError::from)?;
+
+    let vault_id_str = recovered_vault_id.to_uuid().to_string();
+
+    if let Ok(json) = serde_json::to_string_pretty(&updated_header)
+        && let Err(error) = tokio::fs::write(&header_path, json).await
+    {
+        tracing::warn!(
+            ?error,
+            "Failed to persist updated vault-header.json after phrase recovery"
+        );
+    }
+
+    let key_copy: [u8; 32] = state
+        .session_manager
+        .with_sqlcipher_key(|k| *k)
+        .await
+        .map_err(IpcError::from)?;
+    let key_zeroizing = Zeroizing::new(key_copy);
+    let db = SqlCipherMetadataStore::open(&db_path, &key_zeroizing)
+        .await
+        .map_err(IpcError::from)?;
+    drop(key_zeroizing);
+
+    *state.database.write().await = Some(db);
+
+    {
+        let db_guard = state.database.read().await;
+        if let Some(ref inner_db) = *db_guard {
+            try_build_and_swap_rclone_transport(&state, inner_db).await;
+        }
+    }
+
+    {
+        let staging_dir = vault_staging_dir(&vault_id_str);
+        let db_guard = state.database.read().await;
+        if let Some(ref inner_db) = *db_guard
+            && let Err(error) = crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
+        {
+            tracing::warn!(
+                ?error,
+                "Failed to prepare vault storage after phrase recovery"
+            );
+        }
+    }
+
+    *state.active_vault_id.write().await = Some(vault_id_str.clone());
+
+    Ok(AuthResponse {
+        vault_id: vault_id_str,
+        vault_name,
+    })
 }
 
 /// Delete the vault permanently.

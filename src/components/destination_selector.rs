@@ -371,7 +371,10 @@ pub fn DestinationSelector(
 
     let field_class = "w-full bg-surface-overlay border border-border-default rounded-lg px-3 py-2 text-bone text-sm focus:outline-none focus:border-rune";
 
-    let render_option = move |option: DestinationKind, label: &'static str, desc: &'static str, sharing_supported: bool| {
+    let render_option = move |option: DestinationKind,
+                              label: &'static str,
+                              desc: &'static str,
+                              sharing_supported: bool| {
         let is_selected = move || kind.get() == option;
         view! {
             <label

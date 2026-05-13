@@ -19,7 +19,8 @@ use crate::invoke::invoke_command;
 use crate::ipc_types::VaultSummary;
 use crate::ipc_types::{
     AuthResponse, AuthenticateRequest, CreateVaultRequest, DestinationSessionConfig,
-    RecoverVaultFromCloudRequest, SessionStatus, SetGdriveServiceAccountRequest,
+    RecoverVaultFromCloudRequest, RecoverVaultWithPhraseRequest, SessionStatus,
+    SetGdriveServiceAccountRequest,
 };
 use crate::state::use_session_actions;
 
@@ -132,6 +133,8 @@ pub fn LoginPage(
     vault: VaultSummary,
     /// Called when the user clicks "Back" to return to the vault picker.
     on_back: impl Fn() + 'static + Clone,
+    /// Called when the user clicks "Forgot password / lost key file?".
+    on_recover: impl Fn() + 'static + Clone,
 ) -> impl IntoView {
     let (password, set_password) = signal(String::new());
     let (key_file_path, set_key_file_path) = signal::<Option<String>>(None);
@@ -253,6 +256,12 @@ pub fn LoginPage(
                     on:click=move |_| on_back()
                 >
                     "← Back"
+                </button>
+                <button
+                    class="mt-2 text-text-secondary text-sm w-full text-center cursor-pointer hover:text-bone transition-colors underline"
+                    on:click=move |_| on_recover()
+                >
+                    "Forgot password / lost key file?"
                 </button>
             </div>
         </div>
@@ -405,18 +414,17 @@ pub fn VaultCreationPage(
             set_loading.set(false);
             match result {
                 Ok(resp) => {
-                    if let Some(sa_path) = pending_sa_path.get_untracked() {
-                        if let Err(e) = invoke_command::<_, ()>(
+                    if let Some(sa_path) = pending_sa_path.get_untracked()
+                        && let Err(e) = invoke_command::<_, ()>(
                             "set_gdrive_service_account",
                             &SetGdriveServiceAccountRequest {
                                 sa_json_path: sa_path,
                             },
                         )
                         .await
-                        {
-                            crate::components::use_toast()
-                                .warning(format!("Vault created, but sharing setup failed: {e}"));
-                        }
+                    {
+                        crate::components::use_toast()
+                            .warning(format!("Vault created, but sharing setup failed: {e}"));
                     }
                     crate::components::use_toast().success(format!(
                         "Vault '{}' created successfully!",
@@ -751,6 +759,162 @@ pub fn VaultRecoveryPage(
                                 on_manual_select=move |path| set_key_file_path.set(Some(path))
                             />
                         </div>
+                    </div>
+
+                    <div class="flex gap-3">
+                        <button
+                            type="button"
+                            class="flex-1 px-4 py-2 rounded-lg border border-border-default text-bone cursor-pointer hover:bg-surface-overlay transition-colors"
+                            on:click=move |_| on_back_cancel()
+                        >
+                            "\u{2190} Back"
+                        </button>
+                        <Button loading=loading on_click=on_submit>
+                            "Recover Vault"
+                        </Button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+// ─── RecoverWithPhrasePage ────────────────────────────────────────────────────
+
+/// Phrase-based vault recovery — re-keys the vault using the 24-word recovery phrase.
+///
+/// Sections: Phrase input → New credentials (password + optional key file for Tier 2).
+/// Calls `recover_vault_with_phrase`. On success, the session transitions via
+/// `session_actions.complete_success`.
+#[component]
+pub fn RecoverWithPhrasePage(
+    /// The vault to recover.
+    vault: VaultSummary,
+    /// Called when the user clicks "← Back".
+    on_back: impl Fn() + 'static + Clone,
+) -> impl IntoView {
+    let (phrase, set_phrase) = signal(String::new());
+    let (new_password, set_new_password) = signal(String::new());
+    let (confirm_password, set_confirm_password) = signal(String::new());
+    let (key_file_path, set_key_file_path) = signal::<Option<String>>(None);
+    let (loading, set_loading) = signal(false);
+    let session_actions = use_session_actions();
+    let vault_id = vault.vault_id.clone();
+    let vault_tier = vault.tier;
+    let on_back_cancel = on_back.clone();
+
+    let on_submit = {
+        let vault_id = vault_id.clone();
+        move |_| {
+            let mut phrase_value = phrase.get();
+            let mut pw_value = new_password.get();
+            let confirm_value = confirm_password.get();
+
+            if phrase_value.trim().is_empty() {
+                crate::components::use_toast().warning("Recovery phrase is required");
+                return;
+            }
+            if pw_value.is_empty() {
+                crate::components::use_toast().warning("New password is required");
+                return;
+            }
+            if pw_value != confirm_value {
+                crate::components::use_toast().warning("Passwords do not match");
+                return;
+            }
+
+            set_loading.set(true);
+            let vault_id = vault_id.clone();
+
+            leptos::task::spawn_local(async move {
+                let result = invoke_command::<RecoverVaultWithPhraseRequest, AuthResponse>(
+                    "recover_vault_with_phrase",
+                    &RecoverVaultWithPhraseRequest {
+                        vault_id,
+                        phrase: phrase_value.clone(),
+                        new_password: pw_value.clone(),
+                        new_key_file_path: key_file_path.get(),
+                    },
+                )
+                .await;
+                phrase_value.zeroize();
+                pw_value.zeroize();
+                set_phrase.update(|s| s.zeroize());
+                set_new_password.update(|s| s.zeroize());
+                set_confirm_password.update(|s| s.zeroize());
+                set_loading.set(false);
+                match result {
+                    Ok(resp) => {
+                        crate::components::use_toast().success("Vault recovered successfully");
+                        session_actions.complete_success(resp.vault_id);
+                    }
+                    Err(err) => {
+                        crate::components::use_toast().error(&err.message);
+                    }
+                }
+            });
+        }
+    };
+
+    let section_header = |title: &'static str| {
+        view! {
+            <h2 class="text-xs font-semibold uppercase tracking-widest text-text-secondary border-b border-border-default pb-2 mb-4">
+                {title}
+            </h2>
+        }
+    };
+
+    view! {
+        <div class="min-h-screen bg-iron flex items-center justify-center p-4">
+            <div class="w-full max-w-lg bg-stone border border-steel rounded-xl shadow-xl overflow-hidden">
+                <div class="p-6 overflow-y-auto max-h-screen">
+                    <h1 class="text-2xl text-bone text-center mb-8">"Recover with Phrase"</h1>
+
+                    <div class="mb-8">
+                        {section_header("Recovery Phrase")}
+                        <div class="mb-4">
+                            <label class="text-sm text-text-secondary block mb-1">
+                                "24-word recovery phrase"
+                            </label>
+                            <textarea
+                                class="w-full px-3 py-2 bg-surface-overlay border border-border-default rounded text-bone focus:outline-none focus:ring-2 focus:ring-rune font-mono text-sm resize-none"
+                                rows="4"
+                                placeholder="Enter your 24 words separated by spaces"
+                                prop:value=move || phrase.get()
+                                on:input=move |ev| set_phrase.set(event_target_value(&ev))
+                            />
+                        </div>
+                    </div>
+
+                    <div class="mb-8">
+                        {section_header("New Credentials")}
+                        <Input
+                            input_type="password"
+                            label="New Password".to_string()
+                            value=new_password
+                            on_input=move |v| set_new_password.set(v)
+                        />
+                        <Input
+                            input_type="password"
+                            label="Confirm New Password".to_string()
+                            value=confirm_password
+                            on_input=move |v| set_confirm_password.set(v)
+                        />
+                        {move || if vault_tier == 2 {
+                            view! {
+                                <div>
+                                    <label class="text-sm text-text-secondary block mb-1">
+                                        "Key file"
+                                    </label>
+                                    <KeyFileIndicator
+                                        detected_path=key_file_path
+                                        on_manual_select=move |p| set_key_file_path.set(Some(p))
+                                    />
+                                </div>
+                            }.into_any()
+                        } else {
+                            view! { <span></span> }.into_any()
+                        }}
                     </div>
 
                     <div class="flex gap-3">

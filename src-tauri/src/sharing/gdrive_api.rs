@@ -140,12 +140,11 @@ pub(crate) fn parse_gdrive_access_token_from_conf(conf: &str, remote_name: &str)
             in_target = name == remote_name;
             continue;
         }
-        if in_target {
-            if let Some((k, v)) = trimmed.split_once('=') {
-                if k.trim() == "token" {
-                    token_json = Some(v.trim().to_owned());
-                }
-            }
+        if in_target
+            && let Some((k, v)) = trimmed.split_once('=')
+            && k.trim() == "token"
+        {
+            token_json = Some(v.trim().to_owned());
         }
     }
 
