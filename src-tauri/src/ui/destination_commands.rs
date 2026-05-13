@@ -136,6 +136,13 @@ fn rclone_type_from_blob(blob: &str) -> Option<String> {
         .map(|(_, v)| v.trim().to_owned())
 }
 
+/// Returns `true` when the given rclone backend type supports file sharing.
+///
+/// Only Backblaze B2 (`"b2"`) and Google Drive (`"drive"`) are supported.
+fn sharing_supported_for_type(rclone_type: Option<&str>) -> bool {
+    matches!(rclone_type, Some("b2") | Some("drive"))
+}
+
 /// Add a new destination session (primary or backup) to the vault.
 ///
 /// Credentials are encrypted and stored in SQLCipher — `rclone_config_blob` is
@@ -222,6 +229,7 @@ pub async fn add_destination(
     }
 
     let rclone_type = rclone_type_from_blob(&config.rclone_config_blob);
+    let sharing_supported = sharing_supported_for_type(rclone_type.as_deref());
     Ok(DestinationEntry {
         destination_id: session.destination_id,
         label: session.label,
@@ -231,6 +239,7 @@ pub async fn add_destination(
         bucket: session.bucket,
         is_primary: session.is_primary,
         backup_mode: config.backup_mode,
+        sharing_supported,
     })
 }
 
@@ -269,6 +278,7 @@ pub async fn list_destinations(
             });
 
             let rclone_type = rclone_type_from_blob(&session.rclone_config_blob);
+            let sharing_supported = sharing_supported_for_type(rclone_type.as_deref());
             DestinationEntry {
                 destination_id: session.destination_id,
                 label: session.label,
@@ -278,6 +288,7 @@ pub async fn list_destinations(
                 bucket: session.bucket,
                 is_primary: session.is_primary,
                 backup_mode: backup_mode_str,
+                sharing_supported,
             }
         })
         .collect();
@@ -367,6 +378,21 @@ pub async fn set_primary_destination_cmd(
     let conf_path = rclone_conf_path();
 
     let transport = build_destination_transport(binary_path, &conf_path, &new_primary).await?;
+
+    // Load the GDrive SA JSON (if configured) so share operations work immediately
+    // after changing the primary destination, without requiring a vault re-lock/unlock.
+    let db_guard = state.database.read().await;
+    let sa_config = if let Some(db) = db_guard.as_ref() {
+        db.get_gdrive_sharing_config()
+            .await
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+    } else {
+        None
+    };
+    drop(db_guard);
+    let transport = transport.with_sharing_config(sa_config);
 
     state.swap_cloud_transport(Arc::new(transport)).await;
 

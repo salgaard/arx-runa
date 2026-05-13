@@ -23,4 +23,6 @@ pub struct DestinationEntry {
     pub is_primary: bool,
     /// Backup sync mode, `None` for primary destinations.
     pub backup_mode: Option<String>,
+    /// Whether this destination supports file sharing (Backblaze B2 and Google Drive only).
+    pub sharing_supported: bool,
 }

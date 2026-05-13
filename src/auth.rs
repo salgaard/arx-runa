@@ -10,7 +10,9 @@ use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use zeroize::Zeroize;
 
-use crate::components::{Button, ChunkSizeSelector, DestinationSelector, EpochBufferToggle, Input};
+use crate::components::{
+    Button, ChunkSizeSelector, DestinationKind, DestinationSelector, EpochBufferToggle, Input,
+};
 use crate::destinations::GdriveShareSetupModal;
 use crate::dialog::{open_directory_dialog, open_file_dialog};
 use crate::invoke::invoke_command;
@@ -338,12 +340,10 @@ pub fn VaultCreationPage(
 
     // ── Destination signal (updated by DestinationSelector via callback) ──────
     let (primary_destination, set_primary_destination) = signal(default_local_destination());
-    let is_gdrive_selected = move || {
-        primary_destination
-            .read()
-            .rclone_config_blob
-            .contains("type = drive")
-    };
+    let (selected_kind, set_selected_kind) = signal(DestinationKind::Local);
+    let is_gdrive_selected = move || selected_kind.get() == DestinationKind::GoogleDrive;
+    let is_b2_selected = move || selected_kind.get() == DestinationKind::BackblazeB2;
+    let is_sharing_supported = move || is_gdrive_selected() || is_b2_selected();
 
     // ── Google Drive sharing (deferred until after vault creation) ────────────
     let (pending_sa_path, set_pending_sa_path) = signal::<Option<String>>(None);
@@ -533,12 +533,13 @@ pub fn VaultCreationPage(
                         {section_header("Storage Destination")}
                         <DestinationSelector
                             on_change=move |config| set_primary_destination.set(config)
+                            on_kind_change=Box::new(move |k| set_selected_kind.set(k))
                         />
                         <Show when=is_gdrive_selected>
-                            <div class="mt-3 p-3 border border-steel/60 rounded bg-stone/40 text-sm">
-                                <p class="font-medium text-bone mb-1">"File sharing (optional)"</p>
+                            <div class="mt-3 p-3 border border-green-800/40 rounded bg-green-900/20 text-sm">
+                                <p class="font-medium text-green-400 mb-0.5">"✓ Sharing supported"</p>
                                 <p class="text-text-secondary mb-2">
-                                    "To share files from this vault, you need a GCP Service Account key. "
+                                    "Google Drive supports file sharing. To share files, you need a GCP Service Account key. "
                                     "You can set this up now or later from the Destinations page."
                                 </p>
                                 {move || {
@@ -559,6 +560,23 @@ pub fn VaultCreationPage(
                                         .into_any()
                                     }
                                 }}
+                            </div>
+                        </Show>
+                        <Show when=is_b2_selected>
+                            <div class="mt-3 p-3 border border-green-800/40 rounded bg-green-900/20 text-sm">
+                                <p class="font-medium text-green-400 mb-0.5">"✓ Sharing supported"</p>
+                                <p class="text-text-secondary">
+                                    "Backblaze B2 supports file sharing. No additional setup is required."
+                                </p>
+                            </div>
+                        </Show>
+                        <Show when=move || !is_sharing_supported()>
+                            <div class="mt-3 p-3 border border-border-default rounded bg-surface-overlay text-sm">
+                                <p class="font-medium text-text-secondary mb-0.5">"Sharing not available"</p>
+                                <p class="text-text-secondary">
+                                    "This destination does not support file sharing. "
+                                    "Switch to Backblaze B2 or Google Drive to enable sharing."
+                                </p>
                             </div>
                         </Show>
                     </div>

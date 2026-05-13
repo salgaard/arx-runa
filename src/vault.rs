@@ -13,9 +13,9 @@ use crate::drag_drop::on_file_drop;
 use crate::invoke::{invoke_command, invoke_command_with_channel};
 use crate::ipc_channel::IpcChannel;
 use crate::ipc_types::{
-    ComposeEmailWithAttachmentRequest, DeleteFileRequest, DownloadFileRequest, FileContentResponse,
-    FileEntry, GetFileContentRequest, ProgressUpdate, RevealInExplorerRequest, ShareResponse,
-    UploadFileRequest,
+    ComposeEmailWithAttachmentRequest, DeleteFileRequest, DestinationEntry, DownloadFileRequest,
+    FileContentResponse, FileEntry, GetFileContentRequest, ProgressUpdate, RevealInExplorerRequest,
+    ShareResponse, UploadFileRequest,
 };
 use crate::shares::ShareModal;
 use crate::state::{use_vault, use_vault_actions};
@@ -215,6 +215,10 @@ pub fn Breadcrumbs(
 pub fn FileItem(
     /// The file or directory entry to display.
     entry: FileEntry,
+    /// Whether the primary destination supports file sharing.
+    ///
+    /// When `false`, the share button is disabled with an explanatory tooltip.
+    sharing_supported: Signal<bool>,
 ) -> impl IntoView {
     let vault = use_vault();
     let actions = use_vault_actions();
@@ -362,16 +366,34 @@ pub fn FileItem(
                         >
                             "⬇"
                         </button>
-                        <button
-                            class="text-text-muted hover:text-rune cursor-pointer text-xl px-2 py-1 transition-transform hover:scale-125"
-                            title="Share"
-                            on:click=move |_| {
-                                set_show_share_modal.set(true);
-                                share_result.set(None);
+                        {move || {
+                            if sharing_supported.get() {
+                                view! {
+                                    <button
+                                        class="text-text-muted hover:text-rune cursor-pointer text-xl px-2 py-1 transition-transform hover:scale-125"
+                                        title="Share"
+                                        on:click=move |_| {
+                                            set_show_share_modal.set(true);
+                                            share_result.set(None);
+                                        }
+                                    >
+                                        "↗"
+                                    </button>
+                                }
+                                .into_any()
+                            } else {
+                                view! {
+                                    <button
+                                        class="text-text-muted/30 text-xl px-2 py-1 cursor-not-allowed"
+                                        title="Sharing requires Backblaze B2 or Google Drive as primary destination"
+                                        disabled=true
+                                    >
+                                        "↗"
+                                    </button>
+                                }
+                                .into_any()
                             }
-                        >
-                            "↗"
-                        </button>
+                        }}
                         <button
                             class="text-text-muted hover:text-danger cursor-pointer text-xl px-2 py-1 transition-transform hover:scale-125"
                             title="Delete"
@@ -569,13 +591,15 @@ pub fn FileItem(
 pub fn FileList(
     /// The list of file and directory entries to display.
     entries: Signal<Vec<FileEntry>>,
+    /// Whether the primary destination supports file sharing.
+    sharing_supported: Signal<bool>,
 ) -> impl IntoView {
     view! {
         <div class="flex flex-col divide-y divide-border-subtle">
             <For
                 each=move || entries.get()
                 key=|e| e.id.clone()
-                children=move |entry| view! { <FileItem entry=entry /> }
+                children=move |entry| view! { <FileItem entry=entry sharing_supported=sharing_supported /> }
             />
         </div>
     }
@@ -756,6 +780,21 @@ pub fn VaultBrowser() -> impl IntoView {
 
     let current_path = Signal::derive(move || vault.read().current_path.clone());
 
+    // Fetch destinations once to determine whether sharing is supported for the
+    // primary destination.  Refreshed automatically when the component mounts.
+    let destinations_resource = LocalResource::new(move || async move {
+        invoke_command::<(), Vec<DestinationEntry>>("list_destinations", &())
+            .await
+            .unwrap_or_default()
+    });
+
+    let sharing_supported = Signal::derive(move || {
+        destinations_resource
+            .get()
+            .and_then(|entries| entries.iter().find(|e| e.is_primary).map(|e| e.sharing_supported))
+            .unwrap_or(false)
+    });
+
     view! {
         <div class="flex flex-col gap-4 h-full">
             <div class="flex items-center justify-between">
@@ -772,7 +811,10 @@ pub fn VaultBrowser() -> impl IntoView {
                 fallback=move || {
                     view! {
                         <DropZone>
-                            <FileList entries=Signal::derive(move || vault.read().files.clone()) />
+                            <FileList
+                                entries=Signal::derive(move || vault.read().files.clone())
+                                sharing_supported=sharing_supported
+                            />
                         </DropZone>
                     }
                 }

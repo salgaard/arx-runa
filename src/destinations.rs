@@ -3,7 +3,7 @@
 use leptos::prelude::*;
 use std::sync::Arc;
 
-use crate::components::DestinationSelector;
+use crate::components::{DestinationKind, DestinationSelector};
 use crate::dialog::open_file_dialog;
 use crate::invoke::invoke_command;
 use crate::ipc_types::{
@@ -312,6 +312,7 @@ fn DestinationItem(
 ) -> impl IntoView {
     let is_primary = entry.is_primary;
     let is_gdrive = entry.rclone_type.as_deref() == Some("drive");
+    let sharing_supported = entry.sharing_supported;
     let backup_mode_label = match entry.backup_mode.as_deref() {
         Some("mirror") => "Mirror",
         Some("accumulating") => "Accumulating",
@@ -351,6 +352,21 @@ fn DestinationItem(
                             .into_any()
                         } else {
                             ().into_any()
+                        }}
+                        {if sharing_supported {
+                            view! {
+                                <span class="px-2 py-0.5 text-xs font-medium bg-green-900/40 text-green-400 border border-green-800/40 rounded">
+                                    "Sharing ✓"
+                                </span>
+                            }
+                            .into_any()
+                        } else {
+                            view! {
+                                <span class="px-2 py-0.5 text-xs font-medium bg-surface-overlay text-text-muted border border-border-default rounded">
+                                    "No sharing"
+                                </span>
+                            }
+                            .into_any()
                         }}
                     </div>
                     <p class="text-sm text-text-secondary">
@@ -529,8 +545,11 @@ fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
         backup_mode: None,
     });
 
-    // Derived: true when the currently selected config is Google Drive.
-    let is_gdrive_selected = move || config.read().rclone_config_blob.contains("type = drive");
+    // Derived: true when the currently selected kind supports sharing.
+    let (selected_kind, set_selected_kind) = signal(DestinationKind::Local);
+    let is_gdrive_selected = move || selected_kind.get() == DestinationKind::GoogleDrive;
+    let is_b2_selected = move || selected_kind.get() == DestinationKind::BackblazeB2;
+    let is_sharing_supported = move || is_gdrive_selected() || is_b2_selected();
 
     let field_class = "w-full px-3 py-2 bg-stone border border-steel rounded text-bone placeholder-text-secondary focus:outline-none focus:border-bone";
 
@@ -580,16 +599,19 @@ fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
                     </select>
                 </div>
 
-                <DestinationSelector on_change=move |c| config.set(c) />
+                <DestinationSelector
+                    on_change=move |c| config.set(c)
+                    on_kind_change=Box::new(move |k| set_selected_kind.set(k))
+                />
 
-                // Optional sharing setup — shown only after Google Drive is configured.
+                // Sharing status — shown for all destination types.
                 {move || {
                     if is_gdrive_selected() {
                         view! {
-                            <div class="p-3 border border-steel/60 rounded bg-stone/40 text-sm">
-                                <p class="font-medium text-bone mb-1">"File sharing (optional)"</p>
+                            <div class="p-3 border border-green-800/40 rounded bg-green-900/20 text-sm">
+                                <p class="font-medium text-green-400 mb-0.5">"✓ Sharing supported"</p>
                                 <p class="text-text-secondary mb-2">
-                                    "To share files from this destination, you need a GCP Service "
+                                    "Google Drive supports file sharing. To share files, you need a GCP Service "
                                     "Account key. You can set this up now or later from the destination list."
                                 </p>
                                 <button
@@ -601,8 +623,30 @@ fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
                             </div>
                         }
                         .into_any()
-                    } else {
+                    } else if is_b2_selected() {
+                        view! {
+                            <div class="p-3 border border-green-800/40 rounded bg-green-900/20 text-sm">
+                                <p class="font-medium text-green-400 mb-0.5">"✓ Sharing supported"</p>
+                                <p class="text-text-secondary">
+                                    "Backblaze B2 supports file sharing. No additional setup is required."
+                                </p>
+                            </div>
+                        }
+                        .into_any()
+                    } else if is_sharing_supported() {
+                        // Future-proofing: another supported type not covered above.
                         ().into_any()
+                    } else {
+                        view! {
+                            <div class="p-3 border border-border-default rounded bg-surface-overlay text-sm">
+                                <p class="font-medium text-text-secondary mb-0.5">"Sharing not available"</p>
+                                <p class="text-text-secondary">
+                                    "This destination does not support file sharing. "
+                                    "Switch to Backblaze B2 or Google Drive to enable sharing."
+                                </p>
+                            </div>
+                        }
+                        .into_any()
                     }
                 }}
 

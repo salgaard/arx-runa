@@ -181,10 +181,16 @@ fn build_config_for_kind(
 /// Calls `on_change` with an updated `DestinationSessionConfig` whenever the
 /// user completes configuration.  For OAuth providers `on_change` fires only
 /// after the browser callback is received.
+///
+/// Calls `on_kind_change` immediately whenever the user selects a new kind,
+/// even before OAuth or field entry is complete.
 #[component]
 pub fn DestinationSelector(
     /// Called with the completed destination config when configuration is ready.
     on_change: impl Fn(DestinationSessionConfig) + 'static + Clone + Send + Sync,
+    /// Called immediately when the user selects a different destination kind.
+    #[prop(optional)]
+    on_kind_change: Option<Box<dyn Fn(DestinationKind) + Send + Sync>>,
 ) -> impl IntoView {
     let (kind, set_kind) = signal(DestinationKind::Local);
     let (local_path, set_local_path) = signal(String::new());
@@ -198,6 +204,7 @@ pub fn DestinationSelector(
     let (oauth_state, set_oauth_state) = signal(OAuthFlowState::Idle);
 
     let on_change_notify = on_change.clone();
+    let on_kind_change_sv = StoredValue::new(on_kind_change);
 
     // Fire `on_change` reactively for all non-OAuth providers.
     Effect::new(move |_| {
@@ -252,6 +259,11 @@ pub fn DestinationSelector(
         }
         set_oauth_state.set(OAuthFlowState::Idle);
         set_kind.set(new_kind);
+        on_kind_change_sv.with_value(|cb| {
+            if let Some(cb) = cb {
+                cb(new_kind);
+            }
+        });
     };
 
     let begin_oauth = StoredValue::new({
@@ -359,7 +371,7 @@ pub fn DestinationSelector(
 
     let field_class = "w-full bg-surface-overlay border border-border-default rounded-lg px-3 py-2 text-bone text-sm focus:outline-none focus:border-rune";
 
-    let render_option = move |option: DestinationKind, label: &'static str, desc: &'static str| {
+    let render_option = move |option: DestinationKind, label: &'static str, desc: &'static str, sharing_supported: bool| {
         let is_selected = move || kind.get() == option;
         view! {
             <label
@@ -375,8 +387,23 @@ pub fn DestinationSelector(
                     on:change=move |_| handle_kind_change(option)
                     class="mt-0.5 cursor-pointer accent-rune"
                 />
-                <div>
-                    <div class="font-medium text-bone text-sm">{label}</div>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="font-medium text-bone text-sm">{label}</span>
+                        {if sharing_supported {
+                            view! {
+                                <span class="text-xs px-1.5 py-0.5 rounded bg-green-900/40 text-green-400 border border-green-800/40 whitespace-nowrap">
+                                    "Sharing Supported"
+                                </span>
+                            }.into_any()
+                        } else {
+                            view! {
+                                <span class="text-xs px-1.5 py-0.5 rounded bg-surface-overlay text-text-muted border border-border-default whitespace-nowrap">
+                                    "No sharing"
+                                </span>
+                            }.into_any()
+                        }}
+                    </div>
                     <div class="text-xs text-text-secondary mt-0.5">{desc}</div>
                 </div>
             </label>
@@ -386,17 +413,17 @@ pub fn DestinationSelector(
     view! {
         <div class="space-y-3">
             {render_option(DestinationKind::Local, "Local Filesystem",
-                "Store vault data on this computer")}
+                "Store vault data on this computer", false)}
             {render_option(DestinationKind::ExternalDrive, "External Drive",
-                "USB drive or network share — specify a local path")}
+                "USB drive or network share — specify a local path", false)}
             {render_option(DestinationKind::BackblazeB2, "Backblaze B2",
-                "Object storage via Backblaze B2 — key ID and application key")}
+                "Object storage via Backblaze B2 — key ID and application key", true)}
             {render_option(DestinationKind::OneDrive, "OneDrive",
-                "Personal Microsoft OneDrive — sign in with your Microsoft account")}
+                "Personal Microsoft OneDrive — sign in with your Microsoft account", false)}
             {render_option(DestinationKind::GoogleDrive, "Google Drive",
-                "Google Drive — sign in with your Google account")}
+                "Google Drive — sign in with your Google account", true)}
             {render_option(DestinationKind::CustomRclone, "Custom (Rclone)",
-                "Any rclone-compatible remote — paste your rclone config stanza")}
+                "Any rclone-compatible remote — paste your rclone config stanza", false)}
 
             // ── Local path ────────────────────────────────────────────────────
             <Show when=move || kind.get() == DestinationKind::Local>
