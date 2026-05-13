@@ -57,6 +57,7 @@
     "allow-has-gdrive-service-account",
     "allow-set-gdrive-service-account",
     "allow-cancel-oauth-setup-cmd",
+    "allow-get-received-share-content",
     {
       "identifier": "shell:allow-execute",
       "allow": [

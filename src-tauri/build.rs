@@ -49,6 +49,7 @@ fn main() {
             "has_gdrive_service_account",
             "set_gdrive_service_account",
             "cancel_oauth_setup_cmd",
+            "get_received_share_content",
         ]),
     ))
     .expect("failed to build tauri application");
