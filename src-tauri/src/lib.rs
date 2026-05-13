@@ -39,7 +39,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(crate::ui::AppState::construct_default())
         .invoke_handler(tauri::generate_handler![
-            // Auth (13)
+            // Auth (15)
             ui::auth_commands::authenticate,
             ui::auth_commands::check_cloud_configured,
             ui::auth_commands::configure_cloud,
@@ -47,6 +47,8 @@ pub fn run() {
             ui::auth_commands::list_vaults,
             ui::auth_commands::change_password,
             ui::auth_commands::rotate_key_file,
+            ui::auth_commands::setup_recovery,
+            ui::auth_commands::recover_vault_with_phrase,
             ui::auth_commands::delete_vault,
             ui::auth_commands::lock_session,
             ui::auth_commands::get_session_status,
@@ -78,7 +80,7 @@ pub fn run() {
             ui::destination_commands::begin_onedrive_setup,
             ui::destination_commands::poll_oauth_setup,
             ui::destination_commands::cancel_oauth_setup_cmd,
-            // Sharing (9)
+            // Sharing (11)
             ui::sharing_commands::export_public_key,
             ui::sharing_commands::get_own_public_key_b64,
             ui::sharing_commands::add_contact,
@@ -87,9 +89,12 @@ pub fn run() {
             ui::sharing_commands::import_share,
             ui::sharing_commands::check_share_receipts,
             ui::sharing_commands::download_received_share,
+            ui::sharing_commands::get_received_share_content,
             ui::sharing_commands::revoke_share,
             ui::sharing_commands::list_shares,
             ui::sharing_commands::list_received_shares,
+            ui::sharing_commands::set_gdrive_service_account,
+            ui::sharing_commands::has_gdrive_service_account,
             // Shell (3)
             ui::shell_commands::reveal_in_explorer,
             ui::shell_commands::compose_email_with_attachment,

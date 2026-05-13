@@ -68,8 +68,11 @@ pub struct ShareRecord {
     pub expires_at: Option<i64>,
     /// Unix timestamp when the share was revoked (`None` = still active).
     pub revoked_at: Option<i64>,
-    /// B2 scoped application key identifier for this share, if one was generated.
+    /// Provider-specific credential identifier for revocation (B2 key ID or Drive permission ID).
     pub download_key_id: Option<String>,
+    /// Google Drive folder ID for the shared prefix, populated when provider is `drive`.
+    /// Used at revocation time to call the Drive permissions API.
+    pub download_folder_id: Option<String>,
     /// Whether the recipient was asked to send a receipt after downloading.
     pub receipt_requested: bool,
     /// Unix timestamp when the receipt was received (`None` = not yet received).

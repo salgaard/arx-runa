@@ -10,13 +10,17 @@ use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use zeroize::Zeroize;
 
-use crate::components::{Button, ChunkSizeSelector, DestinationSelector, EpochBufferToggle, Input};
+use crate::components::{
+    Button, ChunkSizeSelector, DestinationKind, DestinationSelector, EpochBufferToggle, Input,
+};
+use crate::destinations::GdriveShareSetupModal;
 use crate::dialog::{open_directory_dialog, open_file_dialog};
 use crate::invoke::invoke_command;
 use crate::ipc_types::VaultSummary;
 use crate::ipc_types::{
     AuthResponse, AuthenticateRequest, CreateVaultRequest, DestinationSessionConfig,
-    RecoverVaultFromCloudRequest, SessionStatus,
+    RecoverVaultFromCloudRequest, RecoverVaultWithPhraseRequest, SessionStatus,
+    SetGdriveServiceAccountRequest,
 };
 use crate::state::use_session_actions;
 
@@ -129,6 +133,8 @@ pub fn LoginPage(
     vault: VaultSummary,
     /// Called when the user clicks "Back" to return to the vault picker.
     on_back: impl Fn() + 'static + Clone,
+    /// Called when the user clicks "Forgot password / lost key file?".
+    on_recover: impl Fn() + 'static + Clone,
 ) -> impl IntoView {
     let (password, set_password) = signal(String::new());
     let (key_file_path, set_key_file_path) = signal::<Option<String>>(None);
@@ -251,6 +257,12 @@ pub fn LoginPage(
                 >
                     "← Back"
                 </button>
+                <button
+                    class="mt-2 text-text-secondary text-sm w-full text-center cursor-pointer hover:text-bone transition-colors underline"
+                    on:click=move |_| on_recover()
+                >
+                    "Forgot password / lost key file?"
+                </button>
             </div>
         </div>
     }
@@ -337,6 +349,14 @@ pub fn VaultCreationPage(
 
     // ── Destination signal (updated by DestinationSelector via callback) ──────
     let (primary_destination, set_primary_destination) = signal(default_local_destination());
+    let (selected_kind, set_selected_kind) = signal(DestinationKind::Local);
+    let is_gdrive_selected = move || selected_kind.get() == DestinationKind::GoogleDrive;
+    let is_b2_selected = move || selected_kind.get() == DestinationKind::BackblazeB2;
+    let is_sharing_supported = move || is_gdrive_selected() || is_b2_selected();
+
+    // ── Google Drive sharing (deferred until after vault creation) ────────────
+    let (pending_sa_path, set_pending_sa_path) = signal::<Option<String>>(None);
+    let show_gdrive_sharing_modal = RwSignal::new(false);
 
     // ── Submit state ──────────────────────────────────────────────────────────
     let (loading, set_loading) = signal(false);
@@ -394,6 +414,18 @@ pub fn VaultCreationPage(
             set_loading.set(false);
             match result {
                 Ok(resp) => {
+                    if let Some(sa_path) = pending_sa_path.get_untracked()
+                        && let Err(e) = invoke_command::<_, ()>(
+                            "set_gdrive_service_account",
+                            &SetGdriveServiceAccountRequest {
+                                sa_json_path: sa_path,
+                            },
+                        )
+                        .await
+                    {
+                        crate::components::use_toast()
+                            .warning(format!("Vault created, but sharing setup failed: {e}"));
+                    }
                     crate::components::use_toast().success(format!(
                         "Vault '{}' created successfully!",
                         vault_name_value
@@ -509,7 +541,52 @@ pub fn VaultCreationPage(
                         {section_header("Storage Destination")}
                         <DestinationSelector
                             on_change=move |config| set_primary_destination.set(config)
+                            on_kind_change=Box::new(move |k| set_selected_kind.set(k))
                         />
+                        <Show when=is_gdrive_selected>
+                            <div class="mt-3 p-3 border border-green-800/40 rounded bg-green-900/20 text-sm">
+                                <p class="font-medium text-green-400 mb-0.5">"✓ Sharing supported"</p>
+                                <p class="text-text-secondary mb-2">
+                                    "Google Drive supports file sharing. To share files, you need a GCP Service Account key. "
+                                    "You can set this up now or later from the Destinations page."
+                                </p>
+                                {move || {
+                                    if pending_sa_path.get().is_some() {
+                                        view! {
+                                            <p class="text-green-400 text-sm">"✓ Service account key selected"</p>
+                                        }
+                                        .into_any()
+                                    } else {
+                                        view! {
+                                            <button
+                                                class="text-rune hover:text-rune/80 underline text-sm cursor-pointer"
+                                                on:click=move |_| show_gdrive_sharing_modal.set(true)
+                                            >
+                                                "Set up sharing →"
+                                            </button>
+                                        }
+                                        .into_any()
+                                    }
+                                }}
+                            </div>
+                        </Show>
+                        <Show when=is_b2_selected>
+                            <div class="mt-3 p-3 border border-green-800/40 rounded bg-green-900/20 text-sm">
+                                <p class="font-medium text-green-400 mb-0.5">"✓ Sharing supported"</p>
+                                <p class="text-text-secondary">
+                                    "Backblaze B2 supports file sharing. No additional setup is required."
+                                </p>
+                            </div>
+                        </Show>
+                        <Show when=move || !is_sharing_supported()>
+                            <div class="mt-3 p-3 border border-border-default rounded bg-surface-overlay text-sm">
+                                <p class="font-medium text-text-secondary mb-0.5">"Sharing not available"</p>
+                                <p class="text-text-secondary">
+                                    "This destination does not support file sharing. "
+                                    "Switch to Backblaze B2 or Google Drive to enable sharing."
+                                </p>
+                            </div>
+                        </Show>
                     </div>
 
                     // ── Review Section ────────────────────────────────────────────────
@@ -542,7 +619,7 @@ pub fn VaultCreationPage(
                                 </span>
                             </div>
                             <div class="flex justify-between">
-                                <span class="text-text-secondary">"Version history:"</span>
+                                <span class="text-text-secondary">"Small-file packing:"</span>
                                 <span class="text-bone font-medium">
                                     {move || if epoch_buffer_enabled.get() { "Enabled" } else { "Disabled" }}
                                 </span>
@@ -571,6 +648,18 @@ pub fn VaultCreationPage(
                     </div>
                 </div>
             </div>
+            {move || {
+                if show_gdrive_sharing_modal.get() {
+                    let on_file_picked = move |path: String| {
+                        set_pending_sa_path.set(Some(path));
+                    };
+                    let on_close = move || show_gdrive_sharing_modal.set(false);
+                    view! { <GdriveShareSetupModal on_file_picked=on_file_picked on_close=on_close /> }
+                        .into_any()
+                } else {
+                    ().into_any()
+                }
+            }}
         </div>
     }
 }
@@ -670,6 +759,162 @@ pub fn VaultRecoveryPage(
                                 on_manual_select=move |path| set_key_file_path.set(Some(path))
                             />
                         </div>
+                    </div>
+
+                    <div class="flex gap-3">
+                        <button
+                            type="button"
+                            class="flex-1 px-4 py-2 rounded-lg border border-border-default text-bone cursor-pointer hover:bg-surface-overlay transition-colors"
+                            on:click=move |_| on_back_cancel()
+                        >
+                            "\u{2190} Back"
+                        </button>
+                        <Button loading=loading on_click=on_submit>
+                            "Recover Vault"
+                        </Button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+// ─── RecoverWithPhrasePage ────────────────────────────────────────────────────
+
+/// Phrase-based vault recovery — re-keys the vault using the 24-word recovery phrase.
+///
+/// Sections: Phrase input → New credentials (password + optional key file for Tier 2).
+/// Calls `recover_vault_with_phrase`. On success, the session transitions via
+/// `session_actions.complete_success`.
+#[component]
+pub fn RecoverWithPhrasePage(
+    /// The vault to recover.
+    vault: VaultSummary,
+    /// Called when the user clicks "← Back".
+    on_back: impl Fn() + 'static + Clone,
+) -> impl IntoView {
+    let (phrase, set_phrase) = signal(String::new());
+    let (new_password, set_new_password) = signal(String::new());
+    let (confirm_password, set_confirm_password) = signal(String::new());
+    let (key_file_path, set_key_file_path) = signal::<Option<String>>(None);
+    let (loading, set_loading) = signal(false);
+    let session_actions = use_session_actions();
+    let vault_id = vault.vault_id.clone();
+    let vault_tier = vault.tier;
+    let on_back_cancel = on_back.clone();
+
+    let on_submit = {
+        let vault_id = vault_id.clone();
+        move |_| {
+            let mut phrase_value = phrase.get();
+            let mut pw_value = new_password.get();
+            let confirm_value = confirm_password.get();
+
+            if phrase_value.trim().is_empty() {
+                crate::components::use_toast().warning("Recovery phrase is required");
+                return;
+            }
+            if pw_value.is_empty() {
+                crate::components::use_toast().warning("New password is required");
+                return;
+            }
+            if pw_value != confirm_value {
+                crate::components::use_toast().warning("Passwords do not match");
+                return;
+            }
+
+            set_loading.set(true);
+            let vault_id = vault_id.clone();
+
+            leptos::task::spawn_local(async move {
+                let result = invoke_command::<RecoverVaultWithPhraseRequest, AuthResponse>(
+                    "recover_vault_with_phrase",
+                    &RecoverVaultWithPhraseRequest {
+                        vault_id,
+                        phrase: phrase_value.clone(),
+                        new_password: pw_value.clone(),
+                        new_key_file_path: key_file_path.get(),
+                    },
+                )
+                .await;
+                phrase_value.zeroize();
+                pw_value.zeroize();
+                set_phrase.update(|s| s.zeroize());
+                set_new_password.update(|s| s.zeroize());
+                set_confirm_password.update(|s| s.zeroize());
+                set_loading.set(false);
+                match result {
+                    Ok(resp) => {
+                        crate::components::use_toast().success("Vault recovered successfully");
+                        session_actions.complete_success(resp.vault_id);
+                    }
+                    Err(err) => {
+                        crate::components::use_toast().error(&err.message);
+                    }
+                }
+            });
+        }
+    };
+
+    let section_header = |title: &'static str| {
+        view! {
+            <h2 class="text-xs font-semibold uppercase tracking-widest text-text-secondary border-b border-border-default pb-2 mb-4">
+                {title}
+            </h2>
+        }
+    };
+
+    view! {
+        <div class="min-h-screen bg-iron flex items-center justify-center p-4">
+            <div class="w-full max-w-lg bg-stone border border-steel rounded-xl shadow-xl overflow-hidden">
+                <div class="p-6 overflow-y-auto max-h-screen">
+                    <h1 class="text-2xl text-bone text-center mb-8">"Recover with Phrase"</h1>
+
+                    <div class="mb-8">
+                        {section_header("Recovery Phrase")}
+                        <div class="mb-4">
+                            <label class="text-sm text-text-secondary block mb-1">
+                                "24-word recovery phrase"
+                            </label>
+                            <textarea
+                                class="w-full px-3 py-2 bg-surface-overlay border border-border-default rounded text-bone focus:outline-none focus:ring-2 focus:ring-rune font-mono text-sm resize-none"
+                                rows="4"
+                                placeholder="Enter your 24 words separated by spaces"
+                                prop:value=move || phrase.get()
+                                on:input=move |ev| set_phrase.set(event_target_value(&ev))
+                            />
+                        </div>
+                    </div>
+
+                    <div class="mb-8">
+                        {section_header("New Credentials")}
+                        <Input
+                            input_type="password"
+                            label="New Password".to_string()
+                            value=new_password
+                            on_input=move |v| set_new_password.set(v)
+                        />
+                        <Input
+                            input_type="password"
+                            label="Confirm New Password".to_string()
+                            value=confirm_password
+                            on_input=move |v| set_confirm_password.set(v)
+                        />
+                        {move || if vault_tier == 2 {
+                            view! {
+                                <div>
+                                    <label class="text-sm text-text-secondary block mb-1">
+                                        "Key file"
+                                    </label>
+                                    <KeyFileIndicator
+                                        detected_path=key_file_path
+                                        on_manual_select=move |p| set_key_file_path.set(Some(p))
+                                    />
+                                </div>
+                            }.into_any()
+                        } else {
+                            view! { <span></span> }.into_any()
+                        }}
                     </div>
 
                     <div class="flex gap-3">

@@ -48,6 +48,9 @@ pub enum SharingError {
     /// A cloud transport operation underpinning share creation, revocation, or fetch failed.
     #[error("sharing cloud operation failed: {0}")]
     CloudOperation(String),
+    /// The active cloud destination does not support sharing.
+    #[error("sharing not supported by this destination: {0}")]
+    NotSupported(String),
     /// Revocation blob deletion stopped mid-loop; caller retries by re-invoking `revoke_share`.
     #[error("revocation partial: failed at blob index {failed_index}")]
     RevocationPartial { failed_index: usize },

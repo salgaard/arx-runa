@@ -286,14 +286,15 @@ impl SharingStore for SqlCipherMetadataStore {
         let expires_at = share.expires_at;
         let revoked_at = share.revoked_at;
         let download_key_id = share.download_key_id.clone();
+        let download_folder_id = share.download_folder_id.clone();
         let receipt_requested = share.receipt_requested as i64;
         let receipt_received_at = share.receipt_received_at;
 
         self.with_connection_blocking(move |connection| {
             connection
                 .execute(
-                    "INSERT INTO shares (share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                    params![share_id, file_id, contact_id_text, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at],
+                    "INSERT INTO shares (share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at, download_folder_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    params![share_id, file_id, contact_id_text, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at, download_folder_id],
                 )
                 .map_err(StorageError::from_rusqlite)?;
             Ok(())
@@ -309,7 +310,7 @@ impl SharingStore for SqlCipherMetadataStore {
             .with_connection_blocking(move |connection| {
                 connection
                     .query_row(
-                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at FROM shares WHERE share_id = ?1",
+                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at, download_folder_id FROM shares WHERE share_id = ?1",
                         params![share_id_owned],
                         map_share_row,
                     )
@@ -329,7 +330,7 @@ impl SharingStore for SqlCipherMetadataStore {
             .with_connection_blocking(move |connection| {
                 let mut statement = connection
                     .prepare(
-                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at FROM shares WHERE file_id = ?1 ORDER BY created_at ASC, share_id ASC",
+                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at, download_folder_id FROM shares WHERE file_id = ?1 ORDER BY created_at ASC, share_id ASC",
                     )
                     .map_err(StorageError::from_rusqlite)?;
                 let mapped_rows = statement
@@ -356,7 +357,7 @@ impl SharingStore for SqlCipherMetadataStore {
             .with_connection_blocking(move |connection| {
                 let mut statement = connection
                     .prepare(
-                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at FROM shares WHERE file_id = ?1 AND revoked_at IS NULL ORDER BY created_at ASC, share_id ASC",
+                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at, download_folder_id FROM shares WHERE file_id = ?1 AND revoked_at IS NULL ORDER BY created_at ASC, share_id ASC",
                     )
                     .map_err(StorageError::from_rusqlite)?;
                 let mapped_rows = statement
@@ -383,7 +384,7 @@ impl SharingStore for SqlCipherMetadataStore {
             .with_connection_blocking(move |connection| {
                 let mut statement = connection
                     .prepare(
-                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at FROM shares WHERE file_share_id = ?1 AND revoked_at IS NULL ORDER BY created_at ASC, share_id ASC",
+                        "SELECT share_id, file_id, contact_id, file_share_id, cloud_path, created_at, expires_at, revoked_at, download_key_id, receipt_requested, receipt_received_at, download_folder_id FROM shares WHERE file_share_id = ?1 AND revoked_at IS NULL ORDER BY created_at ASC, share_id ASC",
                     )
                     .map_err(StorageError::from_rusqlite)?;
                 let mapped_rows = statement
@@ -563,6 +564,7 @@ type ShareRow = (
     Option<String>, // 8 download_key_id
     bool,           // 9 receipt_requested (stored as INTEGER 0/1)
     Option<i64>,    // 10 receipt_received_at
+    Option<String>, // 11 download_folder_id
 );
 
 /// Maps a single rusqlite row into the raw `ShareRow` tuple.
@@ -579,6 +581,7 @@ fn map_share_row(row: &Row<'_>) -> rusqlite::Result<ShareRow> {
         row.get::<_, Option<String>>(8)?,
         row.get::<_, bool>(9)?,
         row.get::<_, Option<i64>>(10)?,
+        row.get::<_, Option<String>>(11)?,
     ))
 }
 
@@ -596,6 +599,7 @@ fn parse_share_row(row: ShareRow) -> Result<ShareRecord, SharingError> {
         download_key_id,
         receipt_requested,
         receipt_received_at,
+        download_folder_id,
     ) = row;
     let contact_uuid = Uuid::parse_str(&contact_id_text)
         .map_err(|_| SharingError::InvalidContactId(contact_id_text.clone()))?;
@@ -609,6 +613,7 @@ fn parse_share_row(row: ShareRow) -> Result<ShareRecord, SharingError> {
         expires_at,
         revoked_at,
         download_key_id,
+        download_folder_id,
         receipt_requested,
         receipt_received_at,
     })
@@ -1140,6 +1145,7 @@ mod tests {
             expires_at: None,
             revoked_at: None,
             download_key_id: None,
+            download_folder_id: None,
             receipt_requested: false,
             receipt_received_at: None,
         }

@@ -107,7 +107,7 @@ fn days_since_epoch_to_date(days: u64) -> (u32, u32, u32) {
 ///
 /// Recognises JPEG, PNG, GIF, PDF and ZIP by magic bytes.
 /// Falls back to `"application/octet-stream"` for unrecognised formats.
-fn detect_mime_type(bytes: &[u8]) -> &'static str {
+pub(crate) fn detect_mime_type(bytes: &[u8]) -> &'static str {
     if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
         "image/jpeg"
     } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {

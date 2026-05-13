@@ -594,6 +594,14 @@ impl MetadataStore for MockMetadataStore {
         Ok(guard.epoch_buffer.iter().map(|e| e.node_id).collect())
     }
 
+    async fn get_epoch_buffer_count(&self) -> Result<u32, StorageError> {
+        let guard = self
+            .inner
+            .lock()
+            .map_err(|error| StorageError::Database(error.to_string()))?;
+        Ok(guard.epoch_buffer.len() as u32)
+    }
+
     /// Atomically stores the epoch blob record, inserts chunk rows, and clears the buffer.
     async fn commit_epoch_flush(
         &self,

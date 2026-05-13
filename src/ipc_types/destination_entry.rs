@@ -15,10 +15,14 @@ pub struct DestinationEntry {
     pub destination_type: String,
     /// Cloud provider identifier.
     pub provider: String,
+    /// rclone backend type (e.g. `"drive"`, `"b2"`, `"onedrive"`). `None` for local destinations.
+    pub rclone_type: Option<String>,
     /// Cloud bucket name.
     pub bucket: String,
     /// Whether this is the primary destination.
     pub is_primary: bool,
     /// Backup sync mode, `None` for primary destinations.
     pub backup_mode: Option<String>,
+    /// Whether this destination supports file sharing (Backblaze B2 and Google Drive only).
+    pub sharing_supported: bool,
 }

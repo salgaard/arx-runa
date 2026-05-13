@@ -164,6 +164,15 @@ pub struct RecoverWithPhraseRequest<'a> {
     pub phrase: &'a str,
     /// Destination path for the recovered vault DB.
     pub vault_db_path: PathBuf,
+    /// New password bytes to re-key the vault to after phrase recovery.
+    pub new_password_bytes: &'a [u8],
+    /// Destination path for a newly generated key file (Tier 2 USB key loss only).
+    /// Must be `None` for Tier 1 vaults; must be `Some` for Tier 2 vaults.
+    pub new_key_file_path: Option<PathBuf>,
+    /// Argon2id cost parameters for the new primary slot.
+    pub argon2_params: Argon2Params,
+    /// Argon2 parameter migration intent.
+    pub argon2_migration_intent: Argon2MigrationIntent,
 }
 
 /// Type of operation that was interrupted and pending recovery.

@@ -6,6 +6,7 @@ pub(crate) mod cloud;
 #[allow(dead_code)] // TODO(phase-6): remove when Tauri commands consume ctx_aead
 mod ctx_aead;
 mod error;
+pub(crate) mod gdrive_api;
 pub(crate) mod hpke;
 mod identity;
 mod packages;

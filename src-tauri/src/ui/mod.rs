@@ -19,10 +19,10 @@ pub(crate) mod vault_paths;
 pub use error::IpcError;
 pub use state::AppState;
 
-// Auth commands (7)
+// Auth commands (9)
 pub use auth_commands::{
     authenticate, change_password, create_vault, delete_vault, get_session_status, lock_session,
-    rotate_key_file,
+    recover_vault_with_phrase, rotate_key_file, setup_recovery,
 };
 
 // File commands (6)
@@ -39,10 +39,11 @@ pub use sync_commands::{
 // Destination commands (3)
 pub use destination_commands::{add_destination, delete_destination, list_destinations};
 
-// Sharing commands (9)
+// Sharing commands (11)
 pub use sharing_commands::{
-    add_contact, export_public_key, get_own_public_key_b64, import_share, list_contacts,
-    list_received_shares, list_shares, revoke_share, share_file,
+    add_contact, export_public_key, get_own_public_key_b64, has_gdrive_service_account,
+    import_share, list_contacts, list_received_shares, list_shares, revoke_share,
+    set_gdrive_service_account, share_file,
 };
 
 #[cfg(test)]

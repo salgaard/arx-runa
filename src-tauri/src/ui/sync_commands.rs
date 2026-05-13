@@ -895,7 +895,11 @@ pub async fn pull_and_reconcile(
 #[tauri::command]
 pub async fn get_sync_status(state: State<'_, AppState>) -> Result<SyncStatus, IpcError> {
     state.session_manager.reset_timer().await;
-    let status = state.sync_status.read().await.clone();
+    let mut status = state.sync_status.read().await.clone();
+    let db_guard = state.database.read().await;
+    if let Some(db) = db_guard.as_ref() {
+        status.pending_changes = db.get_epoch_buffer_count().await.unwrap_or(0);
+    }
     Ok(status)
 }
 

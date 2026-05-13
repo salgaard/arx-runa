@@ -68,7 +68,16 @@ pub fn Header() -> impl IntoView {
                     on:click=on_sync
                     disabled=move || sync.read().syncing
                 >
-                    {move || if sync.read().syncing { "Syncing…" } else { "Sync" }}
+                    {move || {
+                        let state = sync.read();
+                        if state.syncing {
+                            "Syncing…".to_string()
+                        } else if state.pending_changes > 0 {
+                            format!("Sync ({})", state.pending_changes)
+                        } else {
+                            "Sync".to_string()
+                        }
+                    }}
                 </button>
                 <A href="/shares">
                     <div class=move || nav_class("/shares") title="Shares">

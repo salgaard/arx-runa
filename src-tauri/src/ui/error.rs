@@ -44,6 +44,9 @@ pub enum IpcError {
     /// Call `pull_and_reconcile` then retry the push.
     #[error("Sync conflict: {0}")]
     SyncConflict(String),
+    /// Sharing is not supported for the active cloud destination.
+    #[error("Sharing not supported: {0}")]
+    SharingNotSupported(String),
 }
 
 #[allow(unreachable_patterns)]
@@ -116,6 +119,7 @@ impl From<crate::sharing::SharingError> for IpcError {
             Sh::CloudOperation(_) | Sh::RevocationPartial { .. } => {
                 IpcError::CloudError("Cloud share operation failed".into())
             }
+            Sh::NotSupported(msg) => IpcError::SharingNotSupported(msg),
             Sh::MalformedSharePackage(_)
             | Sh::InvalidJsonPayload(_)
             | Sh::InvalidFileKeyLength(_)
@@ -185,6 +189,7 @@ impl From<crate::storage::CloudTransportError> for IpcError {
             C::Timeout | C::IoError(_) | C::RcloneProcessFailed { .. } | C::Other(_) => {
                 IpcError::CloudError("Cloud operation failed".into())
             }
+            C::SharingNotSupported(msg) => IpcError::SharingNotSupported(msg),
         }
     }
 }

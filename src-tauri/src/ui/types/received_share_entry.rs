@@ -14,4 +14,6 @@ pub struct ReceivedShareEntry {
     pub sender_name: Option<String>,
     /// ISO 8601 timestamp when the share was imported.
     pub imported_at: String,
+    /// File size in bytes (used by the frontend to gate preview availability).
+    pub size_bytes: u64,
 }

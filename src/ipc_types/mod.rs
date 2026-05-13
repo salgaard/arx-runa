@@ -38,10 +38,11 @@ pub use requests::{
     ChangePasswordRequest, ComposeEmailWithAttachmentRequest, ConfigureCloudRequest,
     CreateVaultRequest, DeleteDestinationRequest, DeleteFileRequest, DeleteVaultRequest,
     DownloadFileRequest, DownloadReceivedShareRequest, ExportPublicKeyRequest,
-    GetFileContentRequest, ImportShareRequest, ListDirectoryRequest, OpenUrlRequest,
-    PollOauthSetupRequest, RecoverVaultFromCloudRequest, RevealInExplorerRequest,
-    RevokeShareRequest, RotateKeyFileRequest, SetPrimaryDestinationRequest, ShareFileRequest,
-    UploadFileRequest,
+    GetFileContentRequest, GetReceivedShareContentRequest, ImportShareRequest,
+    ListDirectoryRequest, OpenUrlRequest, PollOauthSetupRequest, RecoverVaultFromCloudRequest,
+    RecoverVaultWithPhraseRequest, RevealInExplorerRequest, RevokeShareRequest,
+    RotateKeyFileRequest, SetGdriveServiceAccountRequest, SetPrimaryDestinationRequest,
+    SetupRecoveryRequest, ShareFileRequest, UploadFileRequest,
 };
 pub use session_status::SessionStatus;
 pub use share_entry::ShareEntry;

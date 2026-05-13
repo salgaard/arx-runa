@@ -5,7 +5,8 @@
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use base64::Engine;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use rusqlite::OptionalExtension;
 use secrecy::SecretBox;
 use tauri::State;
@@ -20,10 +21,11 @@ use crate::sharing::{
 use crate::storage::{MetadataStore, StorageError};
 use crate::ui::commands_common::require_active_session;
 use crate::ui::error::IpcError;
+use crate::ui::file_commands::detect_mime_type;
 use crate::ui::state::AppState;
 use crate::ui::types::{
-    ContactEntry, DownloadReceivedShareResponse, ImportShareResponse, ReceivedShareEntry,
-    ShareEntry, ShareResponse,
+    ContactEntry, DownloadReceivedShareResponse, FileContent, ImportShareResponse,
+    ReceivedShareEntry, ShareEntry, ShareResponse,
 };
 use crate::ui::validation::validate_file_id;
 use crate::ui::vault_paths::vault_staging_dir;
@@ -507,7 +509,7 @@ pub async fn revoke_share(share_id: String, state: State<'_, AppState>) -> Resul
     // Clone the Arc before acquiring the database lock to avoid holding two guards.
     let transport = state.cloud_transport.read().await.clone();
 
-    let download_key_id = {
+    let (download_key_id, download_folder_id) = {
         let db_guard = state.database.read().await;
         let db = db_guard
             .as_ref()
@@ -517,7 +519,8 @@ pub async fn revoke_share(share_id: String, state: State<'_, AppState>) -> Resul
             .get_share(&share_id)
             .await
             .ok()
-            .and_then(|s| s.download_key_id)
+            .map(|s| (s.download_key_id, s.download_folder_id))
+            .unwrap_or((None, None))
     };
 
     let db_guard = state.database.read().await;
@@ -532,23 +535,99 @@ pub async fn revoke_share(share_id: String, state: State<'_, AppState>) -> Resul
 
     drop(db_guard);
 
-    // Best-effort: delete the scoped B2 application key so recipients lose access immediately.
-    if let Some(key_id) = download_key_id {
-        let conf_path = crate::ui::auth_commands::rclone_conf_path();
-        if let Ok(conf) = tokio::fs::read_to_string(&conf_path).await
-            && let Some((master_key_id, master_app_key, _)) =
-                crate::sharing::b2_api::parse_b2_credentials_from_conf(&conf)
-            && let Ok(auth) =
-                crate::sharing::b2_api::b2_authorize_account(&master_key_id, &master_app_key).await
-        {
-            let client = reqwest::Client::new();
-            if let Err(error) = crate::sharing::b2_api::b2_delete_key(&client, &auth, &key_id).await
-            {
-                tracing::warn!(%error, key_id = %key_id, "B2 key deletion failed after revoke");
-            } else {
-                tracing::debug!(key_id = %key_id, "deleted B2 scoped key after revoke");
+    let conf_path = crate::ui::auth_commands::rclone_conf_path();
+
+    match (download_key_id, download_folder_id) {
+        (Some(perm_id), Some(folder_id)) => {
+            // Google Drive share: revoke the SA reader permission on the shared folder.
+            if let Ok(conf) = tokio::fs::read_to_string(&conf_path).await {
+                // Find the first Drive remote in the conf and use its OAuth creds.
+                let remote_name = conf
+                    .lines()
+                    .filter(|l| l.trim().starts_with('[') && l.trim().ends_with(']'))
+                    .find_map(|l| {
+                        let name = &l.trim()[1..l.trim().len() - 1];
+                        crate::sharing::gdrive_api::parse_gdrive_oauth_from_conf(&conf, name)
+                            .map(|_| name.to_owned())
+                    });
+                if let Some(name) = remote_name
+                    && let Some((client_id, client_secret, refresh_token, _)) =
+                        crate::sharing::gdrive_api::parse_gdrive_oauth_from_conf(&conf, &name)
+                {
+                    let client = reqwest::Client::new();
+                    let token_result = if client_id.is_empty() {
+                        crate::sharing::gdrive_api::parse_gdrive_access_token_from_conf(
+                            &conf, &name,
+                        )
+                        .map(
+                            |access_token| crate::sharing::gdrive_api::GdriveAccessToken {
+                                access_token,
+                            },
+                        )
+                        .ok_or_else(|| {
+                            crate::sharing::gdrive_api::GdriveApiError::TokenRefresh(
+                                "access token not found in config".to_owned(),
+                            )
+                        })
+                    } else {
+                        crate::sharing::gdrive_api::gdrive_refresh_token(
+                            &client,
+                            &client_id,
+                            &client_secret,
+                            &refresh_token,
+                        )
+                        .await
+                    };
+                    match token_result {
+                        Ok(token) => {
+                            if let Err(error) =
+                                crate::sharing::gdrive_api::gdrive_delete_permission(
+                                    &client,
+                                    &token.access_token,
+                                    &folder_id,
+                                    &perm_id,
+                                )
+                                .await
+                            {
+                                tracing::warn!(
+                                    %error,
+                                    permission_id = %perm_id,
+                                    "Drive permission deletion failed after revoke"
+                                );
+                            } else {
+                                tracing::debug!(
+                                    permission_id = %perm_id,
+                                    "deleted Drive permission after revoke"
+                                );
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "Drive token refresh failed during revoke cleanup");
+                        }
+                    }
+                }
             }
         }
+        (Some(key_id), None) => {
+            // B2 share: delete the scoped application key so recipients lose access immediately.
+            if let Ok(conf) = tokio::fs::read_to_string(&conf_path).await
+                && let Some((master_key_id, master_app_key, _)) =
+                    crate::sharing::b2_api::parse_b2_credentials_from_conf(&conf)
+                && let Ok(auth) =
+                    crate::sharing::b2_api::b2_authorize_account(&master_key_id, &master_app_key)
+                        .await
+            {
+                let client = reqwest::Client::new();
+                if let Err(error) =
+                    crate::sharing::b2_api::b2_delete_key(&client, &auth, &key_id).await
+                {
+                    tracing::warn!(%error, key_id = %key_id, "B2 key deletion failed after revoke");
+                } else {
+                    tracing::debug!(key_id = %key_id, "deleted B2 scoped key after revoke");
+                }
+            }
+        }
+        _ => {}
     }
 
     Ok(())
@@ -677,11 +756,17 @@ pub async fn list_received_shares(
         } else {
             None
         };
+        let size_bytes = rs
+            .cloud_endpoint
+            .get("_file_size")
+            .and_then(|v| v.as_u64())
+            .unwrap_or_else(|| (rs.chunk_count as u64).saturating_mul(rs.chunk_size as u64));
         entries.push(ReceivedShareEntry {
             share_id: rs.share_id,
             file_name: rs.file_name,
             sender_name,
             imported_at: unix_ts_to_iso8601(rs.imported_at),
+            size_bytes,
         });
     }
 
@@ -838,6 +923,132 @@ pub async fn download_received_share(
     }
 
     Ok(DownloadReceivedShareResponse { file_name })
+}
+
+/// Decrypts a received share into memory and returns the content for in-app preview.
+///
+/// Rejects files larger than 50 MiB to keep memory use bounded.
+#[tauri::command]
+pub async fn get_received_share_content(
+    share_id: String,
+    state: State<'_, AppState>,
+) -> Result<FileContent, IpcError> {
+    state.session_manager.reset_timer().await;
+    require_active_session(&state).await?;
+
+    let vault_id = state
+        .active_vault_id
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| IpcError::VaultLocked("No active vault".into()))?;
+    let staging_dir = vault_staging_dir(&vault_id);
+    let kek = extract_kek(&state).await?;
+    let transport = state.cloud_transport.read().await.clone();
+
+    let rclone_bin: Option<PathBuf> = state.app_handle.get().map(|h| {
+        use tauri::Manager as _;
+        let name = if cfg!(target_os = "windows") {
+            "rclone.exe"
+        } else {
+            "rclone"
+        };
+        if let Ok(dir) = h.path().resource_dir() {
+            let c = dir.join("bin").join(name);
+            if c.exists() {
+                return c;
+            }
+        }
+        PathBuf::from(name)
+    });
+
+    const FIFTY_MIB: u64 = 50 * 1024 * 1024;
+
+    let (file_key, file_id_uuid, chunk_uuids, chunk_count, chunk_size, file_size, local_blobs) = {
+        let db_guard = state.database.read().await;
+        let db = db_guard
+            .as_ref()
+            .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+        let sharing = db as &dyn SharingStore;
+
+        let share = sharing
+            .get_received_share(&share_id)
+            .await
+            .map_err(IpcError::from)?;
+
+        let file_size = share
+            .cloud_endpoint
+            .get("_file_size")
+            .and_then(|v| v.as_u64())
+            .unwrap_or_else(|| (share.chunk_count as u64).saturating_mul(share.chunk_size as u64));
+
+        if file_size > FIFTY_MIB {
+            return Err(IpcError::InvalidInput(
+                "File exceeds 50 MiB in-app viewing limit".into(),
+            ));
+        }
+
+        let file_key = unwrap_file_key(&WrappedFileKey(share.file_key_wrapped), &kek)
+            .map_err(|_| IpcError::InternalError("File key unwrap failed".into()))?;
+        let file_id_uuid = Uuid::parse_str(&share.file_id)
+            .map_err(|_| IpcError::InternalError("Invalid file ID in received share".into()))?;
+
+        let local_blobs = crate::sharing::cloud::fetch_received_share_to_local(
+            &share_id,
+            sharing,
+            &*transport,
+            &staging_dir,
+            rclone_bin,
+        )
+        .await
+        .map_err(IpcError::from)?;
+
+        (
+            file_key,
+            file_id_uuid,
+            share.chunk_uuids,
+            share.chunk_count,
+            share.chunk_size,
+            file_size,
+            local_blobs,
+        )
+    };
+
+    let temp_dir = tempfile::tempdir()
+        .map_err(|e| IpcError::InternalError(format!("Failed to create temp dir: {e}")))?;
+    let temp_path = temp_dir.path().join("content");
+
+    let decrypt_result = decrypt_received_share_blobs(
+        &temp_path,
+        file_id_uuid,
+        &file_key,
+        file_size,
+        chunk_count,
+        chunk_size,
+        &chunk_uuids,
+        &staging_dir,
+    )
+    .await;
+
+    for blob_path in &local_blobs {
+        let _ = tokio::fs::remove_file(blob_path).await;
+    }
+
+    decrypt_result.map_err(|e| IpcError::InternalError(format!("decrypt failed: {e}")))?;
+
+    let bytes = tokio::fs::read(&temp_path)
+        .await
+        .map_err(|e| IpcError::InternalError(format!("Failed to read decrypted content: {e}")))?;
+
+    let mime_type = detect_mime_type(&bytes).to_owned();
+    let size_bytes = bytes.len() as u64;
+    let data_base64 = BASE64_STANDARD.encode(&bytes);
+
+    Ok(FileContent {
+        mime_type,
+        data_base64,
+        size_bytes,
+    })
 }
 
 /// Seals and uploads a delivery receipt blob to the sender's B2 prefix.
@@ -1305,4 +1516,80 @@ mod tests {
         let share_id_2 = Uuid::new_v4().hyphenated().to_string();
         assert_ne!(share_id_1, share_id_2);
     }
+}
+
+/// Store a Google Drive Service Account JSON key for sharing.
+///
+/// Reads the key file at `sa_json_path`, validates it is a GCP service account
+/// credential, then persists it in the encrypted `sharing_config` table.
+/// The in-memory JSON string is zeroized before the function returns.
+#[tauri::command]
+pub async fn set_gdrive_service_account(
+    sa_json_path: PathBuf,
+    state: State<'_, AppState>,
+) -> Result<(), IpcError> {
+    state.session_manager.reset_timer().await;
+    require_active_session(&state).await?;
+
+    let raw = tokio::fs::read(&sa_json_path)
+        .await
+        .map_err(|_| IpcError::InvalidInput("Failed to read service account JSON file".into()))?;
+    let mut sa_json =
+        Zeroizing::new(String::from_utf8(raw).map_err(|_| {
+            IpcError::InvalidInput("Service account JSON is not valid UTF-8".into())
+        })?);
+
+    // Validate: must be a service_account credential with the required fields.
+    let parsed = serde_json::from_str::<serde_json::Value>(&sa_json)
+        .map_err(|_| IpcError::InvalidInput("File is not valid JSON".into()))?;
+
+    if parsed.get("type").and_then(|v| v.as_str()) != Some("service_account") {
+        *sa_json = String::new();
+        return Err(IpcError::InvalidInput(
+            "JSON is not a service account credential (type must be \"service_account\")".into(),
+        ));
+    }
+    for field in &["client_email", "private_key"] {
+        if parsed.get(field).and_then(|v| v.as_str()).is_none() {
+            *sa_json = String::new();
+            return Err(IpcError::InvalidInput(format!(
+                "service account JSON missing required field: {field}"
+            )));
+        }
+    }
+
+    let now = now_unix_seconds();
+    let db_guard = state.database.read().await;
+    let db = db_guard
+        .as_ref()
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+
+    db.upsert_gdrive_sharing_config(None, sa_json.to_string(), now)
+        .await
+        .map_err(IpcError::from)?;
+
+    // Zeroize before drop.
+    *sa_json = String::new();
+
+    Ok(())
+}
+
+/// Returns `true` if a Google Drive Service Account JSON has been stored for sharing.
+#[tauri::command]
+pub async fn has_gdrive_service_account(state: State<'_, AppState>) -> Result<bool, IpcError> {
+    state.session_manager.reset_timer().await;
+    require_active_session(&state).await?;
+
+    let db_guard = state.database.read().await;
+    let db = db_guard
+        .as_ref()
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+
+    let has = db
+        .get_gdrive_sharing_config()
+        .await
+        .map_err(IpcError::from)?
+        .is_some();
+
+    Ok(has)
 }

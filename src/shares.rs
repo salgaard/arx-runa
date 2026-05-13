@@ -7,11 +7,12 @@ use leptos_router::components::A;
 use crate::dialog::{open_file_dialog_arxshare, open_save_dialog};
 use crate::invoke::invoke_command;
 use crate::ipc_types::{
-    ContactEntry, DownloadReceivedShareRequest, DownloadReceivedShareResponse, ImportShareRequest,
-    ImportShareResponse, ReceivedShareEntry, RevokeShareRequest, ShareEntry, ShareFileRequest,
-    ShareResponse,
+    ContactEntry, DownloadReceivedShareRequest, DownloadReceivedShareResponse, FileContentResponse,
+    GetReceivedShareContentRequest, ImportShareRequest, ImportShareResponse, ReceivedShareEntry,
+    RevokeShareRequest, ShareEntry, ShareFileRequest, ShareResponse,
 };
 use crate::utils::format_fingerprint;
+use crate::vault::{ContentViewerModal, extension_is_previewable, file_size_allows_preview};
 
 // ─── SharesPage (main component) ──────────────────────────────────────────
 
@@ -404,10 +405,40 @@ fn ReceivedShareItem(
     let downloading = RwSignal::new(false);
     let download_error = RwSignal::new(None::<String>);
     let download_success = RwSignal::new(None::<String>);
+    let file_content = RwSignal::new(None::<FileContentResponse>);
+    let preview_loading = RwSignal::new(false);
 
+    let file_name_stored = StoredValue::new(share.file_name.clone());
     let display_file_name = share.file_name.clone();
     let display_sender_name = share.sender_name.clone();
     let display_imported_at = share.imported_at.clone();
+
+    let can_preview =
+        file_size_allows_preview(share.size_bytes) && extension_is_previewable(&share.file_name);
+
+    let share_id_for_preview = share.share_id.clone();
+    let handle_preview = move |_| {
+        preview_loading.set(true);
+        let share_id = share_id_for_preview.clone();
+        spawn_local(async move {
+            match invoke_command::<GetReceivedShareContentRequest, FileContentResponse>(
+                "get_received_share_content",
+                &GetReceivedShareContentRequest {
+                    share_id: share_id.clone(),
+                },
+            )
+            .await
+            {
+                Ok(content) => {
+                    file_content.set(Some(content));
+                }
+                Err(e) => {
+                    download_error.set(Some(e.to_string()));
+                }
+            }
+            preview_loading.set(false);
+        });
+    };
 
     let handle_download = move |_| {
         downloading.set(true);
@@ -441,32 +472,57 @@ fn ReceivedShareItem(
     };
 
     view! {
-        <div class="p-4 bg-iron border border-steel rounded">
-            <div class="flex justify-between items-start">
-                <div>
-                    <p class="text-bone font-semibold">{display_file_name}</p>
-                    {display_sender_name.map(|sender| {
-                        view! {
-                            <p class="text-text-secondary text-sm">"From: " {sender}</p>
-                        }
-                    })}
-                    <p class="text-text-secondary text-xs mt-1">{display_imported_at}</p>
+        <>
+            <div class="p-4 bg-iron border border-steel rounded">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p
+                            class=move || {
+                                if can_preview {
+                                    "text-bone font-semibold cursor-pointer hover:underline"
+                                } else {
+                                    "text-bone font-semibold"
+                                }
+                            }
+                            on:click=move |e| {
+                                if can_preview {
+                                    handle_preview(e);
+                                }
+                            }
+                        >
+                            {display_file_name}
+                            <Show when=move || preview_loading.get() fallback=|| ()>
+                                <span class="ml-2 text-text-secondary text-xs">"Loading…"</span>
+                            </Show>
+                        </p>
+                        {display_sender_name.map(|sender| {
+                            view! {
+                                <p class="text-text-secondary text-sm">"From: " {sender}</p>
+                            }
+                        })}
+                        <p class="text-text-secondary text-xs mt-1">{display_imported_at}</p>
+                    </div>
+                    <button
+                        class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
+                        on:click=handle_download
+                        disabled=move || downloading.get()
+                    >
+                        {move || if downloading.get() { "Downloading…" } else { "Download" }}
+                    </button>
                 </div>
-                <button
-                    class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
-                    on:click=handle_download
-                    disabled=move || downloading.get()
-                >
-                    {move || if downloading.get() { "Downloading…" } else { "Download" }}
-                </button>
+                {move || download_error.get().map(|e| view! {
+                    <p class="text-danger text-sm mt-2">{e}</p>
+                })}
+                {move || download_success.get().map(|msg| view! {
+                    <p class="text-success-text text-sm mt-2">{msg}</p>
+                })}
             </div>
-            {move || download_error.get().map(|e| view! {
-                <p class="text-danger text-sm mt-2">{e}</p>
-            })}
-            {move || download_success.get().map(|msg| view! {
-                <p class="text-success-text text-sm mt-2">{msg}</p>
-            })}
-        </div>
+
+            <ContentViewerModal
+                content=file_content
+                filename=file_name_stored.get_value()
+            />
+        </>
     }
 }
 

@@ -45,6 +45,9 @@ pub struct RcloneTransport {
     bucket_root: String,
     sync_config: SyncConfig,
     runner: Arc<dyn RcloneRunner>,
+    /// Provider-specific sharing config (e.g. Google Drive SA JSON).
+    /// Loaded from the vault DB at session open time; never logged.
+    sharing_config: Option<serde_json::Value>,
 }
 
 impl RcloneTransport {
@@ -63,6 +66,7 @@ impl RcloneTransport {
             bucket_root: format!("{}:{}", destination.rclone_remote_name, destination.bucket),
             sync_config,
             runner: Arc::new(RealRclone { binary_path }),
+            sharing_config: None,
         })
     }
 
@@ -80,7 +84,17 @@ impl RcloneTransport {
             bucket_root: String::new(),
             sync_config: SyncConfig::default(),
             runner: Arc::new(RealRclone { binary_path }),
+            sharing_config: None,
         }
+    }
+
+    /// Attaches a provider-specific sharing configuration to this transport.
+    ///
+    /// For Google Drive remotes, `config` must be the parsed Service Account JSON object.
+    /// This value is never logged; callers must zeroize the source string after calling.
+    pub fn with_sharing_config(mut self, config: Option<serde_json::Value>) -> Self {
+        self.sharing_config = config;
+        self
     }
 
     #[cfg(test)]
@@ -96,6 +110,7 @@ impl RcloneTransport {
             bucket_root: format!("{}:{}", destination.rclone_remote_name, destination.bucket),
             sync_config,
             runner,
+            sharing_config: None,
         })
     }
 
@@ -224,6 +239,18 @@ impl CloudTransport for RcloneTransport {
         Ok(())
     }
 
+    async fn ensure_folder(&self, remote_prefix: &str) -> Result<(), CloudTransportError> {
+        let remote_prefix = validate_remote_path(remote_prefix)?;
+        let mut args = self.base_args();
+        args.push(OsString::from("mkdir"));
+        args.push(OsString::from(self.remote_target(remote_prefix)));
+        tracing::debug!(remote_prefix = %remote_prefix, "rclone mkdir");
+        self.runner
+            .run(args, Duration::from_secs(30))
+            .await
+            .map(|_| ())
+    }
+
     async fn ensure_container(&self) -> Result<(), CloudTransportError> {
         let mut args = self.base_args();
         args.push(OsString::from("mkdir"));
@@ -244,8 +271,12 @@ impl CloudTransport for RcloneTransport {
         }
     }
 
-    /// Generates scoped B2 credentials for a share recipient, if the rclone config
-    /// contains a B2 stanza.  Returns `None` for non-B2 backends.
+    /// Generates scoped credentials for a share recipient.
+    ///
+    /// For Backblaze B2 remotes: creates a time-limited scoped application key.
+    /// For Google Drive remotes: grants the configured Service Account read permission
+    /// on the share folder with `expirationTime`.
+    /// Returns `SharingNotSupported` for other backends.
     async fn generate_share_credentials(
         &self,
         path_prefix: &str,
@@ -256,12 +287,59 @@ impl CloudTransport for RcloneTransport {
             .await
             .map_err(CloudTransportError::IoError)?;
 
-        let Some((master_key_id, master_app_key)) =
-            crate::sharing::b2_api::parse_b2_api_keys_from_conf(&conf)
-        else {
-            return Ok(None);
-        };
+        let remote_name = self
+            .remote_root
+            .split_once(':')
+            .map(|(name, _)| name)
+            .unwrap_or("");
 
+        // B2 path
+        if let Some((master_key_id, master_app_key)) =
+            crate::sharing::b2_api::parse_b2_api_keys_for_remote(&conf, remote_name)
+        {
+            return self
+                .generate_b2_share_credentials(
+                    path_prefix,
+                    ttl_seconds,
+                    receipt_requested,
+                    &master_key_id,
+                    &master_app_key,
+                )
+                .await;
+        }
+
+        // Google Drive path
+        if let Some((client_id, client_secret, refresh_token, root_folder_id)) =
+            crate::sharing::gdrive_api::parse_gdrive_oauth_from_conf(&conf, remote_name)
+        {
+            return self
+                .generate_gdrive_share_credentials(
+                    path_prefix,
+                    ttl_seconds,
+                    &client_id,
+                    &client_secret,
+                    &refresh_token,
+                    root_folder_id.as_deref(),
+                )
+                .await;
+        }
+
+        Err(CloudTransportError::SharingNotSupported(format!(
+            "Remote '{remote_name}' is not a supported sharing backend \
+             (Backblaze B2 or Google Drive)."
+        )))
+    }
+}
+
+impl RcloneTransport {
+    async fn generate_b2_share_credentials(
+        &self,
+        path_prefix: &str,
+        ttl_seconds: u32,
+        receipt_requested: bool,
+        master_key_id: &str,
+        master_app_key: &str,
+    ) -> Result<Option<serde_json::Value>, CloudTransportError> {
         let bucket_name = self
             .remote_root
             .split_once(':')
@@ -272,7 +350,7 @@ impl CloudTransport for RcloneTransport {
             })?
             .to_owned();
 
-        let auth = crate::sharing::b2_api::b2_authorize_account(&master_key_id, &master_app_key)
+        let auth = crate::sharing::b2_api::b2_authorize_account(master_key_id, master_app_key)
             .await
             .map_err(|_| CloudTransportError::Other("B2 authorization failed".to_owned()))?;
 
@@ -281,8 +359,7 @@ impl CloudTransport for RcloneTransport {
             .await
             .map_err(|e| {
                 CloudTransportError::Other(format!(
-                    "B2 bucket lookup failed for '{}': {}",
-                    bucket_name, e
+                    "B2 bucket lookup failed for '{bucket_name}': {e}"
                 ))
             })?;
 
@@ -322,6 +399,116 @@ impl CloudTransport for RcloneTransport {
         }
 
         Ok(Some(creds))
+    }
+
+    async fn generate_gdrive_share_credentials(
+        &self,
+        path_prefix: &str,
+        _ttl_seconds: u32,
+        client_id: &str,
+        client_secret: &str,
+        refresh_token: &str,
+        root_folder_id: Option<&str>,
+    ) -> Result<Option<serde_json::Value>, CloudTransportError> {
+        use crate::sharing::gdrive_api;
+
+        let sa_config = self.sharing_config.as_ref().ok_or_else(|| {
+            CloudTransportError::SharingNotSupported(
+                "Google Drive sharing requires a Service Account to be configured \
+                 in vault settings (Destinations → Sharing Setup)."
+                    .to_owned(),
+            )
+        })?;
+
+        let sa_email = sa_config["client_email"]
+            .as_str()
+            .ok_or_else(|| {
+                CloudTransportError::Other(
+                    "Service Account JSON missing 'client_email' field".to_owned(),
+                )
+            })?
+            .to_owned();
+
+        let sa_json_str = serde_json::to_string(sa_config)
+            .map_err(|e| CloudTransportError::Other(format!("failed to serialise SA JSON: {e}")))?;
+
+        let client = reqwest::Client::new();
+        let token = if client_id.is_empty() {
+            // No custom OAuth credentials stored (rclone built-in app); read the access token
+            // that rclone wrote to the session config during the most recent sync operation.
+            let conf = tokio::fs::read_to_string(&self.session_config_path)
+                .await
+                .map_err(CloudTransportError::IoError)?;
+            let remote_name = self
+                .remote_root
+                .split_once(':')
+                .map(|(n, _)| n)
+                .unwrap_or("");
+            let access_token = gdrive_api::parse_gdrive_access_token_from_conf(&conf, remote_name)
+                .ok_or_else(|| {
+                    CloudTransportError::Other(
+                        "Drive access token not found in session config; \
+                             sync the vault to refresh it."
+                            .to_owned(),
+                    )
+                })?;
+            gdrive_api::GdriveAccessToken { access_token }
+        } else {
+            gdrive_api::gdrive_refresh_token(&client, client_id, client_secret, refresh_token)
+                .await
+                .map_err(|e| {
+                    CloudTransportError::Other(format!("Drive token refresh failed: {e}"))
+                })?
+        };
+
+        // remote_root is "remote:dest_path_prefix" (e.g. "arx_20e5c4d0:arx-runa-new").
+        // path_prefix is relative to that destination root (e.g. "shared/<id>/").
+        // Drive folder resolution must walk the full path from root_folder_id (or Drive root).
+        let dest_path = self
+            .remote_root
+            .split_once(':')
+            .map(|(_, p)| p.trim_matches('/'))
+            .unwrap_or("");
+        let full_drive_path = if dest_path.is_empty() {
+            path_prefix.to_owned()
+        } else {
+            format!("{}/{}", dest_path, path_prefix.trim_start_matches('/'))
+        };
+
+        let folder_id = gdrive_api::gdrive_resolve_folder_id(
+            &client,
+            &token.access_token,
+            root_folder_id,
+            &full_drive_path,
+        )
+        .await
+        .map_err(|e| {
+            CloudTransportError::Other(format!(
+                "Drive folder lookup failed for '{full_drive_path}': {e}"
+            ))
+        })?;
+
+        let permission = gdrive_api::gdrive_create_permission(
+            &client,
+            &token.access_token,
+            &folder_id,
+            &sa_email,
+            // Google Drive rejects expirationTime on personal My Drive items; revocation
+            // deletes the permission explicitly so a TTL is not required for correctness.
+            None,
+        )
+        .await
+        .map_err(|e| CloudTransportError::Other(format!("Drive permission grant failed: {e}")))?;
+
+        tracing::debug!(permission_id = %permission.permission_id, "granted Google Drive SA permission");
+
+        Ok(Some(serde_json::json!({
+            "provider": "drive",
+            "folder_id": folder_id,
+            "sa_credentials_json": sa_json_str,
+            "path_prefix": path_prefix,
+            "permission_id": permission.permission_id,
+        })))
     }
 }
 

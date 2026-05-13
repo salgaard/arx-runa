@@ -21,6 +21,7 @@ mod wizard;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
+pub(crate) use destination_session::validate_single_remote_stanza;
 pub use destination_session::{BackupSyncMode, DestinationSessionPublic, DestinationType};
 pub use endpoint::CloudEndpoint;
 pub use manifest_backup::{
@@ -61,6 +62,8 @@ pub enum CloudTransportError {
         exit_code: i32,
         stderr_sanitised: String,
     },
+    #[error("sharing is not supported by this cloud provider: {0}")]
+    SharingNotSupported(String),
     #[error("cloud transport error: {0}")]
     Other(String),
 }
@@ -111,6 +114,20 @@ pub trait CloudTransport: Send + Sync {
     /// The default implementation is a no-op for transports that do not support
     /// container creation (e.g., local or external-drive transports).
     async fn ensure_container(&self) -> Result<(), CloudTransportError> {
+        Ok(())
+    }
+
+    /// Creates a sub-folder at `remote_prefix` inside the container before
+    /// concurrent uploads begin.
+    ///
+    /// Google Drive creates duplicate folders when two `rclone copyto` processes
+    /// race to mkdir the same parent concurrently.  Calling this once,
+    /// sequentially, before any parallel uploads eliminates the race.
+    ///
+    /// The default implementation is a no-op; backends that need it (rclone)
+    /// override it.
+    async fn ensure_folder(&self, remote_prefix: &str) -> Result<(), CloudTransportError> {
+        let _ = remote_prefix;
         Ok(())
     }
 
