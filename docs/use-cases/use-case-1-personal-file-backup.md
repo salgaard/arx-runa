@@ -24,9 +24,9 @@ An individual user wants to back up sensitive personal files (documents, photos,
 6. User drags files or folders onto the drop zone
 7. Arx Runa generates a unique encryption key for each file
 8. Arx Runa splits and encrypts the file into fixed-size chunks
-9. Arx Runa records the file in the encrypted vault manifest
-10. Arx Runa uploads encrypted chunks to cloud
-11. Drop zone shows sync progress and confirms completion
+9. Arx Runa uploads the file in the encrypted vault database
+10. User clicks sync
+11. Arx Runa uploads vault-header, encrypted chunks and vault database saved as a manifest to cloud
 12. User browses vault and views files in-app (Zero-Trace)
 13. User locks vault (and removes USB key if Tier 2)
 

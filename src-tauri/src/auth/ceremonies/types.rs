@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::auth::kdf::Argon2Params;
 use crate::auth::key_source::KeySource;
 use crate::storage::cloud::destination_session::DestinationSession;
+use crate::storage::cloud::vault_header::VaultHeader;
 
 /// Authentication tier for a vault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,6 +174,10 @@ pub struct RecoverWithPhraseRequest<'a> {
     pub argon2_params: Argon2Params,
     /// Argon2 parameter migration intent.
     pub argon2_migration_intent: Argon2MigrationIntent,
+    /// Pre-loaded local vault header. When `Some`, the ceremony skips the cloud
+    /// header download and uses this directly. Required when cloud transport is
+    /// unavailable (e.g. pre-auth recovery from `LoginPage`).
+    pub vault_header: Option<VaultHeader>,
 }
 
 /// Type of operation that was interrupted and pending recovery.

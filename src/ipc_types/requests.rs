@@ -60,6 +60,22 @@ pub struct RecoverVaultFromCloudRequest {
     pub primary_destination: DestinationSessionConfig,
 }
 
+/// Argument payload for the `recover_vault_from_cloud_with_phrase` Tauri command.
+#[derive(Debug, Clone, Serialize, Zeroize, ZeroizeOnDrop)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoverVaultFromCloudWithPhraseRequest {
+    /// BIP-39 24-word recovery phrase.
+    pub phrase: String,
+    /// New password to re-key the vault to after recovery.
+    pub new_password: String,
+    /// Destination path where a new key file will be written (Tier 2 vaults only).
+    #[zeroize(skip)]
+    pub new_key_file_path: Option<String>,
+    /// Cloud destination where the vault currently lives.
+    #[zeroize(skip)]
+    pub primary_destination: DestinationSessionConfig,
+}
+
 /// Argument payload for the `upload_file` Tauri command.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

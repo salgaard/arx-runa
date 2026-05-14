@@ -55,6 +55,7 @@ pub fn run() {
             ui::auth_commands::check_pending_vault_operations,
             ui::auth_commands::retry_pending_vault_operation,
             ui::auth_commands::recover_vault_from_cloud,
+            ui::auth_commands::recover_vault_from_cloud_with_phrase,
             // Files (7)
             ui::file_commands::list_directory,
             ui::file_commands::upload_file,

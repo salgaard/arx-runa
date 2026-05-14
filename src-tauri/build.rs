@@ -51,6 +51,8 @@ fn main() {
             "cancel_oauth_setup_cmd",
             "get_received_share_content",
             "setup_recovery",
+            "recover_vault_with_phrase",
+            "recover_vault_from_cloud_with_phrase",
         ]),
     ))
     .expect("failed to build tauri application");

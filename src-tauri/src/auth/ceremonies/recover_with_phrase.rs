@@ -38,17 +38,29 @@ pub async fn recover_with_phrase(
 
     let mnemonic = parse_mnemonic(request.phrase)?;
     let canonical = canonicalize_phrase(&mnemonic);
-    precheck_recovery_destination(&request.vault_db_path).await?;
+
+    let db_exists = tokio::fs::try_exists(&request.vault_db_path)
+        .await
+        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
 
     let staging_dir = staging::staging_directory().await?;
 
-    let mut header = download_vault_header(
-        cloud_transport,
-        &staging_dir,
-        VaultHeaderTrustPolicy::Bootstrap,
-    )
-    .await
-    .map_err(map_vault_header_sync_error)?;
+    // Use the caller-supplied local header when available; otherwise download
+    // from cloud. Cloud download requires an active transport (not possible in
+    // the pre-auth recovery flow from LoginPage).
+    let mut header = match request.vault_header {
+        Some(h) => h,
+        None => {
+            precheck_recovery_destination(&request.vault_db_path).await?;
+            download_vault_header(
+                cloud_transport,
+                &staging_dir,
+                VaultHeaderTrustPolicy::Bootstrap,
+            )
+            .await
+            .map_err(map_vault_header_sync_error)?
+        }
+    };
     let vault_uuid =
         Uuid::parse_str(&header.vault_id).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     let vault_id = VaultId::from_uuid(vault_uuid);
@@ -114,15 +126,20 @@ pub async fn recover_with_phrase(
     storage::staging::ensure_staging_directory(&storage_staging_dir)
         .await
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    download_manifest_backup(
-        cloud_transport,
-        &storage_staging_dir,
-        &manifest_key_bytes,
-        &request.vault_db_path,
-        &original_sqlcipher_key,
-    )
-    .await
-    .map_err(map_manifest_backup_sync_error)?;
+
+    // Skip cloud download when a local DB copy already exists (local recovery
+    // path). The existing DB will be re-keyed in place below.
+    if !db_exists {
+        download_manifest_backup(
+            cloud_transport,
+            &storage_staging_dir,
+            &manifest_key_bytes,
+            &request.vault_db_path,
+            &original_sqlcipher_key,
+        )
+        .await
+        .map_err(map_manifest_backup_sync_error)?;
+    }
 
     // Resolve argon2 params for the new primary slot.
     let resolved_argon2_params = {
@@ -270,9 +287,14 @@ pub async fn recover_with_phrase(
     }
     drop(recovered_recovery_key);
 
-    let upload_result = upload_vault_header(&header, cloud_transport, &staging_dir).await;
-    if let Err(error) = upload_result {
-        return Err(map_vault_header_sync_error(error));
+    // Best-effort cloud upload: when transport is unavailable (e.g. NoOp during
+    // local recovery), warn and continue. The caller must persist the returned
+    // header locally; the next sync will push it to cloud.
+    if let Err(error) = upload_vault_header(&header, cloud_transport, &staging_dir).await {
+        tracing::warn!(
+            ?error,
+            "Failed to upload rekeyed vault header to cloud after phrase recovery; will sync later"
+        );
     }
 
     session_manager
@@ -346,6 +368,7 @@ mod tests {
             new_key_file_path: None,
             argon2_params: Argon2Params::DEFAULT,
             argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
+            vault_header: None,
         }
     }
 
