@@ -48,12 +48,19 @@ This breaks down into five sub-questions:
 ### What Arx Runa Does
 
 - [**Use Cases**](use-cases/README.md) — Real-world scenarios Arx Runa is designed for
-- [**Project Roadmap**](roadmap.md) — Development phases and what is planned
 
 ### How It Works
 
-- [**Design Documents**](architecture/designs/README.md) — Detailed technical designs for each part of the system
-- [**Architecture Diagrams**](architecture/diagrams/INDEX.md) — Visual overviews of data flows
+- [**How It Works**](how-it-works/README.md) — Plain-language walkthroughs: the vault, unlocking, encryption, cloud sync, sharing, and recovery
+
+### Going Deeper
+
+- [**Deep Dives**](research/cryptographic-primitive-rationale.md) — Research-level detail on cryptographic choices, file sharing, key recovery, and padding
+
+### Reference
+
+- [**Glossary**](guides/glossary.md) — Term definitions
+- [**Security Model**](guides/security-model.md) — Trust boundaries and threat model
 
 ## Core Features
 

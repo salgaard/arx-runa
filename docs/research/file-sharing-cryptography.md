@@ -6,9 +6,7 @@
 
 Justification and alternative analysis for the cryptographic decisions in the Arx Runa Phase 5 file-sharing design: ECIES variant selection (historical draft), elliptic curve choice (X25519 vs P-256), KDF construction inside ECIES (historical draft), and committing AEAD selection (mandated by Phase 1 primitive research).
 
-For background on the cryptographic primitives used throughout Arx Runa, see `cryptographic-primitive-rationale.md`.
-For the file-sharing architecture, see `docs/architecture/designs/file-sharing/design.md`.
-For the canonical cryptographic specification, see `docs/architecture/designs/cryptographic-primitives/design.md`.
+For background on the cryptographic primitives used throughout Arx Runa, see [Cryptographic Primitive Rationale](cryptographic-primitive-rationale.md).
 
 ---
 

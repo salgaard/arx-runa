@@ -81,13 +81,6 @@ A user wants to share specific files from their vault with a friend or family me
 - Sender is notified (on next pull) when recipient downloads a shared file
 - Recipient can export a decrypted copy to disk; sender is warned this is outside vault protection
 
-## Related Designs
-
-- [File Sharing](../architecture/designs/file-sharing/design.md)
-- [Cryptographic Primitives](../architecture/designs/cryptographic-primitives/design.md)
-- [Chunking & Manifest](../architecture/designs/chunking-and-manifest/design.md)
-- [Cloud Synchronisation](../architecture/designs/cloud-synchronisation/design.md)
-
 ## Security Considerations
 
 ### Threats Addressed

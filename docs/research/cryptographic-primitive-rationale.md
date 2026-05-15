@@ -6,9 +6,7 @@
 
 Justification and alternative analysis for every cryptographic primitive selected in the Arx Runa cryptographic-primitives design: XChaCha20-Poly1305 AEAD, HKDF-SHA256 key derivation, Argon2id password hashing, per-file random key generation and wrapping, BLAKE3 checksums, and the `ZeroizeOnDrop` + `Secret<T>` memory-protection stack.
 
-For background on the auth/session design, see `docs/architecture/designs/authentication-and-session-management/design.md`.
-For the canonical cryptographic specification, see `docs/architecture/designs/cryptographic-primitives/design.md`.
-For password and key recovery, see `password-and-key-recovery.md`.
+For password and key recovery, see [Password and Key Recovery](password-and-key-recovery.md).
 
 ---
 

@@ -95,14 +95,6 @@ _This flow is not yet implemented. Arx Runa currently overwrites silently; a con
 - Tier 1 vault requires password only; Tier 2 vault additionally requires a key file
 - Vault cannot be opened without the correct authentication factors for the chosen tier
 
-## Related Designs
-
-- [Authentication & Session Management](../architecture/designs/authentication-and-session-management/design.md)
-- [Cryptographic Primitives](../architecture/designs/cryptographic-primitives/design.md)
-- [Chunking & Manifest](../architecture/designs/chunking-and-manifest/design.md)
-- [Cloud Synchronisation](../architecture/designs/cloud-synchronisation/design.md)
-- [Tauri IPC & Frontend](../architecture/designs/tauri-ipc-and-frontend/design.md)
-
 See also [use-case-5](use-case-5-multi-destination-backup.md) for multi-destination and redundant backup scenarios.
 
 ## Security Considerations

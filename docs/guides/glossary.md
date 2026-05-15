@@ -33,6 +33,7 @@ A plaintext JSON file stored at the cloud root (`vault-header.json`). It contain
 - `argon2_salt` - 32-byte Argon2id salt (CSPRNG-generated at vault creation)
 - `argon2_params` - Argon2id cost parameters (memory, iterations, parallelism)
 - `key_file_blake3` - BLAKE3 fingerprint of the USB key file (Tier 2 only; `null` for Tier 1; preimage-resistant, does not reveal key material)
+- `recovery_slot` - optional `wrapped_master_key` for recovery-phrase access
 
 The vault header is intentionally unencrypted: it must be downloadable before any keys exist, so a new device can derive the correct keys without prior authentication.
 
@@ -60,6 +61,12 @@ The local SQLCipher database is encrypted with `sqlcipher_key` (derived from `ma
 
 ---
 
+## SQLCipher
+
+An open-source extension to SQLite that provides transparent 256-bit AES encryption of the entire database file. Arx Runa uses SQLCipher as its local manifest database, keyed with `sqlcipher_key`. The database stores file paths, directory structure, chunk records, BLAKE3 checksums, and wrapped file keys. Without the correct `sqlcipher_key`, the database file is indistinguishable from random bytes.
+
+---
+
 ## Blob
 
 A single encrypted file chunk stored in the cloud. Blob names are UUID v4 strings with a `.blob` extension (e.g., `3f7a1b2c-dead-beef-cafe-112233445566.blob`). All blobs are padded to exactly 4 MiB, making them indistinguishable by size.
@@ -74,6 +81,25 @@ The chunk size is fixed (not content-defined) to prevent file size inference fro
 
 ---
 
+## XChaCha20-Poly1305
+
+The authenticated encryption scheme used to encrypt every file chunk in Arx Runa. XChaCha20 is a stream cipher with a 192-bit nonce; Poly1305 is the authentication tag. Each encryption call generates a fresh 192-bit nonce from the CSPRNG, making nonce collisions negligible across any realistic file count.
+
+The wire format per chunk is `[24-byte nonce | ciphertext | 16-byte Poly1305 tag]`. The tag detects any single-bit tampering before decryption returns data.
+
+XChaCha20-Poly1305 is also used to wrap `master_key` in the `recovery_slot`.
+
+---
+
+## BLAKE3
+
+A cryptographic hash function used in Arx Runa for two purposes:
+
+1. **Blob integrity** — a BLAKE3 checksum is computed over each encrypted blob after encryption and stored in the manifest. On download the checksum is verified before decryption begins, catching bit rot or storage corruption immediately.
+2. **USB key file fingerprint** — the vault header stores the BLAKE3 hash of the 32-byte key file. The hash identifies which file to use; it is preimage-resistant and reveals nothing about the key file bytes.
+
+---
+
 ## master_key
 
 The root key material for a vault session, derived by Argon2id from the user's password (and USB key file bytes for Tier 2). All other vault keys are derived from `master_key` via HKDF-SHA256.
@@ -82,6 +108,32 @@ The root key material for a vault session, derived by Argon2id from the user's p
 - **Tier 2**: `master_key = Argon2id(password || key_file_bytes, salt)`
 
 `master_key` exists only in RAM during an active session and is zeroized on vault lock.
+
+---
+
+## Argon2id
+
+A memory-hard key derivation function and winner of the Password Hashing Competition. Arx Runa uses Argon2id to derive `master_key` from the user's password (and USB key file bytes for Tier 2).
+
+Its memory requirement — 64 MiB per invocation at default parameters — ensures that offline brute-force attacks remain expensive regardless of the attacker's hardware: where conventional hash functions can be parallelised onto thousands of GPU cores, Argon2id's memory bandwidth demand caps the number of guesses that can run simultaneously. Parameters (memory, iterations, parallelism) are stored in the vault header so they can be tuned in future versions without invalidating existing vaults.
+
+---
+
+## HKDF
+
+HMAC-based Extract-and-Expand Key Derivation Function (RFC 5869). Arx Runa uses HKDF-SHA256 to expand `master_key` into three purpose-specific vault-level keys, each derived with a distinct `info` label:
+
+- `b"arx-runa-key-encryption"` → `key_encryption_key`
+- `b"arx-runa-sqlcipher"` → `sqlcipher_key`
+- `b"arx-runa-manifest-backup"` → `manifest_key`
+
+Separate labels ensure the three derived keys are cryptographically independent: compromise of one reveals nothing about the others. `master_key` is zeroized immediately after all three derivations complete.
+
+---
+
+## CSPRNG
+
+Cryptographically Secure Pseudo-Random Number Generator. The source of all random material in Arx Runa: encryption nonces, `file_key` values, Argon2id salts, and USB key file bytes. Arx Runa delegates CSPRNG calls to the operating system (`getrandom` on Linux/macOS, `BCryptGenRandom` on Windows).
 
 ---
 
@@ -106,6 +158,18 @@ A vault-level key derived from `master_key` via HKDF with info `b"arx-runa-manif
 ## sqlcipher_key
 
 A vault-level key derived from `master_key` via HKDF, used to encrypt the local SQLCipher manifest database.
+
+---
+
+## mlock
+
+A POSIX system call (and its Windows equivalent `VirtualLock`) that pins memory pages to RAM and instructs the OS not to swap them to disk. Arx Runa calls `mlock` on all session key buffers (`key_encryption_key`, `sqlcipher_key`, `manifest_key`) immediately after derivation. If `mlock` fails, Arx Runa refuses to open the session rather than silently operating with keys that could be written to a swap file or hibernation image.
+
+---
+
+## Staging
+
+A temporary local directory used during sync. Encrypted blobs are written to staging immediately after encryption, before cloud upload. Once a blob is confirmed uploaded it is deleted from staging. On startup, any orphaned blobs left by a previously interrupted session are cleaned up. The cloud never receives data from staging directly; it receives only finished encrypted blobs.
 
 ---
 
@@ -161,6 +225,48 @@ An integer stored in the manifest that increments on every push. Used to detect 
 ## AAD (Additional Authenticated Data)
 
 The binding value included in every XChaCha20-Poly1305 encryption call: `file_id || chunk_index`. AAD prevents chunk-swap attacks - a chunk from one file cannot be spliced into another file's chunk sequence without causing an authentication failure.
+
+---
+
+## EXIF
+
+Exchangeable Image File format metadata embedded in photos and other media files. A photo typically carries GPS coordinates, camera model, lens settings, capture timestamp, and device serial number alongside the image itself. Arx Runa strips EXIF (and the related XMP and IPTC formats) from media files in memory before encryption begins. The original file on disk is never modified; the stripped copy is what enters the encryption pipeline.
+
+---
+
+## BIP-39
+
+A standard wordlist encoding scheme for binary entropy, originally designed for cryptocurrency hardware wallet seed phrases. Arx Runa uses it to encode the 256-bit recovery phrase as 24 human-readable words. The final word embeds a checksum that catches single-word transcription errors immediately, before Argon2id even runs.
+
+---
+
+## recovery_key
+
+A 256-bit key derived by running the 24-word BIP-39 recovery phrase through Argon2id (using the same parameters and a dedicated recovery salt from the vault header). It exists only in RAM during a recovery ceremony and is used to unwrap `wrapped_master_key` from the vault header's `recovery_slot`. It is never stored anywhere.
+
+---
+
+## recovery_slot
+
+An optional field in the vault header that stores `wrapped_master_key`. When present, it allows the vault to be opened with the BIP-39 recovery phrase instead of the primary password. The slot is populated at vault creation (opt-in) and re-wrapped under updated credentials after every successful password rotation or recovery ceremony.
+
+---
+
+## wrapped_master_key
+
+The `master_key` encrypted with `recovery_key` under XChaCha20-Poly1305, stored in the vault header `recovery_slot`. 72 bytes total: `[24-byte nonce | 32-byte ciphertext | 16-byte Poly1305 tag]`. The AAD binding is `vault_id_bytes`, preventing the wrapped key from being transplanted to a different vault.
+
+---
+
+## HPKE
+
+Hybrid Public Key Encryption (RFC 9180). The asymmetric encryption scheme used in Arx Runa's file sharing. The ciphersuite is `DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + ChaCha20-Poly1305`. HPKE seals the `file_key` and file metadata for a recipient's X25519 public key so that only the holder of the corresponding private key can open the envelope. Neither the cloud provider nor Arx Runa's infrastructure can read the contents.
+
+---
+
+## X25519
+
+The Diffie-Hellman key exchange function over Curve25519. In Arx Runa, each user generates an X25519 key pair as their sharing identity. The private key is stored in the encrypted vault; the public key is exported as a small file or QR code for out-of-band exchange with contacts. X25519 public keys are also the recipient key in HPKE share packages.
 
 ---
 

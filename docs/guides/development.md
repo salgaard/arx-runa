@@ -1,17 +1,125 @@
 # Development Setup
 
+This guide walks through a complete first-time setup. Follow all steps in order for your platform before attempting to build or run tests.
+
+---
+
 ## Prerequisites
 
-- Windows 10/11
-- [Rust toolchain](https://rust-lang.org/learn/get-started) (stable, MSVC)
-- `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
-- [Trunk](https://trunkrs.dev/) (`cargo install trunk --locked`)
-- [Node.js](https://nodejs.org/) v18 or later (`node --version`) — required by the
-  Trunk pre-build hook which invokes `node ./node_modules/@tailwindcss/cli/dist/index.mjs`
-  to compile Tailwind CSS v4.
-- [Strawberry Perl](https://strawberryperl.com/) (Windows source builds only; required for vendored OpenSSL in `src-tauri`)
-- [VS Code](https://code.visualstudio.com/) with recommended extensions
-  (see `.vscode/extensions.json`)
+### Windows 10/11
+
+1. **Visual Studio Build Tools** — required by the Rust MSVC toolchain.
+   Download [Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
+   and select the **Desktop development with C++** workload during install.
+
+2. **Rust (MSVC toolchain)**
+   ```powershell
+   winget install Rustlang.Rustup
+   rustup toolchain install stable-x86_64-pc-windows-msvc
+   rustup default stable-x86_64-pc-windows-msvc
+   rustup target add wasm32-unknown-unknown
+   ```
+
+3. **Strawberry Perl** — required at compile time for vendored OpenSSL inside `src-tauri`. This is a build-time dependency only; end users do not need it.
+   ```powershell
+   winget install StrawberryPerl.StrawberryPerl
+   ```
+   Restart your terminal after install so `perl` is on `PATH`. Verify: `perl -v`.
+
+4. **Node.js** v18 or later — the Trunk pre-build hook invokes `node` to compile Tailwind CSS v4:
+   ```powershell
+   winget install OpenJS.NodeJS.LTS
+   ```
+
+5. **Trunk** (Leptos/WASM bundler):
+   ```powershell
+   cargo install trunk --locked
+   ```
+
+6. **jq** — required by Claude Code hooks:
+   ```powershell
+   winget install jqlang.jq
+   ```
+
+7. **VS Code** with recommended extensions.
+   Open the project — VS Code will prompt you to install from `.vscode/extensions.json`:
+   - `rust-lang.rust-analyzer` — language server, inline hints, completions
+   - `ms-vscode.cpptools` — Windows backend debugger (`cppvsdbg`)
+   - `tauri-apps.tauri-vscode` — Tauri project support
+
+---
+
+### macOS
+
+1. **Xcode Command Line Tools**:
+   ```bash
+   xcode-select --install
+   ```
+
+2. **Rust**:
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   source "$HOME/.cargo/env"
+   rustup target add wasm32-unknown-unknown
+   ```
+
+3. **Node.js** v18 or later — via [Homebrew](https://brew.sh/) or [nvm](https://github.com/nvm-sh/nvm):
+   ```bash
+   brew install node
+   ```
+
+4. **Trunk**:
+   ```bash
+   cargo install trunk --locked
+   ```
+
+5. **jq**:
+   ```bash
+   brew install jq
+   ```
+
+6. **VS Code** with recommended extensions.
+   Open the project — VS Code will prompt you to install from `.vscode/extensions.json`.
+   Use `vadimcn.vscode-lldb` for backend debugging instead of `ms-vscode.cpptools`.
+
+---
+
+### Linux (Debian / Ubuntu)
+
+Tauri requires several system libraries. Install them first:
+
+```bash
+sudo apt update
+sudo apt install -y \
+  build-essential curl git \
+  libssl-dev pkg-config \
+  libgtk-3-dev libwebkit2gtk-4.1-dev \
+  libayatana-appindicator3-dev librsvg2-dev \
+  jq
+```
+
+Then:
+
+1. **Rust**:
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   source "$HOME/.cargo/env"
+   rustup target add wasm32-unknown-unknown
+   ```
+
+2. **Node.js** v18 or later:
+   ```bash
+   curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+   sudo apt install -y nodejs
+   ```
+
+3. **Trunk**:
+   ```bash
+   cargo install trunk --locked
+   ```
+
+4. **VS Code** with recommended extensions.
+   Open the project — VS Code will prompt you to install from `.vscode/extensions.json`.
 
 ---
 
@@ -21,64 +129,118 @@
 npm install
 ```
 
-Populates `node_modules/` with `tailwindcss` and `@tailwindcss/cli`. Required
-before the first `cargo tauri dev` or `cargo build --release`. `node_modules/`
-is gitignored.
+Populates `node_modules/` with `tailwindcss` and `@tailwindcss/cli`. Required before the first
+`cargo tauri dev` or `cargo build --release`. `node_modules/` is gitignored.
 
 ---
 
-## 1. Install Rust
+## Rclone sidecar binaries
 
-Download and run `rustup-init.exe` from the [official site](https://rust-lang.org/learn/get-started/), then verify:
+Arx Runa bundles rclone as a Tauri sidecar for cloud transport. The binaries are **not included
+in git** (too large). You must download and place them in `src-tauri/bin/` before building.
 
+### Download and rename
+
+Go to [rclone.org/downloads](https://rclone.org/downloads/) and download the archive for your
+platform. For local development you only need your host platform's binary; building release
+bundles for all platforms requires all five.
+
+| Platform | Archive to download | Required filename in `src-tauri/bin/` |
+|---|---|---|
+| Windows x64 | `rclone-*-windows-amd64.zip` | `rclone-x86_64-pc-windows-msvc.exe` |
+| Linux x64 | `rclone-*-linux-amd64.zip` | `rclone-x86_64-unknown-linux-gnu` |
+| Linux ARM64 | `rclone-*-linux-arm64.zip` | `rclone-aarch64-unknown-linux-gnu` |
+| macOS x64 | `rclone-*-osx-amd64.zip` | `rclone-x86_64-apple-darwin` |
+| macOS Apple Silicon | `rclone-*-osx-arm64.zip` | `rclone-aarch64-apple-darwin` |
+
+The filename **must match exactly** — Tauri's sidecar loader resolves binaries by target triple.
+
+### Windows example
+
+1. Download `rclone-*-windows-amd64.zip` and extract it.
+2. Inside the extracted folder, find `rclone.exe`.
+3. Rename it to `rclone-x86_64-pc-windows-msvc.exe`.
+4. Move it into `src-tauri/bin/`.
+
+### macOS / Linux
+
+After copying, mark the binary executable:
 ```bash
-cargo --version
+chmod +x src-tauri/bin/rclone-*
 ```
 
 ---
 
-## 2. MSVC toolchain (required for the VS Code one-click debugger)
+## Cloud integration tests (`.env.test`)
 
-This workspace uses the VS Code Windows debugger (`cppvsdbg`) for backend
-breakpoints, so keep the default toolchain on MSVC:
+The real-cloud integration tests (`cargo test -p arx-runa-tauri -- --ignored`) require a
+`.env.test` file in the project root. This file is **not in git**. Create it:
 
-```bash
-rustup toolchain install stable-x86_64-pc-windows-msvc
-rustup default stable-x86_64-pc-windows-msvc
+```env
+ARX_TEST_B2_KEY_ID=
+ARX_TEST_B2_APP_KEY=
+ARX_TEST_B2_BUCKET=arx-runa-test
+ARX_TEST_GDRIVE_REFRESH_TOKEN=
+ARX_TEST_ONEDRIVE_REFRESH_TOKEN=
+ARX_TEST_ONEDRIVE_DRIVE_ID=
 ```
 
-Verify:
+### Backblaze B2
 
-```bash
-rustup show
+1. Log in to [secure.backblaze.com](https://secure.backblaze.com/b2_buckets.htm).
+2. Create a bucket named `arx-runa-test` (Private, no server-side encryption).
+3. Go to **App Keys** → **Add a New Application Key**. Scope it to that bucket with
+   read/write/delete permissions.
+4. Copy the **keyID** → `ARX_TEST_B2_KEY_ID` and the **applicationKey** → `ARX_TEST_B2_APP_KEY`.
+
+### Google Drive
+
+The refresh token is obtained by running an OAuth flow through rclone. Use the **sidecar binary
+directly** — it is not in `PATH`:
+
+**Windows:**
+```powershell
+.\src-tauri\bin\rclone-x86_64-pc-windows-msvc.exe config
 ```
 
-If you build the backend from source on Windows, `rusqlite` with
-`bundled-sqlcipher-vendored-openssl` requires Perl on `PATH` during compile:
-
+**macOS (Apple Silicon):**
 ```bash
-winget install StrawberryPerl.StrawberryPerl
-perl -v
+./src-tauri/bin/rclone-aarch64-apple-darwin config
 ```
 
-This is a build-time prerequisite only; end users running packaged binaries do
-not need Perl.
+**macOS (Intel):**
+```bash
+./src-tauri/bin/rclone-x86_64-apple-darwin config
+```
+
+**Linux x64:**
+```bash
+./src-tauri/bin/rclone-x86_64-unknown-linux-gnu config
+```
+
+In the interactive config wizard:
+
+1. Choose **n** → new remote. Name it anything (e.g. `gdrive-test`).
+2. Choose **Google Drive** from the storage type list.
+3. Leave Client ID and Secret blank (uses rclone's built-in credentials).
+4. Follow the browser OAuth flow.
+5. When done, open the rclone config file and find the `[gdrive-test]` section:
+   - Windows: `%APPDATA%\rclone\rclone.conf`
+   - macOS / Linux: `~/.config/rclone/rclone.conf`
+6. Copy the `"refresh_token"` value from inside the `token = {...}` JSON → `ARX_TEST_GDRIVE_REFRESH_TOKEN`.
+
+### OneDrive
+
+Repeat the same rclone config flow, choosing **Microsoft OneDrive** as the storage type.
+Select the correct drive type (personal OneDrive or business/SharePoint) when prompted.
+
+After the OAuth flow, in `rclone.conf` find the `[onedrive-test]` section and copy:
+- `token` → `"refresh_token"` value → `ARX_TEST_ONEDRIVE_REFRESH_TOKEN`
+- `drive_id` value → `ARX_TEST_ONEDRIVE_DRIVE_ID`
 
 ---
 
-## 3. VS Code extensions
-
-Open the project in VS Code — it will prompt you to install recommended
-extensions from `.vscode/extensions.json`:
-
-- `rust-lang.rust-analyzer` — language server, inline hints, completions
-- `ms-vscode.cpptools` — Windows backend debugger (`cppvsdbg`)
-- `vadimcn.vscode-lldb` — optional backend debugger (especially useful on macOS/Linux)
-- `tauri-apps.tauri-vscode` — Tauri project support
-
----
-
-## 4. Cargo workflow
+## 1. Cargo workflow
 
 ```bash
 # Build
@@ -126,7 +288,7 @@ steel, rune, bone) is declared in `input.css` inside an `@theme` block. Source:
 
 ---
 
-## 5. Debugging
+## 2. Debugging
 
 1. Set backend breakpoints in `src-tauri/src/**` (for example `src-tauri/src/lib.rs`).
 2. Press `F5` or open **Run and Debug** in the VS Code sidebar.
@@ -144,7 +306,7 @@ frontend Rust compiled to WASM, not native backend code.
 
 ---
 
-## 6. Git hooks (documentation stubs)
+## 3. Git hooks (documentation stubs)
 
 A post-commit hook automatically creates a report-log stub whenever a commit
 touches `src-tauri/src/`. Configure it once per clone:
@@ -163,21 +325,7 @@ commit message.
 
 ---
 
-## 7. Hook prerequisites
-
-Claude Code hooks use `jq` to parse tool input. Install it:
-
-```bash
-# winget
-winget install jqlang.jq
-
-# or scoop
-scoop install jq
-```
-
----
-
-## 8. Documentation SSOT Architecture
+## 4. Documentation SSOT Architecture
 
 Arx Runa uses a **Single Source of Truth (SSOT)** documentation architecture. Technical specifications appear once in canonical design documents and are referenced elsewhere.
 
@@ -199,7 +347,7 @@ Arx Runa uses a **Single Source of Truth (SSOT)** documentation architecture. Te
 
 ---
 
-## 9. Working with Sub-Phase Roadmaps
+## 5. Working with Sub-Phase Roadmaps
 
 For large design documents (>100 lines or logically separable), Arx Runa uses **sub-phase roadmaps** to decompose implementation into independently testable units with manual validation checkpoints.
 
@@ -288,7 +436,7 @@ Each sub-phase is independently testable, with clear validation checkpoints befo
 
 ---
 
-## 10. AI Assistant Setup (Optional)
+## 6. AI Assistant Setup (Optional)
 
 Arx Runa supports AI assistants via LSP and MCP integrations for enhanced code intelligence and tooling.
 
@@ -326,7 +474,7 @@ claude plugin install commit-commands
 
 ---
 
-## 11. Encryption stack (for context)
+## 7. Encryption stack (for context)
 
 | Component | Technology |
 |---|---|

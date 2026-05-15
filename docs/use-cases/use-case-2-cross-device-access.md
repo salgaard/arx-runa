@@ -117,13 +117,6 @@ _This describes ongoing use on a device that already has a local vault state (ma
 - Tier 1 vaults are accessible with password only; Tier 2 vaults require USB key on each device
 - No device stores plaintext persistently unless the user explicitly exports a file
 
-## Related Designs
-
-- [Authentication & Session Management](../architecture/designs/authentication-and-session-management/design.md)
-- [Cryptographic Primitives](../architecture/designs/cryptographic-primitives/design.md)
-- [Chunking & Manifest](../architecture/designs/chunking-and-manifest/design.md)
-- [Cloud Synchronisation](../architecture/designs/cloud-synchronisation/design.md)
-
 ## Security Considerations
 
 ### Threats Addressed

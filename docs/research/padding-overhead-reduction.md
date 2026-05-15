@@ -6,7 +6,6 @@
 
 This document surveys all known techniques for reducing the per-file padding overhead caused by Arx Runa's fixed-size 4 MiB chunk design, and evaluates each against Arx Runa's privacy model and implementation constraints.
 
-For background on the overhead problem itself, see `compression-and-cloud-cost.md`. For bin-packing specifically, see `bin-packing.md`.
 
 ---
 

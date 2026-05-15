@@ -78,11 +78,6 @@ A user wants their encrypted vault backed up to more than one cloud provider sim
 - Backup failures are surfaced per-destination and cleared automatically on the next successful sync
 - No re-encryption is required when migrating between providers
 
-## Related Designs
-
-- [Cloud Synchronisation](../architecture/designs/cloud-synchronisation/design.md)
-- [Tauri IPC & Frontend](../architecture/designs/tauri-ipc-and-frontend/design.md)
-
 ## Security Considerations
 
 ### Threats Addressed

@@ -46,14 +46,5 @@ Each use case document describes:
 | SQ4 | RAM-based UI / Zero-Trace | Use case 1 |
 | SQ5 | File sharing in a zero-trust system | Use case 4 |
 
-### Design Document Coverage
-
-- [Authentication & Session Management](../architecture/designs/authentication-and-session-management/design.md)
-- [Cryptographic Primitives](../architecture/designs/cryptographic-primitives/design.md)
-- [Chunking & Manifest](../architecture/designs/chunking-and-manifest/design.md)
-- [Cloud Synchronisation](../architecture/designs/cloud-synchronisation/design.md)
-- [File Sharing](../architecture/designs/file-sharing/design.md)
-- [Tauri IPC & Frontend](../architecture/designs/tauri-ipc-and-frontend/design.md)
-
 
 </details>
