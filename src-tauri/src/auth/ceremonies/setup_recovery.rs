@@ -101,7 +101,7 @@ pub async fn setup_recovery(
         method: "bip39".into(),
         argon2_salt: encode_base64(recovery_salt.as_slice()),
         argon2_params: argon2_params_to_json(&resolved_argon2_params),
-        wrapped_master_key: encode_base64(&wrapped.0),
+        wrapped_master_key: encode_base64(wrapped.as_bytes()),
     };
     vault_header.recovery_slots.push(slot);
 

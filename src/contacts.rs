@@ -5,7 +5,7 @@ use leptos::task::spawn_local;
 use leptos_router::components::A;
 use std::sync::Arc;
 
-use crate::dialog::open_save_dialog;
+use crate::dialog::{open_file_dialog, open_save_dialog};
 use crate::invoke::invoke_command;
 use crate::ipc_types::{AddContactRequest, ContactEntry, ExportPublicKeyRequest};
 use crate::utils::format_fingerprint;
@@ -192,11 +192,12 @@ fn AddContactForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
             return;
         }
 
-        let email_opt = email
-            .get()
-            .trim()
-            .is_empty()
-            .then(|| email.get().trim().to_string());
+        let email_val = email.get();
+        let email_opt = if email_val.trim().is_empty() {
+            None
+        } else {
+            Some(email_val.trim().to_string())
+        };
         let path = public_key_path.get().trim().to_string();
         if path.is_empty() {
             validation_error.set(Some("Public key file path is required".to_string()));
@@ -260,15 +261,31 @@ fn AddContactForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
             </div>
 
             <div>
-                <label class="block text-sm text-text-secondary mb-1">"Public Key File Path"</label>
-                <input
-                    type="text"
-                    class="w-full px-3 py-2 bg-stone border border-steel text-bone rounded"
-                    placeholder="/path/to/public_key"
-                    value=move || public_key_path.get()
-                    on:input=move |e| { public_key_path.set(event_target_value(&e)); validation_error.set(None); }
-                    disabled=move || loading.get()
-                />
+                <label class="block text-sm text-text-secondary mb-1">"Public Key File"</label>
+                <div class="flex gap-2">
+                    <input
+                        type="text"
+                        class="flex-1 px-3 py-2 bg-stone border border-steel text-bone rounded"
+                        placeholder="/path/to/public_key"
+                        value=move || public_key_path.get()
+                        on:input=move |e| { public_key_path.set(event_target_value(&e)); validation_error.set(None); }
+                        disabled=move || loading.get()
+                    />
+                    <button
+                        class="px-3 py-2 text-sm bg-steel text-bone rounded cursor-pointer hover:bg-rune/20 transition-colors disabled:opacity-50"
+                        on:click=move |_| {
+                            spawn_local(async move {
+                                if let Some(path) = open_file_dialog().await {
+                                    public_key_path.set(path);
+                                    validation_error.set(None);
+                                }
+                            });
+                        }
+                        disabled=move || loading.get()
+                    >
+                        "Browse…"
+                    </button>
+                </div>
             </div>
 
             {move || {

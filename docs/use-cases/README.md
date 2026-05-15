@@ -21,6 +21,7 @@ Regardless of tier, the cloud never holds your encryption keys or unencrypted fi
 | [Cross-Device Access](use-case-2-cross-device-access.md) | Access the same vault from multiple devices. Changes sync automatically without leaking filenames or structure. |
 | [Hardware Key & Recovery](use-case-3-hardware-mfa-and-key-loss.md) | Use a physical USB file as a second factor. Covers what happens if the USB or password is lost, and opt-in BIP-39 recovery phrase setup and use. |
 | [File Sharing](use-case-4-personal-file-sharing.md) | Share individual files with another person securely — without sharing your password or compromising the vault. |
+| [Multi-Destination Backup](use-case-5-multi-destination-backup.md) | Back up to multiple cloud providers simultaneously. Covers mirror and accumulating modes, cloud provider migration, and backup failure recovery. |
 
 ## What Each Use Case Covers
 

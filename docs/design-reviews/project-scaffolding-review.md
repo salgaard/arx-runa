@@ -4,11 +4,11 @@
 > **Status**: Concluded
 > **Last updated**: 2026-04-08
 
-Critical review of `docs/architecture/designs/project-scaffolding/design.md` against
+Critical review of `docs/architecture/designs/project-skeleton/design.md` against
 current crate versions, Rust edition 2024 constraints, ecosystem compatibility, and
 completeness of the declared dependency set.
 
-For the canonical design, see `docs/architecture/designs/project-scaffolding/design.md`.
+For the canonical design, see `docs/architecture/designs/project-skeleton/design.md`.
 
 ---
 

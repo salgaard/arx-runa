@@ -8,6 +8,9 @@ pub mod storage;
 pub mod sync;
 pub mod ui;
 
+#[cfg(test)]
+mod tests;
+
 use tauri::Manager as _;
 use tokio_stream::StreamExt as _;
 
@@ -56,7 +59,7 @@ pub fn run() {
             ui::auth_commands::retry_pending_vault_operation,
             ui::auth_commands::recover_vault_from_cloud,
             ui::auth_commands::recover_vault_from_cloud_with_phrase,
-            // Files (7)
+            // Files (10)
             ui::file_commands::list_directory,
             ui::file_commands::upload_file,
             ui::file_commands::download_file,
@@ -64,6 +67,9 @@ pub fn run() {
             ui::file_commands::get_file_content,
             ui::file_commands::list_remote,
             ui::file_commands::flush_epoch_buffer,
+            ui::file_commands::stat_local_path,
+            ui::file_commands::list_local_directory,
+            ui::file_commands::create_vault_directory,
             // Sync (7)
             ui::sync_commands::sync_to_cloud,
             ui::sync_commands::recover_from_cloud,

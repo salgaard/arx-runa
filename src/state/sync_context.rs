@@ -1,12 +1,16 @@
 //! Sync state context: SyncState, SyncActions, SyncProvider, and accessor hooks.
 
-use gloo_timers::callback::Interval;
+use gloo_timers::future::sleep;
 use leptos::prelude::*;
 use serde::Serialize;
+use std::time::Duration;
 
+use crate::components::use_toast;
 use crate::invoke::{invoke_command, invoke_command_with_channel};
 use crate::ipc_channel::IpcChannel;
-use crate::ipc_types::{DestinationHealth, ReconcileResult, SyncProgressUpdate, SyncResult};
+use crate::ipc_types::{
+    DestinationHealth, ReconcileResult, SyncProgressUpdate, SyncResult, SyncStatus,
+};
 use crate::state::vault_context::VaultActions;
 
 #[derive(Serialize)]
@@ -26,6 +30,8 @@ pub struct SyncState {
     pub pending_changes: u32,
     /// Description of an active merge conflict, or `None` when clean.
     pub conflict: Option<String>,
+    /// `true` when the user dismissed a sync conflict without pulling.
+    pub stale_manifest: bool,
     /// Last user-displayable sync error, or `None` when clean.
     pub error: Option<String>,
     /// Per-destination backup failure counts; refreshed after each `sync_backup`.
@@ -39,6 +45,7 @@ impl SyncState {
         self.last_synced_at = None;
         self.pending_changes = 0;
         self.conflict = None;
+        self.stale_manifest = false;
         self.error = None;
         self.backup_health = Vec::new();
     }
@@ -125,9 +132,12 @@ impl SyncActions {
         });
     }
 
-    /// Dismisses the active sync conflict without taking action.
+    /// Dismisses the active sync conflict without pulling, marking the manifest stale.
     pub fn dismiss_conflict(self) {
-        self.set_state.update(|s| s.conflict = None);
+        self.set_state.update(|s| {
+            s.conflict = None;
+            s.stale_manifest = true;
+        });
     }
 
     /// Calls `pull_and_reconcile` then retries `sync()`.
@@ -146,7 +156,16 @@ impl SyncActions {
             )
             .await
             {
-                Ok(_) => {
+                Ok(result) => {
+                    if !result.conflicts_renamed.is_empty() {
+                        let names = result.conflicts_renamed.join(", ");
+                        use_toast().warning(format!(
+                            "{} file(s) renamed as conflicted copies: {}",
+                            result.conflicts_renamed.len(),
+                            names
+                        ));
+                    }
+                    self.set_state.update(|s| s.stale_manifest = false);
                     self.sync();
                 }
                 Err(e) => {
@@ -186,18 +205,18 @@ pub fn SyncProvider(children: Children) -> impl IntoView {
         .expect("VaultProvider must wrap SyncProvider — check provider order in src/app.rs");
     provide_context(SyncActions { set_state, vault });
 
-    // Poll get_sync_status every 5 seconds
-    Effect::new(move |_| {
-        let _handle = Interval::new(5000, move || {
-            leptos::task::spawn_local(async move {
-                // TODO: Implement get_sync_status polling
-                // For now, this is a placeholder that will be wired in Phase 6.7.2
-            });
-        });
-
-        on_cleanup(move || {
-            // Interval is dropped here on cleanup
-        });
+    // Poll get_sync_status every 5 seconds to keep pending_changes current.
+    // spawn_local runs in the WASM microtask queue; the loop is naturally
+    // bounded to the app lifetime (SyncProvider is never unmounted).
+    leptos::task::spawn_local(async move {
+        loop {
+            sleep(Duration::from_millis(5000)).await;
+            if let Ok(status) = invoke_command::<(), SyncStatus>("get_sync_status", &()).await {
+                set_state.update(|s| {
+                    s.pending_changes = status.pending_changes;
+                });
+            }
+        }
     });
 
     children()

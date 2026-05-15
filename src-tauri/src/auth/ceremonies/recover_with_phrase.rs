@@ -19,6 +19,7 @@ use crate::storage::cloud::upload_vault_header;
 use crate::storage::cloud::vault_header::{VaultHeader, VaultHeaderTrustPolicy};
 use crate::storage::cloud::{
     ManifestBackupSyncError, download_manifest_backup, download_vault_header,
+    upload_manifest_backup,
 };
 
 #[cfg(test)]
@@ -80,7 +81,7 @@ pub async fn recover_with_phrase(
         let slot_salt = decode_base64_32(&slot.argon2_salt)?;
         let slot_params = argon2_params_from_json(&slot.argon2_params);
         let wrapped_bytes = decode_base64_72(&slot.wrapped_master_key)?;
-        let wrapped = WrappedMasterKey(wrapped_bytes);
+        let wrapped = WrappedMasterKey::new(wrapped_bytes);
 
         let mut recovery_key_bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_recovery_key_into(
@@ -207,14 +208,14 @@ pub async fn recover_with_phrase(
                         let wrapped_array: [u8; 72] = wrapped_blob
                             .try_into()
                             .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                        let wrapped = WrappedFileKey(wrapped_array);
+                        let wrapped = WrappedFileKey::new(wrapped_array);
                         let file_key = unwrap_file_key(&wrapped, &current_kek)
                             .map_err(|_| AuthenticationError::InvalidCredentials)?;
                         let rewrapped = wrap_file_key(&file_key, &new_kek)
                             .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
                         conn.execute(
                             "UPDATE nodes SET file_key_wrapped = ? WHERE node_id = ?",
-                            params![rewrapped.0.to_vec(), node_id],
+                            params![rewrapped.as_bytes().to_vec(), node_id],
                         )
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
                     }
@@ -231,14 +232,14 @@ pub async fn recover_with_phrase(
                     let wrapped_array: [u8; 72] = wrapped_blob
                         .try_into()
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    let wrapped = WrappedFileKey(wrapped_array);
+                    let wrapped = WrappedFileKey::new(wrapped_array);
                     let file_key = unwrap_file_key(&wrapped, &current_kek)
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
                     let rewrapped = wrap_file_key(&file_key, &new_kek)
                         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
                     conn.execute(
                         "UPDATE vault_identity SET wrapped_private_key = ? WHERE id = 1",
-                        params![rewrapped.0.to_vec()],
+                        params![rewrapped.as_bytes().to_vec()],
                     )
                     .map_err(|_| AuthenticationError::InvalidCredentials)?;
                 }
@@ -282,7 +283,7 @@ pub async fn recover_with_phrase(
             .iter_mut()
             .find(|slot| slot.method == "bip39")
         {
-            slot.wrapped_master_key = encode_base64(&rewrapped.0);
+            slot.wrapped_master_key = encode_base64(rewrapped.as_bytes());
         }
     }
     drop(recovered_recovery_key);
@@ -295,6 +296,34 @@ pub async fn recover_with_phrase(
             ?error,
             "Failed to upload rekeyed vault header to cloud after phrase recovery; will sync later"
         );
+    }
+
+    // Re-upload manifest backup under the new manifest key. Without this,
+    // push_vault would fail to decrypt the stale cloud manifest (still
+    // encrypted with the old key) when checking the snapshot counter.
+    {
+        let new_manifest_key_bytes = Zeroizing::new(*new_session_keys.manifest_key.expose());
+        let new_sqlcipher_for_upload = {
+            use crate::crypto::SqlcipherKey;
+            use secrecy::SecretBox;
+            let mut boxed = Box::new([0u8; 32]);
+            boxed.copy_from_slice(new_session_keys.sqlcipher_key.expose());
+            SqlcipherKey::from_secret_box(SecretBox::new(boxed))
+        };
+        if let Err(error) = upload_manifest_backup(
+            &request.vault_db_path,
+            &new_sqlcipher_for_upload,
+            &new_manifest_key_bytes,
+            cloud_transport,
+            &storage_staging_dir,
+        )
+        .await
+        {
+            tracing::warn!(
+                ?error,
+                "Failed to upload re-keyed manifest backup after phrase recovery; next sync will repair"
+            );
+        }
     }
 
     session_manager
@@ -905,7 +934,7 @@ mod tests {
         let slot = &header.recovery_slots[0];
         let slot_salt = decode_base64_32(&slot.argon2_salt).unwrap();
         let slot_params = argon2_params_from_json(&slot.argon2_params);
-        let wrapped = WrappedMasterKey(decode_base64_72(&slot.wrapped_master_key).unwrap());
+        let wrapped = WrappedMasterKey::new(decode_base64_72(&slot.wrapped_master_key).unwrap());
 
         let mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, &phrase_string)
             .expect("phrase must parse");

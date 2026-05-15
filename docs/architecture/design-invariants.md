@@ -84,7 +84,7 @@ This reference captures cross-phase contracts that must stay consistent across a
 
 ### 11) Share package/import key-handling contract
 
-**Invariant**: File sharing packages use HPKE (RFC 9180) and include `file_key` plus `sender_public_key` inside the encrypted JSON payload. Recipient import must wrap raw `file_key` immediately into `received_shares.file_key_wrapped` for at-rest storage and zeroize the raw bytes after wrapping.
+**Invariant**: File sharing packages use HPKE (RFC 9180) and include `file_key` plus `sender_public_key` inside the encrypted JSON payload. Recipient import must wrap raw `file_key` immediately into `received_shares.file_key_wrapped` for at-rest storage and zeroize the raw bytes after wrapping. Sharing exposes only the selected file's `file_key` context; vault-wide keys (`master_key`, `sqlcipher_key`, `manifest_key`) are never exposed to share recipients.
 
 **Source designs**:
 - [File Sharing](designs/file-sharing/design.md)
@@ -104,6 +104,35 @@ This reference captures cross-phase contracts that must stay consistent across a
 **Source designs**:
 - [Authentication & Session Management](designs/authentication-and-session-management/design.md)
 - [File Sharing](designs/file-sharing/design.md)
+
+### 14) Recovery slot key-handling contract (`arx-runa recovery v1`)
+
+**Invariant**: Recovery slots wrap `master_key` independently of the primary credential slot using XChaCha20-Poly1305 with AAD `b"arx-runa recovery v1" || vault_id_bytes`. The recovery phrase (BIP-39 24-word mnemonic, 256-bit entropy, English wordlist) is returned to the UI exactly once and never stored by Arx Runa. The standard BIP-39 PBKDF2 derivation step is intentionally bypassed — the space-joined mnemonic is passed directly to Argon2id with the same parameters as the primary slot. `recover_with_phrase` is a single atomic ceremony with no intermediate authenticated session. Recovery is opt-in; users without a recovery slot cannot recover a lost vault.
+
+**Source designs**:
+- [Authentication & Session Management](designs/authentication-and-session-management/design.md)
+
+### 15) Auth tier input construction and non-oracular failure semantics
+
+**Invariant**: `master_key` derivation input is tier-dependent and fixed: Tier 1 uses password bytes only; Tier 2 concatenates password bytes with exactly 32 key-file bytes. All ceremonies that re-derive `master_key` (create, unlock, change-password, recover-with-phrase) must follow this construction. Authentication failure responses (`InvalidCredentials`) must not distinguish a wrong password from a wrong key file to prevent oracle attacks.
+
+**Source designs**:
+- [Authentication & Session Management](designs/authentication-and-session-management/design.md)
+
+### 16) SQLCipher key handling from protected wrappers
+
+**Invariant**: SQLCipher keys (`sqlcipher_key`) must be applied to database open, create, and rekey operations exclusively from protected wrappers. No by-value raw copies of `sqlcipher_key` may appear on the Rust stack during these operations.
+
+**Source designs**:
+- [Chunking & Manifest](designs/chunking-and-manifest/design.md)
+- [Authentication & Session Management](designs/authentication-and-session-management/design.md)
+
+### 17) Session key memory lifecycle (`mlock` + zeroize)
+
+**Invariant**: Active `SessionKeys` must be memory-locked (`mlock`/`VirtualLock`) immediately after derivation. On vault lock or session timeout, all session key material must be zeroized before deallocation. `master_key` is scope-limited to the derivation ceremony and zeroized immediately after session keys are installed.
+
+**Source designs**:
+- [Authentication & Session Management](designs/authentication-and-session-management/design.md)
 
 ---
 

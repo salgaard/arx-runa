@@ -548,6 +548,7 @@ pub async fn change_password(
     mut current_password: String,
     mut new_password: String,
     recovery_phrase: Option<String>,
+    current_key_file_path: Option<PathBuf>,
     state: State<'_, AppState>,
 ) -> Result<(), IpcError> {
     state.session_manager.reset_timer().await;
@@ -578,14 +579,17 @@ pub async fn change_password(
 
     let cloud_transport_arc = state.cloud_transport.read().await.clone();
 
+    let current_key_source: Option<FileKeySource> = current_key_file_path.map(FileKeySource::new);
     let request = ChangePasswordRequest {
         current_password_bytes: &current_bytes,
         new_password_bytes: &new_bytes,
-        current_key_source: None,
+        current_key_source: current_key_source
+            .as_ref()
+            .map(|s| s as &(dyn crate::auth::key_source::KeySource + Send + Sync)),
         recovery_phrase: recovery_phrase.as_deref(),
         argon2_params: Argon2Params::DEFAULT,
         argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
-        vault_db_path: db_path,
+        vault_db_path: db_path.clone(),
     };
 
     ceremony_change_password(
@@ -606,6 +610,18 @@ pub async fn change_password(
             "Failed to persist updated vault-header.json after password change"
         );
     }
+
+    let key_copy: [u8; 32] = state
+        .session_manager
+        .with_sqlcipher_key(|k| *k)
+        .await
+        .map_err(IpcError::from)?;
+    let key_zeroizing = Zeroizing::new(key_copy);
+    let db = SqlCipherMetadataStore::open(&db_path, &key_zeroizing)
+        .await
+        .map_err(IpcError::from)?;
+    drop(key_zeroizing);
+    *state.database.write().await = Some(db);
 
     Ok(())
 }
@@ -655,6 +671,11 @@ pub async fn rotate_key_file(
     let current_key_source = FileKeySource::new(current_key_file_path);
     let cloud_transport_arc = state.cloud_transport.read().await.clone();
 
+    let new_key_file_destination = if new_key_file_destination.is_dir() {
+        new_key_file_destination.join("arx-runa.key")
+    } else {
+        new_key_file_destination
+    };
     let request = RotateKeyFileRequest {
         password_bytes: &password_bytes,
         current_key_source: &current_key_source,
@@ -662,7 +683,7 @@ pub async fn rotate_key_file(
         recovery_phrase: recovery_phrase.as_deref(),
         argon2_params: Argon2Params::DEFAULT,
         argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
-        vault_db_path: db_path,
+        vault_db_path: db_path.clone(),
     };
 
     ceremony_rotate_key_file(
@@ -683,6 +704,18 @@ pub async fn rotate_key_file(
             "Failed to persist updated vault-header.json after key rotation"
         );
     }
+
+    let key_copy: [u8; 32] = state
+        .session_manager
+        .with_sqlcipher_key(|k| *k)
+        .await
+        .map_err(IpcError::from)?;
+    let key_zeroizing = Zeroizing::new(key_copy);
+    let db = SqlCipherMetadataStore::open(&db_path, &key_zeroizing)
+        .await
+        .map_err(IpcError::from)?;
+    drop(key_zeroizing);
+    *state.database.write().await = Some(db);
 
     Ok(())
 }
@@ -792,7 +825,13 @@ pub async fn recover_vault_with_phrase(
         phrase: &phrase,
         vault_db_path: db_path.clone(),
         new_password_bytes: &new_password_bytes,
-        new_key_file_path,
+        new_key_file_path: new_key_file_path.map(|p| {
+            if p.is_dir() {
+                p.join("arx-runa.key")
+            } else {
+                p
+            }
+        }),
         argon2_params: Argon2Params::DEFAULT,
         argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
         vault_header: Some(header_local),
@@ -983,26 +1022,28 @@ pub async fn get_session_status(state: State<'_, AppState>) -> Result<SessionSta
     let vault_id = state.session_manager.active_vault_id().await;
     let timeout_seconds = state.session_manager.remaining_seconds().await;
 
-    let vault_tier = if is_unlocked {
+    let (vault_tier, has_recovery_slot) = if is_unlocked {
         match &vault_id {
             Some(id) => match resolve_vault_by_id(id) {
                 Ok((_, _db_path, header_path)) => {
                     match tokio::fs::read_to_string(&header_path).await {
                         Ok(header_json) => {
                             match serde_json::from_str::<VaultHeader>(&header_json) {
-                                Ok(header) => Some(header.tier),
-                                Err(_) => None,
+                                Ok(header) => {
+                                    (Some(header.tier), Some(!header.recovery_slots.is_empty()))
+                                }
+                                Err(_) => (None, None),
                             }
                         }
-                        Err(_) => None,
+                        Err(_) => (None, None),
                     }
                 }
-                _ => None,
+                _ => (None, None),
             },
-            None => None,
+            None => (None, None),
         }
     } else {
-        None
+        (None, None)
     };
 
     Ok(SessionStatus {
@@ -1010,6 +1051,7 @@ pub async fn get_session_status(state: State<'_, AppState>) -> Result<SessionSta
         vault_id,
         timeout_seconds,
         vault_tier,
+        has_recovery_slot,
     })
 }
 
@@ -1342,12 +1384,11 @@ pub async fn recover_vault_from_cloud_with_phrase(
                         .into(),
                 ));
             }
-            let normalised = validate_single_remote_stanza(
+            validate_single_remote_stanza(
                 &dest_session.rclone_config_blob,
                 &dest_session.rclone_remote_name,
             )
-            .map_err(|e| IpcError::InvalidInput(format!("Invalid rclone config: {e}")))?;
-            normalised
+            .map_err(|e| IpcError::InvalidInput(format!("Invalid rclone config: {e}")))?
         }
     };
     write_owner_only(&conf_path, config_blob.as_bytes())
@@ -1418,7 +1459,13 @@ pub async fn recover_vault_from_cloud_with_phrase(
             phrase: &phrase,
             vault_db_path: vault_db_path.clone(),
             new_password_bytes: &new_password_bytes,
-            new_key_file_path,
+            new_key_file_path: new_key_file_path.map(|p| {
+                if p.is_dir() {
+                    p.join("arx-runa.key")
+                } else {
+                    p
+                }
+            }),
             argon2_params: Argon2Params::DEFAULT,
             argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
             vault_header: Some(vault_header),
@@ -1496,6 +1543,7 @@ mod tests {
             vault_id: Some("test-vault-id".into()),
             timeout_seconds: Some(900),
             vault_tier: Some(1),
+            has_recovery_slot: Some(false),
         };
     }
 

@@ -119,5 +119,5 @@ cargo build --release
 
 ## References
 
-- **Parent design**: `docs/architecture/designs/project-scaffolding/design.md`
+- **Parent design**: `docs/architecture/designs/project-skeleton/design.md`
 - **Roadmap entry**: `docs/roadmap.md` Phase 0

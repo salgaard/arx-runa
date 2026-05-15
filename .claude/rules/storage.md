@@ -32,7 +32,7 @@ paths:
 - `RcloneTransport`: bundled sidecar via `tokio::process::Command`; remote paths pass `^[a-zA-Z0-9._/-]+$` (reject `..` and leading `/`); stderr strips lines matching `token|key|secret|password|credential|auth`
 
 ## EXIF stripping
-- Optional pre-encrypt; enabled by default for `image/jpeg`, `image/png`, `image/tiff` (magic bytes, not extension); strips EXIF/XMP/IPTC in RAM — disk file never modified; MP4/QuickTime excluded; unsupported containers pass through
+- Optional pre-encrypt; enabled by default for `image/jpeg`, `image/png` (magic bytes, not extension); strips EXIF/XMP/IPTC in RAM — disk file never modified; MP4/QuickTime and TIFF excluded; unsupported containers pass through
 
 ## Deletion & Staging
 - Transaction order: read blob names → enqueue `pending_deletions` → delete node (CASCADE removes chunks) → commit → delete local staging blobs

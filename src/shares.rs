@@ -11,6 +11,7 @@ use crate::ipc_types::{
     GetReceivedShareContentRequest, ImportShareRequest, ImportShareResponse, ReceivedShareEntry,
     RevokeShareRequest, ShareEntry, ShareFileRequest, ShareResponse,
 };
+use crate::state::use_sync;
 use crate::utils::format_fingerprint;
 use crate::vault::{ContentViewerModal, extension_is_previewable, file_size_allows_preview};
 
@@ -131,6 +132,24 @@ fn SentSharesList() -> impl IntoView {
         });
     };
 
+    // Re-check receipts whenever a pull/sync completes (last_synced_at changes).
+    let sync_state = use_sync();
+    Effect::new(move |prev: Option<Option<String>>| {
+        let current = sync_state.with(|s| s.last_synced_at.clone());
+        if let Some(prev_ts) = prev
+            && current != prev_ts
+        {
+            spawn_local(async move {
+                if let Ok(entries) =
+                    invoke_command::<(), Vec<ShareEntry>>("check_share_receipts", &()).await
+                {
+                    shares.set(entries);
+                }
+            });
+        }
+        current
+    });
+
     view! {
         <div class="flex flex-col gap-4">
             <div class="flex justify-end">
@@ -181,6 +200,7 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
     let contact_name = share.contact_name.clone();
     let receipt_received_at = share.receipt_received_at.clone();
     let import_receipt_received_at = share.import_receipt_received_at.clone();
+    let expires_at = share.expires_at.clone();
 
     view! {
         <div class="p-4 bg-iron border border-steel rounded">
@@ -202,6 +222,9 @@ fn SentShareItem(share: ShareEntry, #[prop(into)] on_revoke: Callback<()>) -> im
                             <p class="text-text-secondary text-xs mt-1">"Awaiting receipt"</p>
                         }.into_any()
                     }}
+                    {expires_at.map(|ts| view! {
+                        <p class="text-text-secondary text-xs mt-1">"Expires " {ts}</p>
+                    })}
                     {move || {
                         if share.revoked {
                             view! {
@@ -402,6 +425,7 @@ fn ReceivedShareItem(
     share: ReceivedShareEntry,
     #[prop(into)] on_refresh: Callback<()>,
 ) -> impl IntoView {
+    let show_download_warn = RwSignal::new(false);
     let downloading = RwSignal::new(false);
     let download_error = RwSignal::new(None::<String>);
     let download_success = RwSignal::new(None::<String>);
@@ -412,11 +436,17 @@ fn ReceivedShareItem(
     let display_file_name = share.file_name.clone();
     let display_sender_name = share.sender_name.clone();
     let display_imported_at = share.imported_at.clone();
+    let display_expires_at = share.expires_at.clone();
 
-    let can_preview =
-        file_size_allows_preview(share.size_bytes) && extension_is_previewable(&share.file_name);
+    let is_expired = share.is_expired;
+    let can_preview = !is_expired
+        && file_size_allows_preview(share.size_bytes)
+        && extension_is_previewable(&share.file_name);
 
     let share_id_for_preview = share.share_id.clone();
+    let share_id_for_download = share.share_id.clone();
+    let file_name_for_download = share.file_name.clone();
+
     let handle_preview = move |_| {
         preview_loading.set(true);
         let share_id = share_id_for_preview.clone();
@@ -440,36 +470,8 @@ fn ReceivedShareItem(
         });
     };
 
-    let handle_download = move |_| {
-        downloading.set(true);
-        download_error.set(None);
-        download_success.set(None);
-        let share_id = share.share_id.clone();
-        let file_name = share.file_name.clone();
-
-        spawn_local(async move {
-            if let Some(dest_path) = open_save_dialog(Some(&file_name)).await {
-                match invoke_command::<DownloadReceivedShareRequest, DownloadReceivedShareResponse>(
-                    "download_received_share",
-                    &DownloadReceivedShareRequest {
-                        share_id: share_id.clone(),
-                        destination_path: dest_path,
-                    },
-                )
-                .await
-                {
-                    Ok(resp) => {
-                        download_success.set(Some(format!("Saved: {}", resp.file_name)));
-                        on_refresh.run(());
-                    }
-                    Err(e) => {
-                        download_error.set(Some(e.to_string()));
-                    }
-                }
-            }
-            downloading.set(false);
-        });
-    };
+    // Opens the plaintext-on-disk warning; the actual download runs on confirmation.
+    let handle_download_click = move |_| show_download_warn.set(true);
 
     view! {
         <>
@@ -502,14 +504,99 @@ fn ReceivedShareItem(
                         })}
                         <p class="text-text-secondary text-xs mt-1">{display_imported_at}</p>
                     </div>
-                    <button
-                        class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
-                        on:click=handle_download
-                        disabled=move || downloading.get()
-                    >
-                        {move || if downloading.get() { "Downloading…" } else { "Download" }}
-                    </button>
+                    {if is_expired {
+                        view! {
+                            <span
+                                class="px-3 py-1 text-sm text-danger bg-danger/20 rounded cursor-default"
+                                title="Contact sender for renewed access"
+                            >
+                                "Expired"
+                            </span>
+                        }
+                        .into_any()
+                    } else {
+                        view! {
+                            <button
+                                class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50"
+                                on:click=handle_download_click
+                                disabled=move || downloading.get()
+                            >
+                                {move || if downloading.get() { "Downloading…" } else { "Download" }}
+                            </button>
+                        }
+                        .into_any()
+                    }}
                 </div>
+                {if is_expired {
+                    let expires_msg = display_expires_at
+                        .as_ref()
+                        .map(|ts| format!("Share expired on {} — contact sender for renewed access", ts))
+                        .unwrap_or_else(|| "Share expired — contact sender for renewed access".to_string());
+                    view! {
+                        <p class="text-danger text-xs mt-2">{expires_msg}</p>
+                    }
+                    .into_any()
+                } else {
+                    ().into_any()
+                }}
+                {move || {
+                    if show_download_warn.get() {
+                        let share_id_for_warn = share_id_for_download.clone();
+                        let file_name_for_warn = file_name_for_download.clone();
+                        view! {
+                            <div class="mt-4 p-3 bg-amber-900/30 border border-amber-600 rounded">
+                                <p class="text-bone text-sm mb-3">
+                                    "The downloaded file will be written to disk in plaintext, outside vault protection. You are responsible for the exported copy."
+                                </p>
+                                <div class="flex gap-2">
+                                    <button
+                                        class="px-3 py-1 text-sm bg-amber-600 text-white rounded cursor-pointer hover:bg-amber-500 transition-colors"
+                                        on:click=move |_| {
+                                            show_download_warn.set(false);
+                                            downloading.set(true);
+                                            download_error.set(None);
+                                            download_success.set(None);
+                                            let share_id = share_id_for_warn.clone();
+                                            let file_name = file_name_for_warn.clone();
+                                            spawn_local(async move {
+                                                if let Some(dest_path) = open_save_dialog(Some(&file_name)).await {
+                                                    match invoke_command::<DownloadReceivedShareRequest, DownloadReceivedShareResponse>(
+                                                        "download_received_share",
+                                                        &DownloadReceivedShareRequest {
+                                                            share_id: share_id.clone(),
+                                                            destination_path: dest_path,
+                                                        },
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(resp) => {
+                                                            download_success.set(Some(format!("Saved: {}", resp.file_name)));
+                                                            on_refresh.run(());
+                                                        }
+                                                        Err(e) => {
+                                                            download_error.set(Some(e.to_string()));
+                                                        }
+                                                    }
+                                                }
+                                                downloading.set(false);
+                                            });
+                                        }
+                                    >
+                                        "Download anyway"
+                                    </button>
+                                    <button
+                                        class="px-3 py-1 text-sm bg-steel text-bone rounded cursor-pointer hover:bg-rune/20 transition-colors"
+                                        on:click=move |_| show_download_warn.set(false)
+                                    >
+                                        "Cancel"
+                                    </button>
+                                </div>
+                            </div>
+                        }.into_any()
+                    } else {
+                        ().into_any()
+                    }
+                }}
                 {move || download_error.get().map(|e| view! {
                     <p class="text-danger text-sm mt-2">{e}</p>
                 })}
@@ -532,7 +619,7 @@ fn ReceivedShareItem(
 #[component]
 pub fn ShareModal(
     file_id: String,
-    _file_name: String,
+    file_name: String,
     #[prop(into)] on_close: Callback<()>,
     #[prop(into)] on_success: Callback<ShareResponse>,
 ) -> impl IntoView {
@@ -601,7 +688,8 @@ pub fn ShareModal(
     view! {
         <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div class="bg-stone p-6 rounded border border-steel max-w-md w-full mx-4">
-                <h3 class="text-lg font-semibold text-bone mb-4">"Share file"</h3>
+                <h3 class="text-lg font-semibold text-bone mb-1">"Share file"</h3>
+                <p class="text-text-secondary text-sm mb-4">{file_name}</p>
 
                 <div class="flex flex-col gap-4 mb-4">
                     <div>

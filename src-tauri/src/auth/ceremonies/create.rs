@@ -173,7 +173,7 @@ pub async fn create_vault(
     let vault_id_uuid = vault_id.to_uuid();
     let chunk_size_bytes = request.chunk_size_bytes;
     let epoch_buffer_enabled = request.epoch_buffer_enabled;
-    let wrapped_private_key_vec: Vec<u8> = wrapped_private_key.0.to_vec();
+    let wrapped_private_key_vec: Vec<u8> = wrapped_private_key.as_bytes().to_vec();
     let public_key_vec: Vec<u8> = public_key_bytes.to_vec();
     let db_result: Result<(), AuthenticationError> =
         tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {

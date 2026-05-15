@@ -25,7 +25,7 @@ Arx Runa is built in sequential phases, each delivering a distinct, self-contain
 
 Technical specifications (algorithms, schemas, wire formats) live in the canonical design documents. The roadmap does not duplicate them.
 
-- **Project scaffolding**: [`docs/architecture/designs/project-scaffolding/design.md`](architecture/designs/project-scaffolding/design.md)
+- **Project skeleton**: [`docs/architecture/designs/project-skeleton/design.md`](architecture/designs/project-skeleton/design.md)
 - **Cryptographic primitives**: [`docs/architecture/designs/cryptographic-primitives/design.md`](architecture/designs/cryptographic-primitives/design.md)
 - **Authentication & session**: [`docs/architecture/designs/authentication-and-session-management/design.md`](architecture/designs/authentication-and-session-management/design.md)
 - **Chunking & manifest**: [`docs/architecture/designs/chunking-and-manifest/design.md`](architecture/designs/chunking-and-manifest/design.md)
@@ -39,7 +39,7 @@ Technical specifications (algorithms, schemas, wire formats) live in the canonic
 ## Phase 0 — Project Scaffolding
 
 **Depends on**: nothing
-**Design document**: [`project-scaffolding/design.md`](architecture/designs/project-scaffolding/design.md)
+**Design document**: [`project-skeleton/design.md`](architecture/designs/project-skeleton/design.md)
 
 Establish the compilable project skeleton — directory structure, Tauri workspace, dependency declarations, and CI pipeline — so all subsequent phases have a stable foundation.
 

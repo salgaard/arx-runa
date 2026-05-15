@@ -11,6 +11,7 @@
   - [Use Case 2: Cross-Device Synchronisation](use-cases/use-case-2-cross-device-access.md)
   - [Use Case 3: Hardware MFA and Key Loss](use-cases/use-case-3-hardware-mfa-and-key-loss.md)
   - [Use Case 4: Personal File Sharing](use-cases/use-case-4-personal-file-sharing.md)
+  - [Use Case 5: Multi Destination Backup](use-cases/use-case-5-multi-destination-backup.md)
 
 ---
 
@@ -20,12 +21,12 @@
 - [Global Design Invariants](architecture/design-invariants.md)
 - [Project Roadmap](roadmap.md)
 - [Designs](architecture/designs/README.md)
-  - [Project Scaffolding](architecture/designs/project-scaffolding/design.md)
-    - [Diagram: Build Pipeline](architecture/designs/project-scaffolding/diagrams/build-pipeline.md)
-    - [Sub-Phase Roadmap](architecture/designs/project-scaffolding/sub-phases/roadmap.md)
-      - [0.1: Tauri Workspace Init](architecture/designs/project-scaffolding/sub-phases/0.1-tauri-workspace-init.md)
-      - [0.2: Dependencies and Modules](architecture/designs/project-scaffolding/sub-phases/0.2-dependencies-and-modules.md)
-      - [0.3: Frontend Build Pipeline](architecture/designs/project-scaffolding/sub-phases/0.3-frontend-build-pipeline.md)
+  - [Project Skeleton](architecture/designs/project-skeleton/design.md)
+    - [Diagram: Build Pipeline](architecture/designs/project-skeleton/diagrams/build-pipeline.md)
+    - [Sub-Phase Roadmap](architecture/designs/project-skeleton/sub-phases/roadmap.md)
+      - [0.1: Tauri Workspace Init](architecture/designs/project-skeleton/sub-phases/0.1-tauri-workspace-init.md)
+      - [0.2: Dependencies and Modules](architecture/designs/project-skeleton/sub-phases/0.2-dependencies-and-modules.md)
+      - [0.3: Frontend Build Pipeline](architecture/designs/project-skeleton/sub-phases/0.3-frontend-build-pipeline.md)
   - [Cryptographic Primitives](architecture/designs/cryptographic-primitives/design.md)
     - [Diagram: Key Derivation Tree](architecture/designs/cryptographic-primitives/diagrams/key-derivation-tree.md)
     - [Diagram: Key Derivation — Recovery Slot](architecture/designs/cryptographic-primitives/diagrams/key-derivation-recovery-slot.md)

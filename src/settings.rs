@@ -21,11 +21,13 @@ use crate::state::{use_session, use_session_actions, use_sync_actions, use_vault
 /// Both password strings are zeroized immediately after the IPC call completes.
 #[component]
 fn ChangePasswordForm() -> impl IntoView {
+    let session = use_session();
     let session_actions = use_session_actions();
     let current_pw = RwSignal::new(String::new());
     let new_pw = RwSignal::new(String::new());
     let confirm_pw = RwSignal::new(String::new());
     let recovery_phrase = RwSignal::new(String::new());
+    let key_file_path = RwSignal::new(Option::<String>::None);
     let error = RwSignal::new(Option::<String>::None);
     let success = RwSignal::new(false);
     let loading = RwSignal::new(false);
@@ -50,6 +52,14 @@ fn ChangePasswordForm() -> impl IntoView {
             return;
         }
 
+        let vault_tier = session.read().vault_tier;
+        if vault_tier == Some(2) && key_file_path.get().is_none() {
+            error.set(Some(
+                "Current key file is required for Tier 2 vaults".to_string(),
+            ));
+            return;
+        }
+
         loading.set(true);
 
         let mut rp = recovery_phrase.get();
@@ -59,6 +69,7 @@ fn ChangePasswordForm() -> impl IntoView {
                 current_password: current.clone(),
                 new_password: new.clone(),
                 recovery_phrase: Some(rp.clone()).filter(|s| !s.is_empty()),
+                current_key_file_path: key_file_path.get(),
             };
 
             match invoke_command::<ChangePasswordRequest, ()>("change_password", &request).await {
@@ -159,9 +170,48 @@ fn ChangePasswordForm() -> impl IntoView {
                     />
                 </div>
 
+                {move || {
+                    if session.read().vault_tier == Some(2) {
+                        view! {
+                            <div>
+                                <label class="block text-sm font-medium text-bone mb-2">
+                                    "Current Key File"
+                                </label>
+                                <div class="flex items-center gap-3">
+                                    <button
+                                        type="button"
+                                        class="px-3 py-1.5 rounded border border-border-default text-sm text-bone cursor-pointer hover:bg-surface-overlay transition-colors"
+                                        on:click=move |_| {
+                                            spawn_local(async move {
+                                                if let Some(path) = crate::dialog::open_file_dialog().await {
+                                                    key_file_path.set(Some(path));
+                                                }
+                                            });
+                                        }
+                                    >
+                                        "Choose Key File"
+                                    </button>
+                                    {move || key_file_path.get().map(|p| view! {
+                                        <span class="text-sm text-text-secondary truncate">{p}</span>
+                                    })}
+                                </div>
+                            </div>
+                        }
+                        .into_any()
+                    } else {
+                        ().into_any()
+                    }
+                }}
+
                 <div>
                     <label class="block text-sm font-medium text-bone mb-2">
-                        "Recovery Phrase (optional)"
+                        {move || {
+                            if session.read().has_recovery_slot == Some(true) {
+                                "Recovery Phrase (required to keep slot)"
+                            } else {
+                                "Recovery Phrase (optional)"
+                            }
+                        }}
                     </label>
                     <input
                         type="password"
@@ -172,6 +222,18 @@ fn ChangePasswordForm() -> impl IntoView {
                             recovery_phrase.set(event_target_value(&ev));
                         }
                     />
+                    {move || {
+                        if session.read().has_recovery_slot == Some(true) {
+                            view! {
+                                <p class="mt-1 text-xs text-amber-400">
+                                    "Leaving this blank will permanently delete your recovery slot."
+                                </p>
+                            }
+                            .into_any()
+                        } else {
+                            ().into_any()
+                        }
+                    }}
                 </div>
 
                 <Button
@@ -197,26 +259,45 @@ fn RotateKeyFileForm() -> impl IntoView {
     let error = RwSignal::new(Option::<String>::None);
     let success = RwSignal::new(false);
     let loading = RwSignal::new(false);
+    let current_password = RwSignal::new(String::new());
+    let current_key_file = RwSignal::new(Option::<String>::None);
     let selected_path = RwSignal::new(Option::<String>::None);
     let recovery_phrase = RwSignal::new(String::new());
 
-    let on_choose_file = move |_| {
+    let on_choose_current_key_file = move |_| {
         spawn_local(async move {
-            match crate::dialog::open_save_dialog(None).await {
-                Some(path) => {
-                    selected_path.set(Some(path));
-                    error.set(None);
-                }
-                None => {
-                    // User cancelled or Tauri unavailable
-                }
+            if let Some(path) = crate::dialog::open_file_dialog().await {
+                current_key_file.set(Some(path));
+                error.set(None);
+            }
+        });
+    };
+
+    let on_choose_dest_dir = move |_| {
+        spawn_local(async move {
+            if let Some(path) = crate::dialog::open_directory_dialog().await {
+                selected_path.set(Some(path));
+                error.set(None);
             }
         });
     };
 
     let on_submit = move |_| {
+        let current_pw_val = current_password.get();
+        if current_pw_val.is_empty() {
+            error.set(Some("Current password is required".to_string()));
+            return;
+        }
+
+        let Some(current_kf) = current_key_file.get() else {
+            error.set(Some("Please select the current key file".to_string()));
+            return;
+        };
+
         let Some(path) = selected_path.get() else {
-            error.set(Some("Please select a file location".to_string()));
+            error.set(Some(
+                "Please select a destination directory for the new key file".to_string(),
+            ));
             return;
         };
 
@@ -228,12 +309,16 @@ fn RotateKeyFileForm() -> impl IntoView {
 
         spawn_local(async move {
             let request = RotateKeyFileRequest {
+                current_password: current_pw_val,
+                current_key_file_path: current_kf,
                 new_key_file_destination: path,
                 recovery_phrase: Some(rp.clone()).filter(|s| !s.is_empty()),
             };
 
             match invoke_command::<RotateKeyFileRequest, ()>("rotate_key_file", &request).await {
                 Ok(()) => {
+                    current_password.update(|s| s.zeroize());
+                    current_key_file.set(None);
                     selected_path.set(None);
                     rp.zeroize();
                     recovery_phrase.update(|s| s.zeroize());
@@ -281,20 +366,65 @@ fn RotateKeyFileForm() -> impl IntoView {
 
                         <div class="space-y-4">
                             <div>
-                                <p class="text-sm text-bone mb-3">
-                                    {move || {
-                                        if let Some(ref path) = selected_path.get() {
-                                            format!("Selected: {}", path)
-                                        } else {
-                                            "No file selected".to_string()
-                                        }
-                                    }}
-                                </p>
+                                <label class="block text-sm font-medium text-bone mb-2">
+                                    "Current Password"
+                                </label>
+                                <input
+                                    type="password"
+                                    class="w-full px-3 py-2 bg-surface-overlay border border-border-default rounded text-bone focus:outline-none focus:ring-2 focus:ring-rune"
+                                    placeholder="Enter current password"
+                                    prop:value=move || current_password.get()
+                                    on:change=move |ev| {
+                                        current_password.set(event_target_value(&ev));
+                                    }
+                                />
                             </div>
 
                             <div>
                                 <label class="block text-sm font-medium text-bone mb-2">
-                                    "Recovery Phrase (optional)"
+                                    "Current Key File"
+                                </label>
+                                <div class="flex items-center gap-3">
+                                    <button
+                                        type="button"
+                                        class="px-3 py-1.5 rounded border border-border-default text-sm text-bone cursor-pointer hover:bg-surface-overlay transition-colors"
+                                        on:click=on_choose_current_key_file
+                                    >
+                                        "Choose Key File"
+                                    </button>
+                                    {move || current_key_file.get().map(|p| view! {
+                                        <span class="text-sm text-text-secondary truncate">{p}</span>
+                                    })}
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-bone mb-2">
+                                    "New Key File Destination"
+                                </label>
+                                <div class="flex items-center gap-3">
+                                    <button
+                                        type="button"
+                                        class="px-3 py-1.5 rounded border border-border-default text-sm text-bone cursor-pointer hover:bg-surface-overlay transition-colors"
+                                        on:click=on_choose_dest_dir
+                                    >
+                                        "Choose Directory"
+                                    </button>
+                                    {move || selected_path.get().map(|p| view! {
+                                        <span class="text-sm text-text-secondary truncate">{p}</span>
+                                    })}
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-bone mb-2">
+                                    {move || {
+                                        if session.read().has_recovery_slot == Some(true) {
+                                            "Recovery Phrase (required to keep slot)"
+                                        } else {
+                                            "Recovery Phrase (optional)"
+                                        }
+                                    }}
                                 </label>
                                 <input
                                     type="password"
@@ -305,28 +435,27 @@ fn RotateKeyFileForm() -> impl IntoView {
                                         recovery_phrase.set(event_target_value(&ev));
                                     }
                                 />
+                                {move || {
+                                    if session.read().has_recovery_slot == Some(true) {
+                                        view! {
+                                            <p class="mt-1 text-xs text-amber-400">
+                                                "Leaving this blank will permanently delete your recovery slot."
+                                            </p>
+                                        }
+                                        .into_any()
+                                    } else {
+                                        ().into_any()
+                                    }
+                                }}
                             </div>
 
-                            <div class="flex gap-3">
-                                <Button
-                                    on_click=on_choose_file
-                                    loading=move || loading.get()
-                                    variant="primary"
-                                >
-                                    "Choose New File Location"
-                                </Button>
-                                <Button
-                                    on_click=on_submit
-                                    loading=move || loading.get() || selected_path.get().is_none()
-                                    variant="primary"
-                                >
-                                    {move || if loading.get() {
-                                        "Rotating…"
-                                    } else {
-                                        "Rotate Key File"
-                                    }}
-                                </Button>
-                            </div>
+                            <Button
+                                on_click=on_submit
+                                loading=move || loading.get()
+                                variant="primary"
+                            >
+                                {move || if loading.get() { "Rotating…" } else { "Rotate Key File" }}
+                            </Button>
                         </div>
                     </div>
                 }

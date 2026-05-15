@@ -142,7 +142,7 @@ async fn resolve_or_create_parent(
 
 /// Appends `" (conflicted copy)"` before the extension, or at the end when no
 /// extension is present.
-fn conflict_name(original: &str) -> String {
+pub(crate) fn conflict_name(original: &str) -> String {
     match original.rfind('.') {
         Some(dot) => format!("{} (conflicted copy){}", &original[..dot], &original[dot..]),
         None => format!("{original} (conflicted copy)"),
@@ -265,7 +265,9 @@ async fn collect_pending_local_state(
 async fn reinsert_pending_state(
     db: &SqlCipherMetadataStore,
     pending: &PendingLocalState,
-) -> Result<(), IpcError> {
+) -> Result<Vec<String>, IpcError> {
+    let mut conflicts_renamed: Vec<String> = Vec::new();
+
     for file in &pending.standalone {
         let dir_path = if file.path.len() > 1 {
             &file.path[..file.path.len() - 1]
@@ -283,9 +285,13 @@ async fn reinsert_pending_state(
             if children.iter().any(|n| n.name == filename) {
                 conflict_name(&filename)
             } else {
-                filename
+                filename.clone()
             }
         };
+
+        if final_name != filename {
+            conflicts_renamed.push(final_name.clone());
+        }
 
         let new_node = Node {
             parent_id: Some(parent_id),
@@ -317,9 +323,13 @@ async fn reinsert_pending_state(
                 if children.iter().any(|n| n.name == filename) {
                     conflict_name(&filename)
                 } else {
-                    filename
+                    filename.clone()
                 }
             };
+
+            if final_name != filename {
+                conflicts_renamed.push(final_name.clone());
+            }
 
             let new_node = Node {
                 parent_id: Some(parent_id),
@@ -340,7 +350,7 @@ async fn reinsert_pending_state(
             .map_err(IpcError::from)?;
     }
 
-    Ok(())
+    Ok(conflicts_renamed)
 }
 
 /// Returns the bundled rclone binary path, falling back to `rclone` on PATH.
@@ -837,13 +847,13 @@ pub async fn pull_and_reconcile(
 
     // Re-register pending local files into the new (cloud) manifest DB so the
     // subsequent sync picks them up and uploads the still-present staging blobs.
-    {
+    let conflicts_renamed = {
         let db_guard = state.database.read().await;
         let db = db_guard
             .as_ref()
             .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
-        reinsert_pending_state(db, &pending_local_state).await?;
-    }
+        reinsert_pending_state(db, &pending_local_state).await?
+    };
 
     let _ = progress.send(SyncProgressUpdate {
         percent: 50,
@@ -885,9 +895,13 @@ pub async fn pull_and_reconcile(
         files_total: 0,
     });
 
+    // Best-effort: revoke shares that have passed their expiry deadline.
+    crate::ui::sharing_commands::sweep_expired_shares(&state).await;
+
     Ok(ReconcileResult {
         pending_deletions_drained: pending_deletions_drained as u32,
         cloud_counter,
+        conflicts_renamed,
     })
 }
 

@@ -303,7 +303,7 @@ pub(super) async fn verify_credentials_via_identity_row(
         let wrapped_array: [u8; 72] = wrapped_blob
             .try_into()
             .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-        let wrapped = WrappedFileKey(wrapped_array);
+        let wrapped = WrappedFileKey::new(wrapped_array);
         unwrap_file_key(&wrapped, &key_encryption_key)
             .map_err(|_| AuthenticationError::InvalidCredentials)?;
         Ok(())

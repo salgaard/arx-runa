@@ -11,35 +11,61 @@ An individual user wants to access and edit their encrypted files from multiple 
 
 ## Preconditions
 
-- User has Arx Runa installed on multiple devices with the same Rclone backend configured
+- User has Arx Runa installed on all devices
+- The secondary device has `cloud-config.json` already present (either copied from the primary device or produced by the new-device bootstrap — see Alternate Flow below)
 - User has previously created a vault and pushed an encrypted manifest to cloud (see [use-case-1](use-case-1-personal-file-backup.md))
-- For Tier 2 vaults: same USB key file is available on the secondary device
+- For Tier 2 vaults: the USB key file is available on the secondary device
 
 ## Main Flow
 
-1. User launches Arx Runa on secondary device and selects "Pull Vault from Cloud"
+_This describes ongoing use on a device that already has a local vault state (manifest present). For first-time use on a new device, see the "First Time on This Device" alternate flow below._
+
+1. User launches Arx Runa on secondary device
 2. User authenticates (password for Tier 1 vaults; password + USB key for Tier 2 vaults)
-3. Arx Runa derives encryption keys and downloads the vault manifest from cloud
-4. Arx Runa decrypts manifest and displays file browser
-5. User selects a file to download
-6. Arx Runa downloads and decrypts the file, verifying integrity
-7. User views files in-app (Zero-Trace)
-8. To update a file, user uploads the modified version via the drop zone
-9. Arx Runa encrypts and uploads the updated file, replacing the previous version
-10. Arx Runa increments the manifest version and pushes the updated manifest to cloud
-11. User locks vault and removes USB key (if Tier 2)
+3. Arx Runa derives encryption keys and opens the local manifest, displaying the file browser
+4. User selects a file to download
+5. Arx Runa downloads encrypted chunks from cloud and decrypts them, verifying integrity
+6. User views files in-app (Zero-Trace)
+7. To update a file, user uploads the modified version via the drop zone
+8. Arx Runa encrypts and stages the updated file locally
+9. User triggers sync; Arx Runa increments the snapshot counter, uploads the updated chunks and manifest backup to cloud
+10. User locks vault and removes USB key (if Tier 2)
 
 ## Alternate Flows
 
-### Manifest Out of Sync
+### First Time on This Device
 
-**Trigger**: Cloud manifest has a newer snapshot_counter than local copy
+**Trigger**: Secondary device has Arx Runa installed but has never accessed this vault (no local manifest, no `cloud-config.json`)
 
 **Steps**:
-1. Arx Runa detects local snapshot_counter < cloud snapshot_counter
-2. Arx Runa prompts: "Cloud has a newer version — pull latest?"
-3. If accepted: Arx Runa downloads the latest manifest from cloud, replacing the local copy
-4. If declined: Arx Runa warns "Working with stale manifest — conflicts possible"
+1. User clicks "Recover vault from cloud" on the vault picker screen
+2. User enters the cloud endpoint details (Rclone remote name, bucket, region), vault password, and (Tier 2) path to the USB key file on the recovery page; Arx Runa writes `cloud-config.json` to the local app data directory
+3. Arx Runa downloads `vault-header.json` (plaintext) from the cloud root
+4. Arx Runa derives encryption keys and downloads `manifest/manifest-backup.blob` from cloud
+5. Arx Runa decrypts the manifest backup and writes the local SQLCipher database
+6. Device is now fully set up; continue from Main Flow step 3
+
+### Recover with Recovery Phrase
+
+**Trigger**: User has lost their vault password but retains their 24-word recovery phrase
+
+**Steps**:
+1. User clicks "Recover vault from cloud" on the vault picker screen, or selects "Forgot password?" on the login page
+2. User selects the "Recovery phrase" mode and enters the cloud endpoint details, their 24-word recovery phrase, and (Tier 2) path to the USB key file
+3. Arx Runa downloads `vault-header.json` from the cloud root
+4. Arx Runa derives encryption keys from the recovery phrase and downloads `manifest/manifest-backup.blob` from cloud
+5. Arx Runa decrypts the manifest backup and writes the local SQLCipher database
+6. Device is now fully set up; continue from Main Flow step 3
+
+### Manifest Out of Sync
+
+**Trigger**: User syncs (pushes) and Arx Runa detects the cloud `snapshot_counter` is ahead of the local copy
+
+**Steps**:
+1. Arx Runa detects cloud snapshot_counter > local snapshot_counter during sync
+2. Arx Runa shows dialog: "Another device has synced. Pull changes and continue?"
+3. If accepted: Arx Runa runs `pull_and_reconcile`, downloads the latest manifest from cloud replacing the local copy, then retries sync
+4. If declined: Arx Runa shows a persistent banner "Working with stale manifest — conflicts possible"; user can pull at any time via the banner
 
 ### Concurrent Edit Conflict
 
@@ -48,8 +74,10 @@ An individual user wants to access and edit their encrypted files from multiple 
 **Steps**:
 1. User pushes from Device A (snapshot_counter increments)
 2. User attempts to push from Device B with stale manifest
-3. Arx Runa detects conflict and prompts: "Keep local, keep cloud, or view both?"
-4. User selects resolution; Arx Runa creates a conflict copy with a disambiguated name if needed
+3. Arx Runa detects conflict during sync (snapshot_counter mismatch) and prompts: "Another device has synced. Pull changes and continue?"
+4. User accepts pull: Arx Runa downloads cloud manifest and replaces local copy
+5. Locally-pending files whose names collide with cloud entries are automatically renamed with a `(conflicted copy)` suffix (e.g. `report.pdf` → `report (conflicted copy).pdf`)
+6. Arx Runa retries sync; both the cloud version and the renamed local version are uploaded
 
 ### USB Key Not Available (Tier 2 Vault)
 
@@ -57,7 +85,7 @@ An individual user wants to access and edit their encrypted files from multiple 
 
 **Steps**:
 1. User attempts to access a Tier 2 vault
-2. Arx Runa displays: "Key file not found — insert USB drive"
+2. Arx Runa displays: "No key file selected"
 3. User cannot access Tier 2 vault until USB key is available
 4. Tier 1 vaults remain accessible with password only
 
@@ -85,7 +113,7 @@ An individual user wants to access and edit their encrypted files from multiple 
 
 - User can access vault from any device with the correct authentication factors
 - Cloud manifest stays synchronised; snapshot_counter detects divergence
-- Conflicts are detected and user is prompted for resolution
+- Conflicts are detected when syncing; pending local files are preserved as conflict copies when they collide with cloud state
 - Tier 1 vaults are accessible with password only; Tier 2 vaults require USB key on each device
 - No device stores plaintext persistently unless the user explicitly exports a file
 

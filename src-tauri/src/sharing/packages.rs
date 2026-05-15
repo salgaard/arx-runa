@@ -74,7 +74,7 @@ pub(crate) async fn create_share_package(
     let wrapped_bytes = node
         .file_key_wrapped
         .ok_or_else(|| SharingError::Backend("file node has no wrapped key".to_owned()))?;
-    let file_key = unwrap_file_key(&WrappedFileKey(wrapped_bytes), key_encryption_key)
+    let file_key = unwrap_file_key(&WrappedFileKey::new(wrapped_bytes), key_encryption_key)
         .map_err(|_| SharingError::Backend("file key unwrap failed".to_owned()))?;
 
     let chunks = metadata_store
@@ -164,7 +164,7 @@ pub(crate) async fn import_share_package(
         sender_public_key: X25519PublicKey::new(sender_public_key_bytes),
         file_id: payload.file_id,
         file_name: payload.file_name,
-        file_key_wrapped: wrapped.0,
+        file_key_wrapped: *wrapped.as_bytes(),
         chunk_count: payload.chunk_count,
         chunk_size: payload.chunk_size,
         chunk_uuids: payload.chunk_uuids,
@@ -461,7 +461,7 @@ mod tests {
         use crate::crypto::wrap_key::wrap_file_key;
         let file_key = generate_file_key();
         let wrapped = wrap_file_key(&file_key, kek).expect("wrap must succeed");
-        wrapped.0
+        *wrapped.as_bytes()
     }
 
     fn make_test_node(file_key_wrapped: [u8; 72]) -> Node {

@@ -85,6 +85,63 @@ async fn extract_kek(state: &AppState) -> Result<KeyEncryptionKey, IpcError> {
     ))))
 }
 
+/// Revokes all outgoing shares whose `expires_at` has passed.
+///
+/// Called at the end of `pull_and_reconcile` so expiry is enforced on each
+/// pull without requiring the sender to take manual action. Errors are logged
+/// rather than propagated so a sweep failure cannot abort an otherwise-
+/// successful pull.
+pub(crate) async fn sweep_expired_shares(state: &AppState) {
+    let now = now_unix_seconds();
+    let transport = state.cloud_transport.read().await.clone();
+
+    let expired_ids: Vec<String> = {
+        let db_guard = state.database.read().await;
+        let Some(db) = db_guard.as_ref() else {
+            return;
+        };
+        match db
+            .with_connection_blocking(move |conn| {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT share_id FROM shares \
+                         WHERE expires_at IS NOT NULL \
+                           AND expires_at < ?1 \
+                           AND revoked_at IS NULL",
+                    )
+                    .map_err(StorageError::from_rusqlite)?;
+                let rows = stmt
+                    .query_map(rusqlite::params![now], |row| row.get::<_, String>(0))
+                    .map_err(StorageError::from_rusqlite)?;
+                let mut ids = Vec::new();
+                for row in rows {
+                    ids.push(row.map_err(StorageError::from_rusqlite)?);
+                }
+                Ok(ids)
+            })
+            .await
+        {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::warn!(%e, "sweep_expired_shares: failed to query expired shares");
+                return;
+            }
+        }
+    };
+
+    for share_id in &expired_ids {
+        let db_guard = state.database.read().await;
+        let Some(db) = db_guard.as_ref() else {
+            continue;
+        };
+        if let Err(e) =
+            crate::sharing::revoke_share(share_id, now, db as &dyn SharingStore, &*transport).await
+        {
+            tracing::warn!(%share_id, %e, "sweep_expired_shares: revocation failed");
+        }
+    }
+}
+
 // ─── IPC command handlers ─────────────────────────────────────────────────────
 
 /// Export the user's X25519 public key to a file for out-of-band exchange.
@@ -412,7 +469,7 @@ pub async fn import_share(
             .try_into()
             .map_err(|_| IpcError::InternalError("Vault identity key blob corrupted".into()))?;
 
-        let wrapped_key = WrappedFileKey(wrapped_array);
+        let wrapped_key = WrappedFileKey::new(wrapped_array);
         let private_key_secret = unwrap_file_key(&wrapped_key, &kek).map_err(|_| {
             IpcError::AuthenticationFailed("Vault identity key unwrap failed".into())
         })?;
@@ -643,6 +700,7 @@ type ShareRow = (
     bool,
     Option<i64>,
     Option<i64>,
+    Option<i64>,
 );
 
 /// List outgoing shares.
@@ -668,7 +726,7 @@ pub async fn list_shares(state: State<'_, AppState>) -> Result<Vec<ShareEntry>, 
                 .prepare(
                     "SELECT s.share_id, n.name, c.display_name, s.created_at, s.revoked_at, \
                             s.receipt_requested, s.receipt_received_at, \
-                            s.import_receipt_received_at \
+                            s.import_receipt_received_at, s.expires_at \
                      FROM shares s \
                      JOIN nodes n ON s.file_id = n.node_id \
                      JOIN contacts c ON s.contact_id = c.contact_id \
@@ -686,6 +744,7 @@ pub async fn list_shares(state: State<'_, AppState>) -> Result<Vec<ShareEntry>, 
                         row.get::<_, bool>(5)?,
                         row.get::<_, Option<i64>>(6)?,
                         row.get::<_, Option<i64>>(7)?,
+                        row.get::<_, Option<i64>>(8)?,
                     ))
                 })
                 .map_err(StorageError::from_rusqlite)?;
@@ -710,6 +769,7 @@ pub async fn list_shares(state: State<'_, AppState>) -> Result<Vec<ShareEntry>, 
                 receipt_requested,
                 receipt_received_at,
                 import_receipt_received_at,
+                expires_at,
             )| ShareEntry {
                 share_id,
                 file_name,
@@ -719,6 +779,7 @@ pub async fn list_shares(state: State<'_, AppState>) -> Result<Vec<ShareEntry>, 
                 receipt_requested,
                 receipt_received_at: receipt_received_at.map(unix_ts_to_iso8601),
                 import_receipt_received_at: import_receipt_received_at.map(unix_ts_to_iso8601),
+                expires_at: expires_at.map(unix_ts_to_iso8601),
             },
         )
         .collect())
@@ -761,12 +822,18 @@ pub async fn list_received_shares(
             .get("_file_size")
             .and_then(|v| v.as_u64())
             .unwrap_or_else(|| (rs.chunk_count as u64).saturating_mul(rs.chunk_size as u64));
+        let is_expired = rs
+            .expires_at
+            .map(|t| t < now_unix_seconds())
+            .unwrap_or(false);
         entries.push(ReceivedShareEntry {
             share_id: rs.share_id,
             file_name: rs.file_name,
             sender_name,
             imported_at: unix_ts_to_iso8601(rs.imported_at),
             size_bytes,
+            is_expired,
+            expires_at: rs.expires_at.map(unix_ts_to_iso8601),
         });
     }
 
@@ -832,7 +899,7 @@ pub async fn download_received_share(
             .await
             .map_err(IpcError::from)?;
 
-        let file_key = unwrap_file_key(&WrappedFileKey(share.file_key_wrapped), &kek)
+        let file_key = unwrap_file_key(&WrappedFileKey::new(share.file_key_wrapped), &kek)
             .map_err(|_| IpcError::InternalError("File key unwrap failed".into()))?;
         let file_id_uuid = Uuid::parse_str(&share.file_id)
             .map_err(|_| IpcError::InternalError("Invalid file ID in received share".into()))?;
@@ -988,7 +1055,7 @@ pub async fn get_received_share_content(
             ));
         }
 
-        let file_key = unwrap_file_key(&WrappedFileKey(share.file_key_wrapped), &kek)
+        let file_key = unwrap_file_key(&WrappedFileKey::new(share.file_key_wrapped), &kek)
             .map_err(|_| IpcError::InternalError("File key unwrap failed".into()))?;
         let file_id_uuid = Uuid::parse_str(&share.file_id)
             .map_err(|_| IpcError::InternalError("Invalid file ID in received share".into()))?;
@@ -1276,7 +1343,7 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
             .await
             .map_err(IpcError::from)?;
         let wrapped_key =
-            WrappedFileKey(wrapped_blob.try_into().map_err(|_| {
+            WrappedFileKey::new(wrapped_blob.try_into().map_err(|_| {
                 IpcError::InternalError("Vault identity key blob corrupted".into())
             })?);
         let secret = unwrap_file_key(&wrapped_key, &kek).map_err(|_| {

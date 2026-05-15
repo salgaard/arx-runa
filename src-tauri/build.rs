@@ -53,6 +53,9 @@ fn main() {
             "setup_recovery",
             "recover_vault_with_phrase",
             "recover_vault_from_cloud_with_phrase",
+            "stat_local_path",
+            "create_vault_directory",
+            "list_local_directory",
         ]),
     ))
     .expect("failed to build tauri application");

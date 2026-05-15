@@ -12,6 +12,7 @@ use zeroize::Zeroize;
 
 use crate::components::{
     Button, ChunkSizeSelector, DestinationKind, DestinationSelector, EpochBufferToggle, Input,
+    Modal,
 };
 use crate::destinations::GdriveShareSetupModal;
 use crate::dialog::{open_directory_dialog, open_file_dialog};
@@ -358,6 +359,13 @@ pub fn VaultCreationPage(
     let (pending_sa_path, set_pending_sa_path) = signal::<Option<String>>(None);
     let show_gdrive_sharing_modal = RwSignal::new(false);
 
+    // ── Tier 2 key-file security warning (shown after successful creation) ───
+    let show_key_warning_modal = RwSignal::new(false);
+    let created_vault_id = RwSignal::new(String::new());
+
+    // ── Recovery phrase prompt (shown after creation for all tiers) ───────────
+    let show_recovery_modal = RwSignal::new(false);
+
     // ── Submit state ──────────────────────────────────────────────────────────
     let (loading, set_loading) = signal(false);
 
@@ -392,7 +400,6 @@ pub fn VaultCreationPage(
         let clamped_chunk = clamp_chunk_size(chunk_size_bytes.get());
         set_loading.set(true);
 
-        let session_actions = session_actions;
         let set_loading = set_loading;
         let set_password = set_password;
 
@@ -430,7 +437,12 @@ pub fn VaultCreationPage(
                         "Vault '{}' created successfully!",
                         vault_name_value
                     ));
-                    session_actions.complete_success(resp.vault_id);
+                    created_vault_id.set(resp.vault_id);
+                    if tier_value == 2 {
+                        show_key_warning_modal.set(true);
+                    } else {
+                        show_recovery_modal.set(true);
+                    }
                 }
                 Err(err) => {
                     crate::components::use_toast().error(&err.message);
@@ -660,6 +672,81 @@ pub fn VaultCreationPage(
                     ().into_any()
                 }
             }}
+
+            <Modal
+                open=Signal::derive(move || show_key_warning_modal.get())
+                on_close=move || {}
+            >
+                <div class="p-6 max-w-lg w-full">
+                    <h3 class="text-xl font-semibold text-bone mb-4">"Store Your USB Key Securely"</h3>
+                    <p class="text-sm text-text-secondary mb-6">
+                        "This key file is required to unlock your vault. Losing it means "
+                        <strong class="text-bone">"permanent data loss"</strong>
+                        " for this vault unless you configure a recovery phrase in Security settings."
+                    </p>
+                    <Button
+                        variant="primary"
+                        on_click=move |_: leptos::ev::MouseEvent| {
+                            show_key_warning_modal.set(false);
+                            show_recovery_modal.set(true);
+                        }
+                    >
+                        "I understand"
+                    </Button>
+                </div>
+            </Modal>
+
+            <Modal
+                open=Signal::derive(move || show_recovery_modal.get())
+                on_close=move || {}
+            >
+                <div class="p-6 max-w-lg w-full">
+                    <h3 class="text-xl font-semibold text-bone mb-4">"Set up a recovery phrase?"</h3>
+                    <p class="text-sm text-text-secondary mb-6">
+                        {move || if tier.get() == 2 {
+                            "Without a recovery phrase, losing your password or key file means "
+                        } else {
+                            "Without a recovery phrase, losing your password means "
+                        }}
+                        <strong class="text-bone">"permanent data loss"</strong>
+                        ". You can configure this now under Settings \u{2192} Security."
+                    </p>
+                    <div class="flex gap-3">
+                        <button
+                            type="button"
+                            class="flex-1 px-4 py-2 rounded-lg border border-border-default text-bone cursor-pointer hover:bg-surface-overlay transition-colors"
+                            on:click=move |_| {
+                                show_recovery_modal.set(false);
+                                session_actions.complete_success(created_vault_id.get());
+                            }
+                        >
+                            "Remind Me Later"
+                        </button>
+                        <Button
+                            variant="primary"
+                            on_click=move |_: leptos::ev::MouseEvent| {
+                                show_recovery_modal.set(false);
+                                // Push /settings to history so the Router
+                                // initialises on the Settings page once the vault
+                                // unlocks and the AppShell mounts.
+                                let _ = web_sys::window()
+                                    .and_then(|w| w.history().ok())
+                                    .map(|h| {
+                                        h.push_state_with_url(
+                                            &wasm_bindgen::JsValue::NULL,
+                                            "",
+                                            Some("/settings"),
+                                        )
+                                        .ok()
+                                    });
+                                session_actions.complete_success(created_vault_id.get());
+                            }
+                        >
+                            "Set Up Now"
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
         </div>
     }
 }
@@ -889,10 +976,24 @@ pub fn VaultRecoveryPage(
                                     <label class="text-sm text-text-secondary block mb-1">
                                         "New key file destination (Tier 2 vaults only — leave empty for Tier 1)"
                                     </label>
-                                    <KeyFileIndicator
-                                        detected_path=new_key_file_path
-                                        on_manual_select=move |path| set_new_key_file_path.set(Some(path))
-                                    />
+                                    <div class="flex items-center gap-3">
+                                        <button
+                                            type="button"
+                                            class="px-3 py-1.5 rounded border border-border-default text-sm text-bone cursor-pointer hover:bg-surface-overlay transition-colors"
+                                            on:click=move |_| {
+                                                leptos::task::spawn_local(async move {
+                                                    if let Some(path) = open_directory_dialog().await {
+                                                        set_new_key_file_path.set(Some(path));
+                                                    }
+                                                });
+                                            }
+                                        >
+                                            "Choose Directory"
+                                        </button>
+                                        {move || new_key_file_path.get().map(|p| view! {
+                                            <span class="text-sm text-text-secondary truncate">{p}</span>
+                                        })}
+                                    </div>
                                 </div>
                             </div>
                         }.into_any()
@@ -957,6 +1058,12 @@ pub fn RecoverWithPhrasePage(
             }
             if pw_value != confirm_value {
                 crate::components::use_toast().warning("Passwords do not match");
+                return;
+            }
+
+            if vault_tier == 2 && key_file_path.get().is_none() {
+                crate::components::use_toast()
+                    .warning("Key file destination is required for Tier 2 vaults");
                 return;
             }
 
@@ -1041,12 +1148,26 @@ pub fn RecoverWithPhrasePage(
                             view! {
                                 <div>
                                     <label class="text-sm text-text-secondary block mb-1">
-                                        "Key file"
+                                        "Key file destination"
                                     </label>
-                                    <KeyFileIndicator
-                                        detected_path=key_file_path
-                                        on_manual_select=move |p| set_key_file_path.set(Some(p))
-                                    />
+                                    <div class="flex items-center gap-3">
+                                        <button
+                                            type="button"
+                                            class="px-3 py-1.5 rounded border border-border-default text-sm text-bone cursor-pointer hover:bg-surface-overlay transition-colors"
+                                            on:click=move |_| {
+                                                leptos::task::spawn_local(async move {
+                                                    if let Some(path) = open_directory_dialog().await {
+                                                        set_key_file_path.set(Some(path));
+                                                    }
+                                                });
+                                            }
+                                        >
+                                            "Choose Directory"
+                                        </button>
+                                        {move || key_file_path.get().map(|p| view! {
+                                            <span class="text-sm text-text-secondary truncate">{p}</span>
+                                        })}
+                                    </div>
                                 </div>
                             }.into_any()
                         } else {

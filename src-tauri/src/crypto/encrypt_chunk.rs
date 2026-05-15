@@ -2,7 +2,7 @@
 
 use crate::crypto::error::CryptoError;
 use crate::crypto::nonce::generate_nonce;
-use crate::crypto::types::{ChunkIndex, FileId, FileKey};
+use crate::crypto::types::{ChunkIndex, FileId, FileKey, build_chunk_aad};
 use chacha20poly1305::{
     AeadInPlace, KeyInit, XChaCha20Poly1305, aead::generic_array::GenericArray,
 };
@@ -34,7 +34,7 @@ pub fn encrypt_chunk(
     chunk_index: ChunkIndex,
 ) -> Result<Vec<u8>, CryptoError> {
     let nonce_bytes = generate_nonce();
-    let aad = build_aad(file_id, chunk_index);
+    let aad = build_chunk_aad(file_id, chunk_index);
 
     let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(file_key.expose()));
     let nonce = GenericArray::from_slice(&nonce_bytes);
@@ -53,13 +53,6 @@ pub fn encrypt_chunk(
     blob.extend_from_slice(tag.as_slice());
     plaintext.zeroize();
     Ok(blob)
-}
-
-fn build_aad(file_id: &FileId, chunk_index: ChunkIndex) -> [u8; 20] {
-    let mut aad = [0u8; 20];
-    aad[..16].copy_from_slice(file_id.as_bytes());
-    aad[16..].copy_from_slice(&chunk_index.to_be_bytes());
-    aad
 }
 
 #[cfg(test)]

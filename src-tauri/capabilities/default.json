@@ -61,6 +61,9 @@
     "allow-setup-recovery",
     "allow-recover-vault-with-phrase",
     "allow-recover-vault-from-cloud-with-phrase",
+    "allow-stat-local-path",
+    "allow-create-vault-directory",
+    "allow-list-local-directory",
     {
       "identifier": "shell:allow-execute",
       "allow": [

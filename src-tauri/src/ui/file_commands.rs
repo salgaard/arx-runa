@@ -21,7 +21,7 @@ use crate::storage::{MetadataStore, Node, NodeType};
 use crate::ui::commands_common::{ProgressChannel, require_active_session};
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
-use crate::ui::types::{FileContent, FileEntry, ProgressUpdate, RemoteFileEntry};
+use crate::ui::types::{FileContent, FileEntry, LocalEntry, ProgressUpdate, RemoteFileEntry};
 use crate::ui::validation::{normalise_vault_path, validate_file_id, validate_vault_path};
 use crate::ui::vault_paths::vault_staging_dir;
 
@@ -549,6 +549,127 @@ pub async fn flush_epoch_buffer(
     )
     .await
     .map_err(IpcError::from)
+}
+
+/// Check whether a local filesystem path is a directory.
+///
+/// Returns `true` when `path` refers to a directory, `false` when it is a regular
+/// file or any other non-directory entry.  Returns `IpcError::InvalidInput` when
+/// the path does not exist or cannot be accessed.
+#[tauri::command]
+pub async fn stat_local_path(path: String, state: State<'_, AppState>) -> Result<bool, IpcError> {
+    state.session_manager.reset_timer().await;
+    require_active_session(&state).await?;
+
+    let meta = tokio::fs::metadata(&path)
+        .await
+        .map_err(|e| IpcError::InvalidInput(format!("Cannot stat path '{}': {}", path, e)))?;
+    Ok(meta.is_dir())
+}
+
+/// List the immediate children of a local filesystem directory.
+///
+/// Returns one [`LocalEntry`] per child.  The order is unspecified (matches the
+/// OS-level `read_dir` order).  Returns `IpcError::InvalidInput` when `path` is
+/// not an accessible directory.
+#[tauri::command]
+pub async fn list_local_directory(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<LocalEntry>, IpcError> {
+    state.session_manager.reset_timer().await;
+    require_active_session(&state).await?;
+
+    let mut read_dir = tokio::fs::read_dir(&path)
+        .await
+        .map_err(|e| IpcError::InvalidInput(format!("Cannot list directory '{}': {}", path, e)))?;
+
+    let mut entries = Vec::new();
+    loop {
+        let entry = read_dir.next_entry().await.map_err(|e| {
+            IpcError::InternalError(format!("Failed reading directory entry: {}", e))
+        })?;
+        let Some(entry) = entry else { break };
+
+        let entry_path = entry.path();
+        let is_dir = entry
+            .file_type()
+            .await
+            .map(|ft| ft.is_dir())
+            .unwrap_or(false);
+        let name = entry_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_owned();
+        let path_str = entry_path.to_string_lossy().into_owned();
+
+        entries.push(LocalEntry {
+            name,
+            path: path_str,
+            is_dir,
+        });
+    }
+    Ok(entries)
+}
+
+/// Create a new directory node in the vault manifest.
+///
+/// `vault_path` follows the same convention as `upload_file`: the rightmost
+/// component is the directory name; everything before the last `/` is the
+/// parent UUID (or empty for a root-level directory).
+///
+/// Returns the created directory as a [`FileEntry`] (with `entry_type = "directory"`).
+#[tauri::command]
+pub async fn create_vault_directory(
+    vault_path: String,
+    state: State<'_, AppState>,
+) -> Result<FileEntry, IpcError> {
+    state.session_manager.reset_timer().await;
+    require_active_session(&state).await?;
+
+    let vault_path = normalise_vault_path(&vault_path);
+    let vault_path = vault_path.trim_start_matches('/');
+    if vault_path.is_empty() {
+        return Err(IpcError::InvalidInput(
+            "Vault path is required to create a directory".into(),
+        ));
+    }
+    validate_vault_path(vault_path)?;
+
+    let name = vault_path
+        .rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| IpcError::InvalidInput("Vault path has no valid directory name".into()))?
+        .to_owned();
+
+    let db_guard = state.database.read().await;
+    let db = db_guard
+        .as_ref()
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+
+    let parent_id = resolve_parent_uuid(vault_path, db).await?;
+
+    let node_id = Uuid::new_v4();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    let node = Node::new(
+        node_id,
+        Some(parent_id),
+        NodeType::Directory,
+        name,
+        now,
+        now,
+        0,
+        None,
+    );
+    db.insert_node(&node).await.map_err(IpcError::from)?;
+
+    Ok(node_to_file_entry(&node, false))
 }
 
 #[cfg(test)]

@@ -13,8 +13,8 @@ use crate::crypto::{
     RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
     unwrap_master_key_from_recovery, wrap_file_key, wrap_master_key_for_recovery,
 };
-use crate::storage::cloud::upload_vault_header;
 use crate::storage::cloud::vault_header::VaultHeader;
+use crate::storage::cloud::{upload_manifest_backup, upload_vault_header};
 
 #[cfg(test)]
 use super::STAGING_FILE_NAME;
@@ -102,7 +102,7 @@ pub async fn rotate_key_file(
                 let slot_salt = decode_base64_32(&slot.argon2_salt)?;
                 let slot_params = argon2_params_from_json(&slot.argon2_params);
                 let wrapped_bytes = decode_base64_72(&slot.wrapped_master_key)?;
-                let wrapped = WrappedMasterKey(wrapped_bytes);
+                let wrapped = WrappedMasterKey::new(wrapped_bytes);
                 let mut recovery_key_bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
                 derive_recovery_key_into(
                     canonical.as_bytes(),
@@ -160,14 +160,14 @@ pub async fn rotate_key_file(
                         let wrapped_array: [u8; 72] = wrapped_blob
                             .try_into()
                             .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                        let wrapped = WrappedFileKey(wrapped_array);
+                        let wrapped = WrappedFileKey::new(wrapped_array);
                         let file_key = unwrap_file_key(&wrapped, &current_kek)
                             .map_err(|_| AuthenticationError::InvalidCredentials)?;
                         let rewrapped = wrap_file_key(&file_key, &new_kek)
                             .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
                         conn.execute(
                             "UPDATE nodes SET file_key_wrapped = ? WHERE node_id = ?",
-                            params![rewrapped.0.to_vec(), node_id],
+                            params![rewrapped.as_bytes().to_vec(), node_id],
                         )
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
                     }
@@ -184,14 +184,14 @@ pub async fn rotate_key_file(
                     let wrapped_array: [u8; 72] = wrapped_blob
                         .try_into()
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    let wrapped = WrappedFileKey(wrapped_array);
+                    let wrapped = WrappedFileKey::new(wrapped_array);
                     let file_key = unwrap_file_key(&wrapped, &current_kek)
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
                     let rewrapped = wrap_file_key(&file_key, &new_kek)
                         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
                     conn.execute(
                         "UPDATE vault_identity SET wrapped_private_key = ? WHERE id = 1",
-                        params![rewrapped.0.to_vec()],
+                        params![rewrapped.as_bytes().to_vec()],
                     )
                     .map_err(|_| AuthenticationError::InvalidCredentials)?;
                 }
@@ -234,11 +234,19 @@ pub async fn rotate_key_file(
             .iter_mut()
             .find(|slot| slot.method == "bip39")
         {
-            slot.wrapped_master_key = encode_base64(&rewrapped.0);
+            slot.wrapped_master_key = encode_base64(rewrapped.as_bytes());
         }
     }
     drop(recovery_key_for_rewrap);
 
+    let new_manifest_key_bytes = Zeroizing::new(*new_session_keys.manifest_key.expose());
+    let new_sqlcipher_for_upload = {
+        use crate::crypto::SqlcipherKey;
+        use secrecy::SecretBox;
+        let mut boxed = Box::new([0u8; 32]);
+        boxed.copy_from_slice(new_session_keys.sqlcipher_key.expose());
+        SqlcipherKey::from_secret_box(SecretBox::new(boxed))
+    };
     let staging_dir = staging::staging_directory().await?;
     session_manager
         .swap_active_session(new_session_keys, vault_id.to_uuid().to_string())
@@ -246,6 +254,20 @@ pub async fn rotate_key_file(
     let upload_result = upload_vault_header(vault_header, cloud_transport, &staging_dir).await;
     if let Err(error) = upload_result {
         return Err(map_vault_header_sync_error(error));
+    }
+    if let Err(error) = upload_manifest_backup(
+        &request.vault_db_path,
+        &new_sqlcipher_for_upload,
+        &new_manifest_key_bytes,
+        cloud_transport,
+        &staging_dir,
+    )
+    .await
+    {
+        tracing::warn!(
+            ?error,
+            "Failed to upload re-keyed manifest backup after key file rotation; next sync will repair"
+        );
     }
 
     drop(current_master_key);
@@ -520,7 +542,7 @@ mod tests {
         let slot = &vault.header.recovery_slots[0];
         let slot_salt = decode_base64_32(&slot.argon2_salt).unwrap();
         let slot_params = argon2_params_from_json(&slot.argon2_params);
-        let wrapped = WrappedMasterKey(decode_base64_72(&slot.wrapped_master_key).unwrap());
+        let wrapped = WrappedMasterKey::new(decode_base64_72(&slot.wrapped_master_key).unwrap());
         let mut recovery_key_bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_recovery_key_into(
             phrase_string.as_bytes(),
@@ -766,7 +788,7 @@ mod tests {
         let current_sqlcipher: [u8; 32] = *current_keys.sqlcipher_key.expose();
 
         let wrapped = wrap_with_kek_bytes(&current_kek, &[0x44u8; 32]).unwrap();
-        let wrapped_vec = wrapped.0.to_vec();
+        let wrapped_vec = wrapped.as_bytes().to_vec();
         let vault_db_path = vault.vault_db_path.clone();
         tokio::task::spawn_blocking(move || {
             let sqlcipher_key = sqlcipher_key_from_array(&current_sqlcipher);
