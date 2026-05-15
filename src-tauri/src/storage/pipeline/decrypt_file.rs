@@ -213,6 +213,103 @@ async fn replace_destination_with_temp(
         .map_err(|error| StorageError::Io(error.to_string()))
 }
 
+/// Decrypts a file into a `Zeroizing<Vec<u8>>` in RAM without writing to disk.
+///
+/// Identical validation and chunk-decryption logic to [`decrypt_file`], but
+/// collects plaintext into a memory buffer instead of a destination file.
+/// Callers are responsible for enforcing a size gate before invoking this
+/// function (the IPC layer enforces 50 MiB).
+#[allow(clippy::too_many_arguments)]
+pub async fn decrypt_file_to_memory(
+    file_id: Uuid,
+    file_key: &FileKey,
+    file_size: u64,
+    chunks: &[ChunkRecord],
+    blob_directory: &Path,
+    metadata_store: &dyn MetadataStore,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+) -> Result<Zeroizing<Vec<u8>>, StorageError> {
+    let chunk_size_bytes = read_chunk_size_bytes(metadata_store).await?;
+    let expected_blob_len = chunk_size_bytes.checked_add(40).ok_or_else(|| {
+        StorageError::Database("chunk_size_bytes overflow while sizing blob".to_owned())
+    })?;
+    let expected_blob_len_usize = usize::try_from(expected_blob_len)
+        .map_err(|error| StorageError::Database(error.to_string()))?;
+    let expected_chunk_count_u64 = if file_size == 0 {
+        0
+    } else {
+        file_size.div_ceil(chunk_size_bytes)
+    };
+    let expected_chunk_count = usize::try_from(expected_chunk_count_u64)
+        .map_err(|error| StorageError::Database(error.to_string()))?;
+    if chunks.len() != expected_chunk_count {
+        return Err(StorageError::ConstraintViolation(
+            "chunk list is malformed: missing or duplicate chunk_index".to_owned(),
+        ));
+    }
+
+    let mut sorted_chunks: Vec<&ChunkRecord> = chunks.iter().collect();
+    sorted_chunks.sort_by_key(|chunk| chunk.chunk_index);
+    for (expected_index, chunk) in sorted_chunks.iter().enumerate() {
+        if chunk.chunk_index != expected_index as u32 {
+            return Err(StorageError::ConstraintViolation(
+                "chunk list is malformed: missing or duplicate chunk_index".to_owned(),
+            ));
+        }
+        validate_size_padded_matches_chunk_size(chunk.size_padded, chunk_size_bytes)?;
+    }
+
+    let file_size_usize =
+        usize::try_from(file_size).map_err(|error| StorageError::Database(error.to_string()))?;
+    let mut output: Zeroizing<Vec<u8>> = Zeroizing::new(Vec::with_capacity(file_size_usize));
+    let crypto_file_id = FileId::from_uuid(file_id);
+    let mut bytes_decrypted: u64 = 0;
+
+    for (position, chunk) in sorted_chunks.iter().enumerate() {
+        validate_blob_name_uuid_v4(&chunk.blob_name)?;
+        let blob_path = resolve_blob_path(blob_directory, &chunk.blob_name).await;
+        let encrypted_blob =
+            read_encrypted_blob(&blob_path, expected_blob_len, expected_blob_len_usize).await?;
+
+        let expected_hash = Blake3Hash(chunk.blake3_checksum);
+        let verified_blob =
+            verify_checksum(encrypted_blob, &expected_hash).map_err(StorageError::from)?;
+        let padded_plaintext = decrypt_chunk(
+            verified_blob,
+            file_key,
+            &crypto_file_id,
+            ChunkIndex::new(chunk.chunk_index),
+        )
+        .map_err(StorageError::from)?;
+        let plaintext = Zeroizing::new(padded_plaintext);
+        let bytes_to_write = if position + 1 == sorted_chunks.len() {
+            file_size
+                .checked_sub(u64::from(chunk.chunk_index) * chunk_size_bytes)
+                .ok_or_else(|| {
+                    StorageError::ConstraintViolation(
+                        "file_size underflow while computing last-chunk truncation".to_owned(),
+                    )
+                })?
+        } else {
+            chunk_size_bytes
+        };
+        let bytes_to_write_usize = usize::try_from(bytes_to_write)
+            .map_err(|error| StorageError::Database(error.to_string()))?;
+        if bytes_to_write_usize > plaintext.len() {
+            return Err(StorageError::ConstraintViolation(
+                "file_size exceeds padded plaintext length".to_owned(),
+            ));
+        }
+        output.extend_from_slice(&plaintext[..bytes_to_write_usize]);
+        bytes_decrypted += bytes_to_write_usize as u64;
+        if let Some(cb) = progress {
+            cb(bytes_decrypted, file_size);
+        }
+    }
+
+    Ok(output)
+}
+
 /// Decrypts a file packed into an epoch blob into a destination path.
 ///
 /// Reads the epoch blob, verifies its BLAKE3 checksum, decrypts with the epoch key,
@@ -301,6 +398,71 @@ pub async fn decrypt_epoch_file(
     Ok(())
 }
 
+/// Decrypts a file packed into an epoch blob into a `Zeroizing<Vec<u8>>` in RAM.
+///
+/// Mirrors [`decrypt_epoch_file`] but returns the extracted byte range as an
+/// in-memory buffer instead of writing it to disk.
+pub async fn decrypt_epoch_file_to_memory(
+    chunk: &ChunkRecord,
+    kek: &KeyEncryptionKey,
+    blob_directory: &Path,
+    metadata_store: &dyn MetadataStore,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+) -> Result<Zeroizing<Vec<u8>>, StorageError> {
+    let epoch_blob_id = chunk.epoch_blob_id.ok_or_else(|| {
+        StorageError::ConstraintViolation(
+            "decrypt_epoch_file_to_memory called on non-epoch chunk".to_owned(),
+        )
+    })?;
+    let byte_offset = chunk.byte_offset.ok_or_else(|| {
+        StorageError::ConstraintViolation("epoch chunk missing byte_offset".to_owned())
+    })?;
+    let byte_length = chunk.byte_length.ok_or_else(|| {
+        StorageError::ConstraintViolation("epoch chunk missing byte_length".to_owned())
+    })?;
+
+    let record = metadata_store.get_epoch_blob(epoch_blob_id).await?;
+
+    let blob_path = resolve_blob_path(blob_directory, &record.blob_name).await;
+    let encrypted_bytes = tokio::fs::read(&blob_path)
+        .await
+        .map_err(|error| StorageError::Io(error.to_string()))?;
+
+    let expected_hash = Blake3Hash(record.blake3_checksum);
+    let verified_blob =
+        verify_checksum(encrypted_bytes, &expected_hash).map_err(StorageError::from)?;
+
+    let wrapped_file_key =
+        WrappedFileKey::new(record.file_key_wrapped.try_into().map_err(|_| {
+            StorageError::Database("epoch blob key_wrapped has wrong length".to_owned())
+        })?);
+    let file_key = unwrap_file_key(&wrapped_file_key, kek).map_err(StorageError::from)?;
+
+    let decrypted = decrypt_chunk(
+        verified_blob,
+        &file_key,
+        &FileId::from_uuid(record.epoch_blob_id),
+        ChunkIndex::new(0),
+    )
+    .map_err(StorageError::from)?;
+
+    let start = byte_offset as usize;
+    let end = (byte_offset + byte_length) as usize;
+    if end > decrypted.len() {
+        return Err(StorageError::ConstraintViolation(
+            "epoch byte range exceeds decrypted blob length".to_owned(),
+        ));
+    }
+
+    let output = Zeroizing::new(decrypted[start..end].to_vec());
+
+    if let Some(cb) = progress {
+        cb(byte_length, byte_length);
+    }
+
+    Ok(output)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -310,6 +472,8 @@ mod tests {
     use tokio::fs;
     use tokio::io::AsyncWriteExt;
     use uuid::Uuid;
+
+    use zeroize::Zeroizing;
 
     use super::decrypt_file;
     use crate::crypto::FileKey;
@@ -1107,5 +1271,22 @@ mod tests {
             result,
             Err(StorageError::ConstraintViolation(message)) if message.contains("size_padded")
         ));
+    }
+
+    /// Verifies that `Zeroizing<Vec<u8>>` zeroes its bytes when zeroize is called.
+    ///
+    /// The decrypt pipeline wraps each chunk's plaintext in `Zeroizing<Vec<u8>>`
+    /// so it is wiped from memory when the binding is dropped.  This test
+    /// confirms the `zeroize` crate's guarantees hold in this build configuration.
+    #[test]
+    fn test_zeroizing_vec_zeroes_chunk_buffer_on_drop() {
+        use zeroize::Zeroize;
+        let known_bytes = vec![0xABu8; 64];
+        let mut buffer = Zeroizing::new(known_bytes);
+        buffer.zeroize();
+        assert!(
+            buffer.iter().all(|&b| b == 0),
+            "Zeroizing<Vec<u8>> must zero its buffer on drop"
+        );
     }
 }

@@ -20,7 +20,7 @@ sequenceDiagram
     note over Owner,Cloud: Phase 1 #45;#45; Share a File
     Owner->>Owner: SELECT file_key_wrapped from nodes (SQLCipher)
     Owner->>Owner: unwrap_file_key(file_key_wrapped, key_encryption_key) #45;#62; file_key
-    Owner->>Owner: Assemble JSON#58; file_key, sender_public_key, chunk_uuids, cloud_endpoint, expires_at
+    Owner->>Owner: Assemble JSON#58; share_id, file_id, file_name, chunk_count, chunk_size, chunk_uuids, file_size, file_key, sender_public_key, cloud_endpoint
     Owner->>Owner: HPKE.Seal(recipient_pub, info=arx-runa-share, plaintext=JSON) #45;#62; (enc, ct)
     Owner->>Owner: Wire#58; [enc(32) #124; ct #124; CTX_tag(32)]
     Owner->>Cloud: Copy encrypted blobs to shared/[file_share_id]/ (public read)
@@ -33,9 +33,9 @@ sequenceDiagram
     note over Recipient,Cloud: Phase 3 #45;#45; Recipient Imports and Fetches
     Recipient->>Recipient: Parse wire#58; enc=bytes[0..32], ct=bytes[32..]
     Recipient->>Recipient: HPKE.Open(recipient_priv, enc, info=arx-runa-share, ct) #45;#62; JSON
-    Recipient->>Recipient: Deserialise JSON #45;#62; file_key, sender_public_key, chunk_uuids, cloud_endpoint
+    Recipient->>Recipient: Deserialise JSON #45;#62; share_id, file_id, file_name, chunk_count, chunk_size, chunk_uuids, file_size, file_key, sender_public_key, cloud_endpoint
     Recipient->>Recipient: Wrap file_key with key_encryption_key #45;#62; file_key_wrapped
-    Recipient->>Recipient: INSERT into received_shares (sender_public_key, file_key_wrapped, chunk_uuids, ...)
+    Recipient->>Recipient: INSERT into received_shares (share_id, file_id, file_name, sender_public_key, file_key_wrapped, chunk_count, chunk_size, chunk_uuids, cloud_endpoint, expires_at, ...)
     Recipient->>Cloud: Fetch blobs via Rclone (cloud_endpoint.path_prefix)
     Cloud->>Recipient: Return encrypted blobs
     Recipient->>Recipient: Verify BLAKE3 per blob

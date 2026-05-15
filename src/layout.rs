@@ -155,7 +155,7 @@ pub fn SessionStatusBar() -> impl IntoView {
                     }}
                 </span>
             </div>
-            <button class="text-rune hover:text-bone cursor-pointer transition-colors" on:click=on_lock>
+            <button class="text-rune hover:text-bone cursor-pointer transition-colors" data-testid="lock-button" on:click=on_lock>
                 "Lock"
             </button>
         </footer>

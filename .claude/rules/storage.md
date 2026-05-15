@@ -19,6 +19,7 @@ paths:
 ## Pipeline
 - `storage::pipeline::{encrypt_file,decrypt_file}` owns streaming chunk transforms; `storage::vault_ops::{upload_file,download_file}` owns orchestration
 - Plaintext buffers must be `Zeroizing<Vec<u8>>`; decrypt flow: `verify_checksum` before `decrypt_chunk` (`VerifiedBlob` enforces this — skipping is compile error)
+- Decrypted content must never be written to temp files, OS caches, or thumbnails — RAM only; no exceptions for previews or intermediate processing steps
 - Hybrid routing decision: `storage::vault_ops::routing::decide`
 - `upload_file`/`download_file`: `progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>` (bytes_processed, bytes_total); `push_vault`/`pull_vault`: `progress: Option<&(dyn Fn(u32, u32, Option<&str>) + Send + Sync)>` (files_processed, files_total, current_file_name); storage must never depend on `tauri::` — `Channel<T>` is wrapped into `dyn Fn` at IPC layer
 

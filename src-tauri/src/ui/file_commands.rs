@@ -15,7 +15,8 @@ use uuid::Uuid;
 use crate::crypto::KeyEncryptionKey;
 use crate::storage::cloud::sync::fetch_missing_file_blobs;
 use crate::storage::vault_ops::{
-    delete_file as vault_delete, download_file as vault_download, upload_file as vault_upload,
+    delete_file as vault_delete, download_file as vault_download,
+    download_file_to_memory as vault_download_to_memory, upload_file as vault_upload,
 };
 use crate::storage::{MetadataStore, Node, NodeType};
 use crate::ui::commands_common::{ProgressChannel, require_active_session};
@@ -440,19 +441,10 @@ pub async fn get_file_content(
     let cloud = state.cloud_transport.read().await.clone();
     fetch_missing_file_blobs(node_uuid, db, &staging_dir, cloud.as_ref()).await?;
 
-    // Decrypt into a temporary file; the TempDir and its contents are removed
-    // on drop, keeping the plaintext off permanent storage.
-    let temp_dir = tempfile::tempdir()
-        .map_err(|e| IpcError::InternalError(format!("Failed to create temp dir: {e}")))?;
-    let temp_path = temp_dir.path().join("content");
-
-    vault_download(&temp_path, node_uuid, db, &kek, &staging_dir, None)
+    // Decrypt entirely in RAM — no temp file written to disk (Zero-Trace).
+    let bytes = vault_download_to_memory(node_uuid, db, &kek, &staging_dir, None)
         .await
         .map_err(IpcError::from)?;
-
-    let bytes = tokio::fs::read(&temp_path)
-        .await
-        .map_err(|e| IpcError::InternalError(format!("Failed to read decrypted content: {e}")))?;
 
     let mime_type = detect_mime_type(&bytes).to_owned();
     let size_bytes = bytes.len() as u64;

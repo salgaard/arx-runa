@@ -32,8 +32,9 @@ sequenceDiagram
     Auth->>Auth: zeroize(master_key)
     Auth->>Mem: mlock(SessionKeys)
     Auth->>DB: open SQLCipher(sqlcipher_key)
-    Auth->>DB: create schema + X25519 keypair (private key wrapped)
+    Auth->>DB: create schema + vault_identity row (X25519 keypair, private key KEK-wrapped)
     Auth->>Auth: write vault_header.json (salt, params, key_file_blake3)
+    Auth->>Auth: upload vault_header.json to cloud via CloudTransport
 
     note over User,DB: Login (subsequent runs)
     note over User,DB: Tier 1 branch skips DeviceMonitor and key file scan
@@ -57,7 +58,7 @@ sequenceDiagram
     Auth-->>UI: session active
 
     note over User,DB: Session Timeout
-    Auth->>Auth: activity timer fires (15 min inactivity)
+    Auth->>Auth: inactivity timer fires (15 min of no IPC activity)
     Auth->>UI: warning — 60s before timeout
     Auth->>Mem: zeroize(SessionKeys), drop
     Auth->>DB: close SQLCipher connection
@@ -75,10 +76,16 @@ sequenceDiagram
     KDF-->>Auth: new_key_encryption_key, new_sqlcipher_key, new_manifest_key
     Auth->>DB: re-wrap all file_keys and X25519 private key
     Auth->>DB: PRAGMA rekey (new_sqlcipher_key)
-    Auth->>Auth: [if recovery slot exists] re-wrap recovery slot with new_master_key
+    Auth->>Auth: [if recovery slot exists] prompt user for recovery phrase
+    Auth->>Auth: [if phrase provided] re-derive recovery_key via Argon2id #43; re-wrap with new_master_key
+    Auth->>Auth: [if phrase not provided] remove recovery slot
     Auth->>Auth: update vault_header (new_salt, same key_file_blake3)
     Auth->>Auth: zeroize(new_master_key)
     Auth->>Mem: replace SessionKeys with new keys
+    Auth->>Auth: write pending-vault-header.json to staging
+    Auth->>Auth: upload new vault_header.json to cloud
+    Auth->>Auth: upload manifest backup to cloud
+    Auth->>Auth: delete pending-vault-header.json
 ```
 
 ## Description

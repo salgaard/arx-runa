@@ -17,7 +17,7 @@ flowchart TD
     MK_INPUT(["master_key<br/>(from primary derivation;<br/>held in mlocked memory)"]):::secret
 
     subgraph WRAP_BLOCK ["Key Wrapping — XChaCha20-Poly1305"]
-        WRAP["XChaCha20-Poly1305 encrypt<br/>AAD: vault_id_bytes<br/>Nonce: 24B CSPRNG"]:::crypto
+        WRAP["XChaCha20-Poly1305 encrypt<br/>AAD: #34;arx-runa recovery v1#34; #124;#124; vault_id_bytes<br/>Nonce: 24B CSPRNG"]:::crypto
     end
 
     WMK["wrapped_master_key<br/>(72 bytes: 24B nonce #124; 32B ciphertext #124; 16B tag)<br/>stored in vault header recovery_slot"]:::storage
@@ -53,7 +53,7 @@ XChaCha20-Poly1305 AEAD operation, which is held in mlocked memory and zeroized 
 - `recovery_key` — 32-byte key derived from BIP-39 phrase via Argon2id; used solely to wrap/unwrap `master_key`
 - `master_key` — supplied from primary derivation (see [key-derivation-tree.md](key-derivation-tree.md)); never stored
 - `wrapped_master_key` — authenticated ciphertext blob (not plaintext); stored in `vault_header.recovery_slots[].wrapped_master_key`
-- `AAD: vault_id_bytes` — 16-byte raw UUID bytes bound into AEAD tag to prevent cross-vault attacks
+- `AAD: "arx-runa recovery v1" || vault_id_bytes` — purpose prefix (20 bytes) concatenated with 16-byte raw UUID bytes, bound into AEAD tag to prevent cross-vault attacks and cross-purpose reuse
 
 **Security properties:**
 - Compromising the recovery phrase is equivalent to compromising the password — it unwraps `master_key` directly

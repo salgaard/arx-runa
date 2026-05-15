@@ -8,6 +8,7 @@ flowchart TD
     subgraph ENCRYPT ["Encrypt Path"]
         E0["Route decision<br/>(epoch_buffer_enabled, file_size)"]:::proc
         E0B["Epoch buffer branch<br/>(deferred to Phase 4)"]:::proc
+        EXIF["Check magic bytes<br/>(is_image_magic?)<br/>strip_exif() if image"]:::proc
         E1["Source file<br/>(BufReader, streaming)"]:::io
         E2["Read chunk_size bytes<br/>(zero-pad if last chunk)"]:::proc
         E3["encrypt_chunk<br/>(file_key, AAD = file_id #124;#124; chunk_index)"]:::crypto
@@ -39,8 +40,9 @@ flowchart TD
     K1 --> K2 --> K3
     K3 --> K4 --> K5
 
-    E0 -->|Immediate| E1
+    E0 -->|Immediate| EXIF
     E0 -->|EpochBuffer| E0B
+    EXIF -->|bytes ready| E1
     E1 --> E2 --> E3
     K1 -.->|file_key| E3
     E3 --> E4 --> E5 --> E6 --> E7 --> E8

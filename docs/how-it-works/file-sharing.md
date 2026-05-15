@@ -34,28 +34,28 @@ sequenceDiagram
     participant Channel as Out-of-Band Channel
     participant Recipient as Recipient (Arx Runa)
 
-    note over Owner,Recipient: Phase 0 — Key Exchange (one-time setup)
+    note over Owner,Recipient: Phase 0 #45;#45; Key Exchange (one-time setup)
     Owner->>Channel: Export X25519 public key (file or QR code)
     Channel->>Recipient: Deliver public key
     Recipient->>Owner: Export X25519 public key (file or QR code)
     Owner->>Channel: Deliver public key
-    note over Owner,Recipient: Optional: compare key fingerprints to verify (MITM mitigation)
+    note over Owner,Recipient: Optional#58; compare key fingerprints to verify (MITM mitigation)
 
-    note over Owner,Cloud: Phase 1 — Share a File
+    note over Owner,Cloud: Phase 1 #45;#45; Share a File
     Owner->>Owner: Unwrap file_key from vault manifest
     Owner->>Owner: HPKE.Seal(recipient_pub_key, plaintext=file_key + metadata)
-    Owner->>Cloud: Copy encrypted blobs to shared/<share_id>/
+    Owner->>Cloud: Copy encrypted blobs to shared/[share_id]/
     Owner->>Channel: Export share package (.vgshare)
     Channel->>Recipient: Deliver share package
 
-    note over Recipient,Cloud: Phase 2 — Recipient Imports and Fetches
-    Recipient->>Recipient: HPKE.Open(recipient_priv_key) → file_key + metadata
+    note over Recipient,Cloud: Phase 2 #45;#45; Recipient Imports and Fetches
+    Recipient->>Recipient: HPKE.Open(recipient_priv_key) #45;#62; file_key + metadata
     Recipient->>Cloud: Fetch encrypted blobs
     Cloud->>Recipient: Return encrypted blobs
-    Recipient->>Recipient: Decrypt chunks with file_key → reassemble file
+    Recipient->>Recipient: Decrypt chunks with file_key #45;#62; reassemble file
 
-    note over Owner,Cloud: Phase 3 — Revocation (owner-initiated)
-    Owner->>Cloud: Delete shared/<share_id>/
+    note over Owner,Cloud: Phase 3 #45;#45; Revocation (owner-initiated)
+    Owner->>Cloud: Delete shared/[share_id]/
 ```
 
 ## What the cloud hosts

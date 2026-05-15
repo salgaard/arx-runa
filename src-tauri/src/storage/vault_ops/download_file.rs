@@ -1,11 +1,14 @@
 use std::path::Path;
 
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::crypto::{KeyEncryptionKey, WrappedFileKey, unwrap_file_key};
 use crate::storage::MetadataStore;
 use crate::storage::error::StorageError;
-use crate::storage::pipeline::{decrypt_epoch_file, decrypt_file};
+use crate::storage::pipeline::{
+    decrypt_epoch_file, decrypt_epoch_file_to_memory, decrypt_file, decrypt_file_to_memory,
+};
 use crate::storage::types::NodeType;
 
 /// Downloads a file node from staged encrypted chunks into a destination file.
@@ -62,6 +65,67 @@ pub async fn download_file(
         unwrap_file_key(&wrapped_file_key, key_encryption_key).map_err(StorageError::from)?;
     decrypt_file(
         destination,
+        *node.node_id.as_uuid(),
+        &file_key,
+        node.size_bytes,
+        &chunks,
+        blob_directory,
+        metadata_store,
+        progress,
+    )
+    .await
+}
+
+/// Downloads a file node from staged encrypted chunks into a `Zeroizing<Vec<u8>>` in RAM.
+///
+/// Identical routing logic to [`download_file`] but delegates to the `_to_memory`
+/// pipeline variants so no plaintext is written to disk at any point.
+/// Callers must enforce a file-size gate before invoking this function.
+pub async fn download_file_to_memory(
+    node_id: Uuid,
+    metadata_store: &dyn MetadataStore,
+    key_encryption_key: &KeyEncryptionKey,
+    blob_directory: &Path,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+) -> Result<Zeroizing<Vec<u8>>, StorageError> {
+    let node = metadata_store.get_node(node_id).await?;
+    if !matches!(node.node_type, NodeType::File) {
+        return Err(StorageError::ConstraintViolation(
+            "target is a directory".to_owned(),
+        ));
+    }
+    let chunks = metadata_store.get_chunks(node_id).await?;
+
+    if chunks.is_empty() {
+        let buffer_ids = metadata_store.get_epoch_buffer_node_ids().await?;
+        if buffer_ids.contains(&node_id) {
+            return Err(StorageError::EpochBufferNotFlushed(node_id));
+        }
+    }
+
+    if chunks
+        .first()
+        .map(|c| c.epoch_blob_id.is_some())
+        .unwrap_or(false)
+    {
+        let chunk = &chunks[0];
+        return decrypt_epoch_file_to_memory(
+            chunk,
+            key_encryption_key,
+            blob_directory,
+            metadata_store,
+            progress,
+        )
+        .await;
+    }
+
+    let wrapped_key = node.file_key_wrapped.ok_or_else(|| {
+        StorageError::ConstraintViolation("file node missing wrapped key".to_owned())
+    })?;
+    let wrapped_file_key = WrappedFileKey::new(wrapped_key);
+    let file_key =
+        unwrap_file_key(&wrapped_file_key, key_encryption_key).map_err(StorageError::from)?;
+    decrypt_file_to_memory(
         *node.node_id.as_uuid(),
         &file_key,
         node.size_bytes,

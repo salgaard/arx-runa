@@ -80,6 +80,7 @@ pub fn VaultPicker(
                                 <button
                                     type="button"
                                     class="w-full bg-stone border border-steel rounded-xl p-4 text-left cursor-pointer hover:border-rune hover:bg-surface-overlay transition-colors"
+                                    data-testid="vault-card"
                                     on:click=move |_| on_select(vault_clone.clone())
                                 >
                                     <div class="flex items-center justify-between">
@@ -101,6 +102,7 @@ pub fn VaultPicker(
                 <button
                     type="button"
                     class="w-full px-4 py-3 rounded-xl border border-rune text-rune cursor-pointer hover:bg-surface-overlay transition-colors text-sm font-medium"
+                    data-testid="create-vault-button"
                     on:click={
                         let on_create = on_create.clone();
                         move |_| on_create()
