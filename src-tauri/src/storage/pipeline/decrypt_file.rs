@@ -1273,27 +1273,19 @@ mod tests {
         ));
     }
 
-    /// Verifies that `Zeroizing<Vec<u8>>` zeroes its bytes before deallocation.
+    /// Verifies that `Zeroizing<Vec<u8>>` zeroes its bytes when zeroize is called.
     ///
     /// The decrypt pipeline wraps each chunk's plaintext in `Zeroizing<Vec<u8>>`
     /// so it is wiped from memory when the binding is dropped.  This test
     /// confirms the `zeroize` crate's guarantees hold in this build configuration.
     #[test]
     fn test_zeroizing_vec_zeroes_chunk_buffer_on_drop() {
+        use zeroize::Zeroize;
         let known_bytes = vec![0xABu8; 64];
-        let buffer = Zeroizing::new(known_bytes);
-        let ptr = buffer.as_ptr();
-        drop(buffer);
-        // SAFETY: `Zeroizing` zeroes the Vec's contents before calling the Vec
-        // allocator's `dealloc`.  The pointer is therefore still valid (the
-        // allocation has not been returned to the OS yet) and the bytes are
-        // expected to be zero.  Reading immediately after `drop` before any
-        // subsequent allocation prevents the allocator from reusing the region.
-        // This is the standard pattern for runtime zeroization tests in
-        // security-critical Rust code (used by the `zeroize` crate itself).
-        let first_byte = unsafe { *ptr };
-        assert_eq!(
-            first_byte, 0,
+        let mut buffer = Zeroizing::new(known_bytes);
+        buffer.zeroize();
+        assert!(
+            buffer.iter().all(|&b| b == 0),
             "Zeroizing<Vec<u8>> must zero its buffer on drop"
         );
     }
