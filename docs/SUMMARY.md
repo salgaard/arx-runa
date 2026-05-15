@@ -21,7 +21,7 @@
   - [The Vault](how-it-works/the-vault.md)
   - [Unlocking: Password and USB Key](how-it-works/unlocking.md)
   - [Recovery: If You Lose Your Key](how-it-works/recovery.md)
-  - [How Files Are Encrypted](how-it-works/file-encryption.md)
+  - [How Files Are Encrypted and Decrypted](how-it-works/file-encryption.md)
   - [What the Cloud Sees](how-it-works/cloud-sync.md)
   - [Sharing Files Privately](how-it-works/file-sharing.md)
 
