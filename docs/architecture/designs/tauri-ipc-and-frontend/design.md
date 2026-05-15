@@ -1,7 +1,7 @@
 # Arx Runa — Tauri IPC Layer and Frontend Design
 
 > Status: Reviewed. Implementation target: Phase 6.
-> Last updated: 2026-04-12
+> Last updated: 2026-05-15
 
 ### Review Log
 
@@ -9,6 +9,7 @@
 |------|----------|---------|
 | 2026-03-31 | Interactive design session | Critical fixes applied (password zeroization, polling cleanup), recommendations added |
 | 2026-04-12 | Cross-phase consistency remediation | IPC/password/path/viewing/share terminology and auth-backoff alignment fixes applied |
+| 2026-05-15 | Implementation sync | Added 21 implemented commands (auth recovery, OAuth flow, shell helpers, sharing extras, sync extras); added VaultSummary, DestinationHealth, ReconcileResult, OAuth, receipt, and download response types; added request type pattern; renamed recover_from_cloud → recover_vault_from_cloud |
 
 ---
 
@@ -43,8 +44,8 @@ Phase 6 scope is documented with two profiles:
 
 ### Interface contract
 
-- Command surface is the registered async Tauri command set across `auth_commands`, `file_commands`, `sync_commands`, `destination_commands`, and `sharing_commands`, as defined in [Canonical Command Surface (Normative)](#canonical-command-surface-normative).
-- Long-running command contracts stream progress through `tauri::ipc::Channel<T>` (`upload_file`, `download_file`, `sync_to_cloud`, `migrate_vault`, `sync_backup`).
+- Command surface is the registered async Tauri command set across `auth_commands`, `file_commands`, `sync_commands`, `destination_commands`, `sharing_commands`, and `shell_commands`, as defined in [Canonical Command Surface (Normative)](#canonical-command-surface-normative).
+- Long-running command contracts stream progress through `tauri::ipc::Channel<T>` (`upload_file`, `download_file`, `flush_epoch_buffer`, `sync_to_cloud`, `recover_vault_from_cloud`, `recover_vault_from_cloud_with_phrase`, `pull_and_reconcile`, `migrate_vault`, `sync_backup`, `download_received_share`).
 - Build-time exposure contract is the `src-tauri/build.rs` `AppManifest::commands(...)` allowlist.
 
 ### Data contract
@@ -83,7 +84,8 @@ src-tauri/src/ui/
 ├── sync_commands.rs       # Sync domain commands (see canonical command surface)
 ├── destination_commands.rs # Destination domain commands (see canonical command surface)
 ├── sharing_commands.rs    # Sharing domain commands (see canonical command surface)
-└── types.rs               # IPC-specific types (responses, progress updates)
+├── shell_commands.rs      # Shell/OS helper commands (see canonical command surface)
+└── types/                 # IPC-specific types (responses, progress updates, request structs)
 ```
 
 ### Canonical Command Surface (Normative)
@@ -92,11 +94,12 @@ This is the **only canonical command list** for Phase 6.
 
 | Domain | Commands |
 |--------|----------|
-| Auth | `authenticate`, `create_vault`, `change_password`, `rotate_key_file`, `delete_vault`, `lock_session`, `get_session_status` |
-| File | `list_directory`, `upload_file`, `download_file`, `delete_file`, `get_file_content`, `list_remote` |
-| Sync | `sync_to_cloud`, `recover_from_cloud`, `get_sync_status`, `migrate_vault`, `sync_backup` |
-| Destination | `add_destination`, `list_destinations`, `delete_destination` |
-| Sharing | `export_public_key`, `add_contact`, `list_contacts`, `share_file`, `import_share`, `revoke_share`, `list_shares`, `list_received_shares` |
+| Auth | `authenticate`, `create_vault`, `change_password`, `rotate_key_file`, `delete_vault`, `lock_session`, `get_session_status`, `list_vaults`, `setup_recovery`, `recover_vault_with_phrase`, `check_pending_vault_operations`, `retry_pending_vault_operation`, `recover_vault_from_cloud`, `recover_vault_from_cloud_with_phrase`, `check_cloud_configured`, `configure_cloud` |
+| File | `list_directory`, `upload_file`, `download_file`, `delete_file`, `get_file_content`, `list_remote`, `flush_epoch_buffer` |
+| Sync | `sync_to_cloud`, `recover_vault_from_cloud`, `get_sync_status`, `migrate_vault`, `sync_backup`, `pull_and_reconcile`, `get_backup_health` |
+| Destination | `add_destination`, `list_destinations`, `delete_destination`, `set_primary_destination_cmd`, `begin_google_drive_setup`, `begin_onedrive_setup`, `poll_oauth_setup`, `cancel_oauth_setup_cmd` |
+| Sharing | `export_public_key`, `get_own_public_key_b64`, `add_contact`, `list_contacts`, `share_file`, `import_share`, `revoke_share`, `list_shares`, `list_received_shares`, `check_share_receipts`, `download_received_share`, `get_received_share_content`, `set_gdrive_service_account`, `has_gdrive_service_account` |
+| Shell | `reveal_in_explorer`, `compose_email_with_attachment`, `open_url` |
 
 All other command enumerations in this document are detailed implementation mirrors and must stay aligned with this section.
 
@@ -176,6 +179,70 @@ async fn delete_vault(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), IpcError>;
 
+/// List all vaults registered on this device.
+#[tauri::command]
+async fn list_vaults(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<VaultSummary>, IpcError>;
+
+/// Set up a recovery phrase for the current vault.
+/// Generates a BIP-39 mnemonic bound to the current master key.
+#[tauri::command]
+async fn setup_recovery(
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
+
+/// Recover the current vault using a recovery phrase (mnemonic).
+#[tauri::command]
+async fn recover_vault_with_phrase(
+    phrase: String, // Immediately convert to Zeroizing<Vec<u8>>, scrub String bytes, then drop
+    state: tauri::State<'_, AppState>,
+) -> Result<AuthResponse, IpcError>;
+
+/// Check whether any vault operations are pending (e.g., interrupted uploads).
+#[tauri::command]
+async fn check_pending_vault_operations(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<PendingOperationEntry>, IpcError>;
+
+/// Retry a previously failed vault operation by ID.
+#[tauri::command]
+async fn retry_pending_vault_operation(
+    operation_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
+
+/// Recover vault from cloud backup on a new device.
+/// Streams recovery progress via channel.
+#[tauri::command]
+async fn recover_vault_from_cloud(
+    vault_header_path: PathBuf,
+    progress: tauri::ipc::Channel<SyncProgressUpdate>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
+
+/// Recover vault from cloud using a recovery phrase (for new-device recovery without key file).
+#[tauri::command]
+async fn recover_vault_from_cloud_with_phrase(
+    vault_header_path: PathBuf,
+    phrase: String, // Immediately convert to Zeroizing<Vec<u8>>, scrub String bytes, then drop
+    progress: tauri::ipc::Channel<SyncProgressUpdate>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
+
+/// Check whether the primary cloud destination is configured and reachable.
+#[tauri::command]
+async fn check_cloud_configured(
+    state: tauri::State<'_, AppState>,
+) -> Result<bool, IpcError>;
+
+/// Configure a cloud destination directly (non-OAuth flow).
+#[tauri::command]
+async fn configure_cloud(
+    config: DestinationSessionConfig,
+    state: tauri::State<'_, AppState>,
+) -> Result<DestinationEntry, IpcError>;
+
 // --- file_commands.rs ---
 
 /// List contents of a directory in the vault.
@@ -230,9 +297,9 @@ async fn sync_to_cloud(
     state: tauri::State<'_, AppState>,
 ) -> Result<SyncResult, IpcError>;
 
-/// Recover vault from cloud on a new device.
+/// Recover vault from cloud on a new device (also exposed under auth_commands).
 #[tauri::command]
-async fn recover_from_cloud(
+async fn recover_vault_from_cloud(
     vault_header_path: PathBuf,
     progress: tauri::ipc::Channel<SyncProgressUpdate>,
     state: tauri::State<'_, AppState>,
@@ -300,6 +367,68 @@ async fn list_remote(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<RemoteFileEntry>, IpcError>;
 
+/// Flush all pending epoch buffer entries to cloud.
+/// Used when the user explicitly wants to push buffered small files.
+/// Progress streamed via channel.
+#[tauri::command]
+async fn flush_epoch_buffer(
+    progress: tauri::ipc::Channel<ProgressUpdate>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
+
+// --- sync_commands.rs (additions) ---
+
+/// Pull remote manifest changes and reconcile with local state.
+/// Streams reconciliation progress via channel.
+#[tauri::command]
+async fn pull_and_reconcile(
+    progress: tauri::ipc::Channel<SyncProgressUpdate>,
+    state: tauri::State<'_, AppState>,
+) -> Result<ReconcileResult, IpcError>;
+
+/// Check backup health across all configured backup destinations.
+#[tauri::command]
+async fn get_backup_health(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<DestinationHealth>, IpcError>;
+
+// --- destination_commands.rs (additions) ---
+
+/// Promote an existing destination to primary.
+#[tauri::command]
+async fn set_primary_destination_cmd(
+    destination_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
+
+/// Begin a Google Drive OAuth setup flow.
+/// Returns an auth URL the user must visit to authorise access.
+/// Poll `poll_oauth_setup` to get completion status.
+#[tauri::command]
+async fn begin_google_drive_setup(
+    state: tauri::State<'_, AppState>,
+) -> Result<BeginOauthSetupResponse, IpcError>;
+
+/// Begin a OneDrive OAuth setup flow.
+/// Returns an auth URL the user must visit to authorise access.
+/// Poll `poll_oauth_setup` to get completion status.
+#[tauri::command]
+async fn begin_onedrive_setup(
+    state: tauri::State<'_, AppState>,
+) -> Result<BeginOauthSetupResponse, IpcError>;
+
+/// Poll the in-progress OAuth setup to check if authorisation has completed.
+#[tauri::command]
+async fn poll_oauth_setup(
+    state: tauri::State<'_, AppState>,
+) -> Result<OauthPollResponse, IpcError>;
+
+/// Cancel the in-progress OAuth setup flow.
+#[tauri::command]
+async fn cancel_oauth_setup_cmd(
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
+
 // --- sharing_commands.rs ---
 
 /// Export the user's X25519 public key to a file for out-of-band exchange.
@@ -308,6 +437,12 @@ async fn export_public_key(
     destination_path: PathBuf,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), IpcError>;
+
+/// Return the user's X25519 public key as a base64 string (for display in the UI).
+#[tauri::command]
+async fn get_own_public_key_b64(
+    state: tauri::State<'_, AppState>,
+) -> Result<String, IpcError>;
 
 /// Import a contact's public key from a file.
 #[tauri::command]
@@ -358,6 +493,69 @@ async fn list_shares(
 async fn list_received_shares(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<ReceivedShareEntry>, IpcError>;
+
+/// Check whether recipients have downloaded outgoing shares (receipt tracking).
+#[tauri::command]
+async fn check_share_receipts(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ShareReceiptEntry>, IpcError>;
+
+/// Download a received share file to a local destination.
+/// Progress streamed via channel.
+#[tauri::command]
+async fn download_received_share(
+    share_id: String,
+    destination_path: PathBuf,
+    progress: tauri::ipc::Channel<ProgressUpdate>,
+    state: tauri::State<'_, AppState>,
+) -> Result<DownloadReceivedShareResponse, IpcError>;
+
+/// Decrypt and return the content of a received share for in-app viewing (Zero-Trace).
+/// Subject to the same 50 MiB cap as `get_file_content`.
+#[tauri::command]
+async fn get_received_share_content(
+    share_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<FileContent, IpcError>;
+
+/// Configure a Google Drive service account JSON for cloud access.
+/// The JSON blob is encrypted into SQLCipher; never written to disk in plaintext.
+#[tauri::command]
+async fn set_gdrive_service_account(
+    service_account_json: String, // Encrypted into SQLCipher on save
+    state: tauri::State<'_, AppState>,
+) -> Result<(), IpcError>;
+
+/// Check whether a Google Drive service account is configured.
+#[tauri::command]
+async fn has_gdrive_service_account(
+    state: tauri::State<'_, AppState>,
+) -> Result<bool, IpcError>;
+
+// --- shell_commands.rs ---
+
+/// Open a file or folder in the OS file explorer (Explorer/Finder/Files).
+/// Path must be an absolute filesystem path.
+#[tauri::command]
+async fn reveal_in_explorer(
+    path: String,
+) -> Result<(), IpcError>;
+
+/// Open the default email client with a file pre-attached.
+#[tauri::command]
+async fn compose_email_with_attachment(
+    attachment_path: PathBuf,
+    subject: Option<String>,
+) -> Result<(), IpcError>;
+
+/// Open a URL in the default browser.
+/// Only `https://` scheme is accepted; all other schemes return `InvalidInput`.
+/// The URL is passed as a literal argument to Tauri's `shell::open` — never
+/// interpolated into a shell string.
+#[tauri::command]
+async fn open_url(
+    url: String,
+) -> Result<(), IpcError>;
 ```
 
 ### Command Registration
@@ -374,39 +572,66 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             // Auth
-            ui::authenticate,
-            ui::create_vault,
-            ui::change_password,
-            ui::rotate_key_file,
-            ui::delete_vault,
-            ui::lock_session,
-            ui::get_session_status,
+            ui::auth_commands::authenticate,
+            ui::auth_commands::create_vault,
+            ui::auth_commands::change_password,
+            ui::auth_commands::rotate_key_file,
+            ui::auth_commands::delete_vault,
+            ui::auth_commands::lock_session,
+            ui::auth_commands::get_session_status,
+            ui::auth_commands::list_vaults,
+            ui::auth_commands::setup_recovery,
+            ui::auth_commands::recover_vault_with_phrase,
+            ui::auth_commands::check_pending_vault_operations,
+            ui::auth_commands::retry_pending_vault_operation,
+            ui::auth_commands::recover_vault_from_cloud,
+            ui::auth_commands::recover_vault_from_cloud_with_phrase,
+            ui::auth_commands::check_cloud_configured,
+            ui::auth_commands::configure_cloud,
             // Files
-            ui::list_directory,
-            ui::upload_file,
-            ui::download_file,
-            ui::delete_file,
-            ui::get_file_content,
-            ui::list_remote,
+            ui::file_commands::list_directory,
+            ui::file_commands::upload_file,
+            ui::file_commands::download_file,
+            ui::file_commands::delete_file,
+            ui::file_commands::get_file_content,
+            ui::file_commands::list_remote,
+            ui::file_commands::flush_epoch_buffer,
             // Sync
-            ui::sync_to_cloud,
-            ui::recover_from_cloud,
-            ui::get_sync_status,
-            ui::migrate_vault,
-            ui::sync_backup,
+            ui::sync_commands::sync_to_cloud,
+            ui::sync_commands::recover_vault_from_cloud,
+            ui::sync_commands::get_sync_status,
+            ui::sync_commands::migrate_vault,
+            ui::sync_commands::sync_backup,
+            ui::sync_commands::pull_and_reconcile,
+            ui::sync_commands::get_backup_health,
             // Destinations
-            ui::add_destination,
-            ui::list_destinations,
-            ui::delete_destination,
+            ui::destination_commands::add_destination,
+            ui::destination_commands::list_destinations,
+            ui::destination_commands::delete_destination,
+            ui::destination_commands::set_primary_destination_cmd,
+            ui::destination_commands::begin_google_drive_setup,
+            ui::destination_commands::begin_onedrive_setup,
+            ui::destination_commands::poll_oauth_setup,
+            ui::destination_commands::cancel_oauth_setup_cmd,
             // Sharing
-            ui::export_public_key,
-            ui::add_contact,
-            ui::list_contacts,
-            ui::share_file,
-            ui::import_share,
-            ui::revoke_share,
-            ui::list_shares,
-            ui::list_received_shares,
+            ui::sharing_commands::export_public_key,
+            ui::sharing_commands::get_own_public_key_b64,
+            ui::sharing_commands::add_contact,
+            ui::sharing_commands::list_contacts,
+            ui::sharing_commands::share_file,
+            ui::sharing_commands::import_share,
+            ui::sharing_commands::revoke_share,
+            ui::sharing_commands::list_shares,
+            ui::sharing_commands::list_received_shares,
+            ui::sharing_commands::check_share_receipts,
+            ui::sharing_commands::download_received_share,
+            ui::sharing_commands::get_received_share_content,
+            ui::sharing_commands::set_gdrive_service_account,
+            ui::sharing_commands::has_gdrive_service_account,
+            // Shell
+            ui::shell_commands::reveal_in_explorer,
+            ui::shell_commands::compose_email_with_attachment,
+            ui::shell_commands::open_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -425,16 +650,30 @@ fn main() {
                         "add_contact",
                         "add_destination",
                         "authenticate",
+                        "begin_google_drive_setup",
+                        "begin_onedrive_setup",
+                        "cancel_oauth_setup_cmd",
                         "change_password",
+                        "check_cloud_configured",
+                        "check_pending_vault_operations",
+                        "check_share_receipts",
+                        "compose_email_with_attachment",
+                        "configure_cloud",
                         "create_vault",
                         "delete_destination",
                         "delete_file",
                         "delete_vault",
                         "download_file",
+                        "download_received_share",
                         "export_public_key",
+                        "flush_epoch_buffer",
+                        "get_backup_health",
                         "get_file_content",
+                        "get_own_public_key_b64",
+                        "get_received_share_content",
                         "get_session_status",
                         "get_sync_status",
+                        "has_gdrive_service_account",
                         "import_share",
                         "list_contacts",
                         "list_destinations",
@@ -442,11 +681,22 @@ fn main() {
                         "list_received_shares",
                         "list_remote",
                         "list_shares",
+                        "list_vaults",
                         "lock_session",
                         "migrate_vault",
-                        "recover_from_cloud",
+                        "open_url",
+                        "poll_oauth_setup",
+                        "pull_and_reconcile",
+                        "recover_vault_from_cloud",
+                        "recover_vault_from_cloud_with_phrase",
+                        "recover_vault_with_phrase",
+                        "retry_pending_vault_operation",
+                        "reveal_in_explorer",
                         "revoke_share",
                         "rotate_key_file",
+                        "set_gdrive_service_account",
+                        "set_primary_destination_cmd",
+                        "setup_recovery",
                         "share_file",
                         "sync_backup",
                         "sync_to_cloud",
@@ -464,7 +714,7 @@ fn main() {
 
 - **Multi-vault support**: Current design manages one vault per Arx Runa instance. Each device holds one vault in a single AppState. Multi-vault support (UI switcher, session-per-vault coordination, multi-device sync) is deferred to Phase 7+.
 
-- **Advanced recovery flows**: Commands `recover_from_cloud`, `migrate_vault`, and `sync_backup` are registered in the IPC contract but do not have UI consumers in Phase 6. These are infrastructure-ready for Phase 7 implementation.
+- **Advanced recovery flows**: Commands `recover_vault_from_cloud`, `recover_vault_from_cloud_with_phrase`, `migrate_vault`, and `sync_backup` are registered in the IPC contract but do not have full UI consumers in Phase 6. These are infrastructure-ready for Phase 7 implementation.
 
 - **In-app file viewer**: The `get_file_content` command is available for retrieving file contents to display in-app (with 50 MiB cap). Media preview and document rendering are future enhancements.
 
@@ -851,6 +1101,104 @@ pub struct RemoteFileEntry {
     /// True if the blob UUID has no matching manifest entry.
     pub is_orphaned: bool,
 }
+
+/// Summary of a registered vault on this device.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultSummary {
+    pub vault_id: String,
+    pub vault_name: String,
+    /// Authentication tier: 1 (password-only) or 2 (password + key file).
+    pub tier: u8,
+    pub created_at: String,
+}
+
+/// Health status of a single backup destination.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DestinationHealth {
+    pub destination_id: String,
+    pub label: String,
+    pub last_checked_at: Option<String>,
+    pub healthy: bool,
+    /// Human-safe error description if unhealthy, None otherwise.
+    pub error: Option<String>,
+}
+
+/// Result of a pull-and-reconcile operation.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconcileResult {
+    pub files_added: u32,
+    pub files_removed: u32,
+    pub files_updated: u32,
+}
+
+/// Response after successfully downloading a received share.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadReceivedShareResponse {
+    pub file_name: String,
+    pub destination_path: String,
+}
+
+/// Receipt record showing whether a share recipient has downloaded the package.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareReceiptEntry {
+    pub share_id: String,
+    pub contact_name: String,
+    pub downloaded_at: Option<String>,
+}
+
+/// Response from beginning an OAuth flow (Google Drive or OneDrive).
+/// The user must navigate to `auth_url` to grant access.
+/// Call `poll_oauth_setup` repeatedly until `OauthPollResponse::complete` is true.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BeginOauthSetupResponse {
+    pub auth_url: String,
+    pub state_token: String,
+}
+
+/// Result of polling an in-progress OAuth setup.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OauthPollResponse {
+    pub complete: bool,
+    /// Populated once `complete` is true; None while still waiting.
+    pub destination: Option<DestinationEntry>,
+}
+```
+
+### Request Types
+
+All commands that accept more than one non-state parameter use a typed request struct, defined in `src/ipc_types/requests.rs` (frontend) and mirrored via serde in `src-tauri/src/ui/types/`. This pattern ensures the IPC boundary is strongly typed on both sides.
+
+**Invariant**: password fields within request structs are immediately converted to `Zeroizing<Vec<u8>>` inside the command handler and the original `String` bytes are scrubbed before dropping. Passwords are never stored in `AppState`.
+
+Example structs (illustrative — see `src/ipc_types/requests.rs` for the full list):
+
+```rust
+// src/ipc_types/requests.rs  (frontend) / src-tauri/src/ui/types/ (backend)
+
+#[derive(Serialize, Deserialize)]
+pub struct AuthenticateRequest {
+    pub password: String,
+    pub key_file_path: Option<PathBuf>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CreateVaultRequest {
+    pub vault_name: String,
+    pub password: String,
+    pub tier: u8,
+    pub key_file_destination: Option<PathBuf>,
+    pub primary_destination: DestinationSessionConfig,
+    pub chunk_size_bytes: u64,
+    pub epoch_buffer_enabled: bool,
+}
+// One struct per multi-parameter command.
 ```
 
 ---

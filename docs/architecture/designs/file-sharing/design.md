@@ -27,9 +27,9 @@
 
 ### Data contract
 
-- Canonical share package fields are `share_id`, `file_id`, `file_name`, `chunk_count`, `chunk_size`, `chunk_uuids`, `file_key`, `sender_public_key`, `cloud_endpoint`, and optional `expires_at`.
-- Canonical shared-cloud path contract is `shared/<file_share_id>/<uuid>.blob` plus `shared/<file_share_id>/receipts/<receipt_uuid>.blob`.
-- Canonical persistence tables are `contacts`, `shares`, and `received_shares` (including `revoked_at` / `expires_at` semantics, `received_shares.file_key_wrapped`, and `received_shares.sender_public_key`).
+- Canonical share package fields are `share_id`, `file_id`, `file_name`, `chunk_count`, `chunk_size`, `chunk_uuids`, `file_size`, `file_key`, `sender_public_key`, `cloud_endpoint`, and optional `expires_at`.
+- Canonical shared-cloud path contract is `shared/<file_share_id>/<uuid>.blob`, `shared/<file_share_id>/receipts/<receipt_uuid>.blob` (download receipts), and `shared/<file_share_id>/import-receipts/<receipt_uuid>.blob` (import receipts).
+- Canonical persistence tables are `contacts`, `shares`, and `received_shares` (including `revoked_at` / `expires_at` semantics, `received_shares.file_key_wrapped`, `received_shares.file_id`, `received_shares.file_size`, and `received_shares.sender_public_key`).
 
 ### Invariant contract
 
@@ -158,6 +158,7 @@ When the owner shares a file, Arx Runa produces a share package — a small file
   "chunk_count": 12,
   "chunk_size": 4194304,
   "chunk_uuids": ["<uuid>", "<uuid>", "..."],
+  "file_size": 12345678,
   "file_key": "<32-byte file_key, base64>",
   "sender_public_key": "<32-byte X25519 public key, base64>",
   "cloud_endpoint": {
@@ -182,9 +183,11 @@ When the owner shares a file, Arx Runa produces a share package — a small file
 
 `sender_public_key` is the owner's X25519 public key. Recipients use this field for receipt encryption even when no local contact entry exists for the sender.
 
+`file_size` is the total file size in bytes. Recipients use this to truncate the padding of the final chunk on decrypt (all chunks except the last are fixed-size).
+
 ### Delivery
 
-The owner exports the share package as a file and delivers it via their own channel (email, messaging app, USB). The recipient imports it into Arx Runa via file picker or a `arx-runa://share-import?...` deep link (Tauri custom URI scheme).
+The owner exports the share package as a `.arxshare` file and delivers it via their own channel (email, messaging app, USB). The recipient imports it into Arx Runa via file picker or an `arx-runa://share-import?...` deep link (Tauri custom URI scheme).
 
 ---
 
@@ -253,13 +256,21 @@ The owner of a shared file may want to know when a recipient has downloaded it. 
 
 ### Mechanism
 
-After a recipient successfully downloads and decrypts all chunks of a shared file, the recipient's Arx Runa writes a receipt to the owner's shared folder in the cloud:
+The implementation uses a two-receipt model: an **import receipt** written when the share package is accepted, and a **download receipt** written after all chunks are decrypted. Both are encrypted with the owner's X25519 public key via HPKE (the same construction used for share packages). The recipient reads this key from `sender_public_key` in the imported share package, so receipt encryption does not depend on a pre-existing contact record.
+
+**Import receipt** — written when the recipient imports the share package:
+
+```
+shared/<file_share_id>/import-receipts/<receipt_uuid>.blob
+```
+
+**Download receipt** — written after all chunks are downloaded and successfully decrypted:
 
 ```
 shared/<file_share_id>/receipts/<receipt_uuid>.blob
 ```
 
-The receipt is encrypted with the owner's X25519 public key via HPKE (the same construction used for share packages). The recipient reads this public key from `sender_public_key` in the imported share package, so receipt encryption does not depend on a pre-existing contact record. Only the owner can decrypt it.
+This gives the owner two events: the recipient accepted the package (import) and the recipient retrieved the file (download).
 
 ### Receipt format (plaintext inside HPKE envelope)
 
@@ -275,10 +286,11 @@ The receipt is encrypted with the owner's X25519 public key via HPKE (the same c
 
 On the next manifest pull or sync operation, the owner's Arx Runa:
 
-1. Lists blobs under `shared/<file_share_id>/receipts/`
+1. Lists blobs under `shared/<file_share_id>/receipts/` and `shared/<file_share_id>/import-receipts/`
 2. Downloads and decrypts each receipt using the owner's X25519 private key
 3. Displays a notification: "Your shared file was downloaded by [contact name] on [date]"
-4. Deletes the receipt blob from the cloud after reading (optional; keeps the shared folder tidy)
+4. Records `shares.receipt_received_at` (Unix timestamp) when a download receipt is read
+5. Deletes the receipt blob from the cloud after reading (optional; keeps the shared folder tidy)
 
 ### Security properties
 
@@ -286,6 +298,10 @@ On the next manifest pull or sync operation, the owner's Arx Runa:
 - The cloud provider sees that a receipt blob was written but cannot read its content
 - A malicious recipient can choose not to write a receipt — receipts are cooperative, not enforceable
 - A malicious recipient can write a false receipt — the owner should treat receipts as informational, not authoritative
+
+### Known implementation deviation
+
+The current `share_file` IPC command exposes a `receipt_requested: bool` parameter that makes receipt writing opt-in per share (stored as `shares.receipt_requested`). The design intent is always-write — recipients always write receipts after import and download. The opt-in flag is a temporary deviation; a future pass should remove it and restore always-write behavior.
 
 ### Scope
 
@@ -366,10 +382,14 @@ CREATE TABLE shares (
     file_id         TEXT NOT NULL REFERENCES nodes(node_id),
     contact_id      TEXT NOT NULL REFERENCES contacts(contact_id),
     file_share_id   TEXT NOT NULL,      -- UUID v4, groups all recipients of the same file
-    cloud_path      TEXT NOT NULL,      -- path to shared/<file_share_id>/ in cloud
-    created_at      INTEGER NOT NULL,
-    revoked_at      INTEGER,            -- NULL = active
-    expires_at      INTEGER             -- NULL = no expiration (Unix timestamp)
+    cloud_path            TEXT NOT NULL,      -- path to shared/<file_share_id>/ in cloud
+    created_at            INTEGER NOT NULL,
+    revoked_at            INTEGER,            -- NULL = active
+    expires_at            INTEGER,            -- NULL = no expiration (Unix timestamp)
+    receipt_requested     INTEGER NOT NULL DEFAULT 0,  -- 1 if sender opted in to receiving download receipts
+    receipt_received_at   INTEGER,            -- Unix timestamp when owner read the receipt; NULL = not yet read
+    download_key_id       TEXT,               -- provider-specific access key ID (e.g. B2 applicationKeyId)
+    download_folder_id    TEXT                -- provider-specific folder/container ID (e.g. Google Drive folder ID)
 );
 
 CREATE INDEX idx_shares_active_file
@@ -387,12 +407,14 @@ CREATE INDEX idx_shares_active_expiry
 -- Received shares (populated from imported share packages)
 CREATE TABLE received_shares (
     share_id             TEXT PRIMARY KEY,   -- from the share package
+    file_id              TEXT NOT NULL,      -- UUID v4; needed to reconstruct per-chunk AAD on decrypt
     sender_contact_id    TEXT REFERENCES contacts(contact_id),
     sender_public_key    BLOB NOT NULL,      -- X25519 public key from share package, 32 bytes
     file_name            TEXT NOT NULL,
     file_key_wrapped     BLOB NOT NULL,      -- KEK-wrapped file_key for at-rest protection
     chunk_count          INTEGER NOT NULL,
     chunk_size           INTEGER NOT NULL,
+    file_size            INTEGER NOT NULL,   -- total file size in bytes; used to truncate last-chunk padding
     chunk_uuids          TEXT NOT NULL,      -- JSON array
     cloud_endpoint       TEXT NOT NULL,      -- JSON object
     expires_at           INTEGER,            -- NULL = no expiration (Unix timestamp)
@@ -403,6 +425,27 @@ CREATE TABLE received_shares (
 ### Nodes table addition
 
 `file_key_wrapped` is stored in the `nodes` table (per file, not per chunk) — this is the vault-internal KEK-wrapped key used for local decryption, and is unchanged. On share import, Arx Runa decrypts the package to recover raw `file_key`, immediately wraps it with local `key_encryption_key`, and persists only `received_shares.file_key_wrapped`. Raw `file_key` bytes are zeroized after wrapping. `received_shares.sender_public_key` is stored so receipts remain possible even when no sender contact exists.
+
+---
+
+## IPC Command Surface
+
+Key Tauri commands exposed to the frontend:
+
+| Command | Description |
+|---------|-------------|
+| `share_file(file_id, contact_id, expiration_days?, request_receipt)` | Creates and exports a share package for a contact |
+| `import_share(share_package_path)` | Imports a `.arxshare` file; stores `ReceivedShare`; writes import receipt if requested |
+| `list_received_shares()` | Returns `ReceivedShareEntry[]` with expiry and sender-name resolution |
+| `download_received_share(share_id, destination_path)` | Downloads and decrypts all chunks to disk; writes download receipt if requested |
+| `get_received_share_content(share_id)` | Decrypts and returns file content in-memory for preview without saving to disk; distinct from `download_received_share` |
+| `export_public_key()` | Exports the vault's X25519 public key to a file for out-of-band distribution |
+| `get_own_public_key_b64()` | Returns the vault's X25519 public key as base64 |
+| `add_contact(display_name, email?, public_key_b64)` | Adds a contact from an imported public key |
+| `list_contacts()` | Lists all contacts |
+| `revoke_share(share_id)` | Sets `shares.revoked_at`; deletes cloud blobs |
+| `list_shares()` | Lists outgoing shares with status |
+| `check_share_receipts()` | Reads and decrypts receipt blobs from the cloud; updates `shares.receipt_received_at` |
 
 ---
 
