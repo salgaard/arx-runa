@@ -240,6 +240,7 @@ pub fn LoginPage(
                     label="Password".to_string()
                     value=password
                     on_input=move |v| set_password.set(v)
+                    testid="password-input"
                 />
                 {move || if vault_tier == 2 {
                     view! {
@@ -251,7 +252,7 @@ pub fn LoginPage(
                 } else {
                     view! { <span></span> }.into_any()
                 }}
-                <Button loading=loading on_click=on_submit>"Unlock"</Button>
+                <Button loading=loading on_click=on_submit testid="login-submit">"Unlock"</Button>
                 <button
                     class="mt-4 text-rune text-sm w-full text-center cursor-pointer hover:text-bone transition-colors"
                     on:click=move |_| on_back()
@@ -472,12 +473,14 @@ pub fn VaultCreationPage(
                             label="Vault Name".to_string()
                             value=vault_name
                             on_input=move |v| set_vault_name.set(v)
+                            testid="vault-name-input"
                         />
                         <Input
                             input_type="password"
                             label="Password".to_string()
                             value=password
                             on_input=move |v| set_password.set(v)
+                            testid="create-password-input"
                         />
 
                         <div class="mb-4">
@@ -486,6 +489,7 @@ pub fn VaultCreationPage(
                             </label>
                             <select
                                 class="bg-surface-overlay border border-border-default rounded-lg px-3 py-2 text-bone w-full cursor-pointer focus:outline-none focus:border-rune"
+                                data-testid="tier-select"
                                 on:change=move |ev| {
                                     use leptos::prelude::event_target_value;
                                     let v: u8 = event_target_value(&ev).parse().unwrap_or(2);
@@ -654,7 +658,7 @@ pub fn VaultCreationPage(
                         >
                             "← Back"
                         </button>
-                        <Button loading=loading on_click=on_submit>
+                        <Button loading=loading on_click=on_submit testid="create-vault-submit">
                             "Create Vault"
                         </Button>
                     </div>
@@ -715,6 +719,7 @@ pub fn VaultCreationPage(
                         <button
                             type="button"
                             class="flex-1 px-4 py-2 rounded-lg border border-border-default text-bone cursor-pointer hover:bg-surface-overlay transition-colors"
+                            data-testid="recovery-remind-later"
                             on:click=move |_| {
                                 show_recovery_modal.set(false);
                                 session_actions.complete_success(created_vault_id.get());

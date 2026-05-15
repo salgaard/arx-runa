@@ -18,6 +18,9 @@ pub fn Input(
     value: ReadSignal<String>,
     /// Callback invoked with the new value on each keystroke.
     on_input: impl Fn(String) + 'static + Clone,
+    /// Optional `data-testid` value for e2e test selectors.
+    #[prop(optional)]
+    testid: Option<&'static str>,
 ) -> impl IntoView {
     let resolved_type = if input_type.is_empty() {
         "text"
@@ -35,6 +38,7 @@ pub fn Input(
                        focus:ring-2 focus:ring-rune"
                 placeholder=placeholder
                 prop:value=move || value.get()
+                data-testid=testid
                 on:input=move |ev| {
                     let v = event_target_value(&ev);
                     on_input(v);

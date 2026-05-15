@@ -16,6 +16,9 @@ pub fn Button(
     loading: Signal<bool>,
     /// Click event handler.
     on_click: impl Fn(leptos::ev::MouseEvent) + 'static + Clone,
+    /// Optional `data-testid` value for e2e test selectors.
+    #[prop(optional)]
+    testid: Option<&'static str>,
     children: Children,
 ) -> impl IntoView {
     let base = "inline-flex items-center justify-center px-4 py-2 rounded-lg font-medium \
@@ -36,6 +39,7 @@ pub fn Button(
             )
             disabled=disabled
             on:click=on_click
+            data-testid=testid
         >
             {children()}
         </button>

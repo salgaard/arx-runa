@@ -10,7 +10,7 @@
 
 [![CI](https://github.com/salgaard/arx-runa/actions/workflows/continuous-integration.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/continuous-integration.yml)
 [![Security Audit](https://github.com/salgaard/arx-runa/actions/workflows/security-audit.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/security-audit.yml)
-[![Docs](https://github.com/salgaard/arx-runa/actions/workflows/documentation-check.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/documentation-check.yml)
+[![Deploy Docs](https://github.com/salgaard/arx-runa/actions/workflows/docs.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/docs.yml)
 ![Rust](https://img.shields.io/badge/rust-2024-orange?logo=rust)
 
 **Zero-knowledge file encryption tool** — files are encrypted on your device before upload. The cloud receives only opaque ciphertext. Keys never leave your machine.

@@ -9,7 +9,7 @@ mod routing;
 mod upload_file;
 
 pub use delete_file::delete_file;
-pub use download_file::download_file;
+pub use download_file::{download_file, download_file_to_memory};
 pub use epoch_flush::flush_epoch_buffer;
 pub use prepare_vault_storage::prepare_vault_storage;
 pub use reencrypt_file::reencrypt_file;

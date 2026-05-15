@@ -279,6 +279,50 @@ cargo install cargo-audit
 
 ---
 
+### e2e tests (Zero-Trace frontend verification)
+
+The e2e tests in `src-tauri/tests/e2e/` run the real built app under WebdriverIO + tauri-driver and verify that the frontend leaves no sensitive traces in `localStorage`, `sessionStorage`, the DOM, or the URL after the vault locks.
+
+**One-time setup:**
+
+1. Install `tauri-driver`:
+   ```bash
+   cargo install tauri-driver
+   ```
+
+2. Install **Microsoft Edge WebDriver** (Windows only). Use `msedgedriver-tool` to fetch the version that matches your installed Edge automatically:
+   ```powershell
+   cargo install --git https://github.com/chippers/msedgedriver-tool
+   & "$HOME\.cargo\bin\msedgedriver-tool.exe"
+   Move-Item msedgedriver.exe "$HOME\.cargo\bin\msedgedriver.exe"
+   ```
+   On macOS/Linux, `tauri-driver` uses the system WebKit WebDriver automatically (installed alongside `webkit2gtk`).
+
+3. Install npm test dependencies:
+   ```bash
+   cd src-tauri/tests/e2e && npm install
+   ```
+
+**Running the tests:**
+
+```bash
+# First run: npm test builds the app automatically (cargo tauri build --debug --no-bundle).
+# This takes a few minutes. Subsequent runs can skip the build:
+cd src-tauri/tests/e2e && npm test
+
+# Skip the build if you already ran `cargo tauri build --debug --no-bundle`:
+E2E_SKIP_BUILD=1 npm test             # bash / macOS / Linux
+$env:E2E_SKIP_BUILD=1; npm test       # PowerShell
+```
+
+> **Important:** Do **not** set `E2E_SKIP_BUILD=1` after a plain `cargo build` (the VS Code debug workflow via F5). That binary uses `devUrl: http://localhost:1420` at runtime and shows a blank page when Trunk is not serving. Only `cargo tauri build` embeds the frontend WASM bundle into the binary.
+
+The tests take ~30–60 seconds once the app is built; the app window will open and close automatically.
+
+> **Note:** `cargo build --manifest-path src-tauri/Cargo.toml` alone is not sufficient — it produces a backend-only binary without the frontend WASM bundle embedded, causing the app to crash on startup. `cargo tauri build` (run automatically by `npm test`) compiles the Leptos frontend via Trunk first.
+
+---
+
 ### Tailwind CSS v4
 
 Tailwind v4 has no `tailwind.config.js`. The brand token palette (iron, stone,

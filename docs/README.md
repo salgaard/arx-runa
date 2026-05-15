@@ -1,12 +1,12 @@
 <div class="arx-sheet">
   <svg viewBox="0 0 200 236" width="118" height="140" xmlns="http://www.w3.org/2000/svg">
-    <path d="M 20 0 L 180 0 L 200 20 L 200 152 L 100 232 L 0 152 L 0 20 Z" fill="#0C0E14" stroke="#222736" stroke-width="1"/>
-    <path d="M 30 9 L 170 9 L 188 27 L 188 148 L 100 220 L 12 148 L 12 27 Z" fill="none" stroke="#181D28" stroke-width="0.6"/>
-    <line x1="100" y1="30" x2="100" y2="188" stroke="#5C7090" stroke-width="2.2" stroke-linecap="square"/>
-    <line x1="100" y1="103" x2="59" y2="148" stroke="#5C7090" stroke-width="2.2" stroke-linecap="square"/>
-    <line x1="100" y1="103" x2="141" y2="148" stroke="#5C7090" stroke-width="2.2" stroke-linecap="square"/>
-    <line x1="0" y1="20" x2="14" y2="20" stroke="#1C2130" stroke-width="0.5"/>
-    <line x1="186" y1="20" x2="200" y2="20" stroke="#1C2130" stroke-width="0.5"/>
+    <path d="M 20 0 L 180 0 L 200 20 L 200 152 L 100 232 L 0 152 L 0 20 Z" style="fill: var(--quote-bg); stroke: var(--quote-border); stroke-width: 1"/>
+    <path d="M 30 9 L 170 9 L 188 27 L 188 148 L 100 220 L 12 148 L 12 27 Z" style="fill: none; stroke: var(--quote-border); stroke-width: 0.6; opacity: 0.5"/>
+    <line x1="100" y1="30" x2="100" y2="188" style="stroke: var(--icons); stroke-width: 2.2; stroke-linecap: square"/>
+    <line x1="100" y1="103" x2="59" y2="148" style="stroke: var(--icons); stroke-width: 2.2; stroke-linecap: square"/>
+    <line x1="100" y1="103" x2="141" y2="148" style="stroke: var(--icons); stroke-width: 2.2; stroke-linecap: square"/>
+    <line x1="0" y1="20" x2="14" y2="20" style="stroke: var(--quote-border); stroke-width: 0.5"/>
+    <line x1="186" y1="20" x2="200" y2="20" style="stroke: var(--quote-border); stroke-width: 0.5"/>
   </svg>
   <div class="arx-wordmark">ARX RUNA</div>
   <div class="arx-tagline">Encrypted here &nbsp;·&nbsp; Stored anywhere</div>

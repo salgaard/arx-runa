@@ -642,7 +642,7 @@ pub fn FileList(
     sharing_supported: Signal<bool>,
 ) -> impl IntoView {
     view! {
-        <div class="flex flex-col divide-y divide-border-subtle">
+        <div class="flex flex-col divide-y divide-border-subtle" data-testid="file-list">
             <For
                 each=move || entries.get()
                 key=|e| e.id.clone()

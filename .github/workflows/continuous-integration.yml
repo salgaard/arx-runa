@@ -52,3 +52,62 @@ jobs:
 
       - name: Release build
         run: cargo build --workspace --release
+
+  e2e:
+    name: e2e (Zero-Trace frontend)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libudev-dev \
+            xvfb \
+            webkit2gtk-driver
+
+      - name: Prepare CI rclone sidecar stub
+        run: |
+          mkdir -p src-tauri/bin
+          touch src-tauri/bin/rclone-x86_64-unknown-linux-gnu
+          chmod +x src-tauri/bin/rclone-x86_64-unknown-linux-gnu
+
+      - name: Install Trunk (WASM bundler)
+        run: cargo install trunk --locked
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --locked
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+
+      - name: Install root npm dependencies (Tailwind CSS)
+        run: npm install
+
+      - name: Install e2e npm dependencies
+        run: npm install
+        working-directory: src-tauri/tests/e2e
+
+      - name: Run e2e tests
+        # npm test builds the app via `cargo tauri build --no-bundle` (onPrepare hook)
+        # before launching tauri-driver. E2E_RELEASE=1 selects the release profile.
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" npm test
+        working-directory: src-tauri/tests/e2e
+        env:
+          E2E_RELEASE: "1"

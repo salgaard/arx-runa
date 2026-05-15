@@ -285,6 +285,132 @@ mod security_audit {
         );
     }
 
+    /// Verifies that the `tempfile` crate is not used inside the decrypt pipeline.
+    ///
+    /// The decrypt pipeline must never write plaintext to OS temp directories.
+    /// Sibling atomic-swap files (`.arx-runa-decrypt-*.tmp`) use `std::fs`, not
+    /// the `tempfile` crate, and are in the user-chosen destination directory.
+    /// Any use of `tempfile::` in the pipeline would risk writing plaintext to
+    /// an OS-managed temp path (e.g. `%LOCALAPPDATA%\Temp`) where it could be
+    /// indexed by Windows Search or read by AV before deletion.
+    #[test]
+    fn test_no_tempfile_crate_in_decrypt_pipeline() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let pipeline_src = Path::new(manifest_dir).join("src/storage/pipeline");
+        let target = concat!("tempfile", "::");
+
+        let files = collect_rs_source(&pipeline_src);
+        assert!(
+            !files.is_empty(),
+            "No .rs files found under {pipeline_src:?} — check CARGO_MANIFEST_DIR",
+        );
+
+        let mut violations: Vec<String> = Vec::new();
+        for (path, content) in &files {
+            for (line_no, line) in content.lines().enumerate() {
+                let trimmed = line.trim_start();
+                // Skip comments and `use` import lines — test modules may import TempDir.
+                if line.contains(target)
+                    && !trimmed.starts_with("//")
+                    && !trimmed.starts_with("use ")
+                {
+                    violations.push(format!(
+                        "{}:{}: {}",
+                        path.display(),
+                        line_no + 1,
+                        line.trim(),
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            violations.is_empty(),
+            "Zero-Trace violation: `{}` found in decrypt pipeline (plaintext must never \
+             be written to OS temp dirs):\n  {}",
+            target,
+            violations.join("\n  "),
+        );
+    }
+
+    /// Verifies that the `tempfile` crate is not used in `file_commands.rs`.
+    ///
+    /// `get_file_content` must decrypt entirely in RAM via `download_file_to_memory`.
+    /// Any reintroduction of `tempfile::` here would write decrypted plaintext to
+    /// the OS temp directory before returning it over IPC.
+    #[test]
+    fn test_no_tempfile_crate_in_file_commands() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let file_commands = Path::new(manifest_dir).join("src/ui/file_commands.rs");
+        let target = concat!("tempfile", "::");
+
+        let content = fs::read_to_string(&file_commands).unwrap_or_else(|e| {
+            panic!(
+                "security audit: cannot read {}: {e}",
+                file_commands.display()
+            )
+        });
+
+        let violations: Vec<String> = content
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| line.contains(target) && !line.trim_start().starts_with("//"))
+            .map(|(i, line)| format!("{}:{}: {}", file_commands.display(), i + 1, line.trim()))
+            .collect();
+
+        assert!(
+            violations.is_empty(),
+            "Zero-Trace violation: `{}` found in file_commands.rs. \
+             `get_file_content` must decrypt to memory, not to OS temp dirs:\n  {}",
+            target,
+            violations.join("\n  "),
+        );
+    }
+
+    /// Verifies that no key material, passwords, or derived keys are logged
+    /// anywhere in the `src/storage/` module.
+    ///
+    /// Storage operations should never emit raw key bytes to tracing sinks.
+    /// This catches accidental `tracing::debug!(key = ...)` patterns that would
+    /// write key material to log files, violating Zero-Trace.
+    #[test]
+    fn test_no_key_material_logged_in_storage_module() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let storage_src = Path::new(manifest_dir).join("src/storage");
+        let tracing_call = concat!("tracing", "::");
+        let key_words = [
+            "master_key",
+            "file_key",
+            "sqlcipher_key",
+            "kek",
+            "manifest_key",
+        ];
+
+        let files = collect_rs_source(&storage_src);
+        let mut violations: Vec<String> = Vec::new();
+        for (path, content) in &files {
+            for (line_no, line) in content.lines().enumerate() {
+                if line.contains(tracing_call)
+                    && key_words.iter().any(|kw| line.contains(kw))
+                    && !line.trim_start().starts_with("//")
+                {
+                    violations.push(format!(
+                        "{}:{}: {}",
+                        path.display(),
+                        line_no + 1,
+                        line.trim(),
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            violations.is_empty(),
+            "Zero-Trace violation: key material name found in tracing macro in storage module:\n  {}",
+            violations.join("\n  "),
+        );
+    }
+
     /// Verifies that the Zero-Trace state-clearing hook is wired in `src/app.rs`.
     ///
     /// On the `is_unlocked: true → false` transition the router's `Effect::new`
