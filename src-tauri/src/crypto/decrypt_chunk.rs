@@ -6,7 +6,7 @@
 
 use crate::crypto::checksum::VerifiedBlob;
 use crate::crypto::error::CryptoError;
-use crate::crypto::types::{ChunkIndex, FileId, FileKey};
+use crate::crypto::types::{ChunkIndex, FileId, FileKey, build_chunk_aad};
 use chacha20poly1305::{
     AeadInPlace, KeyInit, XChaCha20Poly1305, aead::generic_array::GenericArray,
 };
@@ -49,7 +49,7 @@ pub fn decrypt_chunk(
     let ciphertext_len = rest.len() - TAG_LEN;
     let (ciphertext_slice, tag_slice) = rest.split_at(ciphertext_len);
 
-    let aad = build_aad(file_id, chunk_index);
+    let aad = build_chunk_aad(file_id, chunk_index);
     let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(file_key.expose()));
     let nonce = GenericArray::from_slice(nonce_slice);
     let tag = GenericArray::from_slice(tag_slice);
@@ -63,13 +63,6 @@ pub fn decrypt_chunk(
             Err(CryptoError::DecryptionFailed)
         }
     }
-}
-
-fn build_aad(file_id: &FileId, chunk_index: ChunkIndex) -> [u8; 20] {
-    let mut aad = [0u8; 20];
-    aad[..16].copy_from_slice(file_id.as_bytes());
-    aad[16..].copy_from_slice(&chunk_index.to_be_bytes());
-    aad
 }
 
 #[cfg(test)]

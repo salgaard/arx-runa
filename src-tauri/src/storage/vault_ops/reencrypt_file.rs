@@ -41,8 +41,9 @@ pub async fn reencrypt_file(
     let wrapped_bytes = node
         .file_key_wrapped
         .ok_or_else(|| StorageError::Database("file node has no wrapped file key".to_owned()))?;
-    let old_file_key: FileKey = unwrap_file_key(&WrappedFileKey(wrapped_bytes), key_encryption_key)
-        .map_err(StorageError::from)?;
+    let old_file_key: FileKey =
+        unwrap_file_key(&WrappedFileKey::new(wrapped_bytes), key_encryption_key)
+            .map_err(StorageError::from)?;
 
     let new_file_key = generate_file_key();
     let new_file_key_wrapped =
@@ -79,7 +80,7 @@ pub async fn reencrypt_file(
     if let Err(error) = sqlcipher_store
         .replace_file_key_and_chunks(
             file_id,
-            new_file_key_wrapped.0,
+            *new_file_key_wrapped.as_bytes(),
             new_chunks.clone(),
             now_unix_seconds,
         )
@@ -259,7 +260,7 @@ mod tests {
             1,
             1,
             128,
-            Some(wrapped.0),
+            Some(*wrapped.as_bytes()),
         );
         let initial_chunks = vec![
             ChunkRecord {
@@ -319,7 +320,7 @@ mod tests {
         );
 
         let updated_node = store.get_node(file_id).await.expect("node should load");
-        assert_ne!(updated_node.file_key_wrapped, Some(wrapped.0));
+        assert_ne!(updated_node.file_key_wrapped, Some(*wrapped.as_bytes()));
     }
 
     /// Verifies that `reencrypt_file` returns `NotFound` when the file node does not exist.

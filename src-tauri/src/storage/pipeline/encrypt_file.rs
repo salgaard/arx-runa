@@ -160,6 +160,89 @@ async fn write_blob_file(
         .map_err(|error| StorageError::Io(error.to_string()))
 }
 
+/// Encrypts an in-memory byte slice into fixed-size encrypted chunk blobs in staging.
+///
+/// Equivalent to [`encrypt_file`] but operates on bytes already in RAM (e.g. after
+/// EXIF stripping) rather than reading from disk.  Zero-pads the final chunk to
+/// `chunk_size_bytes` to match the fixed-size invariant.  Returns an empty vec for
+/// empty input.  The callback MUST NOT import or depend on `tauri::`.
+pub async fn encrypt_bytes(
+    source_bytes: Vec<u8>,
+    file_id: Uuid,
+    file_key: &FileKey,
+    metadata_store: &dyn MetadataStore,
+    staging_directory: &Path,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+) -> Result<Vec<ChunkRecord>, StorageError> {
+    if source_bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let chunk_size_bytes = read_chunk_size_bytes(metadata_store).await?;
+    let chunk_size_usize = usize::try_from(chunk_size_bytes)
+        .map_err(|error| StorageError::Database(error.to_string()))?;
+    let file_size = source_bytes.len() as u64;
+    let crypto_file_id = FileId::from_uuid(file_id);
+    let mut chunk_records = Vec::new();
+    let mut staged_blob_names: Vec<String> = Vec::new();
+    let mut chunk_index = 0u32;
+    let mut bytes_processed: u64 = 0u64;
+
+    for chunk_data in source_bytes.chunks(chunk_size_usize) {
+        let bytes_read = chunk_data.len();
+        let mut plaintext = Zeroizing::new(vec![0u8; chunk_size_usize]);
+        plaintext[..bytes_read].copy_from_slice(chunk_data);
+
+        let owned_plaintext = std::mem::take(plaintext.as_mut());
+        let wire_blob = encrypt_chunk(
+            owned_plaintext,
+            file_key,
+            &crypto_file_id,
+            ChunkIndex::new(chunk_index),
+        )
+        .map_err(|error| {
+            // Best-effort cleanup before surfacing the error
+            let names = staged_blob_names.clone();
+            let dir = staging_directory.to_path_buf();
+            tokio::task::spawn(async move {
+                cleanup_staged_blobs(&dir, &names).await;
+            });
+            StorageError::from(error)
+        })?;
+
+        let checksum = compute_checksum(&wire_blob);
+        let blob_name = Uuid::new_v4().hyphenated().to_string();
+        staged_blob_names.push(blob_name.clone());
+        if let Err(error) = write_blob_file(staging_directory, &blob_name, &wire_blob).await {
+            cleanup_staged_blobs(staging_directory, &staged_blob_names).await;
+            return Err(error);
+        }
+
+        bytes_processed += bytes_read as u64;
+        if let Some(cb) = progress {
+            cb(bytes_processed, file_size);
+        }
+
+        chunk_records.push(ChunkRecord {
+            chunk_id: Uuid::new_v4(),
+            node_id: NodeId::new(Uuid::nil()),
+            chunk_index,
+            blob_name,
+            size_padded: chunk_size_bytes,
+            blake3_checksum: checksum.0,
+            epoch_blob_id: None,
+            byte_offset: None,
+            byte_length: None,
+        });
+
+        chunk_index = chunk_index
+            .checked_add(1)
+            .ok_or_else(|| StorageError::ConstraintViolation("chunk_index overflow".to_owned()))?;
+    }
+
+    Ok(chunk_records)
+}
+
 /// Removes staged blobs after a partial encryption failure.
 async fn cleanup_staged_blobs(staging_directory: &Path, blob_names: &[String]) {
     for blob_name in blob_names {

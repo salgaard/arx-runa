@@ -84,9 +84,10 @@ RFC 5869 HKDF is used to derive three purpose-specific keys from `master_key`. E
 ```rust
 /// Derives vault-level keys from the master key bytes.
 ///
-/// # Panics
-/// Panics if HKDF expansion fails (should never happen with valid inputs).
-pub fn derive_vault_keys(master_key_bytes: &[u8; 32]) -> VaultKeys;
+/// # Errors
+/// Returns `CryptoError::KeyDerivationFailed` if HKDF expansion fails (should never happen
+/// with valid inputs; treated as a fatal internal error by callers).
+pub fn derive_vault_keys(master_key_bytes: &[u8; 32]) -> Result<VaultKeys, CryptoError>;
 
 pub struct VaultKeys {
     pub key_encryption_key: KeyEncryptionKey,
@@ -130,10 +131,13 @@ Total: 72 bytes.
 
 ```rust
 /// Wraps a file key with the key encryption key.
+///
+/// # Errors
+/// Returns `CryptoError::KeyWrapFailed` if the cipher operation fails.
 pub fn wrap_file_key(
     file_key: &FileKey,
     key_encryption_key: &KeyEncryptionKey,
-) -> WrappedFileKey;
+) -> Result<WrappedFileKey, CryptoError>;
 
 /// Unwraps a file key.
 ///
@@ -172,13 +176,16 @@ where `vault_id_bytes` is the UUID v4 bytes of the vault (16 bytes raw, not the 
 /// * `recovery_key` - Derived from the user's BIP-39 recovery phrase via Argon2id
 /// * `vault_id` - The vault's UUID v4; included in AAD to prevent cross-vault attacks
 ///
+/// # Errors
+/// Returns `CryptoError::KeyWrapFailed` if the cipher operation fails.
+///
 /// # Returns
 /// 72-byte wire blob: [24-byte nonce | 32-byte encrypted master_key | 16-byte tag]
 pub fn wrap_master_key_for_recovery(
     master_key: &MasterKey,
     recovery_key: &RecoveryKey,
     vault_id: &VaultId,
-) -> WrappedMasterKey;
+) -> Result<WrappedMasterKey, CryptoError>;
 
 /// Unwraps `master_key` from a vault header recovery slot.
 ///
@@ -194,19 +201,6 @@ pub fn unwrap_master_key_from_recovery(
     recovery_key: &RecoveryKey,
     vault_id: &VaultId,
 ) -> Result<MasterKey, CryptoError>;
-```
-
-New types:
-
-```rust
-/// 32-byte recovery key derived from the user's BIP-39 phrase via Argon2id.
-/// Zeroized on drop. Never stored — derived on demand from the phrase.
-pub struct RecoveryKey(Zeroizing<[u8; 32]>);
-
-/// 72-byte wire blob: [nonce | encrypted master_key | tag].
-/// Stored in the vault header recovery slot. Does not implement ZeroizeOnDrop
-/// because it is ciphertext, not key material.
-pub struct WrappedMasterKey([u8; 72]);
 ```
 
 Recovery-slot Argon2id parameter policy is owned by the authentication design (`same_params_as_primary`). This module consumes `RecoveryKey` as an input type and does not redefine KDF cost constants.
@@ -252,12 +246,16 @@ Chunk size is intentionally defined outside this module. `encrypt_chunk`/`decryp
 ///
 /// # Returns
 /// Wire-format blob: [nonce | ciphertext | tag]
+///
+/// # Errors
+/// Returns `CryptoError::EncryptionFailed` if the cipher operation fails (should never
+/// happen with valid inputs).
 pub fn encrypt_chunk(
     plaintext: Vec<u8>,
     file_key: &FileKey,
     file_id: &FileId,
     chunk_index: ChunkIndex,
-) -> Vec<u8>;
+) -> Result<Vec<u8>, CryptoError>;
 
 /// Decrypts a wire-format blob, returning the plaintext.
 ///
@@ -265,7 +263,7 @@ pub fn encrypt_chunk(
 /// Returns `CryptoError::DecryptionFailed` if authentication fails.
 /// Returns `CryptoError::InvalidBlobFormat` if the blob is too short.
 pub fn decrypt_chunk(
-    blob: &[u8],
+    blob: VerifiedBlob,
     file_key: &FileKey,
     file_id: &FileId,
     chunk_index: ChunkIndex,
@@ -391,6 +389,19 @@ pub struct ManifestKey(SecretBox<[u8; 32]>);
 
 /// Wrapped file key (72 bytes: nonce + encrypted key + tag).
 pub struct WrappedFileKey([u8; 72]);
+
+/// 256-bit master vault key. Never stored — only held in memory.
+#[derive(ZeroizeOnDrop)]
+pub struct MasterKey(SecretBox<[u8; 32]>);
+
+/// 256-bit recovery key derived from BIP-39 phrase via Argon2id.
+/// Never stored — derived on demand from the phrase.
+#[derive(ZeroizeOnDrop)]
+pub struct RecoveryKey(SecretBox<[u8; 32]>);
+
+/// 72-byte wire blob: [nonce | encrypted master_key | tag].
+/// Stored in the vault header recovery slot.
+pub struct WrappedMasterKey([u8; 72]);
 ```
 
 ### Domain Types (newtypes for type safety)
@@ -416,6 +427,17 @@ impl ChunkIndex {
     pub fn as_u32(&self) -> u32 { self.0 }
     pub fn to_be_bytes(&self) -> [u8; 4] { self.0.to_be_bytes() }
 }
+
+/// Vault identifier (UUID v4 as raw bytes). Used in recovery AAD.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VaultId([u8; 16]);
+
+impl VaultId {
+    pub fn new(bytes: [u8; 16]) -> Self { Self(bytes) }
+    pub fn as_bytes(&self) -> &[u8; 16] { &self.0 }
+    pub fn from_uuid(uuid: uuid::Uuid) -> Self { Self(*uuid.as_bytes()) }
+    pub fn to_uuid(&self) -> uuid::Uuid { uuid::Uuid::from_bytes(self.0) }
+}
 ```
 
 ---
@@ -437,12 +459,23 @@ pub enum CryptoError {
     #[error("key unwrap failed")]
     KeyUnwrapFailed,
 
+    #[error("key wrap failed")]
+    KeyWrapFailed,
+
+    #[error("encryption failed")]
+    EncryptionFailed,
+
+    #[error("key derivation failed")]
+    KeyDerivationFailed,
+
     #[error("checksum mismatch: blob has been tampered with or corrupted")]
     ChecksumMismatch,
 }
 ```
 
-`KeyUnwrapFailed` is reserved for key-wrapping call sites. Authentication
+`KeyUnwrapFailed` is reserved for key-unwrapping call sites. `KeyWrapFailed` is for wrap
+operations (`wrap_file_key`, `wrap_master_key_for_recovery`). `EncryptionFailed` is returned
+by `encrypt_chunk`. `KeyDerivationFailed` is returned by `derive_vault_keys`. Authentication
 failures in decrypt and unwrap flows still map to `DecryptionFailed`.
 
 ---
@@ -460,6 +493,7 @@ src-tauri/src/crypto/
 ├── encrypt_chunk.rs        # encrypt_chunk()
 ├── decrypt_chunk.rs        # decrypt_chunk()
 ├── wrap_key.rs             # wrap_file_key(), unwrap_file_key()
+├── recovery_wrap.rs        # wrap_master_key_for_recovery(), unwrap_master_key_from_recovery()
 ├── checksum.rs             # compute_checksum()
 └── generate_file_key.rs    # generate_file_key()
 ```

@@ -12,6 +12,7 @@ use zeroize::Zeroize;
 
 use crate::components::{
     Button, ChunkSizeSelector, DestinationKind, DestinationSelector, EpochBufferToggle, Input,
+    Modal,
 };
 use crate::destinations::GdriveShareSetupModal;
 use crate::dialog::{open_directory_dialog, open_file_dialog};
@@ -19,8 +20,8 @@ use crate::invoke::invoke_command;
 use crate::ipc_types::VaultSummary;
 use crate::ipc_types::{
     AuthResponse, AuthenticateRequest, CreateVaultRequest, DestinationSessionConfig,
-    RecoverVaultFromCloudRequest, RecoverVaultWithPhraseRequest, SessionStatus,
-    SetGdriveServiceAccountRequest,
+    RecoverVaultFromCloudRequest, RecoverVaultFromCloudWithPhraseRequest,
+    RecoverVaultWithPhraseRequest, SessionStatus, SetGdriveServiceAccountRequest,
 };
 use crate::state::use_session_actions;
 
@@ -358,6 +359,13 @@ pub fn VaultCreationPage(
     let (pending_sa_path, set_pending_sa_path) = signal::<Option<String>>(None);
     let show_gdrive_sharing_modal = RwSignal::new(false);
 
+    // ── Tier 2 key-file security warning (shown after successful creation) ───
+    let show_key_warning_modal = RwSignal::new(false);
+    let created_vault_id = RwSignal::new(String::new());
+
+    // ── Recovery phrase prompt (shown after creation for all tiers) ───────────
+    let show_recovery_modal = RwSignal::new(false);
+
     // ── Submit state ──────────────────────────────────────────────────────────
     let (loading, set_loading) = signal(false);
 
@@ -392,7 +400,6 @@ pub fn VaultCreationPage(
         let clamped_chunk = clamp_chunk_size(chunk_size_bytes.get());
         set_loading.set(true);
 
-        let session_actions = session_actions;
         let set_loading = set_loading;
         let set_password = set_password;
 
@@ -430,7 +437,12 @@ pub fn VaultCreationPage(
                         "Vault '{}' created successfully!",
                         vault_name_value
                     ));
-                    session_actions.complete_success(resp.vault_id);
+                    created_vault_id.set(resp.vault_id);
+                    if tier_value == 2 {
+                        show_key_warning_modal.set(true);
+                    } else {
+                        show_recovery_modal.set(true);
+                    }
                 }
                 Err(err) => {
                     crate::components::use_toast().error(&err.message);
@@ -660,6 +672,81 @@ pub fn VaultCreationPage(
                     ().into_any()
                 }
             }}
+
+            <Modal
+                open=Signal::derive(move || show_key_warning_modal.get())
+                on_close=move || {}
+            >
+                <div class="p-6 max-w-lg w-full">
+                    <h3 class="text-xl font-semibold text-bone mb-4">"Store Your USB Key Securely"</h3>
+                    <p class="text-sm text-text-secondary mb-6">
+                        "This key file is required to unlock your vault. Losing it means "
+                        <strong class="text-bone">"permanent data loss"</strong>
+                        " for this vault unless you configure a recovery phrase in Security settings."
+                    </p>
+                    <Button
+                        variant="primary"
+                        on_click=move |_: leptos::ev::MouseEvent| {
+                            show_key_warning_modal.set(false);
+                            show_recovery_modal.set(true);
+                        }
+                    >
+                        "I understand"
+                    </Button>
+                </div>
+            </Modal>
+
+            <Modal
+                open=Signal::derive(move || show_recovery_modal.get())
+                on_close=move || {}
+            >
+                <div class="p-6 max-w-lg w-full">
+                    <h3 class="text-xl font-semibold text-bone mb-4">"Set up a recovery phrase?"</h3>
+                    <p class="text-sm text-text-secondary mb-6">
+                        {move || if tier.get() == 2 {
+                            "Without a recovery phrase, losing your password or key file means "
+                        } else {
+                            "Without a recovery phrase, losing your password means "
+                        }}
+                        <strong class="text-bone">"permanent data loss"</strong>
+                        ". You can configure this now under Settings \u{2192} Security."
+                    </p>
+                    <div class="flex gap-3">
+                        <button
+                            type="button"
+                            class="flex-1 px-4 py-2 rounded-lg border border-border-default text-bone cursor-pointer hover:bg-surface-overlay transition-colors"
+                            on:click=move |_| {
+                                show_recovery_modal.set(false);
+                                session_actions.complete_success(created_vault_id.get());
+                            }
+                        >
+                            "Remind Me Later"
+                        </button>
+                        <Button
+                            variant="primary"
+                            on_click=move |_: leptos::ev::MouseEvent| {
+                                show_recovery_modal.set(false);
+                                // Push /settings to history so the Router
+                                // initialises on the Settings page once the vault
+                                // unlocks and the AppShell mounts.
+                                let _ = web_sys::window()
+                                    .and_then(|w| w.history().ok())
+                                    .map(|h| {
+                                        h.push_state_with_url(
+                                            &wasm_bindgen::JsValue::NULL,
+                                            "",
+                                            Some("/settings"),
+                                        )
+                                        .ok()
+                                    });
+                                session_actions.complete_success(created_vault_id.get());
+                            }
+                        >
+                            "Set Up Now"
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
         </div>
     }
 }
@@ -668,59 +755,124 @@ pub fn VaultCreationPage(
 
 /// Recovery page — downloads an existing cloud vault and imports it onto this device.
 ///
-/// Sections: Cloud Destination → Credentials (password + optional key file).
-/// Calls `recover_vault_from_cloud` (no active session required). On success,
-/// the session transitions to the unlocked state via `session_actions.complete_success`.
+/// Two modes selectable via a toggle:
+/// - **Password** — standard re-import using the existing password + optional key file.
+///   Calls `recover_vault_from_cloud`.
+/// - **Recovery phrase** — for when the password is forgotten. Derives the master key
+///   from the BIP-39 phrase, re-keys the vault to a new password, and installs the
+///   session. Calls `recover_vault_from_cloud_with_phrase`.
+///
+/// No active session is required for either mode.
 #[component]
 pub fn VaultRecoveryPage(
     /// Called when the user clicks "← Back" to return to the vault picker.
     on_back: impl Fn() + 'static + Clone,
 ) -> impl IntoView {
-    let (password, set_password) = signal(String::new());
-    let (key_file_path, set_key_file_path) = signal::<Option<String>>(None);
+    // ── Shared ──
     let (primary_destination, set_primary_destination) = signal(default_local_destination());
     let (loading, set_loading) = signal(false);
+    let use_phrase = RwSignal::new(false);
+
+    // ── Password mode ──
+    let (password, set_password) = signal(String::new());
+    let (key_file_path, set_key_file_path) = signal::<Option<String>>(None);
+
+    // ── Phrase mode ──
+    let (phrase, set_phrase) = signal(String::new());
+    let (new_password, set_new_password) = signal(String::new());
+    let (confirm_password, set_confirm_password) = signal(String::new());
+    let (new_key_file_path, set_new_key_file_path) = signal::<Option<String>>(None);
 
     let session_actions = use_session_actions();
     let on_back_cancel = on_back.clone();
 
     let on_submit = move |_| {
-        let mut password_value = password.get();
-        if password_value.is_empty() {
-            crate::components::use_toast().warning("Password is required");
-            return;
-        }
+        if use_phrase.get_untracked() {
+            // ── Phrase mode ──
+            let phrase_value = phrase.get_untracked();
+            let mut pw_value = new_password.get_untracked();
+            let confirm_value = confirm_password.get_untracked();
 
-        set_loading.set(true);
-        let session_actions = session_actions;
-        let set_loading = set_loading;
-        let set_password = set_password;
-
-        let req = RecoverVaultFromCloudRequest {
-            password: password_value.clone(),
-            key_file_path: key_file_path.get(),
-            primary_destination: primary_destination.get(),
-        };
-
-        leptos::task::spawn_local(async move {
-            let result = invoke_command::<RecoverVaultFromCloudRequest, AuthResponse>(
-                "recover_vault_from_cloud",
-                &req,
-            )
-            .await;
-            password_value.zeroize();
-            set_password.update(|s| s.zeroize());
-            set_loading.set(false);
-            match result {
-                Ok(resp) => {
-                    crate::components::use_toast().success("Vault recovered successfully");
-                    session_actions.complete_success(resp.vault_id);
-                }
-                Err(err) => {
-                    crate::components::use_toast().error(&err.message);
-                }
+            if phrase_value.trim().is_empty() {
+                crate::components::use_toast().warning("Recovery phrase is required");
+                return;
             }
-        });
+            if pw_value.is_empty() {
+                crate::components::use_toast().warning("New password is required");
+                return;
+            }
+            if pw_value != confirm_value {
+                crate::components::use_toast().warning("Passwords do not match");
+                return;
+            }
+
+            set_loading.set(true);
+
+            let req = RecoverVaultFromCloudWithPhraseRequest {
+                phrase: phrase_value,
+                new_password: pw_value.clone(),
+                new_key_file_path: new_key_file_path.get_untracked(),
+                primary_destination: primary_destination.get_untracked(),
+            };
+
+            leptos::task::spawn_local(async move {
+                let result =
+                    invoke_command::<RecoverVaultFromCloudWithPhraseRequest, AuthResponse>(
+                        "recover_vault_from_cloud_with_phrase",
+                        &req,
+                    )
+                    .await;
+                pw_value.zeroize();
+                set_new_password.update(|s| s.zeroize());
+                set_confirm_password.update(|s| s.zeroize());
+                set_phrase.update(|s| s.zeroize());
+                set_loading.set(false);
+                match result {
+                    Ok(resp) => {
+                        crate::components::use_toast().success("Vault recovered successfully");
+                        session_actions.complete_success(resp.vault_id);
+                    }
+                    Err(err) => {
+                        crate::components::use_toast().error(&err.message);
+                    }
+                }
+            });
+        } else {
+            // ── Password mode ──
+            let mut password_value = password.get_untracked();
+            if password_value.is_empty() {
+                crate::components::use_toast().warning("Password is required");
+                return;
+            }
+
+            set_loading.set(true);
+
+            let req = RecoverVaultFromCloudRequest {
+                password: password_value.clone(),
+                key_file_path: key_file_path.get_untracked(),
+                primary_destination: primary_destination.get_untracked(),
+            };
+
+            leptos::task::spawn_local(async move {
+                let result = invoke_command::<RecoverVaultFromCloudRequest, AuthResponse>(
+                    "recover_vault_from_cloud",
+                    &req,
+                )
+                .await;
+                password_value.zeroize();
+                set_password.update(|s| s.zeroize());
+                set_loading.set(false);
+                match result {
+                    Ok(resp) => {
+                        crate::components::use_toast().success("Vault recovered successfully");
+                        session_actions.complete_success(resp.vault_id);
+                    }
+                    Err(err) => {
+                        crate::components::use_toast().error(&err.message);
+                    }
+                }
+            });
+        }
     };
 
     let section_header = |title: &'static str| {
@@ -742,24 +894,110 @@ pub fn VaultRecoveryPage(
                         <DestinationSelector on_change=move |cfg| set_primary_destination.set(cfg) />
                     </div>
 
-                    <div class="mb-8">
-                        {section_header("Credentials")}
-                        <Input
-                            input_type="password"
-                            label="Password".to_string()
-                            value=password
-                            on_input=move |v| set_password.set(v)
-                        />
-                        <div>
-                            <label class="text-sm text-text-secondary block mb-1">
-                                "Key file (leave empty for Tier 1 / password-only vaults)"
-                            </label>
-                            <KeyFileIndicator
-                                detected_path=key_file_path
-                                on_manual_select=move |path| set_key_file_path.set(Some(path))
-                            />
-                        </div>
+                    // ── Mode toggle ──
+                    <div class="mb-6 flex rounded-lg border border-border-default overflow-hidden">
+                        <button
+                            type="button"
+                            class=move || if !use_phrase.get() {
+                                "flex-1 py-2 text-sm font-medium bg-rune text-bone cursor-pointer"
+                            } else {
+                                "flex-1 py-2 text-sm font-medium text-text-secondary cursor-pointer hover:bg-surface-overlay"
+                            }
+                            on:click=move |_| use_phrase.set(false)
+                        >
+                            "Password"
+                        </button>
+                        <button
+                            type="button"
+                            class=move || if use_phrase.get() {
+                                "flex-1 py-2 text-sm font-medium bg-rune text-bone cursor-pointer"
+                            } else {
+                                "flex-1 py-2 text-sm font-medium text-text-secondary cursor-pointer hover:bg-surface-overlay"
+                            }
+                            on:click=move |_| use_phrase.set(true)
+                        >
+                            "Recovery Phrase"
+                        </button>
                     </div>
+
+                    // ── Password mode fields ──
+                    {move || if !use_phrase.get() {
+                        view! {
+                            <div class="mb-8">
+                                {section_header("Credentials")}
+                                <Input
+                                    input_type="password"
+                                    label="Password".to_string()
+                                    value=password
+                                    on_input=move |v| set_password.set(v)
+                                />
+                                <div>
+                                    <label class="text-sm text-text-secondary block mb-1">
+                                        "Key file (leave empty for Tier 1 / password-only vaults)"
+                                    </label>
+                                    <KeyFileIndicator
+                                        detected_path=key_file_path
+                                        on_manual_select=move |path| set_key_file_path.set(Some(path))
+                                    />
+                                </div>
+                            </div>
+                        }.into_any()
+                    } else {
+                        // ── Phrase mode fields ──
+                        view! {
+                            <div class="mb-8">
+                                {section_header("Recovery Phrase")}
+                                <div class="mb-4">
+                                    <label class="text-sm text-text-secondary block mb-1">
+                                        "24-word recovery phrase"
+                                    </label>
+                                    <textarea
+                                        class="w-full px-3 py-2 bg-surface-overlay border border-border-default rounded text-bone focus:outline-none focus:ring-2 focus:ring-rune font-mono text-sm resize-none"
+                                        rows="4"
+                                        placeholder="Enter your 24 words separated by spaces"
+                                        prop:value=move || phrase.get()
+                                        on:input=move |ev| set_phrase.set(event_target_value(&ev))
+                                    />
+                                </div>
+                                {section_header("New Credentials")}
+                                <Input
+                                    input_type="password"
+                                    label="New Password".to_string()
+                                    value=new_password
+                                    on_input=move |v| set_new_password.set(v)
+                                />
+                                <Input
+                                    input_type="password"
+                                    label="Confirm New Password".to_string()
+                                    value=confirm_password
+                                    on_input=move |v| set_confirm_password.set(v)
+                                />
+                                <div>
+                                    <label class="text-sm text-text-secondary block mb-1">
+                                        "New key file destination (Tier 2 vaults only — leave empty for Tier 1)"
+                                    </label>
+                                    <div class="flex items-center gap-3">
+                                        <button
+                                            type="button"
+                                            class="px-3 py-1.5 rounded border border-border-default text-sm text-bone cursor-pointer hover:bg-surface-overlay transition-colors"
+                                            on:click=move |_| {
+                                                leptos::task::spawn_local(async move {
+                                                    if let Some(path) = open_directory_dialog().await {
+                                                        set_new_key_file_path.set(Some(path));
+                                                    }
+                                                });
+                                            }
+                                        >
+                                            "Choose Directory"
+                                        </button>
+                                        {move || new_key_file_path.get().map(|p| view! {
+                                            <span class="text-sm text-text-secondary truncate">{p}</span>
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+                        }.into_any()
+                    }}
 
                     <div class="flex gap-3">
                         <button
@@ -820,6 +1058,12 @@ pub fn RecoverWithPhrasePage(
             }
             if pw_value != confirm_value {
                 crate::components::use_toast().warning("Passwords do not match");
+                return;
+            }
+
+            if vault_tier == 2 && key_file_path.get().is_none() {
+                crate::components::use_toast()
+                    .warning("Key file destination is required for Tier 2 vaults");
                 return;
             }
 
@@ -904,12 +1148,26 @@ pub fn RecoverWithPhrasePage(
                             view! {
                                 <div>
                                     <label class="text-sm text-text-secondary block mb-1">
-                                        "Key file"
+                                        "Key file destination"
                                     </label>
-                                    <KeyFileIndicator
-                                        detected_path=key_file_path
-                                        on_manual_select=move |p| set_key_file_path.set(Some(p))
-                                    />
+                                    <div class="flex items-center gap-3">
+                                        <button
+                                            type="button"
+                                            class="px-3 py-1.5 rounded border border-border-default text-sm text-bone cursor-pointer hover:bg-surface-overlay transition-colors"
+                                            on:click=move |_| {
+                                                leptos::task::spawn_local(async move {
+                                                    if let Some(path) = open_directory_dialog().await {
+                                                        set_key_file_path.set(Some(path));
+                                                    }
+                                                });
+                                            }
+                                        >
+                                            "Choose Directory"
+                                        </button>
+                                        {move || key_file_path.get().map(|p| view! {
+                                            <span class="text-sm text-text-secondary truncate">{p}</span>
+                                        })}
+                                    </div>
                                 </div>
                             }.into_any()
                         } else {

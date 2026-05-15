@@ -1,7 +1,7 @@
 # Arx Runa — Cloud Synchronisation Design
 
 > Status: Design complete. Implementation target: Phase 4.
-> Last updated: 2026-04-12
+> Last updated: 2026-05-15
 
 ---
 
@@ -20,7 +20,7 @@
 
 ### Interface contract
 
-- Cloud transport boundary is `CloudTransport` with `upload_blob`, `download_blob`, `delete_blob`, and `list_blobs` over cloud-root-relative paths.
+- Cloud transport boundary is `CloudTransport` with core methods `upload_blob`, `download_blob`, `delete_blob`, `list_blobs`, and default-impl extension points `is_configured`, `cleanup_session_artifacts`, `ensure_container`, `ensure_folder`, and `generate_share_credentials` over cloud-root-relative paths.
 - Synchronisation boundary includes push, pull, backup sync, and migration flows with typed progress events (`SyncProgress`, `MigrationProgress`).
 - Endpoint/session configuration boundary is expressed through `CloudEndpoint`, `DestinationSession`, and `SyncConfig`.
 
@@ -128,6 +128,61 @@ pub trait CloudTransport: Send + Sync {
         &self,
         remote_prefix: &str,
     ) -> Result<Vec<String>, CloudTransportError>;
+
+    /// Returns `true` when this transport is backed by a real cloud backend.
+    ///
+    /// The default returns `true`. `NoOpCloudTransport` overrides this to
+    /// return `false` so callers can skip cloud operations that are meaningless
+    /// for local-only vaults without attempting a round-trip that will always fail.
+    fn is_configured(&self) -> bool {
+        true
+    }
+
+    /// Removes session-scoped artifacts (e.g., rclone.conf temp files).
+    ///
+    /// Called on session lock or timeout. Implementations must be idempotent
+    /// (file not found is not an error). Default is a no-op.
+    async fn cleanup_session_artifacts(&self) -> Result<(), CloudTransportError> {
+        Ok(())
+    }
+
+    /// Creates the storage container (bucket/folder) if it does not already exist.
+    ///
+    /// Called once during first push / vault initialisation. Default is a no-op
+    /// for transports that do not require explicit container creation (e.g.,
+    /// local-path and external-drive transports).
+    async fn ensure_container(&self) -> Result<(), CloudTransportError> {
+        Ok(())
+    }
+
+    /// Pre-creates a sub-folder at `remote_prefix` before concurrent uploads begin.
+    ///
+    /// Google Drive creates duplicate folders when two `rclone copyto` processes
+    /// race to mkdir the same parent concurrently. Calling this once, sequentially,
+    /// before any parallel uploads eliminates the race. Default is a no-op; the
+    /// Rclone backend overrides it.
+    async fn ensure_folder(&self, remote_prefix: &str) -> Result<(), CloudTransportError> {
+        let _ = remote_prefix;
+        Ok(())
+    }
+
+    /// Generates scoped credentials for a recipient to download a shared prefix.
+    ///
+    /// Returns `None` when the backend does not support credential generation
+    /// (e.g., local-only transports). Callers must treat `None` as "fall back
+    /// to path-prefix-only endpoint".
+    ///
+    /// `ttl_seconds` is the credential lifetime. `receipt_requested` signals
+    /// the backend to notify the sender when the recipient first accesses the prefix.
+    async fn generate_share_credentials(
+        &self,
+        path_prefix: &str,
+        ttl_seconds: u32,
+        receipt_requested: bool,
+    ) -> Result<Option<serde_json::Value>, CloudTransportError> {
+        let _ = (path_prefix, ttl_seconds, receipt_requested);
+        Ok(None)
+    }
 }
 
 /// Errors that can arise from cloud transport operations.
@@ -136,6 +191,10 @@ pub enum CloudTransportError {
     /// The requested remote path does not exist.
     #[error("blob not found at remote path")]
     NotFound,
+
+    /// S3 bucket name is already taken by another account.
+    #[error("bucket name is already taken by another account")]
+    BucketNameTaken,
 
     /// Cloud provider authentication failed (expired token, wrong credentials).
     #[error("cloud transport authentication failed")]
@@ -156,6 +215,10 @@ pub enum CloudTransportError {
         exit_code: i32,
         stderr_sanitised: String,
     },
+
+    /// The cloud provider does not support sharing (e.g., local-only transport).
+    #[error("sharing is not supported by this cloud provider: {0}")]
+    SharingNotSupported(String),
 
     /// Catch-all for unexpected errors.
     #[error("cloud transport error: {0}")]
@@ -923,29 +986,65 @@ When a user creates a new vault locally and pushes for the first time, the cloud
 
 ## Pull Flow
 
-The pull flow is used for new-device recovery or re-synchronisation after another device has pushed changes.
+The pull flow is used for new-device recovery or re-synchronisation after another device has pushed changes. It is split between two layers of responsibility.
+
+### Phase A — Caller responsibility (auth layer)
 
 ```
-1.  download_blob("vault-header.json", temp_path)
-2.  Parse VaultHeader → obtain salt, argon2_params, key_file_blake3
-3.  User authenticates: password + USB key file detected via DeviceMonitor
-    → Argon2id(password || key_file, salt, params) → master_key
-    → HKDF → key_encryption_key, sqlcipher_key, manifest_key
-4.  Decrypt and import manifest (Section "Manifest Cloud Backup" download flow)
-5.  Open local SQLCipher with sqlcipher_key
-6.  Read all chunk rows from manifest → list of (blob_name, blake3_checksum)
-    (performed via a SQLCipher-specific query helper in the sync module; not
-    part of the `MetadataStore` trait)
-7.  Filter to blobs not already present in staging_dir or local blob store
-8.  Download in parallel (tokio::JoinSet, max_concurrent = 4):
-    For each blob_name:
-      a. download_blob("vault/<blob_name>.blob", staging_dir/<blob_name>.blob)
-      b. Verify: blake3::hash(downloaded_file) == blake3_checksum from manifest
-         On mismatch: delete downloaded file, record error (do not abort)
-9.  Report all verification failures to the caller
+1. download_blob("vault-header.json", temp_path)
+2. Parse VaultHeader → obtain salt, argon2_params, key_file_blake3
+3. User authenticates: password + USB key file detected via DeviceMonitor
+   → Argon2id(password || key_file, salt, params) → master_key
+   → HKDF → key_encryption_key, sqlcipher_key, manifest_key
+4. Decrypt and import manifest (Section "Manifest Cloud Backup" download flow)
+   → open SqlCipherMetadataStore with sqlcipher_key
 ```
 
-BLAKE3 verification is mandatory before any blob is passed to `decrypt_chunk`. A corrupted or tampered blob is rejected at step 8b. The Poly1305 tag in `decrypt_chunk` (Phase 1) provides a second layer of integrity verification, but the BLAKE3 check is faster and avoids wasting CPU on known-bad data.
+### Phase B — `pull_vault()` (blob download only)
+
+`pull_vault` receives the already-open `metadata_store_after_import`; it does not re-authenticate or re-import the manifest.
+
+```
+1. list_sync_chunks() from metadata_store_after_import
+   → list of (blob_name, blake3_checksum)
+2. For each chunk:
+   - Check staging/cache/<blob_name>.blob:
+     present + valid checksum → skip (blobs_skipped_present++)
+     present + bad checksum   → delete file, re-download
+   - Check staging/pending/<blob_name>.blob:
+     present + valid checksum → skip (locally staged but not yet pushed)
+   - Otherwise → add to fetch list
+3. Download missing blobs in parallel (tokio::JoinSet, max_concurrent from SyncConfig):
+   For each blob_name:
+     a. download_blob("vault/<blob_name>.blob", staging/cache/<blob_name>.blob)
+     b. Verify: blake3::hash(downloaded_file) == blake3_checksum from manifest
+        On mismatch: delete downloaded file, record failure (do not abort)
+4. Report verification and transport failures to caller via PullReport
+5. drain_pending_deletions() — see Cloud Garbage Collection section
+```
+
+BLAKE3 verification is mandatory before any blob is passed to `decrypt_chunk`. A corrupted or tampered blob is rejected at step 3b. The Poly1305 tag in `decrypt_chunk` (Phase 1) provides a second layer of integrity verification, but the BLAKE3 check is faster and avoids wasting CPU on known-bad data.
+
+---
+
+## On-Demand Blob Fetch
+
+After a successful push, staged blobs are deleted from disk (push step 7b). If the user subsequently opens a file from the vault browser, the required blobs may no longer be present locally.
+
+`fetch_missing_file_blobs(node_id, db, staging_dir, cloud_transport)`:
+
+```
+1. Load all chunk rows for node_id from the metadata store
+2. Resolve epoch-packed chunks to their epoch blob name + checksum
+3. Deduplicate blob list (chunks of a multi-chunk file may share an epoch blob)
+4. For each blob_name:
+   - If present in staging/pending/ or staging/cache/ → skip
+   - Otherwise: download_blob("vault/<blob_name>.blob", staging/cache/<blob_name>.blob)
+     with BLAKE3 checksum verification (reuses download_blob_task)
+5. Error if any blob fails to download or verify (file cannot be decrypted)
+```
+
+This is a targeted recovery, not a full pull. It downloads only the blobs required to decrypt one file node, not the entire vault. The caller is responsible for passing the correct `node_id`.
 
 ---
 
@@ -991,18 +1090,34 @@ This prevents silent data loss at the cost of manual resolution. Future phases m
 
 ## Cloud Garbage Collection
 
-When a file is deleted from the vault:
+Cloud deletions are decoupled from local file deletion via a **persistent pending-deletions queue** in the SQLCipher database. This allows local deletes to succeed even when the device is offline; cloud cleanup is deferred and retried on the next pull.
+
+### Enqueue on file delete
 
 ```
-1. MetadataStore::delete_node(node_id) returns list of blob_names
-   (chunk rows CASCADE-deleted from manifest)
-2. For each blob_name:
-   delete_blob("vault/<blob_name>.blob")
-3. Delete any corresponding staging file if it still exists
-4. Failures in step 2 are logged but do not fail the local delete
+1. MetadataStore::delete_node(node_id) CASCADE-deletes chunk rows
+   → returns list of blob_names no longer referenced by any node
+2. Each blob_name is written to the pending_deletions queue in SQLCipher
+3. Local staging file (staging/pending/<blob_name>.blob) is deleted immediately
+4. The local delete succeeds regardless of cloud reachability
 ```
 
-**Best-effort semantics.** An orphaned blob in the cloud is opaque ciphertext with no manifest entry to contextualise it. It costs storage space but does not compromise security. The user can clean orphans via Rclone directly if desired.
+### Drain on pull (`drain_pending_deletions`)
+
+Called at the end of every successful `pull_vault`:
+
+```
+Loop until queue empty or zero-progress batch:
+  1. Fetch next batch from pending_deletions queue
+  2. For each blob_name:
+     a. delete_blob("vault/<blob_name>.blob")
+        Ok(())    → mark_deletion_complete(); remove from queue
+        NotFound  → blob was never uploaded; treat as success; remove from queue
+        Other err → log warning; leave in queue for next pull (retry)
+  3. If entire batch made zero progress: stop loop to avoid infinite spin
+```
+
+**Best-effort semantics.** An orphaned blob in the cloud is opaque ciphertext with no manifest entry to contextualise it. It costs storage space but does not compromise security. `NotFound` is treated as success because the desired state (blob absent) is already satisfied — the blob may have been staged locally but never uploaded before the file was deleted. The user can also clean orphans via Rclone directly if desired.
 
 ---
 
@@ -1023,6 +1138,8 @@ When the user permanently deletes a vault, all cloud data must be removed. This 
 9. Delete local cloud-config.json and sync-config.json
 10. Zero and drop session keys
 ```
+
+**Implementation scope.** `delete_vault_from_cloud()` in `src-tauri/src/storage/cloud/sync.rs` handles steps 2–5 (cloud-side deletion: vault blobs, manifest backup, vault header). Steps 7–10 (local cleanup: SQLCipher DB, staging directory, config files, session key zeroing) are the responsibility of the calling layer (UI command handler). The function returns a `CloudDeletionReport` indicating which cloud deletions succeeded and which failed.
 
 **Failure handling**: If any cloud deletion fails, Arx Runa reports partial deletion status. The user can retry or manually clean via Rclone. A partially deleted vault cannot be recovered — the manifest backup and vault header are deleted early in the flow, so even if some blobs remain, they are orphaned ciphertext.
 

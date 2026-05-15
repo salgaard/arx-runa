@@ -14,4 +14,6 @@ pub struct SessionStatus {
     pub timeout_seconds: Option<u64>,
     /// Vault authentication tier (1 or 2) if unlocked, `None` if locked.
     pub vault_tier: Option<u8>,
+    /// Whether a BIP-39 recovery slot is configured for this vault; `None` if locked.
+    pub has_recovery_slot: Option<bool>,
 }

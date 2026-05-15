@@ -57,7 +57,9 @@ impl From<crate::auth::AuthenticationError> for IpcError {
         use crate::auth::AuthenticationError as A;
         match error {
             A::InvalidCredentials => IpcError::AuthenticationFailed("Invalid credentials".into()),
-            A::KeyFileNotFound => IpcError::AuthenticationFailed("Key file not found".into()),
+            A::KeyFileNotFound => {
+                IpcError::AuthenticationFailed("Key file not found — insert USB drive".into())
+            }
             A::MemoryLockFailed(_) => {
                 IpcError::InternalError("Cannot lock memory for session keys".into())
             }

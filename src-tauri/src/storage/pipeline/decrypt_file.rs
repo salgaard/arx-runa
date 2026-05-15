@@ -246,9 +246,10 @@ pub async fn decrypt_epoch_file(
     let verified_blob =
         verify_checksum(encrypted_bytes, &expected_hash).map_err(StorageError::from)?;
 
-    let wrapped_file_key = WrappedFileKey(record.file_key_wrapped.try_into().map_err(|_| {
-        StorageError::Database("epoch blob key_wrapped has wrong length".to_owned())
-    })?);
+    let wrapped_file_key =
+        WrappedFileKey::new(record.file_key_wrapped.try_into().map_err(|_| {
+            StorageError::Database("epoch blob key_wrapped has wrong length".to_owned())
+        })?);
     let file_key = unwrap_file_key(&wrapped_file_key, kek).map_err(StorageError::from)?;
 
     let decrypted = decrypt_chunk(
@@ -1032,7 +1033,7 @@ mod tests {
         let record = EpochBlobRecord {
             epoch_blob_id,
             blob_name,
-            file_key_wrapped: wrapped.0.to_vec(),
+            file_key_wrapped: wrapped.as_bytes().to_vec(),
             size_padded,
             blake3_checksum,
         };

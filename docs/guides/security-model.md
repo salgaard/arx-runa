@@ -53,7 +53,6 @@ After Argon2id produces `master_key`, HKDF-SHA256 expands it into three vault-le
 
 `master_key` is zeroed immediately after all three derivations complete. It is never assigned to a struct field, returned from a function, or written to any storage.
 
-See the full derivation specification: [`../architecture/designs/authentication-and-session-management/design.md`](../architecture/designs/authentication-and-session-management/design.md) and [`../architecture/designs/cryptographic-primitives/design.md`](../architecture/designs/cryptographic-primitives/design.md).
 
 ---
 
@@ -141,7 +140,6 @@ Recipients of a shared file are not expected to hold the owner's cloud credentia
 
 This is an accepted architectural property stated in the threat model: ciphertext exposure to a party who discovers a `shared/` folder UUID is not a security failure, because AEAD without the key provides no information about plaintext.
 
-See the full specification: [`../architecture/designs/file-sharing/design.md`](../architecture/designs/file-sharing/design.md) and [`../architecture/designs/cloud-synchronisation/design.md`](../architecture/designs/cloud-synchronisation/design.md).
 
 ---
 
@@ -162,7 +160,7 @@ Share packages are encrypted using HPKE (RFC 9180) with `DHKEM(X25519, HKDF-SHA2
 
 ## References
 
-- [Authentication and Session Management Design](../architecture/designs/authentication-and-session-management/design.md)
-- [Cryptographic Primitives Design](../architecture/designs/cryptographic-primitives/design.md)
-- [File Sharing Design](../architecture/designs/file-sharing/design.md)
-- [Cloud Synchronisation Design](../architecture/designs/cloud-synchronisation/design.md)
+- [Cryptographic Primitive Rationale](../research/cryptographic-primitive-rationale.md)
+- [File-Sharing Cryptography](../research/file-sharing-cryptography.md)
+- [Password and Key Recovery](../research/password-and-key-recovery.md)
+- [Glossary](glossary.md)

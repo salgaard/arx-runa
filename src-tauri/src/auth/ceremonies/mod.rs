@@ -21,7 +21,7 @@ mod setup_recovery;
 mod types;
 
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 
 /// Name of the vault header object at the cloud root.
 pub(super) const VAULT_HEADER_BLOB_NAME: &str = "vault-header.json";

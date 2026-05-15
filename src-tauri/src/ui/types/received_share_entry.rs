@@ -16,4 +16,8 @@ pub struct ReceivedShareEntry {
     pub imported_at: String,
     /// File size in bytes (used by the frontend to gate preview availability).
     pub size_bytes: u64,
+    /// `true` when the share has passed its expiry timestamp.
+    pub is_expired: bool,
+    /// ISO 8601 timestamp when the share expires, or `None` if the share has no expiry.
+    pub expires_at: Option<String>,
 }

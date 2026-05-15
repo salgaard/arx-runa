@@ -1,7 +1,7 @@
 # Arx Runa — Chunking and Manifest Design
 
-> Status: Design complete. Implementation target: Phase 3.
-> Last updated: 2026-04-08
+> Status: Design complete. Implementation live.
+> Last updated: 2026-05-15
 
 ---
 
@@ -19,14 +19,14 @@
 
 ### Interface contract
 
-- Storage API surface is `encrypt_file` / `decrypt_file` plus the `MetadataStore` trait methods (`insert_node`, `insert_chunks`, `get_chunks`, `delete_node`, `list_pending_deletions`, `mark_deletion_complete`, `increment_snapshot_counter`, and related metadata operations).
+- Storage API surface is `encrypt_file` / `encrypt_bytes` / `decrypt_file` / `decrypt_epoch_file` plus the `MetadataStore` trait methods (`insert_node`, `insert_chunks`, `insert_file_with_chunks`, `get_chunks`, `delete_node`, `list_pending_deletions`, `mark_deletion_complete`, `increment_snapshot_counter`, and epoch-routing operations).
 - `ChunkRecord` is the canonical per-chunk contract between encryption and metadata persistence.
 - File upload/access/delete flows are transaction-backed and define how chunk/blob records are created, read, and removed.
 
 ### Data contract
 
-- Canonical manifest tables are `nodes`, `chunks`, `manifest_meta`, and `pending_deletions` with UUID identifiers and uniqueness constraints `UNIQUE(node_id, chunk_index)` and `UNIQUE(blob_name)`.
-- `nodes.file_key_wrapped` is stored once per file; `chunks` stores `blob_name`, `chunk_index`, `size_padded`, and `blake3_checksum`.
+- Core manifest tables are `nodes`, `chunks`, `manifest_meta`, and `pending_deletions`. Standalone chunks have `UNIQUE(node_id, chunk_index)` and a partial unique index on `blob_name WHERE blob_name IS NOT NULL`. Epoch-buffered chunks carry `epoch_blob_id`, `byte_offset`, and `byte_length` instead of `blob_name`.
+- `nodes.file_key_wrapped` is stored once per file; `chunks` stores `chunk_index`, `size_padded`, `blake3_checksum`, and either `blob_name` (standalone) or `epoch_blob_id` + `byte_offset` + `byte_length` (epoch).
 - `manifest_meta.chunk_size_bytes`, `manifest_meta.epoch_buffer_enabled`, and `manifest_meta.snapshot_counter` are canonical metadata keys consumed by later phases.
 - `manifest_meta` mutability policy: `schema_version`, `vault_id`, `snapshot_counter`, `chunk_size_bytes`, and `epoch_buffer_enabled` are immutable via `set_meta`; `snapshot_counter` advances only through `increment_snapshot_counter`.
 
@@ -121,102 +121,177 @@ A 0-byte file has no chunks. The `nodes` row exists with `size_bytes = 0` and `f
 
 ## Manifest Database Schema
 
-### Updated schema (SQLCipher, keyed with `sqlcipher_key`)
+### Live schema (SQLCipher, keyed with `sqlcipher_key`) — schema_version 9
+
+New vaults are created with the canonical schema below. Existing vaults are migrated through versions 1–9 automatically on open. Column annotations marked `[v2]`–`[v9]` were introduced by migrations.
 
 ```sql
+-- Core tables
+
 CREATE TABLE nodes (
     node_id          TEXT PRIMARY KEY,     -- UUID v4
     parent_id        TEXT REFERENCES nodes(node_id) ON DELETE CASCADE,
-    node_type        TEXT NOT NULL         -- 'file' or 'directory'
+    node_type        TEXT NOT NULL
                          CHECK (node_type IN ('file', 'directory')),
     name             TEXT NOT NULL,        -- plaintext (SQLCipher is the encryption layer)
     created_at       INTEGER NOT NULL,     -- Unix timestamp
     modified_at      INTEGER NOT NULL,     -- Unix timestamp
     size_bytes       INTEGER NOT NULL,     -- original file size (0 for directories)
-    file_key_wrapped BLOB                  -- file_key encrypted with key_encryption_key
-                                           -- NULL for directories, NOT NULL for files
+    file_key_wrapped BLOB                  -- NULL for directories, NOT NULL for files
                          CHECK ((node_type = 'file'      AND file_key_wrapped IS NOT NULL)
                              OR (node_type = 'directory' AND file_key_wrapped IS NULL))
 );
 
+-- chunks: either standalone (blob_name set) or epoch-buffered (epoch_blob_id set).
+-- Exactly one mode per row enforced by the CHECK constraint.
 CREATE TABLE chunks (
     chunk_id         TEXT PRIMARY KEY,     -- UUID v4
     node_id          TEXT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
     chunk_index      INTEGER NOT NULL,     -- 0-based
-    blob_name        TEXT NOT NULL,        -- UUID v4, no relation to file identity
-    size_padded      INTEGER NOT NULL,     -- always equals configured chunk_size_bytes
-                                           -- default chunk_size_bytes is 4 MiB (4194304)
+    blob_name        TEXT,                 -- [v2] nullable; NULL for epoch chunks
+    size_padded      INTEGER NOT NULL,     -- equals chunk_size_bytes (standalone) or epoch blob size (epoch)
     blake3_checksum  BLOB NOT NULL,        -- 32 bytes, over encrypted blob
+    epoch_blob_id    TEXT REFERENCES epoch_blobs(epoch_blob_id), -- [v2] NULL for standalone chunks
+    byte_offset      INTEGER,             -- [v2] byte offset within epoch blob; NULL for standalone
+    byte_length      INTEGER,             -- [v2] byte length within epoch blob; NULL for standalone
     UNIQUE(node_id, chunk_index),
-    UNIQUE(blob_name)
+    CHECK (
+        (blob_name IS NOT NULL AND epoch_blob_id IS NULL
+             AND byte_offset IS NULL AND byte_length IS NULL) OR
+        (blob_name IS NULL AND epoch_blob_id IS NOT NULL
+             AND byte_offset IS NOT NULL AND byte_length IS NOT NULL)
+    )
 );
+-- Partial unique index (replaces the old UNIQUE(blob_name) table constraint):
+CREATE UNIQUE INDEX idx_chunks_blob_name ON chunks(blob_name) WHERE blob_name IS NOT NULL;
 
 CREATE TABLE manifest_meta (
     key              TEXT PRIMARY KEY,
     value            TEXT NOT NULL
 );
--- Initial rows:
--- ('schema_version', '1')
+-- Rows (schema_version increments with each migration):
+-- ('schema_version', '9')
 -- ('vault_id', '<uuid>')
 -- ('snapshot_counter', '0')
--- last_synced_at is not seeded; set on first successful push
 -- ('chunk_size_bytes', '4194304')   -- immutable; validated on every open
 -- ('epoch_buffer_enabled', 'false') -- user opt-in at vault creation
+-- 'last_synced_at' not seeded; set on first successful push
 
--- Cloud deletion durability queue:
 CREATE TABLE pending_deletions (
-    blob_name        TEXT PRIMARY KEY,      -- UUID v4 blob name queued for cloud deletion
-    queued_at        INTEGER NOT NULL       -- Unix timestamp
+    blob_name        TEXT PRIMARY KEY,     -- UUID v4 blob name queued for cloud deletion
+    queued_at        INTEGER NOT NULL      -- Unix timestamp
 );
 
--- Destination sessions (Phase 4 multi-destination, included here for schema completeness):
+-- Epoch buffering tables [v2]
+
+CREATE TABLE epoch_blobs (
+    epoch_blob_id    TEXT PRIMARY KEY,     -- UUID v4
+    blob_name        TEXT NOT NULL UNIQUE, -- UUID v4, the actual staged file name
+    file_key_wrapped BLOB NOT NULL,        -- epoch blob's own file_key, wrapped with KEK
+    size_padded      INTEGER NOT NULL,     -- total padded blob size
+    blake3_checksum  BLOB NOT NULL         -- 32 bytes, over the encrypted epoch blob
+);
+
+CREATE TABLE epoch_buffer (
+    entry_id    TEXT PRIMARY KEY,          -- UUID v4
+    node_id     TEXT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    plaintext   BLOB NOT NULL,             -- in-RAM plaintext; never written to disk unencrypted
+    size_bytes  INTEGER NOT NULL,
+    queued_at   INTEGER NOT NULL           -- Unix timestamp
+);
+
+-- Phase 2.4/5 identity table
+
+CREATE TABLE vault_identity (
+    id                   INTEGER PRIMARY KEY CHECK (id = 1),
+    public_key           BLOB NOT NULL UNIQUE,
+    wrapped_private_key  BLOB NOT NULL
+);
+
+-- Phase 4 destination sessions
+
 CREATE TABLE destination_sessions (
-    destination_id   TEXT PRIMARY KEY,          -- UUID v4
-    label            TEXT NOT NULL,             -- human-readable name
-    destination_type TEXT NOT NULL              -- 'cloud', 'external_drive', 'local_path'
-                         CHECK (destination_type IN ('cloud', 'external_drive', 'local_path')),
-    rclone_remote_name TEXT NOT NULL,           -- remote name in the session-lived rclone.conf
-    rclone_config_blob TEXT NOT NULL,           -- encrypted Rclone config section (credentials)
-    bucket           TEXT NOT NULL DEFAULT '',  -- bucket/container; empty for local paths
-    path_prefix      TEXT NOT NULL DEFAULT '',  -- path prefix within the destination
-    is_primary       INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0, 1)),
-    backup_mode      TEXT                       -- 'mirror' | 'accumulating' | NULL (primary)
-                         CHECK (backup_mode IS NULL OR backup_mode IN ('mirror', 'accumulating')),
-    created_at       INTEGER NOT NULL
+    destination_id     TEXT PRIMARY KEY,
+    label              TEXT NOT NULL,
+    destination_type   TEXT NOT NULL
+                           CHECK (destination_type IN ('cloud', 'external_drive', 'local_path')),
+    rclone_remote_name TEXT NOT NULL,
+    rclone_config_blob TEXT NOT NULL,      -- encrypted Rclone config section
+    bucket             TEXT NOT NULL DEFAULT '',
+    path_prefix        TEXT NOT NULL DEFAULT '',
+    is_primary         INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0, 1)),
+    backup_mode        TEXT
+                           CHECK (backup_mode IS NULL OR backup_mode IN ('mirror', 'accumulating')),
+    created_at         INTEGER NOT NULL,
+    device_id          TEXT               -- [v7] device identifier for this destination
 );
--- Constraint: exactly one primary destination per vault (enforced in application logic).
 
--- Sharing tables (Phase 5, included here for schema completeness):
+-- Phase 5 sharing tables
+
 CREATE TABLE contacts (
-    contact_id       TEXT PRIMARY KEY,
-    display_name     TEXT NOT NULL,
-    email            TEXT,
-    public_key       BLOB NOT NULL,
-    created_at       INTEGER NOT NULL
+    contact_id   TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    email        TEXT,
+    public_key   BLOB NOT NULL,
+    created_at   INTEGER NOT NULL
 );
 
 CREATE TABLE shares (
-    share_id         TEXT PRIMARY KEY,
-    file_id          TEXT NOT NULL REFERENCES nodes(node_id),
-    contact_id       TEXT NOT NULL REFERENCES contacts(contact_id),
-    file_share_id    TEXT NOT NULL,
-    cloud_path       TEXT NOT NULL,
-    created_at       INTEGER NOT NULL,
-    expires_at       INTEGER,             -- NULL = no expiration (Unix timestamp)
-    revoked_at       INTEGER
+    share_id                   TEXT PRIMARY KEY,
+    file_id                    TEXT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE, -- [v9] CASCADE added
+    contact_id                 TEXT NOT NULL REFERENCES contacts(contact_id),
+    file_share_id              TEXT NOT NULL,
+    cloud_path                 TEXT NOT NULL,
+    created_at                 INTEGER NOT NULL,
+    expires_at                 INTEGER,
+    revoked_at                 INTEGER,
+    download_key_id            TEXT,      -- [v3]
+    receipt_requested          INTEGER NOT NULL DEFAULT 0, -- [v3]
+    receipt_received_at        INTEGER,   -- [v3]
+    import_receipt_received_at INTEGER,   -- [v4]
+    download_folder_id         TEXT       -- [v8] Drive folder ID for revocation
 );
 
 CREATE TABLE received_shares (
-    share_id             TEXT PRIMARY KEY,
-    sender_contact_id    TEXT REFERENCES contacts(contact_id),
-    file_name            TEXT NOT NULL,
-    file_key_wrapped     BLOB NOT NULL,
-    chunk_count          INTEGER NOT NULL,
-    chunk_size           INTEGER NOT NULL,
-    chunk_uuids          TEXT NOT NULL      -- JSON array of UUID v4 blob names, e.g. ["uuid1","uuid2"]
-                             CHECK (json_valid(chunk_uuids)),
-    cloud_endpoint       TEXT NOT NULL,
-    imported_at          INTEGER NOT NULL
+    share_id          TEXT PRIMARY KEY,
+    sender_contact_id TEXT REFERENCES contacts(contact_id),
+    sender_public_key BLOB NOT NULL,      -- X25519 public key, 32 bytes
+    file_id           TEXT NOT NULL,      -- file node identifier (UUID v4)
+    file_name         TEXT NOT NULL,
+    file_key_wrapped  BLOB NOT NULL,
+    chunk_count       INTEGER NOT NULL,
+    chunk_size        INTEGER NOT NULL,
+    chunk_uuids       TEXT NOT NULL CHECK (json_valid(chunk_uuids)),
+    cloud_endpoint    TEXT NOT NULL CHECK (json_valid(cloud_endpoint)),
+    expires_at        INTEGER,
+    imported_at       INTEGER NOT NULL
+);
+
+-- Phase 7 backup tracking tables [v5, v6]
+
+CREATE TABLE backup_upload_failures (
+    blob_name      TEXT NOT NULL,
+    destination_id TEXT NOT NULL,
+    failed_at      INTEGER NOT NULL,
+    retry_count    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (blob_name, destination_id)
+);
+
+CREATE TABLE pending_backup (
+    blob_name      TEXT NOT NULL,
+    destination_id TEXT NOT NULL,
+    PRIMARY KEY (blob_name, destination_id)
+);
+
+-- GDrive sharing config [v8]
+
+CREATE TABLE sharing_config (
+    config_id      TEXT PRIMARY KEY,
+    destination_id TEXT,
+    provider       TEXT NOT NULL CHECK (provider IN ('gdrive')),
+    config_json    TEXT NOT NULL CHECK (json_valid(config_json)),
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL
 );
 ```
 
@@ -241,7 +316,7 @@ The root directory has `parent_id = NULL`. The tree is purely virtual — it exi
 ### Unique constraints
 
 - `UNIQUE(node_id, chunk_index)` prevents duplicate chunk indices for the same file
-- `UNIQUE(blob_name)` enforces global blob-name uniqueness at insert time (UUID v4 collisions are improbable but must still fail safely)
+- `CREATE UNIQUE INDEX idx_chunks_blob_name ON chunks(blob_name) WHERE blob_name IS NOT NULL` enforces global blob-name uniqueness for standalone chunks (UUID v4 collisions are improbable but must still fail safely); epoch chunk rows have `blob_name = NULL` and are excluded from this index
 
 ---
 
@@ -249,44 +324,44 @@ The root directory has `parent_id = NULL`. The tree is purely virtual — it exi
 
 ### Purpose
 
-Media files (JPEG, PNG, TIFF, video containers) may contain EXIF, XMP, or IPTC metadata that reveals sensitive information: GPS coordinates, camera model, timestamps, lens settings, and software versions. This metadata is encrypted along with the file content, but stripping it before encryption reduces the risk surface if a file is later exported or shared outside Arx Runa.
+Media files (JPEG, PNG, video containers) may contain EXIF, XMP, or IPTC metadata that reveals sensitive information: GPS coordinates, camera model, timestamps, lens settings, and software versions. This metadata is encrypted along with the file content, but stripping it before encryption reduces the risk surface if a file is later exported or shared outside Arx Runa.
 
 ### Behaviour
 
-EXIF stripping is an optional pre-processing step that runs in RAM before the encrypt pipeline. It is enabled by default for media file types and can be disabled per vault in settings.
+EXIF stripping is an optional pre-processing step that runs in RAM before the encrypt pipeline. It is enabled by default for supported image types.
 
 **Supported file types** (detected by magic bytes, not file extension):
 
-| MIME type | Metadata formats stripped |
-|-----------|--------------------------|
-| `image/jpeg` | EXIF, XMP, IPTC |
-| `image/png` | eXIf chunk, XMP (tEXt/iTXt) |
-| `image/tiff` | EXIF, XMP, IPTC |
+| Format | Segments/chunks stripped |
+|--------|--------------------------|
+| JPEG (`FF D8`) | APP1 (0xE1 — EXIF/XMP), APP2 (0xE2 — XMP extended/ICC), APP13 (0xED — IPTC) |
+| PNG (`89 50 4E 47…`) | `eXIf`, `tEXt`, `iTXt`, `zTXt` chunks |
 
-**Unsupported types** (including `video/mp4` and `video/quicktime`) pass through to the encrypt pipeline unmodified.
+All other segments/chunks (JPEG APP0/SOF/SOS/compressed bitstream, PNG IHDR/IDAT/IEND/PLTE, etc.) are preserved so the output is a valid, viewable image.
 
-> **Note — MP4/QuickTime**: The `moov` atom, which contains GPS coordinates and all file-level metadata, is placed at the **end** of the file in typical device recordings (`[ftyp][mdat][moov]`). A streaming single-pass read cannot reach moov without reading the entire file. MP4/QuickTime metadata stripping is therefore excluded from this pipeline to preserve the streaming invariant. Users who need GPS removed from video files should use an external tool (e.g. `ffmpeg -movflags +faststart` followed by ExifTool) before upload. Video stripping is an open question for a future non-streaming pre-processing step.
+**Unsupported types** (including `video/mp4`, `video/quicktime`, and TIFF) pass through to the encrypt pipeline unmodified.
+
+> **Note — MP4/QuickTime**: The `moov` atom (GPS coordinates, all file-level metadata) is at the end of typical device recordings. A streaming single-pass read cannot reach it without reading the entire file, so MP4/QuickTime stripping is excluded to preserve the streaming invariant. Users needing GPS removed from video should use an external tool before upload.
 
 ### Flow
 
 ```
-1. Read file into chunk-sized buffer (streaming, same as encrypt pipeline)
-2. If first buffer contains a recognised media magic byte sequence:
-   a. Parse metadata segments from the buffer
-   b. Remove EXIF, XMP, and IPTC segments
-   c. Rewrite the file header in-place in the buffer
-3. Pass the (possibly modified) buffer to the encrypt pipeline
-4. Original file on disk is never modified
+1. Read entire file into RAM (Vec<u8>)
+2. Check magic bytes via is_image_magic()
+3. If recognised: strip_exif() rewrites the byte stream in RAM, returning cleaned bytes
+4. Pass the (possibly modified) bytes to encrypt_bytes() which chunks and encrypts them
+5. Original file on disk is never modified
 ```
+
+Note: loading the whole file into RAM is a deliberate exception to the per-chunk streaming invariant, scoped only to EXIF-eligible files. The encrypt pipeline's `encrypt_bytes` entry point handles in-RAM chunking.
 
 ### Implementation
 
-The `kamadak-exif` crate provides EXIF parsing. For rewriting JPEG files without EXIF segments, the `img-parts` crate can split a JPEG into segments and reassemble without the APP1 (EXIF) and APP13 (IPTC) segments.
+The EXIF stripper (`storage::pipeline::exif`) is a hand-written byte-level parser — no external EXIF crates are used.
 
-JPEG APP1 segment length is encoded in 16 bits (maximum 65,535 bytes per segment), which fits within Arx Runa's minimum chunk size (128 KiB). First-segment EXIF parsing therefore remains valid at minimum chunk size.
+**JPEG**: iterates the segment stream starting after the SOI marker (`FF D8`). Each segment is identified by its marker byte; segments with marker `0xE1` (APP1), `0xE2` (APP2), or `0xED` (APP13) are omitted from the output. All other segments are copied verbatim. After the SOS marker (`0xDA`), the compressed bitstream is copied in full without further parsing.
 
-<!-- CITE: kamadak-exif crate — https://crates.io/crates/kamadak-exif -->
-<!-- CITE: img-parts crate — https://crates.io/crates/img-parts -->
+**PNG**: iterates the chunk stream after the 8-byte signature. Each chunk's type field is read; chunks of type `eXIf`, `tEXt`, `iTXt`, or `zTXt` are omitted. All other chunks (IHDR, IDAT, PLTE, IEND, etc.) are copied verbatim including their CRC fields.
 
 ### Security property
 
@@ -294,7 +369,7 @@ Stripping occurs in RAM. The original file on disk is never modified by Arx Runa
 
 ### Scope
 
-Implementation target: Phase 3 (alongside the encrypt pipeline) or Phase 6 (as a UI toggle). Not blocking for the core encrypt/decrypt cycle.
+Implemented in Phase 3 alongside the encrypt pipeline (`storage::pipeline::exif`). JPEG and PNG are supported. Video and TIFF pass through unmodified.
 
 ---
 
@@ -303,28 +378,50 @@ Implementation target: Phase 3 (alongside the encrypt pipeline) or Phase 6 (as a
 ### Public API
 
 ```rust
-/// A chunk record — both the output of encrypt_file and the type loaded
-/// from MetadataStore::get_chunks for decryption.
+/// A chunk record — both the output of encrypt_file/encrypt_bytes and the type
+/// loaded from MetadataStore::get_chunks for decryption.
+///
+/// Standalone chunks: blob_name is set, epoch fields are None.
+/// Epoch chunks: blob_name is None, epoch_blob_id/byte_offset/byte_length are set.
 struct ChunkRecord {
     chunk_id:        Uuid,
+    node_id:         NodeId,
     chunk_index:     u32,
-    blob_name:       String,       // UUID v4; no relation to file identity
-    size_padded:     u64,          // always chunk_size_bytes
+    blob_name:       Option<String>,    // UUID v4; None for epoch chunks
+    size_padded:     u64,               // chunk_size_bytes (standalone) or epoch blob size (epoch)
     blake3_checksum: [u8; 32],
+    epoch_blob_id:   Option<Uuid>,      // set for epoch chunks only
+    byte_offset:     Option<u64>,       // byte offset within epoch blob
+    byte_length:     Option<u64>,       // byte length within epoch blob
     // blob_path is intentionally absent: the staging path is derived at the
     // call site as staging_directory/<blob_name>.blob and is not persisted.
 }
 
 /// Encrypts a file into padded, encrypted chunks in the staging directory.
+/// Returns ChunkRecords; does NOT write to MetadataStore — that is the caller's responsibility.
 async fn encrypt_file(
     source: &Path,
     file_id: Uuid,
     file_key: &FileKey,
     metadata_store: &dyn MetadataStore,
     staging_directory: &Path,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<Vec<ChunkRecord>, StorageError>;
 
-/// Decrypts chunks and reassembles the original file.
+/// Encrypts in-RAM bytes into padded, encrypted chunks in the staging directory.
+/// Used after EXIF stripping when the file has already been loaded into RAM.
+/// Returns ChunkRecords; does NOT write to MetadataStore.
+async fn encrypt_bytes(
+    source_bytes: Vec<u8>,
+    file_id: Uuid,
+    file_key: &FileKey,
+    metadata_store: &dyn MetadataStore,
+    staging_directory: &Path,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+) -> Result<Vec<ChunkRecord>, StorageError>;
+
+/// Decrypts standalone chunks and reassembles the original file.
+/// Output is written to a temp file and atomically renamed to destination.
 async fn decrypt_file(
     destination: &Path,
     file_id: Uuid,
@@ -333,6 +430,17 @@ async fn decrypt_file(
     chunks: &[ChunkRecord],
     blob_directory: &Path,
     metadata_store: &dyn MetadataStore,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+) -> Result<(), StorageError>;
+
+/// Decrypts a file whose chunks are packed into an epoch blob.
+async fn decrypt_epoch_file(
+    destination: &Path,
+    chunk: &ChunkRecord,
+    kek: &KeyEncryptionKey,
+    blob_directory: &Path,
+    metadata_store: &dyn MetadataStore,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<(), StorageError>;
 ```
 
@@ -340,8 +448,8 @@ async fn decrypt_file(
 
 ```
 0. Read `chunk_size_bytes` once from `manifest_meta` via MetadataStore
-1. BufReader reads up to `chunk_size_bytes` bytes from source file
-2. If bytes_read < `chunk_size_bytes`: zero-pad buffer to `chunk_size_bytes`
+1. Allocate Zeroizing<Vec<u8>> pre-filled with 0x00 bytes (chunk_size_bytes length)
+2. BufReader reads up to `chunk_size_bytes` bytes into the buffer (trailing bytes remain 0x00)
 3. Generate AAD = file_id (16 bytes) || chunk_index (u32 big-endian, 4 bytes)
 4. encrypt_chunk(padded_buffer, file_key, file_id, chunk_index)
    → wire_blob = [24B nonce | ciphertext | 16B Poly1305 tag]
@@ -352,26 +460,35 @@ async fn decrypt_file(
 9. Return ChunkRecord
 ```
 
+If any chunk write fails, all blobs staged so far for this file are cleaned up before the error is returned. MetadataStore is not touched — the caller (vault_ops) is responsible for the node/chunk insert transaction.
+
 ### Decrypt flow (per chunk)
 
 ```
+Pre-flight: validate chunks slice — length must equal expected chunk count,
+            indices must be contiguous starting at 0 with no gaps or duplicates.
 0. Read `chunk_size_bytes` once from `manifest_meta` via MetadataStore
-1. Read wire_blob from blob_directory/<blob_name>.blob via BufReader
-2. Validate blob length equals `chunk_size_bytes + 40` bytes
-3. Verify: blake3::hash(wire_blob) == expected blake3_checksum
-   If mismatch → return ChecksumMismatch error, do NOT attempt decryption
-4. decrypt_chunk(wire_blob, file_key, file_id, chunk_index)
+1. Resolve blob path: check pending/<blob_name>.blob, then cache/<blob_name>.blob,
+   then staging_directory/<blob_name>.blob (flat fallback)
+2. Check file size via fs::metadata — must equal chunk_size_bytes + 40; fail before read
+3. Read wire_blob from resolved path via BufReader (read_exact)
+4. verify_checksum(wire_blob, expected_blake3) → VerifiedBlob
+   (type enforces checksum-before-decrypt at compile time; mismatch → ChecksumMismatch)
+5. decrypt_chunk(verified_blob, file_key, file_id, chunk_index)
    → padded_plaintext (chunk_size_bytes bytes)
-5. If this is the last chunk:
+6. If this is the last chunk:
    bytes_to_write = file_size - (chunk_index * chunk_size_bytes)
-   Write only bytes_to_write bytes to destination via BufWriter
-6. Else: write full chunk_size_bytes bytes to destination
-7. Zeroize padded_plaintext
+   Write only bytes_to_write bytes to destination tmp file via BufWriter
+7. Else: write full chunk_size_bytes bytes to destination tmp file
+8. Zeroize padded_plaintext
+After all chunks: atomically rename <dest>.arx-runa-decrypt-<uuid>.tmp → destination
 ```
 
 ### Streaming invariant
 
 At no point is more than one chunk's worth of plaintext in memory simultaneously. The `BufReader` reads `chunk_size_bytes` bytes, the chunk is encrypted, the plaintext buffer is zeroed, and the next chunk is read.
+
+**Exception — EXIF stripping**: when the magic bytes indicate JPEG or PNG, the entire file is loaded into RAM before chunking (`encrypt_bytes` path). This is a deliberate, scoped relaxation of the invariant for small-to-medium image files.
 
 ---
 
@@ -379,15 +496,17 @@ At no point is more than one chunk's worth of plaintext in memory simultaneously
 
 ### New file upload
 
+Steps 1–3 are in `storage::pipeline` (encrypt_file / encrypt_bytes). Steps 4–8 are in `storage::vault_ops` (upload_file). The pipeline returns `Vec<ChunkRecord>` and does not touch MetadataStore; the orchestration layer owns the transaction.
+
 ```
 1. Generate file_key (random 256-bit via CSPRNG)
 2. Wrap: file_key_wrapped = encrypt(file_key, key_encryption_key)
-3. Encrypt all chunks → ChunkRecords (blobs written to staging)
-4. Begin SQLCipher transaction
-5. Insert node row (node_id, name, size_bytes, file_key_wrapped, ...)
-6. Insert chunk rows for all ChunkRecords in the same transaction
-7. Commit transaction
-8. Zeroize file_key
+3. encrypt_file / encrypt_bytes → Vec<ChunkRecord> (blobs written to staging)
+   — if any chunk fails, staged blobs for this file are cleaned up before returning
+4. Begin SQLCipher transaction (vault_ops)
+5. MetadataStore::insert_file_with_chunks(node, &chunks) — atomically inserts node + all chunk rows
+6. Commit transaction
+7. Zeroize file_key
 ```
 
 If the transaction fails (crash, I/O error), no manifest state exists for the partial file. Orphaned blobs in staging are cleaned up on next startup.
@@ -427,15 +546,80 @@ A subdirectory of the Arx Runa application data directory:
 
 ### Lifecycle
 
-1. **Write**: blobs are created during `encrypt_file`, named `<uuid>.blob`
+1. **Write**: blobs are created during `encrypt_file` / `encrypt_bytes`, named `<uuid>.blob`
 2. **Upload**: Phase 4 (cloud sync) reads from staging and uploads via Rclone
 3. **Delete**: after confirmed upload, the staging copy is deleted
 4. **Cleanup**: on startup, Arx Runa scans the staging directory for blobs not referenced by any `chunks.blob_name` in the manifest → delete them (orphans from interrupted operations). Global `chunks.blob_name` enumeration is performed via a SQLCipher-specific query helper in the storage implementation, not via the `MetadataStore` trait.
 5. **Cloud-delete queue drain**: Phase 4 sync drains `pending_deletions` and removes queue rows only after confirmed cloud delete.
 
+**Blob resolution order** (used by `decrypt_file`): `pending/<blob_name>.blob` → `cache/<blob_name>.blob` → `<staging_root>/<blob_name>.blob` (flat fallback). The `pending/` and `cache/` subdirectories are managed by the sync layer.
+
 ### Security
 
 Staging blobs are encrypted (AEAD ciphertext). Leaving them on disk does not expose plaintext. The staging directory is local storage, not synced to cloud — the cloud transport layer handles uploads separately.
+
+---
+
+## Epoch Buffering
+
+Epoch buffering (`epoch_buffer_enabled = true`) is an opt-in vault setting that packs multiple small files into a single encrypted blob before uploading. This reduces both storage overhead and the number of cloud API calls for vaults containing many small files.
+
+### Routing decision
+
+Hybrid auto-routing is decided by `storage::vault_ops::routing::decide`:
+
+- Files with `size_bytes < chunk_size_bytes` → epoch buffer path
+- Files with `size_bytes >= chunk_size_bytes` → standalone path (same as when epoch buffering is disabled)
+
+The trailing partial chunk of large files is not deferred to epoch buffering.
+
+### Epoch buffer path (upload)
+
+```
+1. Generate file_key; wrap to file_key_wrapped
+2. Load file into RAM (already small — less than chunk_size_bytes)
+3. MetadataStore::insert_file_node_and_stage_epoch_entry(node, plaintext)
+   — inserts node row AND epoch_buffer entry in one transaction
+4. Zeroize file_key (stored as file_key_wrapped in nodes row)
+5. Check if epoch_buffer total bytes >= chunk_size_bytes (flush trigger)
+6. If flush triggered: call epoch_flush (see below)
+```
+
+### Epoch flush
+
+```
+1. MetadataStore::get_epoch_buffer_entries() → Vec<EpochBufferEntry>
+2. Generate epoch_file_key; concatenate all plaintexts → single buffer
+3. Zero-pad buffer to chunk_size_bytes
+4. encrypt_chunk(buffer, epoch_file_key, epoch_blob_id, 0)
+   → wire_blob = [24B nonce | ciphertext | 16B tag]
+5. blake3_checksum = blake3::hash(wire_blob)
+6. Write wire_blob to staging as <epoch_blob_name>.blob
+7. Wrap epoch_file_key → epoch_file_key_wrapped
+8. MetadataStore::commit_epoch_flush(EpochBlobRecord, extents)
+   — atomically: insert epoch_blobs row, insert chunk rows with byte_offset/byte_length,
+     clear epoch_buffer entries
+```
+
+### Epoch decrypt path
+
+`decrypt_epoch_file` handles a file whose chunk record has `epoch_blob_id` set:
+
+```
+1. MetadataStore::get_epoch_blob(epoch_blob_id) → EpochBlobRecord
+2. Unwrap epoch_file_key from EpochBlobRecord.file_key_wrapped
+3. Resolve blob path (same pending/cache/flat resolution as standalone)
+4. verify_checksum + decrypt_chunk → padded_plaintext
+5. Slice out byte_offset..byte_offset+byte_length from padded_plaintext
+6. Write slice to destination (atomic rename)
+7. Zeroize plaintext buffer
+```
+
+### Schema additions
+
+- `epoch_blobs`: one row per packed blob — stores `blob_name`, `file_key_wrapped`, `size_padded`, `blake3_checksum`
+- `epoch_buffer`: staging queue — stores plaintext bytes in-DB (BLOB), cleared on flush
+- `chunks`: epoch chunk rows have `blob_name = NULL`, `epoch_blob_id` set, `byte_offset` and `byte_length` set
 
 ---
 
@@ -482,25 +666,39 @@ Rationale: Directory deletion requires cascading deletion of all children and th
 ```rust
 use async_trait::async_trait;
 
-/// Abstraction over the manifest database for testability.
+/// Abstraction over manifest metadata persistence.
 #[async_trait]
-trait MetadataStore: Send + Sync {
-    /// Inserts a new node (file or directory).
+pub trait MetadataStore: Send + Sync {
+
+    // --- Core node/chunk methods ---
+
+    /// Inserts a node row into the manifest.
+    /// Returns ConstraintViolation when primary/foreign/check constraints fail,
+    /// or when the provided parent_id is not a directory (including self-parent).
     async fn insert_node(&self, node: &Node) -> Result<(), StorageError>;
 
-    /// Inserts chunk records for a file.
+    /// Inserts one or more chunk rows into the manifest.
+    /// Returns ConstraintViolation for duplicate (node_id, chunk_index) or blob_name collisions.
     async fn insert_chunks(&self, chunks: &[ChunkRecord]) -> Result<(), StorageError>;
 
-    /// Retrieves a node by ID.
+    /// Inserts a file node and all associated chunk rows atomically.
+    /// Both inserts succeed or neither is persisted.
+    async fn insert_file_with_chunks(
+        &self,
+        node: &Node,
+        chunks: &[ChunkRecord],
+    ) -> Result<(), StorageError>;
+
+    /// Loads a node by identifier. Returns NotFound when no row matches.
     async fn get_node(&self, node_id: Uuid) -> Result<Node, StorageError>;
 
-    /// Lists children of a directory.
+    /// Lists direct children for the provided parent node identifier.
     async fn list_children(&self, parent_id: Uuid) -> Result<Vec<Node>, StorageError>;
 
-    /// Retrieves all chunks for a file, ordered by chunk_index.
+    /// Returns all chunk rows for a node ordered by chunk_index.
     async fn get_chunks(&self, node_id: Uuid) -> Result<Vec<ChunkRecord>, StorageError>;
 
-    /// Renames a node. Updates modified_at to the provided Unix timestamp.
+    /// Renames a node and updates modified_at in one mutation.
     async fn rename_node(
         &self,
         node_id: Uuid,
@@ -508,10 +706,9 @@ trait MetadataStore: Send + Sync {
         modified_at: i64,
     ) -> Result<(), StorageError>;
 
-    /// Moves a node to a new parent directory. Updates modified_at.
-    /// Pass None for new_parent_id to move to the root.
-    /// Returns ConstraintViolation when parent is not a directory, when parent
-    /// equals node_id, or when the move would create a cycle.
+    /// Moves a node to a new parent and updates modified_at in one mutation.
+    /// new_parent_id = None moves the node to root.
+    /// Returns ConstraintViolation when the move violates hierarchy rules.
     async fn move_node(
         &self,
         node_id: Uuid,
@@ -519,40 +716,82 @@ trait MetadataStore: Send + Sync {
         modified_at: i64,
     ) -> Result<(), StorageError>;
 
-    /// Deletes a node and cascades to chunks.
-    /// Blob names are queued into `pending_deletions` within the same transaction.
+    /// Deletes a node and its cascading chunk rows.
+    /// Enqueues blob_name entries into pending_deletions in the same transaction.
     async fn delete_node(&self, node_id: Uuid) -> Result<(), StorageError>;
 
-    /// Lists queued blob names awaiting cloud deletion.
+    /// Lists queued blob names from pending_deletions (at most limit entries).
     async fn list_pending_deletions(&self, limit: usize) -> Result<Vec<String>, StorageError>;
 
-    /// Marks a queued deletion complete after confirmed cloud deletion.
+    /// Removes a blob name from pending_deletions after successful cloud delete.
     async fn mark_deletion_complete(&self, blob_name: &str) -> Result<(), StorageError>;
 
-    /// Reads manifest_meta value by key.
+    /// Retrieves a manifest-meta value by key.
     async fn get_meta(&self, key: &str) -> Result<Option<String>, StorageError>;
 
-    /// Sets manifest_meta value.
-    /// Returns ConstraintViolation for immutable keys:
-    /// schema_version, vault_id, snapshot_counter, chunk_size_bytes,
-    /// epoch_buffer_enabled.
+    /// Sets or replaces a manifest-meta key/value pair.
+    /// Returns ConstraintViolation for immutable keys: schema_version, vault_id,
+    /// snapshot_counter, chunk_size_bytes, epoch_buffer_enabled.
     async fn set_meta(&self, key: &str, value: &str) -> Result<(), StorageError>;
 
-    /// Increments and returns the new snapshot_counter.
+    /// Atomically increments and returns snapshot_counter.
+    /// This is the only supported mutation path for snapshot_counter.
     async fn increment_snapshot_counter(&self) -> Result<u64, StorageError>;
-}
 
-// Both concrete implementations require the attribute:
-// #[async_trait]
-// impl MetadataStore for SqlCipherMetadataStore { ... }
-//
-// #[async_trait]
-// impl MetadataStore for MockMetadataStore { ... }
+    // --- Epoch buffering methods ---
+
+    /// Inserts a file node row without any associated chunk rows.
+    /// Used by the epoch routing path before a flush produces chunk rows.
+    async fn insert_file_node_only(&self, node: &Node) -> Result<(), StorageError>;
+
+    /// Inserts a file node and stages its plaintext in the epoch buffer atomically.
+    /// Crash between node insert and buffer entry cannot occur.
+    async fn insert_file_node_and_stage_epoch_entry(
+        &self,
+        node: &Node,
+        plaintext: Vec<u8>,
+    ) -> Result<(), StorageError>;
+
+    /// Stages a plaintext entry in the epoch buffer for the given node.
+    async fn stage_epoch_entry(
+        &self,
+        node_id: Uuid,
+        plaintext: Vec<u8>,
+    ) -> Result<(), StorageError>;
+
+    /// Returns the total number of bytes currently staged in the epoch buffer.
+    async fn get_epoch_buffer_total_bytes(&self) -> Result<u64, StorageError>;
+
+    /// Returns all entries currently staged in the epoch buffer.
+    async fn get_epoch_buffer_entries(&self) -> Result<Vec<EpochBufferEntry>, StorageError>;
+
+    /// Returns the node IDs of all entries currently staged in the epoch buffer.
+    async fn get_epoch_buffer_node_ids(&self) -> Result<Vec<Uuid>, StorageError>;
+
+    /// Returns the number of files currently staged in the epoch buffer.
+    async fn get_epoch_buffer_count(&self) -> Result<u32, StorageError> {
+        self.get_epoch_buffer_node_ids()
+            .await
+            .map(|ids| ids.len() as u32)
+    }
+
+    /// Atomically: insert epoch_blobs row, insert epoch chunk rows into chunks table,
+    /// and clear the flushed epoch_buffer entries.
+    /// extents: (node_id, chunk_index, byte_offset, byte_length)
+    async fn commit_epoch_flush(
+        &self,
+        record: &EpochBlobRecord,
+        extents: &[(Uuid, u32, u64, u64)],
+    ) -> Result<(), StorageError>;
+
+    /// Retrieves an epoch blob record by identifier. Returns NotFound when no row matches.
+    async fn get_epoch_blob(&self, epoch_blob_id: Uuid) -> Result<EpochBlobRecord, StorageError>;
+}
 ```
 
 Implementations:
 - `SqlCipherMetadataStore` — production implementation backed by SQLCipher
-- `MockMetadataStore` — in-memory HashMap for testing without a database
+- `MockMetadataStore` — in-memory store for testing without a database
 
 ---
 
@@ -583,7 +822,7 @@ Implementations:
 | Cloud delete durability | `pending_deletions` queue table drained by Phase 4 sync | Survives crash between manifest delete commit and cloud blob deletion; guarantees retry |
 | `MetadataStore` async dispatch | `#[async_trait]` macro | `async fn` in traits is not dyn-safe; `#[async_trait]` makes `Box<dyn MetadataStore>` compile while keeping the trait readable. Requires `async-trait = "0.1"` in `Cargo.toml` |
 | MP4/QuickTime EXIF stripping | Drop vs full-file read vs two-pass seek | Dropped: moov atom at end-of-file on device recordings breaks streaming; video stripping deferred |
-| JPEG APP1 boundary at minimum chunk size | Keep first-buffer EXIF parse | APP1 max segment length (65,535 bytes) fits within 128 KiB minimum chunk size |
+| EXIF implementation approach | Hand-written byte-level parser (`storage::pipeline::exif`) | No external EXIF crates; full-file RAM load for JPEG/PNG; avoids dependency on kamadak-exif/img-parts |
 | Schema CHECK constraints | DDL enforcement vs prose-only | CHECK constraints added: catch corrupt node rows at write time; cross-column constraint enforces file_key_wrapped nullability invariant |
 | `ChunkRecord.blob_path` | Remove vs split into two structs | Removed: only used between encrypt_file and insert_chunks; staging path derived from blob_name at call site |
 | `received_shares.chunk_uuids` format | JSON array + CHECK vs normalised table vs comment-only | JSON array with `json_valid()` CHECK: consistent with share package format, enforced at write time |

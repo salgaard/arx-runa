@@ -266,7 +266,22 @@ impl RecoveryKey {
 /// non-empty AAD (`b"arx-runa recovery v1" || vault_id_bytes`) to bind the
 /// ciphertext to vault identity and recovery purpose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WrappedMasterKey(pub [u8; 72]);
+pub struct WrappedMasterKey(pub(in crate::crypto) [u8; 72]);
+
+impl WrappedMasterKey {
+    /// Constructs a wrapped master key from a 72-byte wire blob.
+    ///
+    /// Used by callers that reconstruct a wrapped blob from stored bytes (e.g.
+    /// a vault header field) before passing it to `unwrap_master_key_from_recovery`.
+    pub fn new(bytes: [u8; 72]) -> Self {
+        Self(bytes)
+    }
+
+    /// Returns the 72-byte wire blob.
+    pub fn as_bytes(&self) -> &[u8; 72] {
+        &self.0
+    }
+}
 
 /// Vault identifier — raw 128-bit UUID bytes (not the hyphenated text form).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -296,7 +311,22 @@ impl VaultId {
 
 /// Wrapped file key in wire format `[24-byte nonce | 32-byte ciphertext | 16-byte tag]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WrappedFileKey(pub [u8; 72]);
+pub struct WrappedFileKey(pub(in crate::crypto) [u8; 72]);
+
+impl WrappedFileKey {
+    /// Constructs a wrapped file key from a 72-byte wire blob.
+    ///
+    /// Used by callers that reconstruct a wrapped blob from stored bytes (e.g.
+    /// a manifest record) before passing it to `unwrap_file_key`.
+    pub fn new(bytes: [u8; 72]) -> Self {
+        Self(bytes)
+    }
+
+    /// Returns the 72-byte wire blob.
+    pub fn as_bytes(&self) -> &[u8; 72] {
+        &self.0
+    }
+}
 
 /// File identifier represented as compact UUID bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -348,6 +378,17 @@ impl ChunkIndex {
 /// 32-byte BLAKE3 checksum of an encrypted blob.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Blake3Hash(pub [u8; 32]);
+
+/// Builds the 20-byte chunk AAD `file_id || chunk_index` (big-endian `u32`).
+///
+/// Shared by `encrypt_chunk` and `decrypt_chunk` to guarantee identical AAD
+/// construction on both sides.
+pub(crate) fn build_chunk_aad(file_id: &FileId, chunk_index: ChunkIndex) -> [u8; 20] {
+    let mut aad = [0u8; 20];
+    aad[..16].copy_from_slice(file_id.as_bytes());
+    aad[16..].copy_from_slice(&chunk_index.to_be_bytes());
+    aad
+}
 
 #[cfg(test)]
 mod tests {

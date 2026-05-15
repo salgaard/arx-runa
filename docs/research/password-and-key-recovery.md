@@ -6,8 +6,6 @@
 
 Investigates every known mechanism for recovering vault access after a password or key file is lost, evaluated against Arx Runa's zero-knowledge threat model.
 
-For the canonical auth design, see `docs/architecture/designs/authentication-and-session-management/design.md`.  
-For background on the key derivation model, see `../design-reviews/authentication-and-session-management-review.md`.
 
 ---
 

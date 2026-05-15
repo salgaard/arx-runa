@@ -13,9 +13,10 @@ use crate::drag_drop::on_file_drop;
 use crate::invoke::{invoke_command, invoke_command_with_channel};
 use crate::ipc_channel::IpcChannel;
 use crate::ipc_types::{
-    ComposeEmailWithAttachmentRequest, DeleteFileRequest, DestinationEntry, DownloadFileRequest,
-    FileContentResponse, FileEntry, GetFileContentRequest, ProgressUpdate, RevealInExplorerRequest,
-    ShareResponse, UploadFileRequest,
+    ComposeEmailWithAttachmentRequest, CreateVaultDirectoryRequest, DeleteFileRequest,
+    DestinationEntry, DownloadFileRequest, FileContentResponse, FileEntry, GetFileContentRequest,
+    ListLocalDirectoryRequest, LocalEntry, ProgressUpdate, RevealInExplorerRequest, ShareResponse,
+    StatLocalPathRequest, UploadFileRequest,
 };
 use crate::shares::ShareModal;
 use crate::state::{use_vault, use_vault_actions};
@@ -227,6 +228,7 @@ pub fn FileItem(
 
     let entry_clone = entry.clone();
     let (show_delete_confirm, set_show_delete_confirm) = signal(false);
+    let (show_download_warn, set_show_download_warn) = signal(false);
     let (show_share_modal, set_show_share_modal) = signal(false);
     let share_result = RwSignal::new(None::<ShareResponse>);
     let file_content = RwSignal::new(None::<FileContentResponse>);
@@ -342,26 +344,7 @@ pub fn FileItem(
                                 if is_pending_flush {
                                     return;
                                 }
-                                let entry = entry_stored.get_value();
-                                let actions = actions;
-                                let set_download_progress_channel = set_download_progress_channel;
-                                leptos::task::spawn_local(async move {
-                                    let default_name = entry.name.clone();
-                                    if let Some(dest_path) = open_save_dialog(Some(&default_name)).await {
-                                        let channel = IpcChannel::<ProgressUpdate>::new();
-                                        set_download_progress_channel.set(Some(channel.clone()));
-
-                                        let req = DownloadFileRequest {
-                                            file_id: entry.id.clone(),
-                                            destination_path: dest_path,
-                                        };
-
-                                        match invoke_command_with_channel::<DownloadFileRequest, ()>("download_file", &req, "progress", channel.inner()).await {
-                                            Ok(()) => {}
-                                            Err(err) => actions.set_error(err.message),
-                                        }
-                                    }
-                                });
+                                set_show_download_warn.set(true);
                             }
                         >
                             "⬇"
@@ -467,6 +450,70 @@ pub fn FileItem(
                 </Modal>
             </Show>
 
+            // Download export warning modal
+            <Show
+                when=move || show_download_warn.get()
+                fallback=|| ()
+            >
+                <Modal
+                    open=Signal::derive(move || show_download_warn.get())
+                    on_close=move || set_show_download_warn.set(false)
+                >
+                    <div class="w-96">
+                        <h2 class="text-lg text-bone mb-4">"Export unencrypted file?"</h2>
+                        <p class="text-text-secondary text-sm mb-6">
+                            "The exported file will be written to disk in plaintext, outside vault protection. You are responsible for the exported copy."
+                        </p>
+                        <div class="flex gap-2 justify-end">
+                            <button
+                                class="px-4 py-2 rounded bg-surface-overlay hover:bg-steel cursor-pointer text-bone transition-colors"
+                                on:click=move |_| set_show_download_warn.set(false)
+                            >
+                                "Cancel"
+                            </button>
+                            <button
+                                class="px-4 py-2 rounded bg-amber-600 hover:bg-amber-500 cursor-pointer text-white transition-colors"
+                                on:click=move |_| {
+                                    set_show_download_warn.set(false);
+                                    let entry = entry_stored.get_value();
+                                    let actions = actions;
+                                    let set_download_progress_channel = set_download_progress_channel;
+                                    leptos::task::spawn_local(async move {
+                                        let default_name = entry.name.clone();
+                                        if let Some(dest_path) =
+                                            open_save_dialog(Some(&default_name)).await
+                                        {
+                                            let channel = IpcChannel::<ProgressUpdate>::new();
+                                            set_download_progress_channel.set(Some(channel.clone()));
+                                            let req = DownloadFileRequest {
+                                                file_id: entry.id.clone(),
+                                                destination_path: dest_path,
+                                            };
+                                            match invoke_command_with_channel::<
+                                                DownloadFileRequest,
+                                                (),
+                                            >(
+                                                "download_file",
+                                                &req,
+                                                "progress",
+                                                channel.inner(),
+                                            )
+                                            .await
+                                            {
+                                                Ok(()) => {}
+                                                Err(err) => actions.set_error(err.message),
+                                            }
+                                        }
+                                    });
+                                }
+                            >
+                                "Export Anyway"
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
+            </Show>
+
             // Download progress modal
             <Show
                 when=move || download_progress_channel.get().is_some()
@@ -498,7 +545,7 @@ pub fn FileItem(
             >
                 <ShareModal
                     file_id=file_id_stored.get_value()
-                    _file_name=file_name_stored.get_value()
+                    file_name=file_name_stored.get_value()
                     on_close=move || set_show_share_modal.set(false)
                     on_success=Callback::new(move |response: ShareResponse| {
                         set_show_share_modal.set(false);
@@ -607,7 +654,92 @@ pub fn FileList(
 
 // ─── DropZone ────────────────────────────────────────────────────────────────
 
-/// File drop zone that accepts dragged files and initiates upload.
+/// Uploads a single file to the vault and streams progress via `set_upload_channel`.
+///
+/// Returns `Ok(())` on success or the error message on failure.
+async fn upload_one_file(
+    source_path: String,
+    vault_path: String,
+    set_upload_channel: WriteSignal<Option<IpcChannel<ProgressUpdate>>>,
+) -> Result<(), String> {
+    let req = UploadFileRequest {
+        source_path,
+        vault_path,
+    };
+    let channel = IpcChannel::<ProgressUpdate>::new();
+    set_upload_channel.set(Some(channel.clone()));
+    invoke_command_with_channel::<UploadFileRequest, FileEntry>(
+        "upload_file",
+        &req,
+        "progress",
+        channel.inner(),
+    )
+    .await
+    .map(|_| ())
+    .map_err(|e| e.message)
+}
+
+/// Recursively uploads a local directory into the vault under `vault_parent_path`.
+///
+/// Creates a vault directory node for `dir_path`, then iterates its children:
+/// subdirectories are processed recursively; files are uploaded via `upload_one_file`.
+/// Returns the first error encountered, if any.
+async fn upload_directory(
+    dir_path: String,
+    dir_name: String,
+    vault_parent_path: String,
+    set_upload_channel: WriteSignal<Option<IpcChannel<ProgressUpdate>>>,
+) -> Result<(), String> {
+    // Build the vault path for the new directory node.
+    let vault_dir_path = if vault_parent_path.is_empty() {
+        dir_name.clone()
+    } else {
+        format!("{}/{}", vault_parent_path.trim_end_matches('/'), dir_name)
+    };
+
+    // Create the directory node in the vault.
+    let create_req = CreateVaultDirectoryRequest {
+        vault_path: vault_dir_path.clone(),
+    };
+    let dir_entry = invoke_command::<CreateVaultDirectoryRequest, FileEntry>(
+        "create_vault_directory",
+        &create_req,
+    )
+    .await
+    .map_err(|e| e.message)?;
+
+    // Use the newly created directory's UUID as the vault parent for children.
+    let child_parent = dir_entry.id.clone();
+
+    // List immediate children of the local directory.
+    let list_req = ListLocalDirectoryRequest {
+        path: dir_path.clone(),
+    };
+    let children = invoke_command::<ListLocalDirectoryRequest, Vec<LocalEntry>>(
+        "list_local_directory",
+        &list_req,
+    )
+    .await
+    .map_err(|e| e.message)?;
+
+    for child in children {
+        if child.is_dir {
+            Box::pin(upload_directory(
+                child.path,
+                child.name,
+                child_parent.clone(),
+                set_upload_channel,
+            ))
+            .await?;
+        } else {
+            let file_vault_path = format!("{}/{}", child_parent.trim_end_matches('/'), child.name);
+            upload_one_file(child.path, file_vault_path, set_upload_channel).await?;
+        }
+    }
+    Ok(())
+}
+
+/// File drop zone that accepts dragged files and folders and initiates upload.
 ///
 /// Subscribes to `onDragDropEvent` once in the component body (not inside an
 /// `Effect`) and unsubscribes via `on_cleanup`.  Using `Effect::new` caused
@@ -641,36 +773,65 @@ pub fn DropZone(children: Children) -> impl IntoView {
             return;
         };
         let current_path = vault_state.current_path;
-        for source_path in paths {
-            let file_name = source_path.split(['/', '\\']).next_back().unwrap_or("file");
-            let vault_path = join_vault_path(&current_path, file_name)
-                .trim_start_matches('/')
-                .to_owned();
-            let upload_path = current_path.clone();
-            let req = UploadFileRequest {
-                source_path: source_path.clone(),
-                vault_path,
-            };
-            let va = vault_actions;
-            let channel = IpcChannel::<ProgressUpdate>::new();
-            set_upload_channel.set(Some(channel.clone()));
-            leptos::task::spawn_local(async move {
-                match invoke_command_with_channel::<UploadFileRequest, FileEntry>(
-                    "upload_file",
-                    &req,
-                    "progress",
-                    channel.inner(),
+        let va = vault_actions;
+        // Process dropped paths sequentially in a single task so uploads do not
+        // race on upload_channel and navigation fires exactly once at the end.
+        leptos::task::spawn_local(async move {
+            for source_path in paths {
+                // Determine whether the dropped path is a directory or a file.
+                let stat_req = StatLocalPathRequest {
+                    path: source_path.clone(),
+                };
+                let is_dir = match invoke_command::<StatLocalPathRequest, bool>(
+                    "stat_local_path",
+                    &stat_req,
                 )
                 .await
                 {
-                    Ok(_) => va.navigate(upload_path),
+                    Ok(v) => v,
                     Err(err) => {
                         set_upload_channel.set(None);
                         va.set_error(err.message);
+                        return;
+                    }
+                };
+
+                if is_dir {
+                    // Extract directory name for the vault node.
+                    let dir_name = source_path
+                        .split(['/', '\\'])
+                        .next_back()
+                        .unwrap_or("folder")
+                        .to_owned();
+                    if let Err(msg) = upload_directory(
+                        source_path.clone(),
+                        dir_name,
+                        current_path.clone(),
+                        set_upload_channel,
+                    )
+                    .await
+                    {
+                        set_upload_channel.set(None);
+                        va.set_error(msg);
+                        return;
+                    }
+                } else {
+                    let file_name = source_path.split(['/', '\\']).next_back().unwrap_or("file");
+                    let vault_path = join_vault_path(&current_path, file_name)
+                        .trim_start_matches('/')
+                        .to_owned();
+                    if let Err(msg) =
+                        upload_one_file(source_path.clone(), vault_path, set_upload_channel).await
+                    {
+                        set_upload_channel.set(None);
+                        va.set_error(msg);
+                        return;
                     }
                 }
-            });
-        }
+            }
+            set_upload_channel.set(None);
+            va.navigate(current_path);
+        });
     });
     on_cleanup(unsub);
 

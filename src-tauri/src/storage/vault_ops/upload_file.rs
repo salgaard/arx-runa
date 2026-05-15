@@ -1,14 +1,47 @@
 use std::path::Path;
 
+use tokio::io::AsyncReadExt as _;
+use uuid::Uuid;
+
 use crate::crypto::{FileKey, KeyEncryptionKey, generate_file_key, wrap_file_key};
 use crate::storage::MetadataStore;
 use crate::storage::NodeId;
 use crate::storage::error::StorageError;
 use crate::storage::pipeline;
+use crate::storage::pipeline::exif;
 use crate::storage::types::{Node, NodeType};
 use crate::storage::vault_ops::{RouteDecision, decide};
 use tokio::fs;
-use uuid::Uuid;
+
+/// Reads a file's magic bytes and, if it is a recognised image format, reads the
+/// full contents and strips EXIF/XMP/IPTC metadata in RAM before returning.
+///
+/// Returns `None` for non-image files so that the caller can fall back to the
+/// existing path-based pipeline without an extra allocation.
+async fn strip_exif_if_image(
+    source: &Path,
+    source_len: u64,
+) -> Result<Option<Vec<u8>>, StorageError> {
+    if source_len == 0 {
+        return Ok(None);
+    }
+    let mut header = [0u8; 8];
+    let mut file = fs::File::open(source)
+        .await
+        .map_err(|e| StorageError::Io(e.to_string()))?;
+    let n = file
+        .read(&mut header)
+        .await
+        .map_err(|e| StorageError::Io(e.to_string()))?;
+    if !exif::is_image_magic(&header[..n]) {
+        return Ok(None);
+    }
+    drop(file);
+    let bytes = fs::read(source)
+        .await
+        .map_err(|e| StorageError::Io(e.to_string()))?;
+    Ok(Some(exif::strip_exif(bytes)))
+}
 
 /// Uploads a local file into staged encrypted chunks and persists manifest rows.
 ///
@@ -32,16 +65,26 @@ pub async fn upload_file(
     let source_metadata = fs::metadata(source)
         .await
         .map_err(|error| StorageError::Io(error.to_string()))?;
-    let file_size = source_metadata.len();
+
+    // Strip EXIF/XMP/IPTC in RAM before routing; returns None for non-image files.
+    let stripped = strip_exif_if_image(source, source_metadata.len()).await?;
+
+    let file_size = stripped
+        .as_ref()
+        .map(|b| b.len() as u64)
+        .unwrap_or(source_metadata.len());
     let chunk_size_bytes = pipeline::read_chunk_size_bytes(metadata_store).await?;
     let epoch_buffer_enabled = read_epoch_buffer_enabled(metadata_store).await?;
     let route_decision = decide(file_size, chunk_size_bytes, epoch_buffer_enabled);
 
     match route_decision {
         RouteDecision::EpochBuffer => {
-            let plaintext = tokio::fs::read(source)
-                .await
-                .map_err(|error| StorageError::Io(error.to_string()))?;
+            let plaintext = match stripped {
+                Some(bytes) => bytes,
+                None => tokio::fs::read(source)
+                    .await
+                    .map_err(|error| StorageError::Io(error.to_string()))?,
+            };
             let file_size = plaintext.len() as u64;
             let sentinel_file_key =
                 FileKey::from_secret_box(secrecy::SecretBox::new(Box::new([0u8; 32])));
@@ -55,7 +98,7 @@ pub async fn upload_file(
                 created_at,
                 modified_at,
                 file_size,
-                Some(sentinel_wrapped.0),
+                Some(*sentinel_wrapped.as_bytes()),
             );
             metadata_store
                 .insert_file_node_and_stage_epoch_entry(&node, plaintext)
@@ -66,15 +109,30 @@ pub async fn upload_file(
             let file_key = generate_file_key();
             let wrapped_file_key =
                 wrap_file_key(&file_key, key_encryption_key).map_err(StorageError::from)?;
-            let mut chunks = pipeline::encrypt_file(
-                source,
-                node_id,
-                &file_key,
-                metadata_store,
-                staging_directory,
-                progress,
-            )
-            .await?;
+            let mut chunks = match stripped {
+                Some(bytes) => {
+                    pipeline::encrypt_bytes(
+                        bytes,
+                        node_id,
+                        &file_key,
+                        metadata_store,
+                        staging_directory,
+                        progress,
+                    )
+                    .await?
+                }
+                None => {
+                    pipeline::encrypt_file(
+                        source,
+                        node_id,
+                        &file_key,
+                        metadata_store,
+                        staging_directory,
+                        progress,
+                    )
+                    .await?
+                }
+            };
             pipeline::assign_node_id(&mut chunks, NodeId::new(node_id));
             let node = Node::new(
                 node_id,
@@ -84,7 +142,7 @@ pub async fn upload_file(
                 created_at,
                 modified_at,
                 file_size,
-                Some(wrapped_file_key.0),
+                Some(*wrapped_file_key.as_bytes()),
             );
             if let Err(error) = metadata_store.insert_file_with_chunks(&node, &chunks).await {
                 cleanup_staged_blobs(staging_directory, &chunks).await;

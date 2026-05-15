@@ -57,7 +57,7 @@ pub async fn download_file(
     let wrapped_key = node.file_key_wrapped.ok_or_else(|| {
         StorageError::ConstraintViolation("file node missing wrapped key".to_owned())
     })?;
-    let wrapped_file_key = WrappedFileKey(wrapped_key);
+    let wrapped_file_key = WrappedFileKey::new(wrapped_key);
     let file_key =
         unwrap_file_key(&wrapped_file_key, key_encryption_key).map_err(StorageError::from)?;
     decrypt_file(

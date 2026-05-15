@@ -8,6 +8,7 @@ use super::helpers::*;
 use super::types::Argon2MigrationIntent;
 use super::*;
 use crate::auth::Argon2Params;
+use crate::auth::MockKeySource;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::crypto::VaultId;
@@ -17,17 +18,17 @@ use crate::storage::cloud::mock::MockCloudTransport;
 use crate::storage::cloud::vault_header::VaultHeader;
 use crate::storage::cloud::{MANIFEST_BACKUP_BLOB_NAME, upload_manifest_backup};
 
-pub(super) const TEST_PASSWORD: &[u8] = b"correct horse battery staple";
-pub(super) const TEST_NEW_PASSWORD: &[u8] = b"stapler battery horse correct";
-pub(super) const TEST_WRONG_PASSWORD: &[u8] = b"not the password";
+pub(crate) const TEST_PASSWORD: &[u8] = b"correct horse battery staple";
+pub(crate) const TEST_NEW_PASSWORD: &[u8] = b"stapler battery horse correct";
+pub(crate) const TEST_WRONG_PASSWORD: &[u8] = b"not the password";
 
 static CEREMONY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-pub(super) async fn ceremony_lock() -> tokio::sync::MutexGuard<'static, ()> {
+pub(crate) async fn ceremony_lock() -> tokio::sync::MutexGuard<'static, ()> {
     CEREMONY_TEST_LOCK.lock().await
 }
 
-pub(super) fn test_params() -> Argon2Params {
+pub(crate) fn test_params() -> Argon2Params {
     Argon2Params {
         memory_cost_kib: 1024,
         time_cost: 1,
@@ -35,24 +36,24 @@ pub(super) fn test_params() -> Argon2Params {
     }
 }
 
-pub(super) fn test_session_manager() -> SessionManager {
+pub(crate) fn test_session_manager() -> SessionManager {
     SessionManager::with_timeout(Duration::from_secs(3600))
 }
 
-pub(super) fn temp_dir() -> tempfile::TempDir {
+pub(crate) fn temp_dir() -> tempfile::TempDir {
     tempfile::tempdir().expect("tempdir must be created")
 }
 
-pub(super) struct TierOneVault {
-    pub(super) _temp: tempfile::TempDir,
-    pub(super) vault_db_path: PathBuf,
-    pub(super) cloud: MockCloudTransport,
-    pub(super) session: SessionManager,
-    pub(super) vault_id: VaultId,
-    pub(super) header: VaultHeader,
+pub(crate) struct TierOneVault {
+    pub(crate) _temp: tempfile::TempDir,
+    pub(crate) vault_db_path: PathBuf,
+    pub(crate) cloud: MockCloudTransport,
+    pub(crate) session: SessionManager,
+    pub(crate) vault_id: VaultId,
+    pub(crate) header: VaultHeader,
 }
 
-pub(super) async fn create_tier_one_vault() -> TierOneVault {
+pub(crate) async fn create_tier_one_vault() -> TierOneVault {
     let temp = temp_dir();
     let vault_db_path = temp.path().join("vault.db");
     let cloud = MockCloudTransport::new();
@@ -91,17 +92,17 @@ pub(super) async fn create_tier_one_vault() -> TierOneVault {
     }
 }
 
-pub(super) struct TierTwoVault {
-    pub(super) _temp: tempfile::TempDir,
-    pub(super) vault_db_path: PathBuf,
-    pub(super) key_file_path: PathBuf,
-    pub(super) cloud: MockCloudTransport,
-    pub(super) session: SessionManager,
-    pub(super) vault_id: VaultId,
-    pub(super) header: VaultHeader,
+pub(crate) struct TierTwoVault {
+    pub(crate) _temp: tempfile::TempDir,
+    pub(crate) vault_db_path: PathBuf,
+    pub(crate) key_file_path: PathBuf,
+    pub(crate) cloud: MockCloudTransport,
+    pub(crate) session: SessionManager,
+    pub(crate) vault_id: VaultId,
+    pub(crate) header: VaultHeader,
 }
 
-pub(super) async fn create_tier_two_vault() -> TierTwoVault {
+pub(crate) async fn create_tier_two_vault() -> TierTwoVault {
     let temp = temp_dir();
     let vault_db_path = temp.path().join("vault.db");
     let key_file_path = temp.path().join("key.bin");
@@ -142,7 +143,7 @@ pub(super) async fn create_tier_two_vault() -> TierTwoVault {
     }
 }
 
-pub(super) async fn add_recovery_slot_and_return_phrase(
+pub(crate) async fn add_recovery_slot_and_return_phrase(
     vault: &mut TierOneVault,
 ) -> Zeroizing<String> {
     let request = SetupRecoveryRequest {
@@ -164,7 +165,7 @@ pub(super) async fn add_recovery_slot_and_return_phrase(
     .expect("setup_recovery must succeed")
 }
 
-pub(super) async fn upload_manifest_backup_for(vault: &TierOneVault) {
+pub(crate) async fn upload_manifest_backup_for(vault: &TierOneVault) {
     let salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
     let params = argon2_params_from_json(&vault.header.argon2_params);
     let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
@@ -184,7 +185,7 @@ pub(super) async fn upload_manifest_backup_for(vault: &TierOneVault) {
     .expect("manifest backup upload must succeed");
 }
 
-pub(super) async fn upload_manifest_backup_payload_for(vault: &TierOneVault, payload: &[u8]) {
+pub(crate) async fn upload_manifest_backup_payload_for(vault: &TierOneVault, payload: &[u8]) {
     let salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
     let params = argon2_params_from_json(&vault.header.argon2_params);
     let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
@@ -207,7 +208,7 @@ pub(super) async fn upload_manifest_backup_payload_for(vault: &TierOneVault, pay
     let _ = tokio::fs::remove_file(&upload_path).await;
 }
 
-pub(super) async fn upload_corrupted_manifest_backup_for(vault: &TierOneVault) {
+pub(crate) async fn upload_corrupted_manifest_backup_for(vault: &TierOneVault) {
     upload_manifest_backup_for(vault).await;
     let staging_root = tempfile::tempdir().expect("corruption staging tempdir must be created");
     let wire_path = staging_root
@@ -235,4 +236,90 @@ pub(super) async fn upload_corrupted_manifest_backup_for(vault: &TierOneVault) {
         .await
         .expect("corrupted manifest backup upload must succeed");
     let _ = tokio::fs::remove_file(&wire_path).await;
+}
+
+/// Raw vault key bytes derived from master key — accessible to tests in `crate::tests`.
+pub(crate) struct DerivedVaultKeys {
+    /// Bytes suitable for `SqlCipherMetadataStore::open/create`.
+    pub(crate) sqlcipher_key: [u8; 32],
+    /// Bytes for constructing `ManifestKey::from_bytes`.
+    pub(crate) manifest_key: [u8; 32],
+    /// Bytes for constructing `KeyEncryptionKey::from_bytes`.
+    pub(crate) key_encryption_key: [u8; 32],
+}
+
+/// Derives all vault keys for a Tier 1 vault using the test password.
+pub(crate) fn derive_vault_keys_tier_one(vault: &TierOneVault) -> DerivedVaultKeys {
+    let salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
+    let params = argon2_params_from_json(&vault.header.argon2_params);
+    let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+    derive_master_key_into(TEST_PASSWORD, None, &salt, &params, &mut master).unwrap();
+    let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
+    DerivedVaultKeys {
+        sqlcipher_key: *keys.sqlcipher_key.expose(),
+        manifest_key: *keys.manifest_key.expose(),
+        key_encryption_key: *keys.key_encryption_key.expose(),
+    }
+}
+
+/// Adds a recovery phrase slot to a Tier 2 vault using the test password and key file.
+pub(crate) async fn add_recovery_slot_and_return_phrase_tier_two(
+    vault: &mut TierTwoVault,
+) -> Zeroizing<String> {
+    let key_bytes: [u8; 32] = std::fs::read(&vault.key_file_path)
+        .expect("key file must be readable")
+        .try_into()
+        .expect("key file must be 32 bytes");
+    let key_source = MockKeySource::new(key_bytes);
+    let request = SetupRecoveryRequest {
+        current_password_bytes: TEST_PASSWORD,
+        current_key_source: Some(&key_source),
+        argon2_params: test_params(),
+        argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
+        vault_db_path: vault.vault_db_path.clone(),
+    };
+    let cloud_arc: Arc<dyn CloudTransport> = Arc::new(vault.cloud.clone());
+    setup_recovery(
+        request,
+        &vault.session,
+        cloud_arc.as_ref(),
+        &mut vault.header,
+        &vault.vault_id,
+    )
+    .await
+    .expect("setup_recovery tier 2 must succeed")
+}
+
+/// Uploads a manifest backup for a Tier 2 vault using the test password and key file.
+pub(crate) async fn upload_manifest_backup_for_tier_two(vault: &TierTwoVault) {
+    let key_bytes = std::fs::read(&vault.key_file_path).expect("key file must be readable");
+    let key_bytes_32: &[u8; 32] = key_bytes
+        .as_slice()
+        .try_into()
+        .expect("key file must be 32 bytes");
+    let salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
+    let params = argon2_params_from_json(&vault.header.argon2_params);
+    let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+    derive_master_key_into(
+        TEST_PASSWORD,
+        Some(key_bytes_32),
+        &salt,
+        &params,
+        &mut master,
+    )
+    .unwrap();
+    let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
+    let sqlcipher_key = sqlcipher_key_from_array(keys.sqlcipher_key.expose());
+    let manifest_key: [u8; 32] = *keys.manifest_key.expose();
+    let staging_root =
+        tempfile::tempdir().expect("tier 2 manifest backup staging tempdir must exist");
+    upload_manifest_backup(
+        &vault.vault_db_path,
+        &sqlcipher_key,
+        &manifest_key,
+        &vault.cloud,
+        staging_root.path(),
+    )
+    .await
+    .expect("tier 2 manifest backup upload must succeed");
 }

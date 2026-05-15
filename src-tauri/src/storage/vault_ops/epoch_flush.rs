@@ -139,7 +139,7 @@ async fn flush_one_blob(
     let record = EpochBlobRecord {
         epoch_blob_id,
         blob_name,
-        file_key_wrapped: wrapped_file_key.0.to_vec(),
+        file_key_wrapped: wrapped_file_key.as_bytes().to_vec(),
         size_padded,
         blake3_checksum,
     };

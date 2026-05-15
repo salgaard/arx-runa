@@ -30,17 +30,17 @@ The approved problem formulation (Danish original, advisor-approved):
    <!-- SOURCE: Guideline for Using Cryptographic Standards in the Federal Government: Cryptographic Mechanisms — https://csrc.nist.gov/publications/detail/sp/800-175b/rev-1/final — guidance on symmetric encryption, key establishment, and authentication for data at rest and in transit -->
    <!-- SOURCE: XChaCha: eXtended-nonce ChaCha and AEAD_XChaCha20_Poly1305 — https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-xchacha — defines the 192-bit nonce variant of ChaCha20, enabling safe random nonce generation per chunk without state tracking -->
 
-2. **USB hardware factor in authentication:** How can a physical USB device be integrated into the authentication flow (as MFA or recovery mechanism) to ensure that knowledge of the password alone is insufficient to compromise data?
+2. **USB key file factor and offline recovery:** How can a physical USB key file be integrated into the authentication flow as a mandatory second factor — ensuring that password knowledge alone is insufficient to access vault data — and how can an offline BIP-39 recovery mechanism enable user-controlled credential recovery without delegating trust to a third party or introducing a server-side backdoor?
    <!-- SOURCE: NIST SP 800-63B: Digital Identity Guidelines—Authentication and Lifecycle Management — https://pages.nist.gov/800-63-3/sp800-63b.html — defines Authenticator Assurance Levels AAL1–AAL3 and requirements for multi-factor authentication -->
-   <!-- SOURCE: FIDO User Authentication Specifications — https://fidoalliance.org/specifications/ — defines FIDO2/WebAuthn and CTAP protocols for hardware-backed and passwordless authentication -->
+   <!-- SOURCE: BIP-39: Mnemonic code for generating deterministic keys — https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki — specifies the 2048-word wordlist, checksum scheme, and PBKDF2-HMAC-SHA512 derivation used as the basis for Arx Runa's recovery phrase mechanism -->
+   <!-- SOURCE: Argon2: Memory-Hard Function for Password Hashing and Other Applications — https://www.rfc-editor.org/rfc/rfc9106 — RFC 9106, specifies Argon2id parameters and security considerations; used in Arx Runa's recovery_key derivation from the BIP-39 phrase -->
 
-3. **Chunking and synchronisation without metadata leakage:** How can effective chunking and synchronisation logic be implemented to upload changes to the cloud without revealing filenames, directory structures, or metadata to the cloud provider?
+3. **Chunking, synchronisation, and provider-agnostic storage:** How can effective chunking and synchronisation logic be implemented to upload changes to the cloud without revealing filenames, directory structures, or metadata to the cloud provider — and how can the synchronisation protocol maintain consistency across multiple devices while remaining provider-agnostic, enabling redundant backup to multiple destinations without re-encryption?
    <!-- SOURCE: Breaking and Fixing Content-Defined Chunking — https://eprint.iacr.org/2025/558.pdf — analyses security vulnerabilities in CDC implementations across major backup tools; supports the choice of fixed-size chunking for metadata privacy -->
    <!-- SOURCE: Chunking Attacks on File Backup Services using Content-Defined Chunking — https://eprint.iacr.org/2025/532.pdf — demonstrates that CDC leaks file size and content information as a side channel in backup services -->
    <!-- SOURCE: Cryptomator Security Architecture — https://docs.cryptomator.org/security/architecture — "Files are transparently en- and decrypted. There are no unencrypted copies on your hard disk drive." — key architectural comparison point -->
 
-4. **RAM-based UI vs. virtual filesystem for Zero-Trace:** What are the advantages and disadvantages of presenting data through an isolated application UI (RAM-based) compared to a virtual filesystem, when the goal is to leave the fewest possible traces on the host machine?
-   <!-- SOURCE: WinFSP — Windows File System Proxy — https://github.com/winfsp/winfsp — user-mode file system framework for Windows enabling FUSE-style virtual filesystem implementations; represents the virtual filesystem alternative to the RAM-based UI approach -->
+4. **Zero-Trace operation through a RAM-based UI:** How can a RAM-based in-application UI achieve Zero-Trace operation — ensuring that decrypted file content is never written to disk during a session — and what forensic residue, if any, persists on the host machine after the vault is locked?
    <!-- SOURCE: Resident $DATA Residue in NTFS MFT Entries — https://www.sans.org/blog/resident-data-residue-in-ntfs-mft-entries/ — SANS Institute: documents specific MFT artifacts and how file access operations leave forensic traces in NTFS Master File Table records -->
    <!-- SOURCE: Memory Forensic Acquisition and Analysis 101 — https://www.sans.org/blog/memory-forensic-acquisition-and-analysis-101/ — SANS Institute: covers volatile RAM evidence that does not persist to disk; supports the claim that RAM-only decryption leaves no filesystem artifacts -->
    <!-- SOURCE: RAM Forensics: Tools, Techniques, and Best Practices — https://belkasoft.com/ram-forensics-tools-techniques — Belkasoft: documents what evidence exists only in volatile memory and is unrecoverable after power-off; supports the Zero-Trace argument for RAM-based UI -->
@@ -58,9 +58,9 @@ Each sub-question maps to a distinct module in the Arx Runa architecture:
 | Sub-question | Arx Runa module | Report section |
 |---|---|---|
 | 1 — Encryption & key management | `src-tauri/src/crypto/` | Method, Analysis |
-| 2 — USB hardware factor | `src-tauri/src/auth/` | Method, Analysis |
-| 3 — Chunking & sync | `src-tauri/src/storage/` | Method, Analysis |
-| 4 — RAM-based UI vs. FUSE | `src-tauri/src/ui/` | Discussion |
+| 2 — USB key file factor + BIP-39 recovery | `src-tauri/src/auth/` | Method, Analysis |
+| 3 — Chunking, sync, multi-device & multi-destination (UC2, UC5) | `src-tauri/src/storage/` | Method, Analysis |
+| 4 — Zero-Trace RAM-based UI | `src-tauri/src/ui/` | Method, Analysis, Discussion |
 | 5 — File sharing | `src-tauri/src/sharing/` | Method, Analysis, Discussion |
 
 This mapping provides the structural backbone ("rød tråd") for the report: the problem formulation drives the architecture, the architecture drives the implementation, and sub-conclusions per module feed the final conclusion.

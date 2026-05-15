@@ -13,11 +13,11 @@ A user wants to share specific files from their vault with a friend or family me
 
 - Sender has Arx Runa installed with a vault containing the files to share
 - Recipient has Arx Runa installed and has shared their public identity key with the sender
-- Both parties use the same or compatible Rclone backend (or sender publishes the share to a mutually accessible location)
+- Both parties have their vault backed by Backblaze B2 or Google Drive (MVP scope)
 
 ## Main Flow
 
-1. Sender unlocks vault and selects a file to share (e.g., holiday photos folder)
+1. Sender unlocks vault and selects a file to share (e.g., a holiday photo, a shared document)
 2. Sender selects "Share" and enters the recipient's identifier (name or public key)
 3. Arx Runa retrieves the file's encryption key
 4. Arx Runa encrypts the file key so only the recipient can decrypt it
@@ -81,13 +81,6 @@ A user wants to share specific files from their vault with a friend or family me
 - Sender is notified (on next pull) when recipient downloads a shared file
 - Recipient can export a decrypted copy to disk; sender is warned this is outside vault protection
 
-## Related Designs
-
-- [File Sharing](../architecture/designs/file-sharing/design.md)
-- [Cryptographic Primitives](../architecture/designs/cryptographic-primitives/design.md)
-- [Chunking & Manifest](../architecture/designs/chunking-and-manifest/design.md)
-- [Cloud Synchronisation](../architecture/designs/cloud-synchronisation/design.md)
-
 ## Security Considerations
 
 ### Threats Addressed
@@ -107,7 +100,8 @@ A user wants to share specific files from their vault with a friend or family me
 - Sharing with recipients who do not have Arx Runa installed
 - Cryptographic enforcement of read-only access (recipient holds the file key and can re-encrypt)
 - Group sharing with multiple recipients simultaneously (future enhancement)
+- Single-click folder sharing (planned; currently requires sharing each file individually)
 
 ## Notes
 
-File sharing is specified in the design document but not yet implemented. This use case describes intended behaviour. See [use-case-3](use-case-3-hardware-mfa-and-key-loss.md) for authentication factor considerations when the sender uses a Tier 2 vault.
+See [use-case-3](use-case-3-hardware-mfa-and-key-loss.md) for authentication factor considerations when the sender uses a Tier 2 vault.

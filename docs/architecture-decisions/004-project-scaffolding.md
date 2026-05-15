@@ -107,7 +107,7 @@ This ADR records the scaffolding-level decisions. Code-level patterns (newtypes,
 
 ## References
 
-- Design document: `docs/architecture/designs/project-scaffolding/design.md`
+- Design document: `docs/architecture/designs/project-skeleton/design.md`
 - ADR-001: Code Structure and Patterns
 - ADR-002: Frontend Stack Selection
 - [Tauri v2 — Leptos Frontend Guide](https://v2.tauri.app/start/frontend/leptos/)

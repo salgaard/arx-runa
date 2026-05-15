@@ -153,12 +153,9 @@ This use case covers all credential-loss and recovery scenarios across both auth
 - After recovery, user must set new primary credentials before vault is fully operational
 - Recovery slot survives password change and key rotation when phrase is provided during the ceremony
 
-## Related Designs
+## Related Reading
 
-- [Authentication & Session Management](../architecture/designs/authentication-and-session-management/design.md) — Recovery Slot section covers BIP-39 derivation and authentication flow
-- [Cryptographic Primitives](../architecture/designs/cryptographic-primitives/design.md) — `wrap_master_key_for_recovery` / `unwrap_master_key_from_recovery` functions
-- [Cloud Synchronisation](../architecture/designs/cloud-synchronisation/design.md) — `RecoverySlot` struct and vault header format
-- [Password and Key Recovery Research](../research/password-and-key-recovery.md) — Full feasibility analysis and decision rationale
+- [Password and Key Recovery](../research/password-and-key-recovery.md) — Full feasibility analysis and decision rationale
 
 ## Security Considerations
 
