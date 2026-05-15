@@ -1,4 +1,4 @@
-# How Files Are Encrypted
+# How Files Are Encrypted and Decrypted
 
 When you add a file to Arx Runa, it never reaches the cloud in recognisable form. By the time the first byte leaves your device, the file has been stripped of hidden metadata, split into uniform chunks, padded to an identical size, and encrypted under a key that exists nowhere outside your vault. Here is what happens at each step — and why.
 
@@ -86,6 +86,83 @@ flowchart TD
     E1 --> E2 --> E3 --> E4
     K1 -.->|file_key| E4
     E4 --> E5 --> E6 --> E7 --> E8 --> E9 --> K4
+
+    classDef io fill:#16a34a,stroke:#166534,color:#fff
+    classDef proc fill:#2563eb,stroke:#1e40af,color:#fff
+    classDef crypto fill:#dc2626,stroke:#991b1b,color:#fff
+    classDef data fill:#9333ea,stroke:#6b21a8,color:#fff
+    classDef db fill:#d97706,stroke:#92400e,color:#fff
+```
+
+---
+
+# How Files Are Decrypted
+
+Decryption is the exact inverse of encryption. Every guarantee made on the way in — authentication, ordering, padding removal — is enforced again on the way out, before a single byte of plaintext is written.
+
+## Unwrapping the file key
+
+The manifest stores the file key in wrapped form. To begin decryption, Arx Runa unwraps it using the `key_encryption_key` derived from the master key. The raw file key exists in memory only for the duration of the operation and is zeroed immediately after.
+
+## Pre-flight validation
+
+Before touching any blobs, Arx Runa validates the chunk list from the manifest: the number of chunks must match what is expected for the file size, and chunk indices must be contiguous starting at zero with no gaps or duplicates. Any anomaly here is a hard stop — it means the manifest is inconsistent and the file cannot be safely reconstructed.
+
+## Locating each blob
+
+Chunks may live in different locations depending on sync state. For each blob, Arx Runa checks in order: the pending upload directory, the local cache, and the staging directory. Whichever location holds the file wins. If none do, the blob must be downloaded from the cloud before decryption can proceed.
+
+## Verifying integrity before decryption
+
+The BLAKE3 checksum stored in the manifest is verified against the blob **before** the file key is used. This is enforced at the type level — the `VerifiedBlob` type that `decrypt_chunk` accepts can only be constructed by `verify_checksum`, so it is impossible to decrypt a blob without first checking it. A mismatch means the blob was corrupted in storage or transit; the error is reported and decryption stops immediately.
+
+Arx Runa also checks the blob's file size against the expected wire format size (`chunk_size + 40 bytes` for the 24-byte nonce and 16-byte tag) before reading it. A size mismatch fails without reading the blob content.
+
+## Decrypting each chunk
+
+`decrypt_chunk` takes the verified blob, the file key, and the same AAD used during encryption (`file_id || chunk_index`). XChaCha20-Poly1305 authenticates the ciphertext and tag together: if either has been tampered with, or if the wrong file identity or chunk position is supplied, the authentication tag fails and no plaintext is returned. There is no partial output on failure.
+
+The result is a buffer of exactly `chunk_size` bytes — the padded plaintext.
+
+## Stripping padding from the last chunk
+
+Every chunk except the last is written in full. For the last chunk, Arx Runa reads the true file size from the manifest and writes only the bytes that belong to the file:
+
+```
+bytes_to_write = file_size − (chunk_index × chunk_size)
+```
+
+The zero-padding added at encryption time is silently discarded. The output file will be byte-for-byte identical to the original, minus any EXIF metadata that was stripped on the way in.
+
+## Atomic output
+
+Arx Runa writes each chunk to a temporary file named `<destination>.arx-runa-decrypt-<uuid>.tmp`. Only after all chunks have been written and verified does it atomically rename the temporary file to the final destination. A crash at any point before the rename leaves no partial output at the destination path — the next attempt starts from the beginning.
+
+## The full pipeline
+
+```mermaid
+flowchart TD
+    subgraph DECRYPT ["Decrypt Path"]
+        D1["Read chunks from manifest<br/>(ordered by chunk_index)"]:::db
+        D2["Resolve blob path<br/>(pending → cache → staging)"]:::io
+        D3["Check file size<br/>(must equal chunk_size + 40)"]:::proc
+        D4["Read wire_blob<br/>(BufReader read_exact)"]:::io
+        D5["verify_checksum(wire_blob, blake3_checksum)<br/>→ VerifiedBlob"]:::proc
+        D6["decrypt_chunk<br/>(file_key, AAD = file_id || chunk_index)"]:::crypto
+        D7["padded_plaintext<br/>(chunk_size bytes)"]:::data
+        D8["Write chunk to .tmp<br/>(full, or truncate last chunk)"]:::io
+        D9["Atomic rename .tmp → destination"]:::io
+        D10["Zeroize file_key"]:::crypto
+    end
+
+    subgraph KEYS ["Key Lifecycle"]
+        K1["Read file_key_wrapped<br/>from manifest"]:::db
+        K2["Unwrap: decrypt(file_key_wrapped,<br/>key_encryption_key) → file_key"]:::crypto
+    end
+
+    K1 --> K2
+    D1 --> D2 --> D3 --> D4 --> D5 --> D6 --> D7 --> D8 --> D9 --> D10
+    K2 -.->|file_key| D6
 
     classDef io fill:#16a34a,stroke:#166534,color:#fff
     classDef proc fill:#2563eb,stroke:#1e40af,color:#fff

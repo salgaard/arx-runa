@@ -19,6 +19,6 @@ Targets Win/macOS/Linux; preserve behavior across all three; platform-specific c
 - Multi-step: `step → result → next`, no narrative padding
 
 ## Lookup
-- Design docs → jdocmunch-mcp (`docs/architecture/**`)
+- Markdown → jdocmunch-mcp
 - Library APIs → context7
 - Source code → jcodemunch-mcp

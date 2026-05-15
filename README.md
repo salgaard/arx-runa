@@ -11,53 +11,44 @@
 [![CI](https://github.com/salgaard/arx-runa/actions/workflows/continuous-integration.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/continuous-integration.yml)
 [![Security Audit](https://github.com/salgaard/arx-runa/actions/workflows/security-audit.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/security-audit.yml)
 [![Deploy Docs](https://github.com/salgaard/arx-runa/actions/workflows/docs.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/docs.yml)
+[![Secret Scan](https://github.com/salgaard/arx-runa/actions/workflows/secret-scan.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/secret-scan.yml)
+[![Gitlab Mirror](https://github.com/salgaard/arx-runa/actions/workflows/mirror.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/mirror.yml)
 ![Rust](https://img.shields.io/badge/rust-2024-orange?logo=rust)
 
 **Zero-knowledge file encryption tool** — files are encrypted on your device before upload. The cloud receives only opaque ciphertext. Keys never leave your machine.
 
 ---
 
-**📖 [Read the full documentation](https://salgaard.github.io/arx-runa/)** — architecture, threat model, roadmap, and development guides.
+**📖 [Read more stuff!](https://salgaard.github.io/arx-runa/)**
 
 ## Core Pillars
 
-- **Client-side encryption** — files are encrypted before upload; the cloud
-  stores opaque ciphertext blobs only
-- **Tiered authentication** — Tier 1 (password only) or Tier 2 (password +
-  32-byte USB key file); both combined before key derivation
-- **Zero-Trace policy** — plaintext is transient in active memory only and is
-  never persisted to disk, logs, or telemetry; session keys are mlock'd and
-  zeroed on lock or timeout
-- **Metadata-minimizing storage** — fixed-size padded chunks, random UUID blob
-  names, and EXIF/XMP/IPTC stripping in memory before encryption reduce
-  leakage of file structure, sizes, and embedded personal data
-- **Tamper-evident chunks** — each encrypted blob is BLAKE3-hashed; the
-  checksum is verified before decryption so bit rot or tampering is caught
-  immediately
-- **Secure sharing** — share packages use HPKE (RFC 9180) with X25519/HKDF-SHA256/ChaCha20-Poly1305; only the recipient's private key can open the envelope
-- **Bring Your Own Cloud** — encrypted blobs via Rclone; no provider lock-in
+| Feature | What it means |
+|---------|---------------|
+| **Client-side encryption** | Your files are encrypted on your device before upload — the cloud only ever sees opaque ciphertext blobs |
+| **Tiered authentication** | Tier 1 (password only) or Tier 2 (password + 32-byte USB key file); both are combined before key derivation, so neither factor alone is sufficient |
+| **Zero-Trace** | Sensitive data is zeroed from memory as soon as it is no longer needed; session keys are mlock'd so the OS cannot page them to disk; no temporary plaintext files are written |
+| **Fixed-size chunks with BLAKE3 integrity** | Files are split into equal-sized, padded chunks so the cloud cannot guess sizes; every chunk is BLAKE3-hashed and verified before decryption to catch bit rot or tampering |
+| **Secure file sharing** | Share individual files using HPKE (RFC 9180) with X25519 identities — only the recipient's private key opens the share; the cloud sees only encrypted blobs |
+| **Bring Your Own Cloud** | Works with any provider Rclone supports (S3, Backblaze B2, Dropbox, Google Drive, and 70+ more) — no lock-in, multiple destinations supported |
 
 ## Technology Stack
 
-| Component | Technology |
-|---|---|
-| Language | Rust (edition 2024) |
-| Framework | Tauri (native shell + Rust backend) |
-| UI | Leptos (Rust/WASM frontend, CSR mode) |
-| Encryption | XChaCha20-Poly1305 via `chacha20poly1305` crate |
-| KDF | Argon2id → HKDF-SHA256 key separation |
-| Authentication | Tier 1 password-only or Tier 2 password + USB key file |
-| File sharing | HPKE (RFC 9180) with X25519/HKDF-SHA256/ChaCha20-Poly1305 |
-| Integrity | BLAKE3 per-chunk checksums; verified before decryption |
-| Local DB | SQLite + SQLCipher |
-| Cloud transport | Rclone |
-| Memory safety | `zeroize`, `secrecy`, `mlock`/`VirtualLock` |
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| Language | Rust (edition 2024) | Memory-safe systems programming |
+| Application framework | Tauri | Native desktop shell and Rust backend |
+| UI framework | Leptos (Rust/WASM, CSR) | Reactive frontend compiled to WebAssembly |
+| Encryption | XChaCha20-Poly1305 | Authenticated encryption for every chunk; 192-bit random nonce per chunk |
+| Key derivation | Argon2id → HKDF-SHA256 | Memory-hard password hardening; then key expansion into independent vault keys |
+| File sharing | HPKE (RFC 9180) with X25519 | End-to-end encrypted share packages; only the recipient's private key can open them |
+| Integrity | BLAKE3 | Per-chunk checksums recorded in the manifest; verified on download before decryption |
+| Local database | SQLite + SQLCipher | Encrypted manifest: file paths, chunk records, wrapped file keys |
+| Cloud transport | Rclone | Provider-agnostic transfer to 70+ storage backends |
+| Memory safety | `zeroize`, `secrecy`, `mlock`/`VirtualLock` | Keys zeroed after use; locked memory never paged to disk |
 
-## Documentation
+## Quick links
 
-Quick links:
-- [Use Cases](https://salgaard.github.io/arx-runa/use-cases/index.html) — Real-world scenarios Arx Runa is designed for
-- [Roadmap](https://salgaard.github.io/arx-runa/roadmap.html) — Implementation roadmap
-- [Architecture](https://salgaard.github.io/arx-runa/architecture/index.html) — Detailed technical designs for each part of the system
-- [Glossary](https://salgaard.github.io/arx-runa/guides/glossary.html) — Terms used consistently across Arx Runa
-- [Research](https://salgaard.github.io/arx-runa/research/index.html) — Research to critique and explore ideas and options
+- [Intro](https://salgaard.github.io/arx-runa/)
+- [Use Cases](https://salgaard.github.io/arx-runa/use-cases/index.html)
+- [How it works](https://salgaard.github.io/arx-runa/how-it-works/index.html)
