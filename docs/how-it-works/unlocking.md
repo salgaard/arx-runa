@@ -40,9 +40,9 @@ sequenceDiagram
     App->>App: Scan for 32-byte files<br/>verify BLAKE3 fingerprint against vault header
     App-->>You: Key file detected — enter password
     You->>App: Type password, confirm
-    App->>KDF: Argon2id(password ‖ key_file, salt)<br/>64 MiB · 3 iterations · 4 threads
-    KDF-->>App: master_key  (~1 second)
-    App->>KDF: HKDF(master_key) × 3
+    App->>KDF: Argon2id(password #124;#124; key_file, salt) 64 MiB, 3 iterations, 4 threads
+    KDF-->>App: master_key (~1 second)
+    App->>KDF: HKDF(master_key) x 3
     KDF-->>App: session keys
     App->>App: zeroize(master_key)
     App->>Mem: mlock(session keys)

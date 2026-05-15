@@ -30,22 +30,18 @@
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [
-                {"name": "RUST_LOG", "value": "debug"},
-                {"name": "RUST_BACKTRACE", "value": "1"}
+                {
+                    "name": "RUST_LOG",
+                    "value": "debug"
+                },
+                {
+                    "name": "RUST_BACKTRACE",
+                    "value": "1"
+                }
             ],
             "visualizerFile": "${workspaceFolder}/.vscode/intrinsic.natvis",
             "showDisplayString": true,
             "preLaunchTask": "build:tauri-debug"
-        }
-    ],
-    "compounds": [
-        {
-            // One-click developer workflow: trunk dev server starts via preLaunchTask inside the debug config.
-            "name": "[One-click] Debug UI + Backend (Windows)",
-            "configurations": [
-                "[Debug] Backend core (Windows)"
-            ],
-            "stopAll": true
         }
     ]
 }

@@ -31,7 +31,7 @@ stateDiagram-v2
         SessionKeys: None
         SQLCipher: Closed
         UI State: Login screen
-        Action: Prompt for password + USB key file
+        Action: Prompt for password (+ USB key file for Tier 2 vaults)
     end note
     
     note right of Authenticating
@@ -59,7 +59,7 @@ stateDiagram-v2
         SessionKeys: Still valid (mlocked)
         SQLCipher: Open
         UI State: Any vault page
-        Inactivity Timer: Running (15 min countdown)
+        Inactivity Timer: Running (15 min in Idle #45;#62; TimingOut)
     end note
     
     note right of TimingOut

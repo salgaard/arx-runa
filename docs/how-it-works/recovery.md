@@ -22,10 +22,10 @@ flowchart TD
     MK_INPUT(["master_key<br/>(from primary derivation;<br/>held in mlocked memory)"]):::secret
 
     subgraph WRAP_BLOCK ["Key Wrapping — XChaCha20-Poly1305"]
-        WRAP["XChaCha20-Poly1305 encrypt<br/>AAD: vault_id_bytes<br/>Nonce: 24B CSPRNG"]:::crypto
+        WRAP["XChaCha20-Poly1305 encrypt<br/>AAD: #34;arx-runa recovery v1#34; #124;#124; vault_id_bytes<br/>Nonce: 24B CSPRNG"]:::crypto
     end
 
-    WMK["wrapped_master_key<br/>(72 bytes: 24B nonce | 32B ciphertext | 16B tag)<br/>stored in vault header recovery_slot"]:::storage
+    WMK["wrapped_master_key<br/>(72 bytes: 24B nonce #124; 32B ciphertext #124; 16B tag)<br/>stored in vault header recovery_slot"]:::storage
 
     PHRASE -->|phrase input| REC_ARGON
     REC_SALT -->|salt| REC_ARGON

@@ -62,27 +62,29 @@ This breaks down into five sub-questions:
 - [**Glossary**](guides/glossary.md) — Term definitions
 - [**Security Model**](guides/security-model.md) — Trust boundaries and threat model
 
-## Core Features
+## Core Pillars
 
 | Feature | What it means |
 |---------|---------------|
-| **Client-side encryption** | Your files are encrypted on your device before upload — the cloud only ever sees scrambled data |
-| **Hardware security key** | Optionally require a physical USB file as a second factor, so a stolen password is not enough |
-| **Zero-Trace** | Sensitive data is erased from memory as soon as it is no longer needed; no temporary files are written |
-| **Fixed-size chunks** | Files are split into equal-sized pieces so the cloud cannot guess file sizes from upload patterns |
-| **Bring Your Own Cloud** | Works with any cloud provider (Dropbox, Google Drive, S3, etc.) — no lock-in |
+| **Client-side encryption** | Your files are encrypted on your device before upload — the cloud only ever sees opaque ciphertext blobs |
+| **Tiered authentication** | Tier 1 (password only) or Tier 2 (password + 32-byte USB key file); both are combined before key derivation, so neither factor alone is sufficient |
+| **Zero-Trace** | Sensitive data is zeroed from memory as soon as it is no longer needed; session keys are mlock'd so the OS cannot page them to disk; no temporary plaintext files are written |
+| **EXIF & metadata stripping** | GPS coordinates, timestamps, and camera metadata are removed from media files in memory before encryption — the cloud never receives that embedded personal data |
+| **Fixed-size chunks with BLAKE3 integrity** | Files are split into equal-sized, padded chunks so the cloud cannot guess sizes; every chunk is BLAKE3-hashed and verified before decryption to catch bit rot or tampering |
+| **Secure file sharing** | Share individual files using HPKE (RFC 9180) with X25519 identities — only the recipient's private key opens the share; the cloud sees only encrypted blobs |
+| **Bring Your Own Cloud** | Works with any provider Rclone supports (S3, Backblaze B2, Dropbox, Google Drive, and 70+ more) — no lock-in, multiple destinations supported |
 
 ## Technology Stack
 
 | Component | Technology | Purpose |
 |-----------|------------|---------|
-| Language | Rust | Memory-safe systems programming |
-| Application framework | Tauri | Native desktop app with a web-based UI |
-| Encryption algorithm | XChaCha20-Poly1305 | Fast, secure authenticated encryption |
-| Key derivation | Argon2id + HKDF-SHA256 | Turns passwords into strong cryptographic keys |
-| Local database | SQLite + SQLCipher | Encrypted local storage for file metadata |
-| Cloud transport | Rclone | Provider-agnostic file transfer |
-
-## Source Code
-
-- [GitHub Repository(private at the moment)](https://github.com/salgaard/arx-runa)
+| Language | Rust (edition 2024) | Memory-safe systems programming |
+| Application framework | Tauri | Native desktop shell and Rust backend |
+| UI framework | Leptos (Rust/WASM, CSR) | Reactive frontend compiled to WebAssembly |
+| Encryption | XChaCha20-Poly1305 | Authenticated encryption for every chunk; 192-bit random nonce per chunk |
+| Key derivation | Argon2id → HKDF-SHA256 | Memory-hard password hardening; then key expansion into independent vault keys |
+| File sharing | HPKE (RFC 9180) with X25519 | End-to-end encrypted share packages; only the recipient's private key can open them |
+| Integrity | BLAKE3 | Per-chunk checksums recorded in the manifest; verified on download before decryption |
+| Local database | SQLite + SQLCipher | Encrypted manifest: file paths, chunk records, wrapped file keys |
+| Cloud transport | Rclone | Provider-agnostic transfer to 70+ storage backends |
+| Memory safety | `zeroize`, `secrecy`, `mlock`/`VirtualLock` | Keys zeroed after use; locked memory never paged to disk |

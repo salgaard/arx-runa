@@ -77,10 +77,10 @@ sequenceDiagram
     RT-->>Sync: temp file
     Sync->>Sync: decrypt manifest backup #45;#62; cloud_counter
     break cloud_counter #62; local_counter
-        Sync-->>User: CONFLICT — pull first
+        Sync-->>User: CONFLICT - pull first
     end
     break cloud_counter #60; local_counter
-        Sync-->>User: CONFLICT — cloud manifest older than local
+        Sync-->>User: CONFLICT - cloud manifest older than local
     end
 
     Sync->>Meta: get all staged blob_names

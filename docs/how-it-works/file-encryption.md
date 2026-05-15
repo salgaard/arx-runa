@@ -44,10 +44,10 @@ sequenceDiagram
     Caller->>encrypt_chunk: plaintext, file_key, file_id, chunk_index
     encrypt_chunk->>CSPRNG: generate_nonce()
     CSPRNG-->>encrypt_chunk: nonce (24 bytes)
-    encrypt_chunk->>encrypt_chunk: construct AAD = file_id || chunk_index
+    encrypt_chunk->>encrypt_chunk: construct AAD = file_id #124;#124; chunk_index
     encrypt_chunk->>XChaCha20Poly1305: encrypt_in_place_detached(nonce, aad, plaintext)
     XChaCha20Poly1305-->>encrypt_chunk: tag (16 bytes)
-    encrypt_chunk->>encrypt_chunk: assemble [nonce | ciphertext | tag]
+    encrypt_chunk->>encrypt_chunk: assemble [nonce #124; ciphertext #124; tag]
     encrypt_chunk-->>Caller: blob
 ```
 
@@ -67,8 +67,8 @@ flowchart TD
         E1["Source file<br/>(streaming)"]:::io
         E2["Strip EXIF metadata<br/>(in memory only)"]:::proc
         E3["Read chunk_size bytes<br/>(zero-pad if last chunk)"]:::proc
-        E4["encrypt_chunk<br/>(file_key, AAD = file_id || chunk_index)"]:::crypto
-        E5["[24B nonce | ciphertext | 16B tag]<br/>wire_blob"]:::data
+        E4["encrypt_chunk<br/>(file_key, AAD = file_id #124;#124; chunk_index)"]:::crypto
+        E5["[24B nonce #124; ciphertext #124; 16B tag]<br/>wire_blob"]:::data
         E6["blake3::hash(wire_blob)<br/>→ blake3_checksum"]:::proc
         E7["Write to staging/{uuid}.blob"]:::io
         E8["ChunkRecord<br/>(chunk_index, blob_name, blake3_checksum)"]:::data
@@ -77,7 +77,7 @@ flowchart TD
 
     subgraph KEYS ["Key Lifecycle"]
         K1["Generate file_key<br/>(256-bit CSPRNG)"]:::crypto
-        K2["Wrap: encrypt(file_key, key_encryption_key)<br/>→ file_key_wrapped"]:::crypto
+        K2["Wrap: encrypt(file_key, key_encryption_key)<br/>#45;#62; file_key_wrapped"]:::crypto
         K3["Store file_key_wrapped<br/>in manifest"]:::db
         K4["Zeroize file_key<br/>after use"]:::crypto
     end
