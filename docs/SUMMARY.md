@@ -29,10 +29,11 @@
 
 # Deep Dives
 
-- [Cryptographic Primitive Rationale](research/cryptographic-primitive-rationale.md)
-- [File Sharing Cryptography](research/file-sharing-cryptography.md)
-- [Password And Key Recovery](research/password-and-key-recovery.md)
-- [Padding Overhead Reduction](research/padding-overhead-reduction.md)
+- [Overview](notes/README.md)
+  - [Cryptographic Primitive Rationale](research/cryptographic-primitive-rationale.md)
+  - [File Sharing Cryptography](research/file-sharing-cryptography.md)
+  - [Password And Key Recovery](research/password-and-key-recovery.md)
+  - [Padding Overhead Reduction](research/padding-overhead-reduction.md)
 
 ---
 
