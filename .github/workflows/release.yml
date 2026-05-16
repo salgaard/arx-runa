@@ -80,9 +80,10 @@ jobs:
             curl -fsSL "https://github.com/rclone/rclone/releases/download/${RCLONE_VERSION}/rclone-${RCLONE_VERSION}-osx-amd64.zip" -o rclone-amd.zip
             unzip -j rclone-arm.zip "*/rclone" -d /tmp/rclone-arm
             unzip -j rclone-amd.zip "*/rclone" -d /tmp/rclone-amd
-            cp /tmp/rclone-arm/rclone src-tauri/bin/rclone-aarch64-apple-darwin
-            cp /tmp/rclone-amd/rclone src-tauri/bin/rclone-x86_64-apple-darwin
-            chmod +x src-tauri/bin/rclone-aarch64-apple-darwin src-tauri/bin/rclone-x86_64-apple-darwin
+            lipo -create -output src-tauri/bin/rclone-universal-apple-darwin \
+              /tmp/rclone-arm/rclone \
+              /tmp/rclone-amd/rclone
+            chmod +x src-tauri/bin/rclone-universal-apple-darwin
           fi
 
       - name: Build and publish release

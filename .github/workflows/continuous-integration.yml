@@ -54,19 +54,18 @@ jobs:
           elif [[ "$RUNNER_OS" == "Windows" ]]; then
             touch src-tauri/bin/rclone-x86_64-pc-windows-msvc.exe
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
-            touch src-tauri/bin/rclone-aarch64-apple-darwin
-            touch src-tauri/bin/rclone-x86_64-apple-darwin
-            chmod +x src-tauri/bin/rclone-aarch64-apple-darwin src-tauri/bin/rclone-x86_64-apple-darwin
+            touch src-tauri/bin/rclone-universal-apple-darwin
+            chmod +x src-tauri/bin/rclone-universal-apple-darwin
           fi
 
       - name: Run Clippy (warnings as errors)
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy -p arx-runa-tauri --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo test --workspace --all-targets --all-features
+        run: cargo test -p arx-runa-tauri --all-targets
 
       - name: Release build
-        run: cargo build --workspace --release
+        run: cargo build -p arx-runa-tauri --release
 
   e2e:
     name: e2e (Zero-Trace frontend)
