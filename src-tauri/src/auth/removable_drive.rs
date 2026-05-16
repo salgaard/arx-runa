@@ -82,11 +82,11 @@ mod imp {
             let mount_path = Path::new(mount_point);
             if path.starts_with(mount_path) {
                 let prefix_len = mount_point.len();
-                if prefix_len >= best_len {
-                    if let Some(mm) = parse_major_minor(major_minor) {
-                        best_len = prefix_len;
-                        best = Some(mm);
-                    }
+                if prefix_len >= best_len
+                    && let Some(mm) = parse_major_minor(major_minor)
+                {
+                    best_len = prefix_len;
+                    best = Some(mm);
                 }
             }
         }
