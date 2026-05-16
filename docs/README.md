@@ -47,15 +47,15 @@ This breaks down into five sub-questions:
 
 ### What Arx Runa Does
 
-- [**Use Cases**](use-cases/README.md) — Real-world scenarios Arx Runa is designed for
+- [**Use Cases**](use-cases/index.html) — Real-world scenarios Arx Runa is designed for
 
 ### How It Works
 
-- [**How It Works**](how-it-works/README.md) — Plain-language walkthroughs: the vault, unlocking, encryption, cloud sync, sharing, and recovery
+- [**How It Works**](how-it-works/index.html) — Plain-language walkthroughs: the vault, unlocking, encryption, cloud sync, sharing, and recovery
 
 ### Going Deeper
 
-- [**Deep Dives**](research/README.md) — Research-level detail on cryptographic choices, file sharing, key recovery, and padding
+- [**Deep Dives**](research/index.html) — Research-level detail on cryptographic choices, file sharing, key recovery, and padding
 
 ### Reference
 
