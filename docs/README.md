@@ -43,7 +43,7 @@ This breaks down into five sub-questions:
 
 5. **File sharing in a zero-trust system:** What cryptographic and protocol-level challenges arise when enabling file-granularity sharing between independent users in a zero-trust client-side encrypted system, and how does the proposed sharing architecture compare to existing approaches such as OneDrive sharing links and Cryptomator shared vaults?
 
-## Explore some Documentation
+## Explore some stuff
 
 ### What Arx Runa Does
 
@@ -55,7 +55,7 @@ This breaks down into five sub-questions:
 
 ### Going Deeper
 
-- [**Deep Dives**](notes/README.md) — Research-level detail on cryptographic choices, file sharing, key recovery, and padding
+- [**Deep Dives**](research/README.md) — Research-level detail on cryptographic choices, file sharing, key recovery, and padding
 
 ### Reference
 

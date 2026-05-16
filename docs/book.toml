@@ -1,7 +1,7 @@
 [book]
 title = "Arx Runa Documentation"
 authors = ["salgaard"]
-description = "Zero-knowledge cloud storage — technical documentation"
+description = "Zero-knowledge cloud storage — documentation"
 src = "."
 language = "en"
 

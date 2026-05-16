@@ -29,7 +29,7 @@
 
 # Deep Dives
 
-- [Overview](notes/README.md)
+- [Overview](research/README.md)
   - [Cryptographic Primitive Rationale](research/cryptographic-primitive-rationale.md)
   - [File Sharing Cryptography](research/file-sharing-cryptography.md)
   - [Password And Key Recovery](research/password-and-key-recovery.md)
