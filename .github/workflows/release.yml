@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: ubuntu-22.04
+          - platform: ubuntu-24.04
             rust_targets: wasm32-unknown-unknown
             args: ''
           - platform: windows-latest

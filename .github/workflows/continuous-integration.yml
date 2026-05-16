@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-22.04, windows-latest, macos-latest]
+        platform: [ubuntu-24.04, windows-latest, macos-latest]
 
     steps:
       - name: Checkout repository
@@ -54,8 +54,8 @@ jobs:
           elif [[ "$RUNNER_OS" == "Windows" ]]; then
             touch src-tauri/bin/rclone-x86_64-pc-windows-msvc.exe
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
-            touch src-tauri/bin/rclone-universal-apple-darwin
-            chmod +x src-tauri/bin/rclone-universal-apple-darwin
+            touch src-tauri/bin/rclone-aarch64-apple-darwin
+            chmod +x src-tauri/bin/rclone-aarch64-apple-darwin
           fi
 
       - name: Run Clippy (warnings as errors)
