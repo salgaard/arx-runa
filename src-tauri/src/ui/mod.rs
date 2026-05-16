@@ -15,6 +15,7 @@ pub mod sync_commands;
 pub mod types;
 pub mod validation;
 pub(crate) mod vault_paths;
+pub mod video_stream;
 
 pub use error::IpcError;
 pub use state::AppState;
@@ -27,7 +28,8 @@ pub use auth_commands::{
 
 // File commands (6)
 pub use file_commands::{
-    delete_file, download_file, get_file_content, list_directory, list_remote, upload_file,
+    delete_file, download_file, get_file_content, list_directory, list_remote, prefetch_video,
+    upload_file,
 };
 
 // Sync commands (7)

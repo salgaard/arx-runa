@@ -787,6 +787,35 @@ impl SqlCipherMetadataStore {
         .await
     }
 
+    /// Returns per-destination pending-backup counts: `(destination_id, count)` pairs.
+    pub(crate) async fn get_pending_backup_counts(
+        &self,
+    ) -> Result<Vec<(String, u32)>, StorageError> {
+        self.with_connection_blocking(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT destination_id, COUNT(*) as cnt
+                     FROM pending_backup
+                     GROUP BY destination_id
+                     ORDER BY destination_id ASC",
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            let rows = stmt
+                .query_map([], |row| {
+                    let dest: String = row.get(0)?;
+                    let cnt: i64 = row.get(1)?;
+                    Ok((dest, cnt as u32))
+                })
+                .map_err(StorageError::from_rusqlite)?;
+            let mut result = Vec::new();
+            for row in rows {
+                result.push(row.map_err(StorageError::from_rusqlite)?);
+            }
+            Ok(result)
+        })
+        .await
+    }
+
     /// Enqueues multiple blobs for backup to a mirror destination in a single transaction.
     ///
     /// Silently ignores duplicates (idempotent).
@@ -1678,6 +1707,19 @@ impl MetadataStore for SqlCipherMetadataStore {
             if affected == 0 {
                 return Err(StorageError::NotFound);
             }
+            // Remove epoch_blobs rows that are now fully orphaned (no chunks
+            // reference them after the cascade delete above). Must run after
+            // the node delete so the FK from chunks → epoch_blobs is already
+            // gone before we attempt the epoch_blobs delete.
+            tx.execute(
+                "DELETE FROM epoch_blobs \
+                 WHERE epoch_blob_id NOT IN ( \
+                     SELECT DISTINCT epoch_blob_id FROM chunks \
+                     WHERE epoch_blob_id IS NOT NULL \
+                 )",
+                [],
+            )
+            .map_err(StorageError::from_rusqlite)?;
             tx.commit().map_err(StorageError::from_rusqlite)?;
             Ok(())
         })
@@ -2198,7 +2240,7 @@ mod tests {
     use super::SqlCipherMetadataStore;
     use crate::storage::MetadataStore;
     use crate::storage::error::StorageError;
-    use crate::storage::types::{ChunkRecord, Node, NodeType};
+    use crate::storage::types::{ChunkRecord, EpochBlobRecord, Node, NodeType};
 
     fn directory_node(node_id: Uuid, parent_id: Option<Uuid>, name: &str) -> Node {
         Node::new(
@@ -2381,6 +2423,124 @@ mod tests {
                 "11111111-1111-4111-8111-111111111111".to_owned(),
                 "22222222-2222-4222-8222-222222222222".to_owned(),
             ]
+        );
+    }
+
+    fn epoch_blob_record(blob_name: &str) -> EpochBlobRecord {
+        EpochBlobRecord {
+            epoch_blob_id: Uuid::new_v4(),
+            blob_name: blob_name.to_owned(),
+            file_key_wrapped: vec![0u8; 72],
+            size_padded: 4_194_304,
+            blake3_checksum: [0xCC; 32],
+        }
+    }
+
+    #[tokio::test]
+    async fn test_delete_node_removes_orphaned_epoch_blob_from_db() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+
+        let file_id = Uuid::new_v4();
+        store
+            .insert_node(&file_node(file_id, None, "only.txt"))
+            .await
+            .expect("file should insert");
+
+        let blob_name = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        let record = epoch_blob_record(blob_name);
+        store
+            .commit_epoch_flush(&record, &[(file_id, 0, 0, 128)])
+            .await
+            .expect("epoch flush should commit");
+
+        let before = store
+            .list_sync_chunks()
+            .await
+            .expect("list_sync_chunks should succeed");
+        assert!(
+            before.iter().any(|r| r.blob_name == blob_name),
+            "epoch blob should appear in list_sync_chunks before delete"
+        );
+
+        store
+            .delete_node(file_id)
+            .await
+            .expect("delete_node should succeed");
+
+        let after = store
+            .list_sync_chunks()
+            .await
+            .expect("list_sync_chunks should succeed");
+        assert!(
+            !after.iter().any(|r| r.blob_name == blob_name),
+            "epoch blob should be removed from list_sync_chunks after all referencing nodes deleted"
+        );
+
+        let pending = store
+            .list_pending_deletions(10)
+            .await
+            .expect("pending deletions should list");
+        assert!(
+            pending.contains(&blob_name.to_owned()),
+            "orphaned epoch blob should be enqueued in pending_deletions"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_node_preserves_epoch_blob_when_other_files_remain() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [5; 32];
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+
+        let file_a = Uuid::new_v4();
+        let file_b = Uuid::new_v4();
+        store
+            .insert_node(&file_node(file_a, None, "a.txt"))
+            .await
+            .expect("file_a should insert");
+        store
+            .insert_node(&file_node(file_b, None, "b.txt"))
+            .await
+            .expect("file_b should insert");
+
+        let blob_name = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        let record = epoch_blob_record(blob_name);
+        store
+            .commit_epoch_flush(&record, &[(file_a, 0, 0, 64), (file_b, 0, 64, 64)])
+            .await
+            .expect("epoch flush should commit");
+
+        store
+            .delete_node(file_a)
+            .await
+            .expect("delete_node should succeed");
+
+        let after = store
+            .list_sync_chunks()
+            .await
+            .expect("list_sync_chunks should succeed");
+        assert!(
+            after.iter().any(|r| r.blob_name == blob_name),
+            "epoch blob should remain in list_sync_chunks while file_b still references it"
+        );
+
+        let pending = store
+            .list_pending_deletions(10)
+            .await
+            .expect("pending deletions should list");
+        assert!(
+            !pending.contains(&blob_name.to_owned()),
+            "epoch blob should not be in pending_deletions while file_b still references it"
         );
     }
 

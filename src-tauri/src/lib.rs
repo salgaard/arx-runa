@@ -28,7 +28,7 @@ struct DeviceEventPayload {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-/// Starts the Arx Runa Tauri runtime with all 45 registered commands.
+/// Starts the Arx Runa Tauri runtime with all 46 registered commands.
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -36,13 +36,13 @@ pub fn run() {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
-    if let Err(error) = tauri::Builder::default()
+    if let Err(error) = crate::ui::video_stream::register(tauri::Builder::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(crate::ui::AppState::construct_default())
         .invoke_handler(tauri::generate_handler![
-            // Auth (15)
+            // Auth (17)
             ui::auth_commands::authenticate,
             ui::auth_commands::check_cloud_configured,
             ui::auth_commands::configure_cloud,
@@ -59,12 +59,16 @@ pub fn run() {
             ui::auth_commands::retry_pending_vault_operation,
             ui::auth_commands::recover_vault_from_cloud,
             ui::auth_commands::recover_vault_from_cloud_with_phrase,
+            ui::auth_commands::scan_for_key_file,
+            ui::auth_commands::is_path_on_removable_drive,
             // Files (10)
             ui::file_commands::list_directory,
             ui::file_commands::upload_file,
             ui::file_commands::download_file,
             ui::file_commands::delete_file,
+            ui::file_commands::delete_directory,
             ui::file_commands::get_file_content,
+            ui::file_commands::prefetch_video,
             ui::file_commands::list_remote,
             ui::file_commands::flush_epoch_buffer,
             ui::file_commands::stat_local_path,
@@ -106,6 +110,8 @@ pub fn run() {
             ui::shell_commands::reveal_in_explorer,
             ui::shell_commands::compose_email_with_attachment,
             ui::shell_commands::open_url,
+            // Video streaming (1)
+            ui::video_stream::video_scheme_base_url,
         ])
         .setup(|app| {
             use tauri::Emitter as _;

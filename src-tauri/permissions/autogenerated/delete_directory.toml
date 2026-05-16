@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-directory"
+description = "Enables the delete_directory command without any pre-configured scope."
+commands.allow = ["delete_directory"]
+
+[[permission]]
+identifier = "deny-delete-directory"
+description = "Denies the delete_directory command without any pre-configured scope."
+commands.deny = ["delete_directory"]

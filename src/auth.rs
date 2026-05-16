@@ -16,14 +16,17 @@ use crate::components::{
 };
 use crate::destinations::GdriveShareSetupModal;
 use crate::dialog::{open_directory_dialog, open_file_dialog};
-use crate::invoke::invoke_command;
+use crate::invoke::{invoke_command, invoke_command_with_channel};
+use crate::ipc_channel::IpcChannel;
 use crate::ipc_types::VaultSummary;
 use crate::ipc_types::{
     AuthResponse, AuthenticateRequest, CreateVaultRequest, DestinationSessionConfig,
-    RecoverVaultFromCloudRequest, RecoverVaultFromCloudWithPhraseRequest,
-    RecoverVaultWithPhraseRequest, SessionStatus, SetGdriveServiceAccountRequest,
+    IsPathOnRemovableDriveRequest, ProgressUpdate, RecoverVaultFromCloudRequest,
+    RecoverVaultFromCloudWithPhraseRequest, RecoverVaultWithPhraseRequest, ScanForKeyFileRequest,
+    SessionStatus, SetGdriveServiceAccountRequest,
 };
 use crate::state::use_session_actions;
+use crate::transfer::ProgressModal;
 
 // Re-export chunk-size primitives so existing tests via `use super::*` still compile.
 pub use crate::components::{CHUNK_MAX, CHUNK_MIN, PRESETS, clamp_chunk_size};
@@ -58,9 +61,11 @@ fn is_tauri_event_available() -> bool {
 
 /// Key-file selector indicator.
 ///
-/// Displays the currently detected or manually-selected key file path.
-/// The `device-event` subscriber is wired but receives no payloads until Phase 6.5
-/// adds the backend emission bridge.
+/// Displays the currently detected or manually-selected key file path and
+/// provides a Browse button for manual file selection.  Auto-detection
+/// (listening for `device-event` and scanning via `scan_for_key_file`) is
+/// handled by the parent `LoginPage`, which has access to the vault's BLAKE3
+/// hash needed for matching.
 #[component]
 pub fn KeyFileIndicator(
     /// Currently detected or manually-selected key file path signal.
@@ -78,42 +83,6 @@ pub fn KeyFileIndicator(
             }
         });
     };
-
-    Effect::new(move |_| {
-        if !is_tauri_event_available() {
-            return;
-        }
-
-        let on_device = on_manual_select.clone();
-        let unlisten_fn: Arc<Mutex<Option<js_sys::Function>>> = Arc::new(Mutex::new(None));
-        let unlisten_for_cleanup = Arc::clone(&unlisten_fn);
-
-        leptos::task::spawn_local(async move {
-            let event_closure = Closure::wrap(Box::new(move |payload: JsValue| {
-                let path = js_sys::Reflect::get(&payload, &JsValue::from_str("path"))
-                    .ok()
-                    .and_then(|v| v.as_string());
-                if let Some(p) = path {
-                    on_device(p);
-                }
-            }) as Box<dyn Fn(JsValue)>);
-            if let Ok(unlisten_val) =
-                listen("device-event", event_closure.as_ref().unchecked_ref()).await
-                && let Ok(f) = unlisten_val.dyn_into::<js_sys::Function>()
-            {
-                *unlisten_fn.lock().unwrap_or_else(|e| e.into_inner()) = Some(f);
-            }
-            event_closure.forget();
-        });
-
-        on_cleanup(move || {
-            if let Ok(mut guard) = unlisten_for_cleanup.lock()
-                && let Some(f) = guard.take()
-            {
-                let _ = f.call0(&JsValue::undefined());
-            }
-        });
-    });
 
     view! {
         <div class="flex items-center gap-2 mb-4">
@@ -143,10 +112,85 @@ pub fn LoginPage(
     let session_actions = use_session_actions();
     let vault_id = vault.vault_id.clone();
     let vault_tier = vault.tier;
+    let vault_key_file_blake3 = vault.key_file_blake3.clone();
     let vault_display_name = vault
         .name
         .clone()
         .unwrap_or_else(|| format!("{}…", &vault.vault_id[..8]));
+
+    // Auto-detection: when a removable drive mounts, scan it for the vault's key file.
+    if vault_tier == 2
+        && let Some(blake3_hex) = vault_key_file_blake3
+    {
+        Effect::new(move |_| {
+            if !is_tauri_event_available() {
+                return;
+            }
+
+            let blake3_hex = blake3_hex.clone();
+            // Arc created fresh each Effect run so the closure stays FnMut.
+            let unlisten_fn: Arc<Mutex<Option<js_sys::Function>>> = Arc::new(Mutex::new(None));
+            let unlisten_for_cleanup = Arc::clone(&unlisten_fn);
+
+            leptos::task::spawn_local(async move {
+                let blake3_for_closure = blake3_hex.clone();
+                let event_closure = Closure::wrap(Box::new(move |event: JsValue| {
+                    // Tauri v2 delivers { event, id, payload } — unwrap the inner payload.
+                    let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload"))
+                        .unwrap_or(JsValue::UNDEFINED);
+                    let kind = js_sys::Reflect::get(&payload, &JsValue::from_str("kind"))
+                        .ok()
+                        .and_then(|v| v.as_string());
+                    let mount_path_val =
+                        js_sys::Reflect::get(&payload, &JsValue::from_str("mountPath"))
+                            .ok()
+                            .and_then(|v| v.as_string());
+
+                    if kind.as_deref() != Some("mounted") {
+                        return;
+                    }
+                    let Some(mp) = mount_path_val else { return };
+                    if key_file_path.get().is_some() {
+                        return;
+                    }
+
+                    let blake3_hex_inner = blake3_for_closure.clone();
+                    leptos::task::spawn_local(async move {
+                        if let Ok(Some(found_path)) =
+                            invoke_command::<ScanForKeyFileRequest, Option<String>>(
+                                "scan_for_key_file",
+                                &ScanForKeyFileRequest {
+                                    mount_path: mp,
+                                    expected_hash_hex: blake3_hex_inner,
+                                },
+                            )
+                            .await
+                        {
+                            set_key_file_path.set(Some(found_path));
+                            crate::components::use_toast()
+                                .info("Key file detected on removable drive");
+                        }
+                    });
+                }) as Box<dyn Fn(JsValue)>);
+
+                if let Ok(unlisten_val) =
+                    listen("device-event", event_closure.as_ref().unchecked_ref()).await
+                    && let Ok(f) = unlisten_val.dyn_into::<js_sys::Function>()
+                {
+                    *unlisten_fn.lock().unwrap_or_else(|e| e.into_inner()) = Some(f);
+                }
+                event_closure.forget();
+            });
+
+            on_cleanup(move || {
+                if let Ok(mut guard) = unlisten_for_cleanup.lock()
+                    && let Some(f) = guard.take()
+                {
+                    let _ = f.call0(&JsValue::undefined());
+                }
+            });
+        });
+    }
 
     let on_submit = {
         let vault_id = vault_id.clone();
@@ -360,6 +404,9 @@ pub fn VaultCreationPage(
     let (pending_sa_path, set_pending_sa_path) = signal::<Option<String>>(None);
     let show_gdrive_sharing_modal = RwSignal::new(false);
 
+    // ── Removable-drive warning for key file destination ─────────────────────
+    let (key_file_on_removable, set_key_file_on_removable) = signal::<Option<bool>>(None);
+
     // ── Tier 2 key-file security warning (shown after successful creation) ───
     let show_key_warning_modal = RwSignal::new(false);
     let created_vault_id = RwSignal::new(String::new());
@@ -369,6 +416,7 @@ pub fn VaultCreationPage(
 
     // ── Submit state ──────────────────────────────────────────────────────────
     let (loading, set_loading) = signal(false);
+    let (create_channel, set_create_channel) = signal::<Option<IpcChannel<ProgressUpdate>>>(None);
 
     let session_actions = use_session_actions();
     let on_back = on_back_to_login.clone();
@@ -376,6 +424,13 @@ pub fn VaultCreationPage(
     let on_browse_key = move |_| {
         leptos::task::spawn_local(async move {
             if let Some(path) = open_directory_dialog().await {
+                let is_removable = invoke_command::<IsPathOnRemovableDriveRequest, bool>(
+                    "is_path_on_removable_drive",
+                    &IsPathOnRemovableDriveRequest { path: path.clone() },
+                )
+                .await
+                .unwrap_or(true);
+                set_key_file_on_removable.set(Some(is_removable));
                 set_key_file_destination.set(Some(path));
                 crate::components::use_toast().info("Key file destination selected");
             }
@@ -415,8 +470,16 @@ pub fn VaultCreationPage(
         };
 
         leptos::task::spawn_local(async move {
-            let result =
-                invoke_command::<CreateVaultRequest, AuthResponse>("create_vault", &req).await;
+            let channel = IpcChannel::<ProgressUpdate>::new();
+            set_create_channel.set(Some(channel.clone()));
+            let result = invoke_command_with_channel::<CreateVaultRequest, AuthResponse>(
+                "create_vault",
+                &req,
+                "progress",
+                channel.inner(),
+            )
+            .await;
+            set_create_channel.set(None);
             password_value.zeroize();
             set_password.update(|s| s.zeroize());
             set_loading.set(false);
@@ -515,6 +578,11 @@ pub fn VaultCreationPage(
                                         "Browse"
                                     </Button>
                                 </div>
+                                <Show when=move || key_file_on_removable.get() == Some(false)>
+                                    <p class="text-sm text-amber-400 mt-1">
+                                        "⚠ This path is on a fixed drive. For best security, save the key file to a USB drive."
+                                    </p>
+                                </Show>
                             </div>
                         </Show>
                     </div>
@@ -752,6 +820,15 @@ pub fn VaultCreationPage(
                     </div>
                 </div>
             </Modal>
+            <Show when=move || create_channel.get().is_some() fallback=|| ()>
+                {move || create_channel.get().map(|ch| view! {
+                    <ProgressModal
+                        channel=ch
+                        title="Creating vault…"
+                        on_close=move || set_create_channel.set(None)
+                    />
+                })}
+            </Show>
         </div>
     }
 }
@@ -776,6 +853,10 @@ pub fn VaultRecoveryPage(
     // ── Shared ──
     let (primary_destination, set_primary_destination) = signal(default_local_destination());
     let (loading, set_loading) = signal(false);
+    let (recover_cloud_channel, set_recover_cloud_channel) =
+        signal::<Option<IpcChannel<ProgressUpdate>>>(None);
+    let (recover_phrase_cloud_channel, set_recover_phrase_cloud_channel) =
+        signal::<Option<IpcChannel<ProgressUpdate>>>(None);
     let use_phrase = RwSignal::new(false);
 
     // ── Password mode ──
@@ -820,18 +901,25 @@ pub fn VaultRecoveryPage(
                 primary_destination: primary_destination.get_untracked(),
             };
 
+            let channel = IpcChannel::<ProgressUpdate>::new();
+            set_recover_phrase_cloud_channel.set(Some(channel.clone()));
             leptos::task::spawn_local(async move {
-                let result =
-                    invoke_command::<RecoverVaultFromCloudWithPhraseRequest, AuthResponse>(
-                        "recover_vault_from_cloud_with_phrase",
-                        &req,
-                    )
-                    .await;
+                let result = invoke_command_with_channel::<
+                    RecoverVaultFromCloudWithPhraseRequest,
+                    AuthResponse,
+                >(
+                    "recover_vault_from_cloud_with_phrase",
+                    &req,
+                    "progress",
+                    channel.inner(),
+                )
+                .await;
                 pw_value.zeroize();
                 set_new_password.update(|s| s.zeroize());
                 set_confirm_password.update(|s| s.zeroize());
                 set_phrase.update(|s| s.zeroize());
                 set_loading.set(false);
+                set_recover_phrase_cloud_channel.set(None);
                 match result {
                     Ok(resp) => {
                         crate::components::use_toast().success("Vault recovered successfully");
@@ -858,15 +946,21 @@ pub fn VaultRecoveryPage(
                 primary_destination: primary_destination.get_untracked(),
             };
 
+            let channel = IpcChannel::<ProgressUpdate>::new();
+            set_recover_cloud_channel.set(Some(channel.clone()));
             leptos::task::spawn_local(async move {
-                let result = invoke_command::<RecoverVaultFromCloudRequest, AuthResponse>(
-                    "recover_vault_from_cloud",
-                    &req,
-                )
-                .await;
+                let result =
+                    invoke_command_with_channel::<RecoverVaultFromCloudRequest, AuthResponse>(
+                        "recover_vault_from_cloud",
+                        &req,
+                        "progress",
+                        channel.inner(),
+                    )
+                    .await;
                 password_value.zeroize();
                 set_password.update(|s| s.zeroize());
                 set_loading.set(false);
+                set_recover_cloud_channel.set(None);
                 match result {
                     Ok(resp) => {
                         crate::components::use_toast().success("Vault recovered successfully");
@@ -1018,6 +1112,32 @@ pub fn VaultRecoveryPage(
                     </div>
                 </div>
             </div>
+            <Show when=move || recover_cloud_channel.get().is_some() fallback=|| ()>
+                {move || {
+                    recover_cloud_channel.get().map(|ch| {
+                        view! {
+                            <ProgressModal
+                                channel=ch
+                                title="Recovering vault from cloud…"
+                                on_close=move || set_recover_cloud_channel.set(None)
+                            />
+                        }
+                    })
+                }}
+            </Show>
+            <Show when=move || recover_phrase_cloud_channel.get().is_some() fallback=|| ()>
+                {move || {
+                    recover_phrase_cloud_channel.get().map(|ch| {
+                        view! {
+                            <ProgressModal
+                                channel=ch
+                                title="Recovering vault from cloud…"
+                                on_close=move || set_recover_phrase_cloud_channel.set(None)
+                            />
+                        }
+                    })
+                }}
+            </Show>
         </div>
     }
 }
@@ -1041,6 +1161,7 @@ pub fn RecoverWithPhrasePage(
     let (confirm_password, set_confirm_password) = signal(String::new());
     let (key_file_path, set_key_file_path) = signal::<Option<String>>(None);
     let (loading, set_loading) = signal(false);
+    let (recover_channel, set_recover_channel) = signal::<Option<IpcChannel<ProgressUpdate>>>(None);
     let session_actions = use_session_actions();
     let vault_id = vault.vault_id.clone();
     let vault_tier = vault.tier;
@@ -1076,16 +1197,22 @@ pub fn RecoverWithPhrasePage(
             let vault_id = vault_id.clone();
 
             leptos::task::spawn_local(async move {
-                let result = invoke_command::<RecoverVaultWithPhraseRequest, AuthResponse>(
-                    "recover_vault_with_phrase",
-                    &RecoverVaultWithPhraseRequest {
-                        vault_id,
-                        phrase: phrase_value.clone(),
-                        new_password: pw_value.clone(),
-                        new_key_file_path: key_file_path.get(),
-                    },
-                )
-                .await;
+                let channel = IpcChannel::<ProgressUpdate>::new();
+                set_recover_channel.set(Some(channel.clone()));
+                let result =
+                    invoke_command_with_channel::<RecoverVaultWithPhraseRequest, AuthResponse>(
+                        "recover_vault_with_phrase",
+                        &RecoverVaultWithPhraseRequest {
+                            vault_id,
+                            phrase: phrase_value.clone(),
+                            new_password: pw_value.clone(),
+                            new_key_file_path: key_file_path.get(),
+                        },
+                        "progress",
+                        channel.inner(),
+                    )
+                    .await;
+                set_recover_channel.set(None);
                 phrase_value.zeroize();
                 pw_value.zeroize();
                 set_phrase.update(|s| s.zeroize());
@@ -1195,6 +1322,15 @@ pub fn RecoverWithPhrasePage(
                 </div>
             </div>
         </div>
+        <Show when=move || recover_channel.get().is_some() fallback=|| ()>
+            {move || recover_channel.get().map(|ch| view! {
+                <ProgressModal
+                    channel=ch
+                    title="Recovering vault…"
+                    on_close=move || set_recover_channel.set(None)
+                />
+            })}
+        </Show>
     }
 }
 

@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Release (${{ matrix.platform }})
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            rust_targets: wasm32-unknown-unknown
+            args: ''
+          - platform: windows-latest
+            rust_targets: wasm32-unknown-unknown
+            args: ''
+          - platform: macos-latest
+            rust_targets: wasm32-unknown-unknown,aarch64-apple-darwin,x86_64-apple-darwin
+            args: '--target universal-apple-darwin'
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Trunk (WASM bundler)
+        run: cargo install trunk --locked
+
+      - name: Install Node (Tailwind CSS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Install Tauri system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libudev-dev
+
+      - name: Download rclone sidecar
+        shell: bash
+        run: |
+          RCLONE_VERSION="v1.68.2"
+          mkdir -p src-tauri/bin
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            curl -fsSL "https://github.com/rclone/rclone/releases/download/${RCLONE_VERSION}/rclone-${RCLONE_VERSION}-linux-amd64.zip" -o rclone.zip
+            unzip -j rclone.zip "*/rclone" -d src-tauri/bin
+            mv src-tauri/bin/rclone src-tauri/bin/rclone-x86_64-unknown-linux-gnu
+            chmod +x src-tauri/bin/rclone-x86_64-unknown-linux-gnu
+          elif [[ "$RUNNER_OS" == "Windows" ]]; then
+            curl -fsSL "https://github.com/rclone/rclone/releases/download/${RCLONE_VERSION}/rclone-${RCLONE_VERSION}-windows-amd64.zip" -o rclone.zip
+            unzip -j rclone.zip "*/rclone.exe" -d src-tauri/bin
+            mv src-tauri/bin/rclone.exe "src-tauri/bin/rclone-x86_64-pc-windows-msvc.exe"
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            curl -fsSL "https://github.com/rclone/rclone/releases/download/${RCLONE_VERSION}/rclone-${RCLONE_VERSION}-osx-arm64.zip" -o rclone-arm.zip
+            curl -fsSL "https://github.com/rclone/rclone/releases/download/${RCLONE_VERSION}/rclone-${RCLONE_VERSION}-osx-amd64.zip" -o rclone-amd.zip
+            unzip -j rclone-arm.zip "*/rclone" -d /tmp/rclone-arm
+            unzip -j rclone-amd.zip "*/rclone" -d /tmp/rclone-amd
+            cp /tmp/rclone-arm/rclone src-tauri/bin/rclone-aarch64-apple-darwin
+            cp /tmp/rclone-amd/rclone src-tauri/bin/rclone-x86_64-apple-darwin
+            chmod +x src-tauri/bin/rclone-aarch64-apple-darwin src-tauri/bin/rclone-x86_64-apple-darwin
+          fi
+
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Arx Runa ${{ github.ref_name }}'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

@@ -15,8 +15,9 @@ use uuid::Uuid;
 use crate::crypto::KeyEncryptionKey;
 use crate::storage::cloud::sync::fetch_missing_file_blobs;
 use crate::storage::vault_ops::{
-    delete_file as vault_delete, download_file as vault_download,
-    download_file_to_memory as vault_download_to_memory, upload_file as vault_upload,
+    delete_directory as vault_delete_directory, delete_file as vault_delete,
+    download_file as vault_download, download_file_to_memory as vault_download_to_memory,
+    upload_file as vault_upload,
 };
 use crate::storage::{MetadataStore, Node, NodeType};
 use crate::ui::commands_common::{ProgressChannel, require_active_session};
@@ -217,12 +218,7 @@ pub async fn list_directory(
         .list_children(parent_uuid)
         .await
         .map_err(IpcError::from)?;
-    tracing::debug!(
-        path = normalised,
-        parent_uuid = %parent_uuid,
-        children_count = children.len(),
-        "list_directory result"
-    );
+
     let pending_ids: std::collections::HashSet<uuid::Uuid> = db
         .get_epoch_buffer_node_ids()
         .await
@@ -251,7 +247,6 @@ pub async fn upload_file(
     require_active_session(&state).await?;
 
     let vault_path = normalise_vault_path(&vault_path);
-    let vault_path = vault_path.trim_start_matches('/');
     if vault_path.is_empty() {
         return Err(IpcError::InvalidInput(
             "Vault path is required for upload".into(),
@@ -344,7 +339,7 @@ pub async fn download_file(
 
     // Download any blobs uploaded to cloud that were pruned from local staging.
     let cloud = state.cloud_transport.read().await.clone();
-    fetch_missing_file_blobs(node_uuid, db, &staging_dir, cloud.as_ref()).await?;
+    fetch_missing_file_blobs(node_uuid, db, &staging_dir, cloud.as_ref(), None).await?;
 
     // Wrap the Tauri channel in a ProgressChannel to gracefully handle
     // closed connections (M3: Streaming Progress Channel Validation)
@@ -401,14 +396,46 @@ pub async fn delete_file(file_id: String, state: State<'_, AppState>) -> Result<
         .map_err(IpcError::from)
 }
 
+/// Recursively deletes a directory node and all its descendants from the vault.
+///
+/// Each file in the subtree has its metadata and any locally staged blobs
+/// removed. The directory node itself is removed last.
+#[tauri::command]
+pub async fn delete_directory(
+    directory_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), IpcError> {
+    state.session_manager.reset_timer().await;
+    require_active_session(&state).await?;
+
+    validate_file_id(&directory_id)?;
+    let node_uuid = Uuid::parse_str(&directory_id)
+        .map_err(|_| IpcError::InvalidInput("Invalid directory ID".into()))?;
+
+    let vault_id = require_vault_id(&state).await?;
+    let staging_dir = vault_staging_dir(&vault_id);
+
+    let db_guard = state.database.read().await;
+    let db = db_guard
+        .as_ref()
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+
+    vault_delete_directory(node_uuid, db, &staging_dir)
+        .await
+        .map_err(IpcError::from)
+}
+
 /// Decrypt and return file content for in-app viewing (Zero-Trace).
 ///
 /// Rejects files larger than 50 MiB based on the manifest `size_bytes` field
 /// **before** any decryption takes place.  The decrypted bytes are returned
 /// as a base64-encoded payload and are never written to a permanent location.
+///
+/// Progress is streamed via the `progress` channel.
 #[tauri::command]
 pub async fn get_file_content(
     file_id: String,
+    progress: Channel<ProgressUpdate>,
     state: State<'_, AppState>,
 ) -> Result<FileContent, IpcError> {
     state.session_manager.reset_timer().await;
@@ -439,10 +466,26 @@ pub async fn get_file_content(
 
     // Download any blobs uploaded to cloud that were pruned from local staging.
     let cloud = state.cloud_transport.read().await.clone();
-    fetch_missing_file_blobs(node_uuid, db, &staging_dir, cloud.as_ref()).await?;
+    fetch_missing_file_blobs(node_uuid, db, &staging_dir, cloud.as_ref(), None).await?;
+
+    // Wrap the Tauri channel in a ProgressChannel to gracefully handle
+    // closed connections (M3: Streaming Progress Channel Validation)
+    let progress_ch = ProgressChannel::new(progress);
+    let progress_fn = {
+        let progress = progress_ch.clone();
+        move |bytes_processed: u64, bytes_total: u64| {
+            let percent = (bytes_processed * 100 / bytes_total.max(1)) as u8;
+            let _ = progress.try_send_if_open(ProgressUpdate {
+                percent,
+                bytes_processed,
+                bytes_total,
+                status: "Loading".into(),
+            });
+        }
+    };
 
     // Decrypt entirely in RAM — no temp file written to disk (Zero-Trace).
-    let bytes = vault_download_to_memory(node_uuid, db, &kek, &staging_dir, None)
+    let bytes = vault_download_to_memory(node_uuid, db, &kek, &staging_dir, Some(&progress_fn))
         .await
         .map_err(IpcError::from)?;
 
@@ -457,7 +500,72 @@ pub async fn get_file_content(
     })
 }
 
-/// List files on the primary remote destination.
+/// Pre-fetch any missing cloud blobs for a video file and return the streaming
+/// base URL so the frontend can open the video player without a cold-start stall.
+///
+/// Progress is streamed via the `progress` channel: 0 % when blob fetching
+/// starts, 100 % when all blobs are present locally and the video is ready.
+#[tauri::command]
+pub async fn prefetch_video(
+    file_id: String,
+    progress: Channel<ProgressUpdate>,
+    state: State<'_, AppState>,
+) -> Result<String, IpcError> {
+    state.session_manager.reset_timer().await;
+    require_active_session(&state).await?;
+
+    validate_file_id(&file_id)?;
+    let node_uuid =
+        Uuid::parse_str(&file_id).map_err(|_| IpcError::InvalidInput("Invalid file ID".into()))?;
+
+    let vault_id = require_vault_id(&state).await?;
+    let staging_dir = vault_staging_dir(&vault_id);
+
+    let db_guard = state.database.read().await;
+    let db = db_guard
+        .as_ref()
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+
+    let progress_ch = ProgressChannel::new(progress);
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 0,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Downloading video…".into(),
+    });
+
+    let cloud = state.cloud_transport.read().await.clone();
+    let on_blob_downloaded = {
+        let progress_ch = progress_ch.clone();
+        move |done: u64, total: u64| {
+            let percent = (done * 100 / total.max(1)) as u8;
+            let _ = progress_ch.try_send_if_open(ProgressUpdate {
+                percent,
+                bytes_processed: done,
+                bytes_total: total,
+                status: format!("Downloading blob {done}/{total}"),
+            });
+        }
+    };
+    fetch_missing_file_blobs(
+        node_uuid,
+        db,
+        &staging_dir,
+        cloud.as_ref(),
+        Some(&on_blob_downloaded),
+    )
+    .await?;
+
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 100,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Ready".into(),
+    });
+
+    Ok(crate::ui::video_stream::video_scheme_base_url().to_owned())
+}
+
 ///
 /// Returns a manifest-linked view.  Blobs present on the remote are returned;
 /// manifest cross-referencing for orphan detection is a Phase 7 feature — all
@@ -621,7 +729,6 @@ pub async fn create_vault_directory(
     require_active_session(&state).await?;
 
     let vault_path = normalise_vault_path(&vault_path);
-    let vault_path = vault_path.trim_start_matches('/');
     if vault_path.is_empty() {
         return Err(IpcError::InvalidInput(
             "Vault path is required to create a directory".into(),

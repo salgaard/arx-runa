@@ -5,7 +5,7 @@ use leptos::prelude::*;
 use leptos_router::components::A;
 use leptos_router::hooks::use_location;
 
-use crate::components::{StaleManifestBanner, SyncConflictDialog};
+use crate::components::{Spinner, StaleManifestBanner, SyncConflictDialog};
 use crate::invoke::invoke_command;
 use crate::state::{
     use_session, use_session_actions, use_sync, use_sync_actions, use_vault_actions,
@@ -64,20 +64,48 @@ pub fn Header() -> impl IntoView {
                     </div>
                 </A>
                 <button
-                    class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    class=move || {
+                        let base = "relative inline-flex items-center gap-2 px-3 py-1 text-sm text-bone bg-rune rounded overflow-hidden transition-colors";
+                        if sync.read().syncing {
+                            format!("{base} cursor-not-allowed")
+                        } else {
+                            format!("{base} cursor-pointer hover:bg-rune/80")
+                        }
+                    }
+                    data-testid="sync-button"
                     on:click=on_sync
                     disabled=move || sync.read().syncing
                 >
-                    {move || {
-                        let state = sync.read();
-                        if state.syncing {
-                            "Syncing…".to_string()
-                        } else if state.pending_changes > 0 {
-                            format!("Sync ({})", state.pending_changes)
-                        } else {
-                            "Sync".to_string()
-                        }
-                    }}
+                    // Progress fill: slides in from the left while syncing
+                    <Show when=move || sync.read().syncing fallback=|| ()>
+                        {move || {
+                            let pct = sync.read().sync_percent.unwrap_or(0);
+                            view! {
+                                <span
+                                    class="absolute inset-0 bg-white/20 transition-all duration-500 ease-out"
+                                    style=move || format!("width: {}%", pct)
+                                    aria-hidden="true"
+                                />
+                            }
+                        }}
+                    </Show>
+                    // Button content above the fill layer
+                    <span class="relative z-10 inline-flex items-center gap-2">
+                        <Show when=move || sync.read().syncing fallback=|| ()>
+                            <Spinner />
+                        </Show>
+                        {move || {
+                            let state = sync.read();
+                            if state.syncing {
+                                let pct = state.sync_percent.map(|p| format!(" {p}%")).unwrap_or_default();
+                                format!("Syncing…{pct}")
+                            } else if state.pending_changes > 0 {
+                                format!("Sync ({})", state.pending_changes)
+                            } else {
+                                "Sync".to_string()
+                            }
+                        }}
+                    </span>
                 </button>
                 <A href="/shares">
                     <div class=move || nav_class("/shares") title="Shares">
@@ -117,9 +145,12 @@ pub fn format_countdown_seconds(remaining: u64) -> String {
 
 /// Footer status bar showing the session countdown, last-synced timestamp, and a lock button.
 ///
-/// The lock button clears Vault, Sync, and Session state before invoking
-/// `lock_session` IPC — satisfying the Zero-Trace requirement that all
-/// sensitive state is wiped regardless of IPC success or failure.
+/// The lock button clears Vault and Sync state immediately (those hold sensitive file-list
+/// data) then awaits `lock_session` IPC before clearing Session state. This ordering
+/// ensures the backend session is fully locked before the VaultPicker re-renders,
+/// preventing a race where `authenticate` arrives at the backend while a session is
+/// still active. Session state (`vault_id`, `timeout_seconds`) contains no key material,
+/// so deferring its clear until after IPC does not weaken Zero-Trace.
 #[component]
 pub fn SessionStatusBar() -> impl IntoView {
     let session = use_session();
@@ -131,9 +162,9 @@ pub fn SessionStatusBar() -> impl IntoView {
     let on_lock = move |_| {
         vault_actions.clear();
         sync_actions.clear();
-        session_actions.clear();
         leptos::task::spawn_local(async move {
             let _ = invoke_command::<(), ()>("lock_session", &()).await;
+            session_actions.clear();
         });
     };
 

@@ -13,10 +13,11 @@ use crate::drag_drop::on_file_drop;
 use crate::invoke::{invoke_command, invoke_command_with_channel};
 use crate::ipc_channel::IpcChannel;
 use crate::ipc_types::{
-    ComposeEmailWithAttachmentRequest, CreateVaultDirectoryRequest, DeleteFileRequest,
-    DestinationEntry, DownloadFileRequest, FileContentResponse, FileEntry, GetFileContentRequest,
-    ListLocalDirectoryRequest, LocalEntry, ProgressUpdate, RevealInExplorerRequest, ShareResponse,
-    StatLocalPathRequest, UploadFileRequest,
+    ComposeEmailWithAttachmentRequest, CreateVaultDirectoryRequest, DeleteDirectoryRequest,
+    DeleteFileRequest, DestinationEntry, DownloadFileRequest, FileContentResponse, FileEntry,
+    GetFileContentRequest, ListLocalDirectoryRequest, LocalEntry, PrefetchVideoRequest,
+    ProgressUpdate, RevealInExplorerRequest, ShareResponse, StatLocalPathRequest,
+    UploadFileRequest,
 };
 use crate::shares::ShareModal;
 use crate::state::{use_vault, use_vault_actions};
@@ -40,11 +41,25 @@ fn get_file_extension(filename: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Detects if a file extension is previewable (MVP: 6 text/image types).
+/// Detects if a file extension is previewable (text, image, or video types).
 pub fn extension_is_previewable(filename: &str) -> bool {
     matches!(
         get_file_extension(filename).as_str(),
-        "txt" | "md" | "log" | "csv" | "png" | "jpg" | "jpeg" | "gif" | "webp"
+        "txt"
+            | "md"
+            | "log"
+            | "csv"
+            | "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "mp4"
+            | "m4v"
+            | "mov"
+            | "webm"
+            | "avi"
+            | "mkv"
     )
 }
 
@@ -53,6 +68,14 @@ fn is_image_type(filename: &str) -> bool {
     matches!(
         get_file_extension(filename).as_str(),
         "png" | "jpg" | "jpeg" | "gif" | "webp"
+    )
+}
+
+/// Detects if a file is a video type supported by the arxvault:// stream handler.
+fn is_video_type(filename: &str) -> bool {
+    matches!(
+        get_file_extension(filename).as_str(),
+        "mp4" | "m4v" | "mov" | "webm" | "avi" | "mkv"
     )
 }
 
@@ -171,6 +194,52 @@ pub fn ContentViewerModal(
     }
 }
 
+// ─── VideoViewerModal ─────────────────────────────────────────────────────────
+
+/// Modal component for streaming video from the `arxvault://` custom URI scheme.
+///
+/// Zero-Trace: the scheme handler decrypts only the requested byte range in RAM;
+/// no decrypted bytes are written to disk.  Clearing `video_url` dismisses the modal.
+#[component]
+pub fn VideoViewerModal(
+    /// RwSignal holding the full `arxvault://` (or `http://arxvault.localhost`) URL.
+    video_url: RwSignal<Option<String>>,
+    /// Filename shown in the modal header.
+    filename: String,
+) -> impl IntoView {
+    let is_open = Signal::derive(move || video_url.get().is_some());
+    view! {
+        <Modal
+            open=is_open
+            on_close=move || video_url.set(None)
+        >
+            <div class="w-full max-w-4xl max-h-[85vh] flex flex-col">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg text-bone truncate">{filename.clone()}</h2>
+                    <button
+                        class="text-text-muted hover:text-bone cursor-pointer"
+                        on:click=move |_| video_url.set(None)
+                    >
+                        "✕"
+                    </button>
+                </div>
+                <div class="flex-1 flex items-center justify-center bg-surface-overlay rounded overflow-hidden">
+                    {move || {
+                        video_url.get().map(|url| view! {
+                            <video
+                                src=url
+                                controls=true
+                                autoplay=true
+                                class="max-w-full max-h-full"
+                            />
+                        })
+                    }}
+                </div>
+            </div>
+        </Modal>
+    }
+}
+
 // ─── Breadcrumbs ─────────────────────────────────────────────────────────────
 
 /// Navigation breadcrumb bar showing the current vault path.
@@ -232,16 +301,20 @@ pub fn FileItem(
     let (show_share_modal, set_show_share_modal) = signal(false);
     let share_result = RwSignal::new(None::<ShareResponse>);
     let file_content = RwSignal::new(None::<FileContentResponse>);
-    let (preview_loading, set_preview_loading) = signal(false);
+    let video_url = RwSignal::new(None::<String>);
+    let (preview_progress_channel, set_preview_progress_channel) =
+        signal::<Option<IpcChannel<ProgressUpdate>>>(None);
     let (download_progress_channel, set_download_progress_channel) =
         signal::<Option<IpcChannel<ProgressUpdate>>>(None);
     let (delete_error, set_delete_error) = signal::<Option<String>>(None);
 
     let file_name = entry.name.clone();
+    let is_video = is_video_type(&entry.name);
+    // Videos stream via arxvault:// scheme — no size limit; other types cap at 50 MiB.
     let can_preview = !is_dir
         && !is_pending_flush
-        && file_size_allows_preview(entry.size_bytes)
-        && extension_is_previewable(&entry.name);
+        && extension_is_previewable(&entry.name)
+        && (is_video || file_size_allows_preview(entry.size_bytes));
 
     let entry_stored = StoredValue::new(entry_clone.clone());
     let file_name_stored = StoredValue::new(file_name.clone());
@@ -257,7 +330,7 @@ pub fn FileItem(
                     class=move || {
                         format!(
                             "flex-1 text-bone text-sm {}",
-                            if !is_dir && can_preview {
+                            if is_dir || can_preview {
                                 "cursor-pointer hover:underline"
                             } else {
                                 ""
@@ -265,26 +338,76 @@ pub fn FileItem(
                         )
                     }
                     on:click=move |_| {
-                        if !is_dir
-                            && file_size_allows_preview(entry_clone.size_bytes)
-                            && extension_is_previewable(&entry_clone.name)
-                        {
+                        if is_dir {
+                            actions.navigate(entry_clone.id.clone());
+                            return;
+                        }
+                        if !extension_is_previewable(&entry_clone.name) {
+                            return;
+                        }
+                        if is_video {
+                            let file_id = entry_clone.id.clone();
+                            let channel = IpcChannel::<ProgressUpdate>::new();
+                            set_preview_progress_channel.set(Some(channel.clone()));
+                            spawn_local(async move {
+                                let req = PrefetchVideoRequest {
+                                    file_id: file_id.clone(),
+                                };
+                                match invoke_command_with_channel::<
+                                    PrefetchVideoRequest,
+                                    String,
+                                >(
+                                    "prefetch_video",
+                                    &req,
+                                    "progress",
+                                    channel.inner(),
+                                )
+                                .await
+                                {
+                                    Ok(base_url) => {
+                                        set_preview_progress_channel.set(None);
+                                        video_url.set(Some(format!(
+                                            "{base_url}/view/{file_id}"
+                                        )));
+                                    }
+                                    Err(err) => {
+                                        set_preview_progress_channel.set(None);
+                                        leptos::logging::error!(
+                                            "Failed to prefetch video: {}",
+                                            err.message
+                                        );
+                                    }
+                                }
+                            });
+                        } else if file_size_allows_preview(entry_clone.size_bytes) {
                             let entry = entry_clone.clone();
-                            set_preview_loading.set(true);
-                            leptos::task::spawn_local(async move {
+                            let channel = IpcChannel::<ProgressUpdate>::new();
+                            set_preview_progress_channel.set(Some(channel.clone()));
+                            spawn_local(async move {
                                 let req = GetFileContentRequest {
                                     file_id: entry.id.clone(),
                                 };
-                                match invoke_command::<GetFileContentRequest, FileContentResponse>("get_file_content", &req)
-                                    .await
+                                match invoke_command_with_channel::<
+                                    GetFileContentRequest,
+                                    FileContentResponse,
+                                >(
+                                    "get_file_content",
+                                    &req,
+                                    "progress",
+                                    channel.inner(),
+                                )
+                                .await
                                 {
                                     Ok(content) => {
-                                        set_preview_loading.set(false);
+                                        set_preview_progress_channel.set(None);
                                         file_content.set(Some(content));
                                     }
                                     Err(err) => {
-                                        set_preview_loading.set(false);
-                                        leptos::logging::error!("Failed to fetch file content: {}", err.message);
+                                        set_preview_progress_channel.set(None);
+                                        leptos::logging::error!(
+                                            "Failed to fetch file content: {}",
+                                            err.message
+                                        );
                                     }
                                 }
                             });
@@ -301,14 +424,6 @@ pub fn FileItem(
                             title="File is queued for packing. Press Sync to upload."
                         >
                             "Encrypting…"
-                        </span>
-                    </Show>
-                    <Show
-                        when=move || preview_loading.get()
-                        fallback=|| ()
-                    >
-                        <span class="ml-2 inline-flex items-center">
-                            <Spinner size="h-3 w-3" />
                         </span>
                     </Show>
                 </span>
@@ -389,6 +504,23 @@ pub fn FileItem(
                         </button>
                     </div>
                 </Show>
+                <Show
+                    when=move || is_dir
+                    fallback=|| ()
+                >
+                    <div class="flex gap-2 items-center">
+                        <button
+                            class="text-text-muted hover:text-danger cursor-pointer text-xl px-2 py-1 transition-transform hover:scale-125"
+                            title="Delete folder"
+                            on:click=move |_| {
+                                set_show_delete_confirm.set(true);
+                                set_delete_error.set(None);
+                            }
+                        >
+                            "🗑"
+                        </button>
+                    </div>
+                </Show>
             </div>
 
             // Delete confirmation modal
@@ -402,7 +534,11 @@ pub fn FileItem(
                 >
                     <div class="w-80">
                         <h2 class="text-lg text-bone mb-4">
-                            "Delete " {file_name_stored.get_value()} "?"
+                            {if is_dir {
+                                "Delete folder and all its contents?".to_owned()
+                            } else {
+                                format!("Delete {}?", file_name_stored.get_value())
+                            }}
                         </h2>
                         <p class="text-text-secondary text-sm mb-6">
                             "This action cannot be undone."
@@ -429,16 +565,42 @@ pub fn FileItem(
                                     let set_delete_error = set_delete_error;
 
                                     leptos::task::spawn_local(async move {
-                                        let req = DeleteFileRequest {
-                                            file_id: entry.id.clone(),
-                                        };
-
-                                        match invoke_command::<DeleteFileRequest, ()>("delete_file", &req).await {
-                                            Ok(()) => {
-                                                set_show_delete_confirm.set(false);
-                                                actions.navigate(current_path);
+                                        if is_dir {
+                                            let req = DeleteDirectoryRequest {
+                                                directory_id: entry.id.clone(),
+                                            };
+                                            match invoke_command::<DeleteDirectoryRequest, ()>(
+                                                "delete_directory",
+                                                &req,
+                                            )
+                                            .await
+                                            {
+                                                Ok(()) => {
+                                                    set_show_delete_confirm.set(false);
+                                                    actions.navigate(current_path);
+                                                }
+                                                Err(err) => {
+                                                    set_delete_error.set(Some(err.message));
+                                                }
                                             }
-                                            Err(err) => set_delete_error.set(Some(err.message)),
+                                        } else {
+                                            let req = DeleteFileRequest {
+                                                file_id: entry.id.clone(),
+                                            };
+                                            match invoke_command::<DeleteFileRequest, ()>(
+                                                "delete_file",
+                                                &req,
+                                            )
+                                            .await
+                                            {
+                                                Ok(()) => {
+                                                    set_show_delete_confirm.set(false);
+                                                    actions.navigate(current_path);
+                                                }
+                                                Err(err) => {
+                                                    set_delete_error.set(Some(err.message));
+                                                }
+                                            }
                                         }
                                     });
                                 }
@@ -532,9 +694,33 @@ pub fn FileItem(
                 }}
             </Show>
 
-            // File content viewer modal
+            // Preview loading progress modal
+            <Show
+                when=move || preview_progress_channel.get().is_some()
+                fallback=|| ()
+            >
+                {move || {
+                    preview_progress_channel.get().map(|channel| {
+                        view! {
+                            <ProgressModal
+                                channel=channel
+                                title="Loading file"
+                                on_close=move || set_preview_progress_channel.set(None)
+                            />
+                        }
+                    })
+                }}
+            </Show>
+
+            // File content viewer modal (text / image)
             <ContentViewerModal
                 content=file_content
+                filename=entry_stored.get_value().name.clone()
+            />
+
+            // Video viewer modal (streams via arxvault:// scheme — Zero-Trace)
+            <VideoViewerModal
+                video_url=video_url
                 filename=entry_stored.get_value().name.clone()
             />
 
@@ -1070,7 +1256,7 @@ mod tests {
     fn test_extension_is_previewable_returns_false_for_unsupported() {
         assert!(!extension_is_previewable("archive.zip"));
         assert!(!extension_is_previewable("document.pdf"));
-        assert!(!extension_is_previewable("video.mp4"));
+        assert!(!extension_is_previewable("video.wmv"));
     }
 
     #[test]

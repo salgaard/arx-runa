@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-video-scheme-base-url"
+description = "Enables the video_scheme_base_url command without any pre-configured scope."
+commands.allow = ["video_scheme_base_url"]
+
+[[permission]]
+identifier = "deny-video-scheme-base-url"
+description = "Denies the video_scheme_base_url command without any pre-configured scope."
+commands.deny = ["video_scheme_base_url"]

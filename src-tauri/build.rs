@@ -10,6 +10,7 @@ fn main() {
             "create_vault",
             "delete_destination",
             "set_primary_destination_cmd",
+            "delete_directory",
             "delete_file",
             "delete_vault",
             "download_file",
@@ -56,6 +57,10 @@ fn main() {
             "stat_local_path",
             "create_vault_directory",
             "list_local_directory",
+            "scan_for_key_file",
+            "is_path_on_removable_drive",
+            "video_scheme_base_url",
+            "prefetch_video",
         ]),
     ))
     .expect("failed to build tauri application");

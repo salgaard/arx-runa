@@ -39,22 +39,24 @@ pub fn ProgressModal(
             open=Signal::derive(move || progress.read().is_some())
             on_close=on_close
         >
-            <h2 class="text-lg text-bone mb-4">{move || title_stored.get_value()}</h2>
-            {move || progress.read().as_ref().map(|p| {
-                let percent = p.percent;
-                let status = p.status.clone();
-                view! {
-                    <div class="mb-2">
-                        <div class="h-2 bg-surface-overlay rounded-full overflow-hidden">
-                            <div
-                                class="h-full bg-rune transition-all"
-                                style=move || format!("width: {percent}%")
-                            />
+            <div data-testid="progress-modal">
+                <h2 class="text-lg text-bone mb-4">{move || title_stored.get_value()}</h2>
+                {move || progress.read().as_ref().map(|p| {
+                    let percent = p.percent;
+                    let status = p.status.clone();
+                    view! {
+                        <div class="mb-2">
+                            <div class="h-2 bg-surface-overlay rounded-full overflow-hidden">
+                                <div
+                                    class="h-full bg-rune transition-all"
+                                    style=move || format!("width: {percent}%")
+                                />
+                            </div>
                         </div>
-                    </div>
-                    <p class="text-sm text-text-secondary">{status}</p>
-                }
-            })}
+                        <p class="text-sm text-text-secondary">{status}</p>
+                    }
+                })}
+            </div>
         </Modal>
     }
 }

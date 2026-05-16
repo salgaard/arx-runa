@@ -447,4 +447,85 @@ mod security_audit {
              Both clear() calls must be inside the Effect::new lock-transition block.",
         );
     }
+
+    /// Verifies that `sync_percent` is reset to `None` inside `SyncState::clear()`.
+    ///
+    /// `sync_percent` is displayed live in the header while a sync is in-flight.
+    /// Forgetting to clear it in `SyncState::clear()` would leave a stale progress
+    /// value visible after the vault locks, violating Zero-Trace state hygiene.
+    #[test]
+    fn test_sync_percent_cleared_in_sync_state_clear() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let sync_ctx = Path::new(manifest_dir).join("../src/state/sync_context.rs");
+        let clear_marker = "fn clear(";
+        let percent_reset = concat!("sync_percent", " = None");
+
+        let content = fs::read_to_string(&sync_ctx)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {e}", sync_ctx.display()));
+
+        let lines: Vec<&str> = content.lines().collect();
+        let window = 20_usize;
+        let found = lines.windows(window).any(|block| {
+            let joined = block.join("\n");
+            joined.contains(clear_marker) && joined.contains(percent_reset)
+        });
+
+        assert!(
+            found,
+            "Zero-Trace violation: `{percent_reset}` must appear inside `{clear_marker}` \
+             in sync_context.rs. SyncState::clear() must reset sync_percent to None on lock.",
+        );
+    }
+
+    /// Verifies that the four slow auth commands accept a `Channel<ProgressUpdate>` parameter.
+    ///
+    /// These commands drive the `ProgressModal` in the frontend. If a command loses its
+    /// `Channel` parameter (e.g., during a signature refactor), the frontend channel will
+    /// silently never receive updates and the modal will hang open indefinitely.
+    #[test]
+    fn test_progress_channel_wired_in_auth_slow_commands() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let auth_commands = Path::new(manifest_dir).join("src/ui/auth_commands.rs");
+        let channel_param = concat!("Channel<Progress", "Update>");
+
+        let content = fs::read_to_string(&auth_commands)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {e}", auth_commands.display()));
+
+        let count = content.matches(channel_param).count();
+        assert!(
+            count >= 4,
+            "Expected at least 4 occurrences of `{channel_param}` in auth_commands.rs \
+             (create_vault, recover_vault_from_cloud, recover_vault_from_cloud_with_phrase, \
+             recover_vault_with_phrase). Found: {count}. \
+             Re-add Channel<ProgressUpdate> to any removed slow-auth command.",
+        );
+    }
+
+    /// Verifies that `download_received_share` accepts a `Channel<ProgressUpdate>` parameter.
+    ///
+    /// Without it the frontend ProgressModal for received-share downloads will never
+    /// receive progress events and the modal will never auto-close.
+    #[test]
+    fn test_progress_channel_wired_in_download_received_share() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let sharing_commands = Path::new(manifest_dir).join("src/ui/sharing_commands.rs");
+        let fn_marker = "download_received_share";
+        let channel_param = concat!("Channel<Progress", "Update>");
+
+        let content = fs::read_to_string(&sharing_commands)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {e}", sharing_commands.display()));
+
+        let lines: Vec<&str> = content.lines().collect();
+        let window = 15_usize;
+        let found = lines.windows(window).any(|block| {
+            let joined = block.join("\n");
+            joined.contains(fn_marker) && joined.contains(channel_param)
+        });
+
+        assert!(
+            found,
+            "Expected `{channel_param}` within {window} lines of `{fn_marker}` in \
+             sharing_commands.rs. Re-add the progress channel to download_received_share.",
+        );
+    }
 }

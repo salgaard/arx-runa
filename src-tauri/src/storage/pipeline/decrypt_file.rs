@@ -310,6 +310,123 @@ pub async fn decrypt_file_to_memory(
     Ok(output)
 }
 
+/// Decrypts a byte-range `[range_start, range_end]` (inclusive) of a multi-chunk file into
+/// memory without writing to disk.
+///
+/// Only the chunks that overlap with the requested range are downloaded and decrypted,
+/// so RAM usage stays proportional to the range size rather than the whole file.
+/// The streaming invariant holds: at most one chunk's plaintext exists in RAM at a time.
+///
+/// Both `range_start` and `range_end` must satisfy `range_start <= range_end < file_size`.
+#[allow(clippy::too_many_arguments)]
+pub async fn decrypt_file_range_to_memory(
+    file_id: Uuid,
+    file_key: &FileKey,
+    file_size: u64,
+    chunks: &[ChunkRecord],
+    blob_directory: &Path,
+    metadata_store: &dyn MetadataStore,
+    range_start: u64,
+    range_end: u64,
+) -> Result<Zeroizing<Vec<u8>>, StorageError> {
+    if range_start > range_end || range_end >= file_size {
+        return Err(StorageError::ConstraintViolation(
+            "range is out of bounds for this file".to_owned(),
+        ));
+    }
+
+    let chunk_size_bytes = read_chunk_size_bytes(metadata_store).await?;
+    let expected_blob_len = chunk_size_bytes.checked_add(40).ok_or_else(|| {
+        StorageError::Database("chunk_size_bytes overflow while sizing blob".to_owned())
+    })?;
+    let expected_blob_len_usize = usize::try_from(expected_blob_len)
+        .map_err(|error| StorageError::Database(error.to_string()))?;
+
+    let expected_chunk_count_u64 = file_size.div_ceil(chunk_size_bytes);
+    let expected_chunk_count = usize::try_from(expected_chunk_count_u64)
+        .map_err(|error| StorageError::Database(error.to_string()))?;
+    if chunks.len() != expected_chunk_count {
+        return Err(StorageError::ConstraintViolation(
+            "chunk list is malformed: missing or duplicate chunk_index".to_owned(),
+        ));
+    }
+
+    let mut sorted_chunks: Vec<&ChunkRecord> = chunks.iter().collect();
+    sorted_chunks.sort_by_key(|chunk| chunk.chunk_index);
+    for (expected_index, chunk) in sorted_chunks.iter().enumerate() {
+        if chunk.chunk_index != expected_index as u32 {
+            return Err(StorageError::ConstraintViolation(
+                "chunk list is malformed: missing or duplicate chunk_index".to_owned(),
+            ));
+        }
+        validate_size_padded_matches_chunk_size(chunk.size_padded, chunk_size_bytes)?;
+    }
+
+    let first_chunk_index = (range_start / chunk_size_bytes) as usize;
+    let last_chunk_index = (range_end / chunk_size_bytes) as usize;
+    let range_len = usize::try_from(range_end - range_start + 1)
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+    let mut output: Zeroizing<Vec<u8>> = Zeroizing::new(Vec::with_capacity(range_len));
+    let crypto_file_id = FileId::from_uuid(file_id);
+
+    for chunk in sorted_chunks
+        .iter()
+        .skip(first_chunk_index)
+        .take(last_chunk_index - first_chunk_index + 1)
+    {
+        validate_blob_name_uuid_v4(&chunk.blob_name)?;
+        let blob_path = resolve_blob_path(blob_directory, &chunk.blob_name).await;
+        let encrypted_blob =
+            read_encrypted_blob(&blob_path, expected_blob_len, expected_blob_len_usize).await?;
+
+        let expected_hash = Blake3Hash(chunk.blake3_checksum);
+        let verified_blob =
+            verify_checksum(encrypted_blob, &expected_hash).map_err(StorageError::from)?;
+        let padded_plaintext = decrypt_chunk(
+            verified_blob,
+            file_key,
+            &crypto_file_id,
+            ChunkIndex::new(chunk.chunk_index),
+        )
+        .map_err(StorageError::from)?;
+        let plaintext = Zeroizing::new(padded_plaintext);
+
+        let chunk_file_offset = u64::from(chunk.chunk_index) * chunk_size_bytes;
+        let real_bytes_in_chunk = if chunk.chunk_index as usize + 1 == sorted_chunks.len() {
+            file_size.checked_sub(chunk_file_offset).ok_or_else(|| {
+                StorageError::ConstraintViolation(
+                    "file_size underflow while computing last-chunk truncation".to_owned(),
+                )
+            })?
+        } else {
+            chunk_size_bytes
+        };
+
+        let chunk_file_end = chunk_file_offset + real_bytes_in_chunk - 1;
+        let overlap_start = range_start.max(chunk_file_offset);
+        let overlap_end = range_end.min(chunk_file_end);
+
+        if overlap_start > overlap_end {
+            continue;
+        }
+
+        let plain_slice_start = usize::try_from(overlap_start - chunk_file_offset)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let plain_slice_end = usize::try_from(overlap_end - chunk_file_offset + 1)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        if plain_slice_end > plaintext.len() {
+            return Err(StorageError::ConstraintViolation(
+                "range slice exceeds padded plaintext length".to_owned(),
+            ));
+        }
+
+        output.extend_from_slice(&plaintext[plain_slice_start..plain_slice_end]);
+    }
+
+    Ok(output)
+}
+
 /// Decrypts a file packed into an epoch blob into a destination path.
 ///
 /// Reads the epoch blob, verifies its BLAKE3 checksum, decrypts with the epoch key,
@@ -475,7 +592,7 @@ mod tests {
 
     use zeroize::Zeroizing;
 
-    use super::decrypt_file;
+    use super::{decrypt_file, decrypt_file_range_to_memory};
     use crate::crypto::FileKey;
     use crate::storage::MetadataStore;
     use crate::storage::error::StorageError;
@@ -1271,6 +1388,196 @@ mod tests {
             result,
             Err(StorageError::ConstraintViolation(message)) if message.contains("size_padded")
         ));
+    }
+
+    // ─── decrypt_file_range_to_memory ─────────────────────────────────────────
+
+    /// Verifies a range within a single chunk returns only the requested slice.
+    #[tokio::test]
+    async fn test_decrypt_file_range_to_memory_single_chunk_mid_range_returns_slice() {
+        let temp_dir = TempDir::new().expect("temporary directory should be created");
+        let source_path = temp_dir.path().join("source.bin");
+        let staging_directory = temp_dir.path().join("staging");
+        fs::create_dir_all(&staging_directory)
+            .await
+            .expect("staging directory should be created");
+        let chunk_size = 131_072usize;
+        let plaintext: Vec<u8> = (0u8..=255).cycle().take(chunk_size / 2).collect();
+        write_source_file(&source_path, &plaintext).await;
+        let metadata_store = FixedMetaStore {
+            chunk_size_bytes: chunk_size as u64,
+        };
+        let file_id = Uuid::new_v4();
+        let file_key = FileKey::from_bytes([51; 32]);
+        let chunks = stage_encrypted_chunks(
+            &metadata_store,
+            &source_path,
+            &staging_directory,
+            file_id,
+            &file_key,
+        )
+        .await;
+
+        let range_start = 10u64;
+        let range_end = 99u64;
+        let result = decrypt_file_range_to_memory(
+            file_id,
+            &file_key,
+            plaintext.len() as u64,
+            &chunks,
+            &staging_directory,
+            &metadata_store,
+            range_start,
+            range_end,
+        )
+        .await
+        .expect("range decrypt should succeed");
+
+        assert_eq!(result.len(), (range_end - range_start + 1) as usize);
+        assert_eq!(
+            &*result,
+            &plaintext[range_start as usize..=range_end as usize]
+        );
+    }
+
+    /// Verifies a range spanning two chunk boundaries returns the correct bytes.
+    #[tokio::test]
+    async fn test_decrypt_file_range_to_memory_cross_chunk_boundary_returns_correct_bytes() {
+        let temp_dir = TempDir::new().expect("temporary directory should be created");
+        let source_path = temp_dir.path().join("source.bin");
+        let staging_directory = temp_dir.path().join("staging");
+        fs::create_dir_all(&staging_directory)
+            .await
+            .expect("staging directory should be created");
+        let chunk_size = 131_072usize;
+        let plaintext: Vec<u8> = (0u8..=255).cycle().take(chunk_size * 2 + 500).collect();
+        write_source_file(&source_path, &plaintext).await;
+        let metadata_store = FixedMetaStore {
+            chunk_size_bytes: chunk_size as u64,
+        };
+        let file_id = Uuid::new_v4();
+        let file_key = FileKey::from_bytes([53; 32]);
+        let chunks = stage_encrypted_chunks(
+            &metadata_store,
+            &source_path,
+            &staging_directory,
+            file_id,
+            &file_key,
+        )
+        .await;
+
+        // Straddle the boundary between chunk 0 and chunk 1.
+        let range_start = (chunk_size - 4) as u64;
+        let range_end = (chunk_size + 4) as u64;
+        let result = decrypt_file_range_to_memory(
+            file_id,
+            &file_key,
+            plaintext.len() as u64,
+            &chunks,
+            &staging_directory,
+            &metadata_store,
+            range_start,
+            range_end,
+        )
+        .await
+        .expect("cross-chunk range decrypt should succeed");
+
+        assert_eq!(result.len(), (range_end - range_start + 1) as usize);
+        assert_eq!(
+            &*result,
+            &plaintext[range_start as usize..=range_end as usize]
+        );
+    }
+
+    /// Verifies a range ending at the last byte of the file strips padding correctly.
+    #[tokio::test]
+    async fn test_decrypt_file_range_to_memory_last_byte_range_strips_padding() {
+        let temp_dir = TempDir::new().expect("temporary directory should be created");
+        let source_path = temp_dir.path().join("source.bin");
+        let staging_directory = temp_dir.path().join("staging");
+        fs::create_dir_all(&staging_directory)
+            .await
+            .expect("staging directory should be created");
+        let chunk_size = 131_072usize;
+        // Non-chunk-aligned size so the last chunk has padding.
+        let plaintext: Vec<u8> = (0u8..=255).cycle().take(chunk_size + 37).collect();
+        write_source_file(&source_path, &plaintext).await;
+        let metadata_store = FixedMetaStore {
+            chunk_size_bytes: chunk_size as u64,
+        };
+        let file_id = Uuid::new_v4();
+        let file_key = FileKey::from_bytes([59; 32]);
+        let chunks = stage_encrypted_chunks(
+            &metadata_store,
+            &source_path,
+            &staging_directory,
+            file_id,
+            &file_key,
+        )
+        .await;
+
+        let range_start = (chunk_size + 10) as u64;
+        let range_end = (plaintext.len() - 1) as u64;
+        let result = decrypt_file_range_to_memory(
+            file_id,
+            &file_key,
+            plaintext.len() as u64,
+            &chunks,
+            &staging_directory,
+            &metadata_store,
+            range_start,
+            range_end,
+        )
+        .await
+        .expect("last-byte range decrypt should succeed");
+
+        assert_eq!(result.len(), (range_end - range_start + 1) as usize);
+        assert_eq!(
+            &*result,
+            &plaintext[range_start as usize..=range_end as usize]
+        );
+    }
+
+    /// Verifies a full-file range returns the entire plaintext.
+    #[tokio::test]
+    async fn test_decrypt_file_range_to_memory_full_range_returns_all_plaintext() {
+        let temp_dir = TempDir::new().expect("temporary directory should be created");
+        let source_path = temp_dir.path().join("source.bin");
+        let staging_directory = temp_dir.path().join("staging");
+        fs::create_dir_all(&staging_directory)
+            .await
+            .expect("staging directory should be created");
+        let chunk_size = 131_072usize;
+        let plaintext = vec![0x7Eu8; chunk_size * 2 + 1];
+        write_source_file(&source_path, &plaintext).await;
+        let metadata_store = FixedMetaStore {
+            chunk_size_bytes: chunk_size as u64,
+        };
+        let file_id = Uuid::new_v4();
+        let file_key = FileKey::from_bytes([61; 32]);
+        let chunks = stage_encrypted_chunks(
+            &metadata_store,
+            &source_path,
+            &staging_directory,
+            file_id,
+            &file_key,
+        )
+        .await;
+
+        let result = decrypt_file_range_to_memory(
+            file_id,
+            &file_key,
+            plaintext.len() as u64,
+            &chunks,
+            &staging_directory,
+            &metadata_store,
+            0,
+            (plaintext.len() - 1) as u64,
+        )
+        .await
+        .expect("full-file range decrypt should succeed");
+
+        assert_eq!(&*result, plaintext.as_slice());
     }
 
     /// Verifies that `Zeroizing<Vec<u8>>` zeroes its bytes when zeroize is called.
