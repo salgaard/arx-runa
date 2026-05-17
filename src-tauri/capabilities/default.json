@@ -21,6 +21,7 @@
     "allow-list-directory",
     "allow-upload-file",
     "allow-download-file",
+    "allow-delete-directory",
     "allow-delete-file",
     "allow-get-file-content",
     "allow-list-remote",
@@ -64,6 +65,10 @@
     "allow-stat-local-path",
     "allow-create-vault-directory",
     "allow-list-local-directory",
+    "allow-scan-for-key-file",
+    "allow-is-path-on-removable-drive",
+    "allow-video-scheme-base-url",
+    "allow-prefetch-video",
     {
       "identifier": "shell:allow-execute",
       "allow": [

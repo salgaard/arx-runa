@@ -15,6 +15,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64_STANDARD;
 use tauri::Emitter as _;
 use tauri::State;
+use tauri::ipc::Channel;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -35,7 +36,7 @@ use crate::storage::cloud::{
     CloudEndpoint, CloudTransport as _, DestinationSessionPublic, RcloneTransport, SyncConfig,
     destination_session::{
         BackupSyncMode, DestinationSession, DestinationType, build_session_rclone_conf,
-        destroy_session_rclone_conf, get_primary_destination,
+        destroy_session_rclone_conf, get_primary_destination, insert_destination_session,
     },
     validate_single_remote_stanza,
     vault_header::VaultHeader,
@@ -46,10 +47,12 @@ use crate::crypto::KeyEncryptionKey;
 use crate::storage::MetadataStore as _;
 use crate::storage::staging::write_owner_only;
 use crate::storage::vault_ops::flush_epoch_buffer;
-use crate::ui::commands_common::{require_active_session, sanitise_password};
+use crate::ui::commands_common::{ProgressChannel, require_active_session, sanitise_password};
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
-use crate::ui::types::{AuthResponse, DestinationSessionConfig, SessionStatus, VaultSummary};
+use crate::ui::types::{
+    AuthResponse, DestinationSessionConfig, ProgressUpdate, SessionStatus, VaultSummary,
+};
 use crate::ui::validation::validate_password;
 use crate::ui::vault_paths::{
     default_vault_root, list_local_vaults, resolve_singleton_vault, resolve_vault_by_id,
@@ -380,9 +383,18 @@ pub async fn create_vault(
     primary_destination: DestinationSessionConfig,
     chunk_size_bytes: u64,
     epoch_buffer_enabled: bool,
+    progress: Channel<ProgressUpdate>,
     state: State<'_, AppState>,
 ) -> Result<AuthResponse, IpcError> {
     state.session_manager.reset_timer().await;
+
+    let progress_ch = ProgressChannel::new(progress);
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 0,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Setting up encryption…".into(),
+    });
 
     let password_bytes = sanitise_password(&mut password);
     validate_password(std::str::from_utf8(&password_bytes).unwrap_or(""))?;
@@ -436,6 +448,13 @@ pub async fn create_vault(
         };
 
     validate_storage_destination(&primary_destination, &cloud_transport_arc).await?;
+
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 30,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Initializing vault…".into(),
+    });
 
     let vault_uuid = Uuid::new_v4();
     let vault_id_str = vault_uuid.hyphenated().to_string();
@@ -497,6 +516,13 @@ pub async fn create_vault(
         return Err(IpcError::from(err));
     }
 
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 80,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Opening database…".into(),
+    });
+
     let key_copy: [u8; 32] = state
         .session_manager
         .with_sqlcipher_key(|k| *k)
@@ -532,6 +558,13 @@ pub async fn create_vault(
     }
 
     *state.active_vault_id.write().await = Some(vault_id_str.clone());
+
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 100,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Vault ready".into(),
+    });
 
     Ok(AuthResponse {
         vault_id: vault_id_str,
@@ -800,9 +833,18 @@ pub async fn recover_vault_with_phrase(
     phrase: String,
     mut new_password: String,
     new_key_file_path: Option<PathBuf>,
+    progress: Channel<ProgressUpdate>,
     state: State<'_, AppState>,
 ) -> Result<AuthResponse, IpcError> {
     state.session_manager.reset_timer().await;
+
+    let progress_ch = ProgressChannel::new(progress);
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 0,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Validating recovery phrase…".into(),
+    });
 
     let new_password_bytes = sanitise_password(&mut new_password);
     validate_password(std::str::from_utf8(&new_password_bytes).unwrap_or(""))?;
@@ -837,6 +879,13 @@ pub async fn recover_vault_with_phrase(
         vault_header: Some(header_local),
     };
 
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 30,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Reconstructing keys…".into(),
+    });
+
     let (recovered_vault_id, updated_header) = ceremony_recover_with_phrase(
         request,
         &state.session_manager,
@@ -855,6 +904,13 @@ pub async fn recover_vault_with_phrase(
             "Failed to persist updated vault-header.json after phrase recovery"
         );
     }
+
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 80,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Opening database…".into(),
+    });
 
     let key_copy: [u8; 32] = state
         .session_manager
@@ -890,6 +946,13 @@ pub async fn recover_vault_with_phrase(
     }
 
     *state.active_vault_id.write().await = Some(vault_id_str.clone());
+
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 100,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Recovery complete".into(),
+    });
 
     Ok(AuthResponse {
         vault_id: vault_id_str,
@@ -1204,9 +1267,19 @@ pub async fn recover_vault_from_cloud(
     mut password: String,
     key_file_path: Option<PathBuf>,
     primary_destination: DestinationSessionConfig,
+    progress: Channel<ProgressUpdate>,
     state: State<'_, AppState>,
 ) -> Result<AuthResponse, IpcError> {
     state.session_manager.reset_timer().await;
+
+    let progress_ch = ProgressChannel::new(progress);
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 0,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Connecting to cloud…".into(),
+    });
+
     let password_bytes = sanitise_password(&mut password);
     validate_password(std::str::from_utf8(&password_bytes).unwrap_or(""))?;
 
@@ -1261,6 +1334,13 @@ pub async fn recover_vault_from_cloud(
             )
         })?;
 
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 30,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Downloading vault data…".into(),
+    });
+
     let header_bytes = tokio::fs::read(&probe_path)
         .await
         .map_err(|e| IpcError::InternalError(e.to_string()))?;
@@ -1272,10 +1352,18 @@ pub async fn recover_vault_from_cloud(
     let cloud_vault_id = vault_header.vault_id.clone();
 
     let vault_dir = default_vault_root().join(&cloud_vault_id);
-    if vault_dir.join("vault.db").exists() {
+    let vault_db_exists = vault_dir.join("vault.db").exists();
+    let vault_header_exists = vault_dir.join("vault-header.json").exists();
+    if vault_db_exists && vault_header_exists {
         return Err(IpcError::AlreadyExists(format!(
             "Vault '{cloud_vault_id}' already exists on this device"
         )));
+    }
+    // Incomplete vault dir (db without header, or stale empty dir): wipe and re-recover.
+    if vault_dir.exists() {
+        tokio::fs::remove_dir_all(&vault_dir).await.map_err(|e| {
+            IpcError::InternalError(format!("failed to remove incomplete vault dir: {e}"))
+        })?;
     }
     tokio::fs::create_dir_all(&vault_dir)
         .await
@@ -1285,6 +1373,24 @@ pub async fn recover_vault_from_cloud(
     let key_source_ref: Option<&(dyn crate::auth::KeySource + Send + Sync)> = key_source_opt
         .as_ref()
         .map(|ks| ks as &(dyn crate::auth::KeySource + Send + Sync));
+
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 60,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Restoring vault…".into(),
+    });
+
+    // Write vault-header.json before the ceremony so the vault directory is
+    // complete even if install_session succeeds but a subsequent step fails.
+    // On Windows, remove_dir_all on a directory containing an open vault.db
+    // can fail; writing the header first ensures the vault is always listable.
+    tokio::fs::write(vault_dir.join("vault-header.json"), &header_bytes)
+        .await
+        .map_err(|e| {
+            let _ = std::fs::remove_dir_all(&vault_dir);
+            IpcError::InternalError(e.to_string())
+        })?;
 
     let vault_db_path = vault_dir.join("vault.db");
     let vault_id = ceremony_recover_vault(
@@ -1304,9 +1410,12 @@ pub async fn recover_vault_from_cloud(
 
     let vault_id_str = vault_id.to_uuid().to_string();
 
-    tokio::fs::write(vault_dir.join("vault-header.json"), &header_bytes)
-        .await
-        .map_err(|e| IpcError::InternalError(e.to_string()))?;
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 85,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Opening database…".into(),
+    });
 
     let key_copy: [u8; 32] = state
         .session_manager
@@ -1324,6 +1433,24 @@ pub async fn recover_vault_from_cloud(
     {
         let db_guard = state.database.read().await;
         if let Some(ref inner_db) = *db_guard {
+            // If the recovered vault DB has no primary destination (typical for
+            // a freshly recovered vault), persist the one the user supplied so
+            // build_session_rclone_conf produces a valid rclone.conf.
+            match get_primary_destination(inner_db).await {
+                Ok(None) => {
+                    if let Err(e) = insert_destination_session(inner_db, &dest_session).await {
+                        tracing::warn!(
+                            ?e,
+                            "Failed to persist recovery destination session into vault DB"
+                        );
+                    }
+                }
+                Ok(Some(_)) => {}
+                Err(e) => tracing::warn!(
+                    ?e,
+                    "Failed to query primary destination after cloud recovery"
+                ),
+            }
             try_build_and_swap_rclone_transport(&state, inner_db).await;
         }
     }
@@ -1339,6 +1466,13 @@ pub async fn recover_vault_from_cloud(
     }
 
     *state.active_vault_id.write().await = Some(vault_id_str.clone());
+
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 100,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Recovery complete".into(),
+    });
 
     Ok(AuthResponse {
         vault_id: vault_id_str.clone(),
@@ -1356,9 +1490,18 @@ pub async fn recover_vault_from_cloud_with_phrase(
     mut new_password: String,
     new_key_file_path: Option<PathBuf>,
     primary_destination: DestinationSessionConfig,
+    progress: Channel<ProgressUpdate>,
     state: State<'_, AppState>,
 ) -> Result<AuthResponse, IpcError> {
     state.session_manager.reset_timer().await;
+
+    let progress_ch = ProgressChannel::new(progress);
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 0,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Connecting to cloud…".into(),
+    });
 
     let new_password_bytes = sanitise_password(&mut new_password);
     validate_password(std::str::from_utf8(&new_password_bytes).unwrap_or(""))?;
@@ -1428,6 +1571,13 @@ pub async fn recover_vault_from_cloud_with_phrase(
             )
         })?;
 
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 30,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Downloading vault data…".into(),
+    });
+
     let header_bytes = tokio::fs::read(&probe_path)
         .await
         .map_err(|e| IpcError::InternalError(e.to_string()))?;
@@ -1443,16 +1593,31 @@ pub async fn recover_vault_from_cloud_with_phrase(
         .unwrap_or_else(|| cloud_vault_id.clone());
 
     let vault_dir = default_vault_root().join(&cloud_vault_id);
-    if vault_dir.join("vault.db").exists() {
+    let vault_db_exists = vault_dir.join("vault.db").exists();
+    let vault_header_exists = vault_dir.join("vault-header.json").exists();
+    if vault_db_exists && vault_header_exists {
         return Err(IpcError::AlreadyExists(format!(
             "Vault '{cloud_vault_id}' already exists on this device"
         )));
+    }
+    // Incomplete vault dir (db without header, or stale empty dir): wipe and re-recover.
+    if vault_dir.exists() {
+        tokio::fs::remove_dir_all(&vault_dir).await.map_err(|e| {
+            IpcError::InternalError(format!("failed to remove incomplete vault dir: {e}"))
+        })?;
     }
     tokio::fs::create_dir_all(&vault_dir)
         .await
         .map_err(|e| IpcError::InternalError(e.to_string()))?;
 
     let vault_db_path = vault_dir.join("vault.db");
+
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 60,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Restoring vault…".into(),
+    });
 
     let (recovered_vault_id, updated_header) = ceremony_recover_with_phrase(
         RecoverWithPhraseRequest {
@@ -1481,14 +1646,21 @@ pub async fn recover_vault_from_cloud_with_phrase(
 
     let vault_id_str = recovered_vault_id.to_uuid().to_string();
 
-    if let Ok(json) = serde_json::to_string_pretty(&updated_header)
-        && let Err(error) = tokio::fs::write(vault_dir.join("vault-header.json"), json).await
-    {
-        tracing::warn!(
-            ?error,
-            "Failed to persist vault-header.json after cloud phrase recovery"
-        );
-    }
+    let header_json = serde_json::to_string_pretty(&updated_header)
+        .map_err(|_| IpcError::InternalError("failed to serialise vault header".into()))?;
+    tokio::fs::write(vault_dir.join("vault-header.json"), &header_json)
+        .await
+        .map_err(|e| {
+            let _ = std::fs::remove_dir_all(&vault_dir);
+            IpcError::InternalError(e.to_string())
+        })?;
+
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 85,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Opening database…".into(),
+    });
 
     let key_copy: [u8; 32] = state
         .session_manager
@@ -1506,6 +1678,24 @@ pub async fn recover_vault_from_cloud_with_phrase(
     {
         let db_guard = state.database.read().await;
         if let Some(ref inner_db) = *db_guard {
+            // If the recovered vault DB has no primary destination (typical for
+            // a freshly recovered vault), persist the one the user supplied so
+            // build_session_rclone_conf produces a valid rclone.conf.
+            match get_primary_destination(inner_db).await {
+                Ok(None) => {
+                    if let Err(e) = insert_destination_session(inner_db, &dest_session).await {
+                        tracing::warn!(
+                            ?e,
+                            "Failed to persist recovery destination session into vault DB"
+                        );
+                    }
+                }
+                Ok(Some(_)) => {}
+                Err(e) => tracing::warn!(
+                    ?e,
+                    "Failed to query primary destination after cloud phrase recovery"
+                ),
+            }
             try_build_and_swap_rclone_transport(&state, inner_db).await;
         }
     }
@@ -1525,10 +1715,59 @@ pub async fn recover_vault_from_cloud_with_phrase(
 
     *state.active_vault_id.write().await = Some(vault_id_str.clone());
 
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 100,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Recovery complete".into(),
+    });
+
     Ok(AuthResponse {
         vault_id: vault_id_str,
         vault_name,
     })
+}
+
+/// Scans a mounted drive for a 32-byte key file whose BLAKE3 hash matches
+/// `expected_hash_hex`.
+///
+/// Returns the absolute path of the matching file, or `None` if not found.
+/// Scan errors are swallowed and treated as no-match so a bad drive never
+/// blocks the login UI.
+#[tauri::command]
+pub async fn scan_for_key_file(
+    mount_path: String,
+    expected_hash_hex: String,
+) -> Result<Option<String>, IpcError> {
+    use crate::auth::autodetect::find_key_file;
+    use crate::crypto::Blake3Hash;
+
+    let hash_bytes: [u8; 32] = hex::decode(&expected_hash_hex)
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .ok_or_else(|| {
+            IpcError::InvalidInput("expected_hash_hex must be a 64-character hex string".into())
+        })?;
+    let reference_hash = Blake3Hash(hash_bytes);
+
+    match find_key_file(std::path::Path::new(&mount_path), &reference_hash).await {
+        Ok(Some(path)) => Ok(Some(path.to_string_lossy().into_owned())),
+        Ok(None) => Ok(None),
+        Err(e) => {
+            tracing::debug!(mount_path = %mount_path, error = %e, "key file scan returned error; treating as no match");
+            Ok(None)
+        }
+    }
+}
+
+/// Returns whether the given path resides on a removable storage device.
+///
+/// Used at vault creation time to warn users who place their key file on a
+/// fixed drive.  Returns `false` on any error so callers never false-alarm.
+#[tauri::command]
+pub async fn is_path_on_removable_drive(path: String) -> Result<bool, IpcError> {
+    use crate::auth::removable_drive::is_removable_path;
+    Ok(is_removable_path(std::path::Path::new(&path)))
 }
 
 #[cfg(test)]
@@ -1583,5 +1822,87 @@ mod tests {
 
         assert!(!json1.is_empty());
         assert!(!json2.is_empty());
+    }
+
+    // ── scan_for_key_file ──────────────────────────────────────────────────
+
+    /// Creates a deterministic 32-byte key payload and its hex-encoded BLAKE3 hash.
+    fn key_hex(seed: u8) -> ([u8; 32], String) {
+        let bytes = [seed; 32];
+        let hash_hex = hex::encode(blake3::hash(&bytes).as_bytes());
+        (bytes, hash_hex)
+    }
+
+    #[tokio::test]
+    async fn test_scan_for_key_file_returns_path_when_file_matches() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let (bytes, hash_hex) = key_hex(0xA1);
+        let key_path = dir.path().join("mykey.bin");
+        std::fs::write(&key_path, bytes).expect("key file should be written");
+
+        let result = scan_for_key_file(dir.path().to_string_lossy().into_owned(), hash_hex)
+            .await
+            .expect("command should not error");
+
+        assert_eq!(result, Some(key_path.to_string_lossy().into_owned()));
+    }
+
+    #[tokio::test]
+    async fn test_scan_for_key_file_returns_none_when_no_match() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let (bytes, _) = key_hex(0xB2);
+        std::fs::write(dir.path().join("decoy.bin"), bytes).expect("decoy file should be written");
+        let (_, hash_hex) = key_hex(0xC3);
+
+        let result = scan_for_key_file(dir.path().to_string_lossy().into_owned(), hash_hex)
+            .await
+            .expect("command should not error");
+
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn test_scan_for_key_file_returns_none_for_nonexistent_mount() {
+        let (_, hash_hex) = key_hex(0xD4);
+
+        let result = scan_for_key_file("/nonexistent/mount/path/xyz".to_string(), hash_hex)
+            .await
+            .expect("scan error should be swallowed and return None");
+
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn test_scan_for_key_file_rejects_invalid_hex() {
+        let result = scan_for_key_file(
+            std::env::temp_dir().to_string_lossy().into_owned(),
+            "not-valid-hex".to_string(),
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scan_for_key_file_rejects_wrong_length_hex() {
+        // 63 hex chars = 31.5 bytes, not 32.
+        let result = scan_for_key_file(
+            std::env::temp_dir().to_string_lossy().into_owned(),
+            "a".repeat(63),
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    // ── is_path_on_removable_drive ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_is_path_on_removable_drive_fixed_drive_returns_false() {
+        let temp = std::env::temp_dir().to_string_lossy().into_owned();
+        let result = is_path_on_removable_drive(temp)
+            .await
+            .expect("command should not error");
+        assert!(!result);
     }
 }

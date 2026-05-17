@@ -309,6 +309,7 @@ fn DestinationItem(
     entry: DestinationEntry,
     on_refresh: Arc<dyn Fn() + Send + Sync>,
     #[prop(default = 0u32)] pending_failures: u32,
+    #[prop(default = 0u32)] pending_blobs: u32,
 ) -> impl IntoView {
     let is_primary = entry.is_primary;
     let is_gdrive = entry.rclone_type.as_deref() == Some("drive");
@@ -339,17 +340,36 @@ fn DestinationItem(
                         } else {
                             ().into_any()
                         }}
-                        {if pending_failures > 0 {
-                            view! {
-                                <span class="px-2 py-0.5 text-xs font-medium bg-danger/20 text-danger rounded">
-                                    {format!(
-                                        "{} backup failure{}",
-                                        pending_failures,
-                                        if pending_failures == 1 { "" } else { "s" },
-                                    )}
-                                </span>
+                        {if !is_primary {
+                            if pending_failures > 0 {
+                                view! {
+                                    <span class="px-2 py-0.5 text-xs font-medium bg-danger/20 text-danger rounded">
+                                        {format!(
+                                            "{} backup failure{}",
+                                            pending_failures,
+                                            if pending_failures == 1 { "" } else { "s" },
+                                        )}
+                                    </span>
+                                }
+                                .into_any()
+                            } else if pending_blobs > 0 {
+                                view! {
+                                    <span class="px-2 py-0.5 text-xs font-medium bg-surface-overlay text-text-muted border border-border-default rounded">
+                                        {format!(
+                                            "{} pending",
+                                            pending_blobs,
+                                        )}
+                                    </span>
+                                }
+                                .into_any()
+                            } else {
+                                view! {
+                                    <span class="px-2 py-0.5 text-xs font-medium bg-green-900/40 text-green-400 border border-green-800/40 rounded">
+                                        "In sync ✓"
+                                    </span>
+                                }
+                                .into_any()
                             }
-                            .into_any()
                         } else {
                             ().into_any()
                         }}
@@ -751,6 +771,7 @@ pub fn DestinationList() -> impl IntoView {
     let on_refresh: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
         refresh_count.update(|n| *n += 1);
     });
+    let on_refresh_add = on_refresh.clone();
 
     view! {
         <div class="space-y-6">
@@ -760,8 +781,6 @@ pub fn DestinationList() -> impl IntoView {
                     "Manage the locations where your vault is backed up."
                 </p>
             </div>
-
-            <AddDestinationForm on_added=on_refresh.clone() />
 
             <div>
                 <h3 class="text-lg font-semibold text-bone mb-3">"Configured Destinations"</h3>
@@ -781,16 +800,21 @@ pub fn DestinationList() -> impl IntoView {
                                         {entries
                                             .into_iter()
                                             .map(|entry| {
-                                                let failures = health
+                                                let h = health
                                                     .iter()
-                                                    .find(|h| h.destination_id == entry.destination_id)
+                                                    .find(|h| h.destination_id == entry.destination_id);
+                                                let failures = h
                                                     .map(|h| h.pending_failure_blobs)
+                                                    .unwrap_or(0);
+                                                let pending = h
+                                                    .map(|h| h.pending_blobs)
                                                     .unwrap_or(0);
                                                 view! {
                                                     <DestinationItem
                                                         entry
                                                         on_refresh=on_refresh_ref.clone()
                                                         pending_failures=failures
+                                                        pending_blobs=pending
                                                     />
                                                 }
                                             })
@@ -819,6 +843,8 @@ pub fn DestinationList() -> impl IntoView {
                     }}
                 </Suspense>
             </div>
+
+            <AddDestinationForm on_added=on_refresh_add />
         </div>
     }
 }

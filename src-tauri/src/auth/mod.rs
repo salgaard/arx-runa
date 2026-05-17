@@ -11,6 +11,7 @@ pub mod error;
 pub mod kdf;
 pub mod key_source;
 pub mod path_hint;
+pub(crate) mod removable_drive;
 pub mod session;
 pub mod staging;
 pub mod transport_provider;

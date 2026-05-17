@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-is-path-on-removable-drive"
+description = "Enables the is_path_on_removable_drive command without any pre-configured scope."
+commands.allow = ["is_path_on_removable_drive"]
+
+[[permission]]
+identifier = "deny-is-path-on-removable-drive"
+description = "Denies the is_path_on_removable_drive command without any pre-configured scope."
+commands.deny = ["is_path_on_removable_drive"]

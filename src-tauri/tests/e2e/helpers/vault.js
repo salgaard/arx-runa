@@ -5,6 +5,7 @@
 
 const TEST_VAULT_PASSWORD = "e2e-test-password-arx-runa-2026";
 const TEST_VAULT_NAME = "e2e-test-vault";
+const LOADING_STATE_VAULT_NAME = "loading-state-test-vault";
 
 /**
  * Creates a new vault via the UI (Tier 1, password only) and leaves the
@@ -131,4 +132,4 @@ async function lockVault(browser) {
   );
 }
 
-module.exports = { createAndUnlockVault, unlockExistingVault, lockVault };
+module.exports = { TEST_VAULT_NAME, LOADING_STATE_VAULT_NAME, createAndUnlockVault, unlockExistingVault, lockVault };

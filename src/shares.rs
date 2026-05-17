@@ -5,13 +5,15 @@ use leptos::task::spawn_local;
 use leptos_router::components::A;
 
 use crate::dialog::{open_file_dialog_arxshare, open_save_dialog};
-use crate::invoke::invoke_command;
+use crate::invoke::{invoke_command, invoke_command_with_channel};
+use crate::ipc_channel::IpcChannel;
 use crate::ipc_types::{
     ContactEntry, DownloadReceivedShareRequest, DownloadReceivedShareResponse, FileContentResponse,
-    GetReceivedShareContentRequest, ImportShareRequest, ImportShareResponse, ReceivedShareEntry,
-    RevokeShareRequest, ShareEntry, ShareFileRequest, ShareResponse,
+    GetReceivedShareContentRequest, ImportShareRequest, ImportShareResponse, ProgressUpdate,
+    ReceivedShareEntry, RevokeShareRequest, ShareEntry, ShareFileRequest, ShareResponse,
 };
 use crate::state::use_sync;
+use crate::transfer::ProgressModal;
 use crate::utils::format_fingerprint;
 use crate::vault::{ContentViewerModal, extension_is_previewable, file_size_allows_preview};
 
@@ -431,6 +433,8 @@ fn ReceivedShareItem(
     let download_success = RwSignal::new(None::<String>);
     let file_content = RwSignal::new(None::<FileContentResponse>);
     let preview_loading = RwSignal::new(false);
+    let (download_channel, set_download_channel) =
+        signal::<Option<IpcChannel<ProgressUpdate>>>(None);
 
     let file_name_stored = StoredValue::new(share.file_name.clone());
     let display_file_name = share.file_name.clone();
@@ -560,12 +564,16 @@ fn ReceivedShareItem(
                                             let file_name = file_name_for_warn.clone();
                                             spawn_local(async move {
                                                 if let Some(dest_path) = open_save_dialog(Some(&file_name)).await {
-                                                    match invoke_command::<DownloadReceivedShareRequest, DownloadReceivedShareResponse>(
+                                                    let channel = IpcChannel::<ProgressUpdate>::new();
+                                                    set_download_channel.set(Some(channel.clone()));
+                                                    match invoke_command_with_channel::<DownloadReceivedShareRequest, DownloadReceivedShareResponse>(
                                                         "download_received_share",
                                                         &DownloadReceivedShareRequest {
                                                             share_id: share_id.clone(),
                                                             destination_path: dest_path,
                                                         },
+                                                        "progress",
+                                                        channel.inner(),
                                                     )
                                                     .await
                                                     {
@@ -577,6 +585,7 @@ fn ReceivedShareItem(
                                                             download_error.set(Some(e.to_string()));
                                                         }
                                                     }
+                                                    set_download_channel.set(None);
                                                 }
                                                 downloading.set(false);
                                             });
@@ -609,6 +618,15 @@ fn ReceivedShareItem(
                 content=file_content
                 filename=file_name_stored.get_value()
             />
+            <Show when=move || download_channel.get().is_some() fallback=|| ()>
+                {move || download_channel.get().map(|ch| view! {
+                    <ProgressModal
+                        channel=ch
+                        title="Downloading file…"
+                        on_close=move || set_download_channel.set(None)
+                    />
+                })}
+            </Show>
         </>
     }
 }

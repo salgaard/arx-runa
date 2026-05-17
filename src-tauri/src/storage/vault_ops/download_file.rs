@@ -7,7 +7,8 @@ use crate::crypto::{KeyEncryptionKey, WrappedFileKey, unwrap_file_key};
 use crate::storage::MetadataStore;
 use crate::storage::error::StorageError;
 use crate::storage::pipeline::{
-    decrypt_epoch_file, decrypt_epoch_file_to_memory, decrypt_file, decrypt_file_to_memory,
+    decrypt_epoch_file, decrypt_epoch_file_to_memory, decrypt_file, decrypt_file_range_to_memory,
+    decrypt_file_to_memory,
 };
 use crate::storage::types::NodeType;
 
@@ -133,6 +134,68 @@ pub async fn download_file_to_memory(
         blob_directory,
         metadata_store,
         progress,
+    )
+    .await
+}
+
+/// Downloads a byte-range of a file from staged encrypted chunks into memory.
+///
+/// Only the chunks covering `[range_start, range_end]` are decrypted, keeping RAM usage
+/// proportional to the range size. Both offsets are inclusive byte positions in the
+/// final plaintext.
+///
+/// Returns `StorageError::ConstraintViolation` for epoch-packed files; those must be
+/// synced and flushed before range access is possible.
+pub async fn download_file_range_to_memory(
+    node_id: Uuid,
+    metadata_store: &dyn MetadataStore,
+    key_encryption_key: &KeyEncryptionKey,
+    blob_directory: &Path,
+    range_start: u64,
+    range_end: u64,
+) -> Result<Zeroizing<Vec<u8>>, StorageError> {
+    let node = metadata_store.get_node(node_id).await?;
+    if !matches!(node.node_type, NodeType::File) {
+        return Err(StorageError::ConstraintViolation(
+            "target is a directory".to_owned(),
+        ));
+    }
+    let chunks = metadata_store.get_chunks(node_id).await?;
+
+    if chunks.is_empty() {
+        let buffer_ids = metadata_store.get_epoch_buffer_node_ids().await?;
+        if buffer_ids.contains(&node_id) {
+            return Err(StorageError::EpochBufferNotFlushed(node_id));
+        }
+    }
+
+    if chunks
+        .first()
+        .map(|c| c.epoch_blob_id.is_some())
+        .unwrap_or(false)
+    {
+        return Err(StorageError::ConstraintViolation(
+            "range streaming is not supported for epoch-packed files; sync the vault first"
+                .to_owned(),
+        ));
+    }
+
+    let wrapped_key = node.file_key_wrapped.ok_or_else(|| {
+        StorageError::ConstraintViolation("file node missing wrapped key".to_owned())
+    })?;
+    let wrapped_file_key = WrappedFileKey::new(wrapped_key);
+    let file_key =
+        unwrap_file_key(&wrapped_file_key, key_encryption_key).map_err(StorageError::from)?;
+
+    decrypt_file_range_to_memory(
+        *node.node_id.as_uuid(),
+        &file_key,
+        node.size_bytes,
+        &chunks,
+        blob_directory,
+        metadata_store,
+        range_start,
+        range_end,
     )
     .await
 }

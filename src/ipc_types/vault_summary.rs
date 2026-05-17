@@ -12,4 +12,9 @@ pub struct VaultSummary {
     pub name: Option<String>,
     /// Authentication tier: `1` (password only) or `2` (password + key file).
     pub tier: u8,
+    /// Hex-encoded BLAKE3 hash of the key file; `None` for Tier 1 vaults.
+    ///
+    /// Used by auto-detection: when a removable drive mounts the frontend calls
+    /// `scan_for_key_file` with this hash to find the matching 32-byte file.
+    pub key_file_blake3: Option<String>,
 }

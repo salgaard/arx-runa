@@ -391,13 +391,18 @@ impl MetadataStore for MockMetadataStore {
         }
 
         let queued_at = unix_timestamp_now()?;
+        let mut candidate_epoch_ids: std::collections::HashSet<uuid::Uuid> =
+            std::collections::HashSet::new();
         for subtree_node_id in &subtree_node_ids {
             if let Some(chunks) = guard.chunks_by_node.remove(subtree_node_id) {
                 for chunk in chunks {
-                    if !guard
-                        .pending_deletions
-                        .iter()
-                        .any(|(blob_name, _)| blob_name == &chunk.blob_name)
+                    if let Some(epoch_id) = chunk.epoch_blob_id {
+                        candidate_epoch_ids.insert(epoch_id);
+                    } else if !chunk.blob_name.is_empty()
+                        && !guard
+                            .pending_deletions
+                            .iter()
+                            .any(|(name, _)| name == &chunk.blob_name)
                     {
                         guard.pending_deletions.push((chunk.blob_name, queued_at));
                     }
@@ -406,6 +411,26 @@ impl MetadataStore for MockMetadataStore {
         }
         for subtree_node_id in subtree_node_ids {
             guard.nodes.remove(&subtree_node_id);
+        }
+        // Enqueue and remove epoch blobs that are now fully orphaned.
+        let still_referenced: std::collections::HashSet<uuid::Uuid> = guard
+            .chunks_by_node
+            .values()
+            .flat_map(|chunks| chunks.iter())
+            .filter_map(|c| c.epoch_blob_id)
+            .collect();
+        for epoch_id in candidate_epoch_ids {
+            if !still_referenced.contains(&epoch_id)
+                && let Some(epoch_blob) = guard.epoch_blobs.remove(&epoch_id)
+                && !guard
+                    .pending_deletions
+                    .iter()
+                    .any(|(name, _)| name == &epoch_blob.blob_name)
+            {
+                guard
+                    .pending_deletions
+                    .push((epoch_blob.blob_name, queued_at));
+            }
         }
         guard
             .pending_deletions

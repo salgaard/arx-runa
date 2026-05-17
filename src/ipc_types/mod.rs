@@ -39,14 +39,16 @@ pub use reconcile_result::ReconcileResult;
 pub use requests::{
     AddContactRequest, AddDestinationRequest, AuthenticateRequest, CancelOauthSetupRequest,
     ChangePasswordRequest, ComposeEmailWithAttachmentRequest, ConfigureCloudRequest,
-    CreateVaultDirectoryRequest, CreateVaultRequest, DeleteDestinationRequest, DeleteFileRequest,
-    DeleteVaultRequest, DownloadFileRequest, DownloadReceivedShareRequest, ExportPublicKeyRequest,
-    GetFileContentRequest, GetReceivedShareContentRequest, ImportShareRequest,
+    CreateVaultDirectoryRequest, CreateVaultRequest, DeleteDestinationRequest,
+    DeleteDirectoryRequest, DeleteFileRequest, DeleteVaultRequest, DownloadFileRequest,
+    DownloadReceivedShareRequest, ExportPublicKeyRequest, GetFileContentRequest,
+    GetReceivedShareContentRequest, ImportShareRequest, IsPathOnRemovableDriveRequest,
     ListDirectoryRequest, ListLocalDirectoryRequest, OpenUrlRequest, PollOauthSetupRequest,
-    RecoverVaultFromCloudRequest, RecoverVaultFromCloudWithPhraseRequest,
+    PrefetchVideoRequest, RecoverVaultFromCloudRequest, RecoverVaultFromCloudWithPhraseRequest,
     RecoverVaultWithPhraseRequest, RevealInExplorerRequest, RevokeShareRequest,
-    RotateKeyFileRequest, SetGdriveServiceAccountRequest, SetPrimaryDestinationRequest,
-    SetupRecoveryRequest, ShareFileRequest, StatLocalPathRequest, UploadFileRequest,
+    RotateKeyFileRequest, ScanForKeyFileRequest, SetGdriveServiceAccountRequest,
+    SetPrimaryDestinationRequest, SetupRecoveryRequest, ShareFileRequest, StatLocalPathRequest,
+    UploadFileRequest,
 };
 pub use session_status::SessionStatus;
 pub use share_entry::ShareEntry;

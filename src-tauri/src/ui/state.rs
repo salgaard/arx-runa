@@ -55,6 +55,11 @@ pub struct AppState {
     pub(crate) active_vault_id: Arc<RwLock<Option<String>>>,
     /// Mutex ensuring at most one epoch-buffer flush runs at a time.
     pub(crate) flush_mutex: Arc<tokio::sync::Mutex<()>>,
+    /// Mutex preventing concurrent `sync_to_cloud` / `sync_backup` invocations.
+    ///
+    /// Guards the shared rclone config files and mirror-temp directory from
+    /// races when the UI issues a second sync before the first completes.
+    pub(crate) sync_mutex: Arc<tokio::sync::Mutex<()>>,
     /// In-flight OAuth setup subprocesses keyed by opaque setup ID.
     ///
     /// Uses `tokio::sync::Mutex` so it can be held across `.await` points
@@ -147,6 +152,7 @@ impl AppState {
             app_handle: OnceLock::new(),
             active_vault_id: Arc::new(RwLock::new(None)),
             flush_mutex: Arc::new(tokio::sync::Mutex::new(())),
+            sync_mutex: Arc::new(tokio::sync::Mutex::new(())),
             oauth_setups: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }

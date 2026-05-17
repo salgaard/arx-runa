@@ -25,9 +25,11 @@
 // Use release binary (CI default via E2E_RELEASE=1):
 //   E2E_RELEASE=1 npm test
 
+const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
+const { TEST_VAULT_NAME, LOADING_STATE_VAULT_NAME } = require("./helpers/vault");
 
 const isWin = os.platform() === "win32";
 const profile = process.env.E2E_RELEASE ? "release" : "debug";
@@ -53,6 +55,53 @@ let shuttingDown = false;
 function closeTauriDriver() {
   shuttingDown = true;
   tauriDriver?.kill();
+}
+
+// Removes vault directories created during the test run.
+// Matches by name in vault-header.json so no UUID needs to be tracked.
+function cleanupTestVaults() {
+  const platform = os.platform();
+  let dataDir;
+  if (platform === "win32") {
+    dataDir = process.env.APPDATA;
+  } else if (platform === "darwin") {
+    dataDir = path.join(os.homedir(), "Library", "Application Support");
+  } else {
+    dataDir =
+      process.env.XDG_DATA_HOME ||
+      path.join(os.homedir(), ".local", "share");
+  }
+
+  if (!dataDir) {
+    console.warn("[e2e cleanup] Cannot determine data dir; skipping vault cleanup");
+    return;
+  }
+
+  const vaultRoot = path.join(dataDir, "arx-runa", "vaults");
+  if (!fs.existsSync(vaultRoot)) return;
+
+  let removed = 0;
+  for (const entry of fs.readdirSync(vaultRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const vaultDir = path.join(vaultRoot, entry.name);
+    const headerPath = path.join(vaultDir, "vault-header.json");
+    if (!fs.existsSync(headerPath)) continue;
+    try {
+      const header = JSON.parse(fs.readFileSync(headerPath, "utf8"));
+      if (header.name === TEST_VAULT_NAME || header.name === LOADING_STATE_VAULT_NAME) {
+        fs.rmSync(vaultDir, { recursive: true, force: true });
+        console.log(`[e2e cleanup] Removed test vault: ${vaultDir}`);
+        removed++;
+      }
+    } catch (err) {
+      console.warn(
+        `[e2e cleanup] Could not process ${headerPath}: ${err.message}`,
+      );
+    }
+  }
+  if (removed === 0) {
+    console.log("[e2e cleanup] No test vaults found to remove");
+  }
 }
 
 // Ensure tauri-driver is killed even if the process exits abnormally.
@@ -98,6 +147,9 @@ exports.config = {
   // frontend WASM bundle into the binary. Plain `cargo build` is not sufficient
   // — without the embedded frontend the app crashes on startup.
   onPrepare: () => {
+    // Remove vaults from any previous run that crashed before onComplete cleanup ran.
+    cleanupTestVaults();
+
     if (process.env.E2E_SKIP_BUILD) {
       console.log("E2E_SKIP_BUILD set — skipping cargo tauri build");
       return;
@@ -137,5 +189,10 @@ exports.config = {
   // Kill tauri-driver after the session ends.
   afterSession: () => {
     closeTauriDriver();
+  },
+
+  // Remove vaults created during the test run.
+  onComplete: () => {
+    cleanupTestVaults();
   },
 };

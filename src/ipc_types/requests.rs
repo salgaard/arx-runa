@@ -94,6 +94,14 @@ pub struct DeleteFileRequest {
     pub file_id: String,
 }
 
+/// Argument payload for the `delete_directory` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteDirectoryRequest {
+    /// Manifest node ID of the directory to delete (along with all descendants).
+    pub directory_id: String,
+}
+
 /// Argument payload for the `download_file` Tauri command.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -109,6 +117,14 @@ pub struct DownloadFileRequest {
 #[serde(rename_all = "camelCase")]
 pub struct GetFileContentRequest {
     /// Manifest node ID of the file to read.
+    pub file_id: String,
+}
+
+/// Argument payload for the `prefetch_video` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrefetchVideoRequest {
+    /// Manifest node ID of the video file to pre-fetch.
     pub file_id: String,
 }
 
@@ -359,4 +375,22 @@ pub struct OpenUrlRequest {
 pub struct SetGdriveServiceAccountRequest {
     /// Absolute path to the GCP service account JSON key file.
     pub sa_json_path: String,
+}
+
+/// Argument payload for the `scan_for_key_file` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanForKeyFileRequest {
+    /// Absolute path to the mounted drive root to scan.
+    pub mount_path: String,
+    /// Hex-encoded BLAKE3 hash to match against (64 lowercase hex characters).
+    pub expected_hash_hex: String,
+}
+
+/// Argument payload for the `is_path_on_removable_drive` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IsPathOnRemovableDriveRequest {
+    /// Absolute filesystem path to check.
+    pub path: String,
 }

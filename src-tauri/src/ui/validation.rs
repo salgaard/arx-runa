@@ -108,16 +108,17 @@ pub(crate) fn validate_chunk_size(chunk_size_bytes: u64) -> Result<(), IpcError>
     Ok(())
 }
 
-/// Normalises a vault-relative path by treating a bare `"/"` as the root (empty) path.
+/// Normalises a vault-relative path by stripping any leading `'/'`.
 ///
-/// The frontend may send `"/"` to represent the root directory; this function converts
-/// it to `""` so downstream code sees a consistent representation.
+/// The frontend represents the root as `"/"` and sub-directories as `"/docs"`,
+/// `"/docs/reports"`, etc. This function converts those to the backend's relative
+/// convention (`""`, `"docs"`, `"docs/reports"`).
 ///
 /// **Must be called before [`validate_vault_path`]** for all user-supplied vault paths.
-/// Calling `validate_vault_path` on a raw, un-normalised path causes `"/"` to be
-/// rejected as an absolute path rather than accepted as the root directory.
+/// Calling `validate_vault_path` on a raw, un-normalised path causes it to be
+/// rejected as an absolute path rather than accepted as a vault-relative path.
 pub(crate) fn normalise_vault_path(path: &str) -> &str {
-    if path == "/" { "" } else { path }
+    path.trim_start_matches('/')
 }
 
 #[cfg(test)]
@@ -291,6 +292,13 @@ mod tests {
     #[test]
     fn test_normalise_vault_path_non_root_path_unchanged() {
         assert_eq!(normalise_vault_path("documents"), "documents");
+    }
+
+    #[test]
+    fn test_normalise_vault_path_absolute_sub_path_strips_leading_slash() {
+        // Frontend breadcrumbs emit "/docs", "/docs/reports" — these must become relative.
+        assert_eq!(normalise_vault_path("/docs"), "docs");
+        assert_eq!(normalise_vault_path("/docs/reports"), "docs/reports");
     }
 
     // --- validate_vault_path additional boundary cases ---

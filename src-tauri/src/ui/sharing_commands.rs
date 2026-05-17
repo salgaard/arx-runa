@@ -10,6 +10,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use rusqlite::OptionalExtension;
 use secrecy::SecretBox;
 use tauri::State;
+use tauri::ipc::Channel;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -19,12 +20,12 @@ use crate::sharing::{
     import_share_package, public_key_qr_string,
 };
 use crate::storage::{MetadataStore, StorageError};
-use crate::ui::commands_common::require_active_session;
+use crate::ui::commands_common::{ProgressChannel, require_active_session};
 use crate::ui::error::IpcError;
 use crate::ui::file_commands::detect_mime_type;
 use crate::ui::state::AppState;
 use crate::ui::types::{
-    ContactEntry, DownloadReceivedShareResponse, FileContent, ImportShareResponse,
+    ContactEntry, DownloadReceivedShareResponse, FileContent, ImportShareResponse, ProgressUpdate,
     ReceivedShareEntry, ShareEntry, ShareResponse,
 };
 use crate::ui::validation::validate_file_id;
@@ -845,10 +846,19 @@ pub async fn list_received_shares(
 pub async fn download_received_share(
     share_id: String,
     destination_path: String,
+    progress: Channel<ProgressUpdate>,
     state: State<'_, AppState>,
 ) -> Result<DownloadReceivedShareResponse, IpcError> {
     state.session_manager.reset_timer().await;
     require_active_session(&state).await?;
+
+    let progress_ch = ProgressChannel::new(progress);
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 0,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Preparing download…".into(),
+    });
 
     let vault_id = state
         .active_vault_id
@@ -956,6 +966,13 @@ pub async fn download_received_share(
         "download_received_share: staging dir, chunk UUIDs, and downloaded blob paths",
     );
 
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 70,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Decrypting file…".into(),
+    });
+
     let dest = std::path::Path::new(&destination_path);
     let decrypt_result = decrypt_received_share_blobs(
         dest,
@@ -974,6 +991,13 @@ pub async fn download_received_share(
     }
 
     decrypt_result.map_err(|e| IpcError::InternalError(format!("decrypt failed: {e}")))?;
+
+    let _ = progress_ch.try_send_if_open(ProgressUpdate {
+        percent: 100,
+        bytes_processed: 0,
+        bytes_total: 0,
+        status: "Download complete".into(),
+    });
 
     // Best-effort: write a receipt blob sealed with the sender's public key.
     if let Some((sender_pub_key, cloud_endpoint, receipt_share_id)) = receipt_ctx {

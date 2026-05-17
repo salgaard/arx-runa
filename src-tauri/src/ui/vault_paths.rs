@@ -186,6 +186,7 @@ pub(crate) fn list_local_vaults() -> Vec<crate::ui::types::VaultSummary> {
             vault_id: header.vault_id.clone(),
             name: header.name,
             tier: header.tier,
+            key_file_blake3: header.key_file_blake3,
         });
     }
     summaries

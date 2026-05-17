@@ -398,6 +398,7 @@ pub(crate) async fn fetch_missing_file_blobs(
     db: &dyn MetadataStore,
     staging_dir: &Path,
     cloud_transport: &dyn CloudTransport,
+    on_blob_downloaded: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<(), SyncError> {
     use std::collections::HashMap;
 
@@ -414,11 +415,18 @@ pub(crate) async fn fetch_missing_file_blobs(
         needed.entry(blob_name).or_insert(checksum);
     }
 
+    let total = needed.len() as u64;
+    let mut done: u64 = 0;
+
     for (blob_name, blake3_checksum) in needed {
         // Skip if blob is already present in either pending/ or cache/.
         if tokio::fs::try_exists(&pending_blob_path(staging_dir, &blob_name)).await?
             || tokio::fs::try_exists(&cache_blob_path(staging_dir, &blob_name)).await?
         {
+            done += 1;
+            if let Some(cb) = on_blob_downloaded {
+                cb(done, total);
+            }
             continue;
         }
         download_blob_task(
@@ -438,6 +446,10 @@ pub(crate) async fn fetch_missing_file_blobs(
                 )),
             },
         })?;
+        done += 1;
+        if let Some(cb) = on_blob_downloaded {
+            cb(done, total);
+        }
     }
 
     Ok(())
@@ -470,8 +482,28 @@ pub async fn push_vault(
     let local_last_synced = read_optional_i64_meta(metadata_store, "last_synced_at").await?;
     let previous_last_synced_raw = metadata_store.get_meta("last_synced_at").await?;
 
-    if let Some(cloud_state) =
-        read_cloud_snapshot_state(cloud_transport, staging_dir, manifest_key, sqlcipher_key).await?
+    // CloudManifestUnreadable means the cloud manifest is encrypted with a different
+    // key than what we hold — this happens after a phrase-recovery rekey where the
+    // manifest backup upload was skipped (no transport at recovery time). Treat it as
+    // "no valid cloud snapshot" so the push proceeds and overwrites the stale blob.
+    let cloud_snapshot_state = match read_cloud_snapshot_state(
+        cloud_transport,
+        staging_dir,
+        manifest_key,
+        sqlcipher_key,
+    )
+    .await
+    {
+        Ok(state) => state,
+        Err(SyncError::CloudManifestUnreadable { .. }) => {
+            tracing::warn!(
+                "Cloud manifest unreadable with current key (post-rekey stale blob); treating as first push"
+            );
+            None
+        }
+        Err(other) => return Err(other),
+    };
+    if let Some(cloud_state) = cloud_snapshot_state
         && cloud_state.snapshot_counter > local_counter
     {
         return Err(SyncError::Conflict(SyncConflict {
@@ -1115,6 +1147,82 @@ mod tests {
                 .expect("pending deletions should load")
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn test_push_vault_treats_stale_manifest_from_rekey_as_first_push_and_succeeds() {
+        // After a phrase-recovery rekey with no cloud transport, the cloud still holds
+        // a manifest backup encrypted with the old manifest key. push_vault must treat
+        // this as "no valid cloud snapshot" rather than a hard error, so the push
+        // proceeds and overwrites the stale blob.
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let old_key_bytes = [1u8; 32];
+        let new_key_bytes = [7u8; 32];
+        let old_manifest_key = ManifestKey::from_bytes([2u8; 32]);
+        let new_manifest_key = ManifestKey::from_bytes([8u8; 32]);
+        let old_sqlcipher_key = SqlcipherKey::from_bytes(old_key_bytes);
+        let new_sqlcipher_key = SqlcipherKey::from_bytes(new_key_bytes);
+        let cloud = MockCloudTransport::new();
+        let staging_dir = temp.path();
+
+        // Set up an "old" store and upload a manifest backup under the old key to
+        // simulate what was on cloud before phrase recovery.
+        let old_db_path = temp.path().join("old_manifest.db");
+        let old_store = setup_store(&old_db_path, &old_key_bytes)
+            .await
+            .expect("old store should be created");
+        let old_manifest_key_bytes = Zeroizing::new(old_manifest_key.with_exposed(|bytes| *bytes));
+        upload_manifest_backup(
+            &old_db_path,
+            &old_sqlcipher_key,
+            &old_manifest_key_bytes,
+            &cloud,
+            staging_dir,
+        )
+        .await
+        .expect("old manifest upload should succeed");
+        drop(old_store);
+
+        // Set up the rekeyed store (new credentials, counter starts at 0).
+        let store = setup_store(&db_path, &new_key_bytes)
+            .await
+            .expect("new store should be created");
+        insert_single_chunk(
+            &store,
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            b"encrypted-payload",
+        )
+        .await
+        .expect("chunk insert should succeed");
+        tokio::fs::create_dir_all(staging_dir.join("pending"))
+            .await
+            .expect("pending dir should be created");
+        tokio::fs::write(
+            pending_blob_path(staging_dir, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            b"encrypted-payload",
+        )
+        .await
+        .expect("staging blob should be written");
+
+        // push_vault must succeed despite the cloud manifest being encrypted with
+        // the old key, treating it as a first push.
+        let report = push_vault(
+            &db_path,
+            &new_sqlcipher_key,
+            &new_manifest_key,
+            &store,
+            &cloud,
+            &sample_header(),
+            staging_dir,
+            &SyncConfig::default(),
+            None,
+        )
+        .await
+        .expect("push should succeed despite stale cloud manifest");
+
+        assert_eq!(report.blobs_uploaded, 1);
+        assert_eq!(report.snapshot_counter_after, 1);
     }
 
     #[tokio::test]

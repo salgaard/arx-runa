@@ -3,6 +3,8 @@
 use gloo_timers::future::sleep;
 use leptos::prelude::*;
 use serde::Serialize;
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::Duration;
 
 use crate::components::use_toast;
@@ -36,6 +38,8 @@ pub struct SyncState {
     pub error: Option<String>,
     /// Per-destination backup failure counts; refreshed after each `sync_backup`.
     pub backup_health: Vec<DestinationHealth>,
+    /// Overall sync progress 0–100 while in-flight; `None` when idle.
+    pub sync_percent: Option<u8>,
 }
 
 impl SyncState {
@@ -48,6 +52,7 @@ impl SyncState {
         self.stale_manifest = false;
         self.error = None;
         self.backup_health = Vec::new();
+        self.sync_percent = None;
     }
 }
 
@@ -71,10 +76,20 @@ impl SyncActions {
     /// files reach mirror destinations in the same sync run they are uploaded to the
     /// primary.
     pub fn sync(self) {
-        self.set_state.update(|s| s.syncing = true);
+        self.set_state.update(|s| {
+            s.syncing = true;
+            // Show 5% immediately so the user sees activity before the first blob upload.
+            s.sync_percent = Some(5);
+        });
 
         leptos::task::spawn_local(async move {
             let channel = IpcChannel::<SyncProgressUpdate>::new();
+            let set_state = self.set_state;
+            // Primary phase: blob uploads mapped to 5–60%.
+            channel.on_message(move |update: SyncProgressUpdate| {
+                let mapped = (5 + update.percent as u16 * 55 / 100) as u8;
+                set_state.update(|s| s.sync_percent = Some(mapped));
+            });
             match invoke_command_with_channel::<(), SyncResult>(
                 "sync_to_cloud",
                 &(),
@@ -89,9 +104,25 @@ impl SyncActions {
                     self.set_state.update(|s| {
                         s.last_synced_at = Some(iso_string);
                         s.error = None;
+                        // Primary done — anchor at 60% before backup begins.
+                        s.sync_percent = Some(60);
                     });
 
                     let backup_channel = IpcChannel::<SyncProgressUpdate>::new();
+                    // Backup phase: each destination emits 0-100% independently, which
+                    // would cause the bar to jump backwards between destinations. Track
+                    // a monotonic floor so the bar only ever advances.
+                    let backup_floor = Rc::new(Cell::new(60u8));
+                    backup_channel.on_message({
+                        let backup_floor = backup_floor.clone();
+                        move |update: SyncProgressUpdate| {
+                            let raw = (60 + update.percent as u16 * 40 / 100) as u8;
+                            let floor = backup_floor.get();
+                            let mapped = raw.max(floor);
+                            backup_floor.set(mapped);
+                            set_state.update(|s| s.sync_percent = Some(mapped));
+                        }
+                    });
                     let _ = invoke_command_with_channel::<SyncBackupPayload, SyncResult>(
                         "sync_backup",
                         &SyncBackupPayload {
@@ -110,6 +141,7 @@ impl SyncActions {
                     self.set_state.update(|s| {
                         s.backup_health = health;
                         s.syncing = false;
+                        s.sync_percent = None;
                     });
                     self.vault.refresh();
                 }
@@ -117,14 +149,18 @@ impl SyncActions {
                     if e.kind == "syncConflict" {
                         self.set_state.update(|s| {
                             s.syncing = false;
+                            s.sync_percent = None;
                             s.conflict = Some(
                                 "Another device has synced. Pull changes and continue?".into(),
                             );
                         });
                     } else {
+                        let msg = e.to_string();
+                        use_toast().error(msg.clone());
                         self.set_state.update(|s| {
                             s.syncing = false;
-                            s.error = Some(e.to_string());
+                            s.sync_percent = None;
+                            s.error = Some(msg);
                         });
                     }
                 }
@@ -169,9 +205,11 @@ impl SyncActions {
                     self.sync();
                 }
                 Err(e) => {
+                    let msg = format!("Pull failed: {e}");
+                    use_toast().error(msg.clone());
                     self.set_state.update(|s| {
                         s.syncing = false;
-                        s.error = Some(format!("Pull failed: {e}"));
+                        s.error = Some(msg);
                     });
                 }
             }

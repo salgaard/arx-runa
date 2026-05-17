@@ -1,5 +1,6 @@
 //! Button component — generic action button with variant styling and loading state.
 
+use super::spinner::Spinner;
 use leptos::prelude::*;
 
 /// Generic action button with variant styling and loading state.
@@ -21,7 +22,7 @@ pub fn Button(
     testid: Option<&'static str>,
     children: Children,
 ) -> impl IntoView {
-    let base = "inline-flex items-center justify-center px-4 py-2 rounded-lg font-medium \
+    let base = "inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium \
                 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-rune";
     let variant_class = move || match variant {
         "secondary" => "bg-steel text-bone hover:bg-rune",
@@ -41,6 +42,9 @@ pub fn Button(
             on:click=on_click
             data-testid=testid
         >
+            <Show when=move || loading.get() fallback=|| ()>
+                <Spinner />
+            </Show>
             {children()}
         </button>
     }
