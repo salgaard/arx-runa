@@ -195,7 +195,10 @@ impl CloudTransport for RcloneTransport {
 
         tracing::debug!(remote_path = %remote_path, "rclone delete");
         self.runner
-            .run(args, Duration::from_secs(30))
+            .run(
+                args,
+                Duration::from_secs(self.sync_config.operation_timeout_seconds),
+            )
             .await
             .map(|_| ())
     }
@@ -215,7 +218,13 @@ impl CloudTransport for RcloneTransport {
         args.push(OsString::from("--no-mimetype"));
         args.push(OsString::from("--no-modtime"));
 
-        let output = self.runner.run(args, Duration::from_secs(60)).await?;
+        let output = self
+            .runner
+            .run(
+                args,
+                Duration::from_secs(self.sync_config.operation_timeout_seconds),
+            )
+            .await?;
         let mut parsed: Vec<String> = serde_json::from_str::<Vec<LsJsonEntry>>(&output)
             .map_err(|error| CloudTransportError::Other(format!("invalid lsjson output: {error}")))?
             .into_iter()
@@ -246,7 +255,10 @@ impl CloudTransport for RcloneTransport {
         args.push(OsString::from(self.remote_target(remote_prefix)));
         tracing::debug!(remote_prefix = %remote_prefix, "rclone mkdir");
         self.runner
-            .run(args, Duration::from_secs(30))
+            .run(
+                args,
+                Duration::from_secs(self.sync_config.operation_timeout_seconds),
+            )
             .await
             .map(|_| ())
     }
@@ -255,7 +267,14 @@ impl CloudTransport for RcloneTransport {
         let mut args = self.base_args();
         args.push(OsString::from("mkdir"));
         args.push(OsString::from(&self.bucket_root));
-        match self.runner.run(args, Duration::from_secs(30)).await {
+        match self
+            .runner
+            .run(
+                args,
+                Duration::from_secs(self.sync_config.operation_timeout_seconds),
+            )
+            .await
+        {
             Ok(_) => Ok(()),
             Err(CloudTransportError::RcloneProcessFailed {
                 ref stderr_sanitised,

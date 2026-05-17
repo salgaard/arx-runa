@@ -4,7 +4,7 @@
 //! `docs/architecture/designs/cloud-synchronisation/design.md`.
 
 use std::path::{Path, PathBuf};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
 #[cfg(test)]
@@ -260,9 +260,15 @@ async fn upload_blob_task(
         }
     })?;
     let local_path = pending_blob_path(staging_dir, &blob_name);
-    cloud_transport
-        .upload_blob(&local_path, &remote_path)
-        .await?;
+    let upload_result = cloud_transport.upload_blob(&local_path, &remote_path).await;
+    let upload_result = if matches!(upload_result, Err(CloudTransportError::Timeout)) {
+        tracing::warn!(blob_name = %blob_name, "upload timed out; retrying");
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        cloud_transport.upload_blob(&local_path, &remote_path).await
+    } else {
+        upload_result
+    };
+    upload_result?;
     remove_file_if_present(&local_path)
         .await
         .map_err(CloudTransportError::IoError)?;
@@ -282,10 +288,19 @@ async fn download_blob_task(
         )
     })?;
     let local_path = cache_blob_path(staging_dir, &blob_name);
-    cloud_transport
+    let download_result = cloud_transport
         .download_blob(&remote_path, &local_path)
-        .await
-        .map_err(|error| DownloadTaskError::Transport(blob_name.clone(), error))?;
+        .await;
+    let download_result = if matches!(download_result, Err(CloudTransportError::Timeout)) {
+        tracing::warn!(blob_name = %blob_name, "download timed out; retrying");
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        cloud_transport
+            .download_blob(&remote_path, &local_path)
+            .await
+    } else {
+        download_result
+    };
+    download_result.map_err(|error| DownloadTaskError::Transport(blob_name.clone(), error))?;
     let checksum_matches = verify_blob_checksum(&local_path, &chunk.blake3_checksum)
         .await
         .map_err(|error| {

@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use secrecy::SecretBox;
 use tauri::State;
@@ -1414,7 +1414,30 @@ pub async fn sync_backup(
 
         // Mirror mode: delete blobs that exist on the remote but no longer in the vault.
         if dest.backup_mode == Some(BackupSyncMode::Mirror) {
-            match transport.list_blobs("vault/").await {
+            const LIST_BLOBS_MAX_ATTEMPTS: u32 = 3;
+            const LIST_BLOBS_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+            let mut list_result = Err(CloudTransportError::Other("not started".to_string()));
+            for attempt in 1..=LIST_BLOBS_MAX_ATTEMPTS {
+                list_result = transport.list_blobs("vault/").await;
+                match &list_result {
+                    Ok(_) | Err(CloudTransportError::NotFound) => break,
+                    Err(e) => {
+                        if attempt < LIST_BLOBS_MAX_ATTEMPTS {
+                            tracing::warn!(
+                                destination_id = %dest.destination_id,
+                                attempt,
+                                max_attempts = LIST_BLOBS_MAX_ATTEMPTS,
+                                error = %e,
+                                "mirror list_blobs failed; retrying"
+                            );
+                            tokio::time::sleep(LIST_BLOBS_RETRY_DELAY).await;
+                        }
+                    }
+                }
+            }
+
+            match list_result {
                 Ok(remote_paths) => {
                     for remote_path in &remote_paths {
                         let blob_name = remote_path
@@ -1422,15 +1445,30 @@ pub async fn sync_backup(
                             .and_then(|s| s.strip_suffix(".blob"))
                             .unwrap_or("");
                         if !blob_name.is_empty() && !all_blob_names.contains(blob_name) {
-                            if let Err(e) = transport.delete_blob(remote_path).await {
-                                tracing::warn!(
+                            let delete_result =
+                                transport.delete_blob(remote_path).await.map_err(|e| {
+                                    tracing::warn!(
+                                        destination_id = %dest.destination_id,
+                                        remote_path = %remote_path,
+                                        error = %e,
+                                        "mirror delete failed for orphan blob; retrying"
+                                    );
+                                    e
+                                });
+                            let delete_result = if delete_result.is_err() {
+                                tokio::time::sleep(Duration::from_secs(3)).await;
+                                transport.delete_blob(remote_path).await
+                            } else {
+                                delete_result
+                            };
+                            match delete_result {
+                                Ok(()) => total_deleted += 1,
+                                Err(e) => tracing::warn!(
                                     destination_id = %dest.destination_id,
                                     remote_path = %remote_path,
                                     error = %e,
-                                    "mirror delete failed for orphan blob"
-                                );
-                            } else {
-                                total_deleted += 1;
+                                    "mirror delete failed for orphan blob after retry; blob will be retried on next sync"
+                                ),
                             }
                         }
                     }
@@ -1441,8 +1479,9 @@ pub async fn sync_backup(
                 Err(e) => {
                     tracing::warn!(
                         destination_id = %dest.destination_id,
+                        attempts = LIST_BLOBS_MAX_ATTEMPTS,
                         error = %e,
-                        "mirror list_blobs failed; skipping orphan deletion for this destination"
+                        "mirror list_blobs failed after all attempts; orphan blobs will persist until next sync"
                     );
                 }
             }

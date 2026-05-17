@@ -1044,6 +1044,8 @@ async fn try_flush_on_lock(
 pub async fn lock_session(state: State<'_, AppState>) -> Result<(), IpcError> {
     state.session_manager.reset_timer().await;
 
+    let vault_id = state.active_vault_id.read().await.clone();
+
     {
         let db_guard = state.database.read().await;
         if let Some(db) = db_guard.as_ref() {
@@ -1070,6 +1072,15 @@ pub async fn lock_session(state: State<'_, AppState>) -> Result<(), IpcError> {
 
     *state.database.write().await = None;
     *state.active_vault_id.write().await = None;
+
+    if let Some(ref id) = vault_id {
+        let cache_dir = vault_staging_dir(id).join("cache");
+        if let Err(error) = tokio::fs::remove_dir_all(&cache_dir).await
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(?error, "Failed to clear staging cache on lock");
+        }
+    }
 
     Ok(())
 }

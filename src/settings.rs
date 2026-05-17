@@ -641,7 +641,7 @@ fn SetupRecoveryForm() -> impl IntoView {
                 </div>
                 <Button
                     on_click=on_done_click
-                    loading=move || !acknowledged.get()
+                    disabled=Signal::derive(move || !acknowledged.get())
                     variant="primary"
                 >
                     "Done"
@@ -737,7 +737,8 @@ fn DeleteVaultForm() -> impl IntoView {
 
                 <Button
                     on_click=on_delete
-                    loading=delete_button_disabled
+                    loading=loading
+                    disabled=Signal::derive(delete_button_disabled)
                     variant="danger"
                 >
                     {move || if loading.get() { "Deleting…" } else { "Delete Vault" }}

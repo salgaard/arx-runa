@@ -16,12 +16,16 @@ pub(crate) async fn run_rclone(
     args: Vec<OsString>,
     timeout: Duration,
 ) -> Result<String, CloudTransportError> {
-    let mut child = tokio::process::Command::new(binary_path)
+    #[allow(unused_mut)]
+    let mut command = tokio::process::Command::new(binary_path);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let mut child = command.spawn()?;
 
     let mut stdout = child
         .stdout
