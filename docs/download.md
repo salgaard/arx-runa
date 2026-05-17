@@ -1,6 +1,6 @@
 # Download
 
-Arx Runa is free and open source. All releases are available on GitHub.
+All releases are available on GitHub.
 
 **[→ View all releases on GitHub](https://github.com/salgaard/arx-runa/releases)**
 
