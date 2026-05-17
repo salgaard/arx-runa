@@ -9,6 +9,7 @@
 </div>
 
 [![CI](https://github.com/salgaard/arx-runa/actions/workflows/continuous-integration.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/continuous-integration.yml)
+[![Release](https://github.com/salgaard/arx-runa/actions/workflows/release.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/release.yml)
 [![Security Audit](https://github.com/salgaard/arx-runa/actions/workflows/security-audit.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/security-audit.yml)
 [![Deploy Docs](https://github.com/salgaard/arx-runa/actions/workflows/docs.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/docs.yml)
 [![Secret Scan](https://github.com/salgaard/arx-runa/actions/workflows/secret-scan.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/secret-scan.yml)
