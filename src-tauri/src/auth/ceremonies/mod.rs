@@ -19,6 +19,7 @@ mod recover_with_phrase;
 mod rotate_key_file;
 mod setup_recovery;
 mod types;
+mod unlock;
 
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -40,6 +41,7 @@ pub use types::{
     PendingVaultHeader, RecoverVaultRequest, RecoverWithPhraseRequest, RotateKeyFileRequest,
     SetupRecoveryRequest, Tier,
 };
+pub use unlock::unlock_vault;
 
 #[cfg(test)]
 mod invariant_tests {

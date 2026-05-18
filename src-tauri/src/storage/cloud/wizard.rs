@@ -463,6 +463,8 @@ pub async fn begin_oauth_setup(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    #[cfg(windows)]
+    command.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
     let mut child = command.spawn().map_err(CloudTransportError::from)?;
 

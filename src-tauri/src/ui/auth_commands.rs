@@ -11,14 +11,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as B64_STANDARD;
-use tauri::Emitter as _;
-use tauri::State;
-use tauri::ipc::Channel;
-use uuid::Uuid;
-use zeroize::Zeroizing;
-
 use crate::auth::LifecycleState;
 use crate::auth::ceremonies::{
     Argon2MigrationIntent, ChangePasswordRequest, CreateVaultRequest, PendingOperation,
@@ -27,6 +19,7 @@ use crate::auth::ceremonies::{
     create_vault as ceremony_create_vault, recover_vault as ceremony_recover_vault,
     recover_with_phrase as ceremony_recover_with_phrase,
     rotate_key_file as ceremony_rotate_key_file, setup_recovery as ceremony_setup_recovery,
+    unlock_vault as ceremony_unlock_vault,
 };
 use crate::auth::kdf::Argon2Params;
 use crate::auth::key_source::FileKeySource;
@@ -42,6 +35,11 @@ use crate::storage::cloud::{
     vault_header::VaultHeader,
 };
 use secrecy::SecretBox;
+use tauri::Emitter as _;
+use tauri::State;
+use tauri::ipc::Channel;
+use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::crypto::KeyEncryptionKey;
 use crate::storage::MetadataStore as _;
@@ -282,81 +280,25 @@ pub async fn authenticate(
     let password_bytes = sanitise_password(&mut password);
     validate_password(std::str::from_utf8(&password_bytes).unwrap_or(""))?;
 
-    let (vault_id, db_path, header_path) = match vault_id {
+    let (_, _, header_path) = match vault_id {
         Some(ref id) => resolve_vault_by_id(id)?,
         None => resolve_singleton_vault()?
             .ok_or_else(|| IpcError::InvalidInput("No vault configured".into()))?,
     };
 
-    let header_json = tokio::fs::read_to_string(&header_path)
-        .await
-        .map_err(|_| IpcError::InternalError("Failed to read vault header".into()))?;
-    let header: VaultHeader = serde_json::from_str(&header_json)
-        .map_err(|_| IpcError::InternalError("Vault header corrupted".into()))?;
+    let vault_id = ceremony_unlock_vault(
+        &password_bytes,
+        key_file_path,
+        &header_path,
+        &state.session_manager,
+    )
+    .await
+    .map_err(IpcError::from)?;
 
-    let salt_bytes = B64_STANDARD
-        .decode(&header.argon2_salt)
-        .map_err(|_| IpcError::InternalError("Vault header corrupted".into()))?;
-    let salt: [u8; 32] = salt_bytes
-        .try_into()
-        .map_err(|_| IpcError::InternalError("Vault header corrupted".into()))?;
-
-    let params = Argon2Params {
-        memory_cost_kib: header.argon2_params.memory_cost,
-        time_cost: header.argon2_params.time_cost,
-        parallelism: header.argon2_params.parallelism,
-    };
-
-    let key_source_opt: Option<FileKeySource> = if header.tier == 2 {
-        let path = key_file_path.ok_or_else(|| {
-            IpcError::AuthenticationFailed("Key file required for Tier 2 vault".into())
-        })?;
-        Some(FileKeySource::new(path))
-    } else {
-        None
-    };
-    let key_source_ref: Option<&(dyn crate::auth::KeySource + Send + Sync)> = key_source_opt
-        .as_ref()
-        .map(|ks| ks as &(dyn crate::auth::KeySource + Send + Sync));
-
-    state
-        .session_manager
-        .authenticate(
-            &password_bytes,
-            key_source_ref,
-            &salt,
-            &params,
-            header.vault_id.clone(),
-        )
-        .await
-        .map_err(IpcError::from)?;
-
-    let key_copy: [u8; 32] = state
-        .session_manager
-        .with_sqlcipher_key(|k| *k)
-        .await
-        .map_err(IpcError::from)?;
-    let key_zeroizing = Zeroizing::new(key_copy);
-    let db = SqlCipherMetadataStore::open(&db_path, &key_zeroizing)
-        .await
-        .map_err(IpcError::from)?;
-    drop(key_zeroizing);
-
-    *state.database.write().await = Some(db);
-
-    {
-        let db_guard = state.database.read().await;
-        if let Some(ref inner_db) = *db_guard {
-            try_build_and_swap_rclone_transport(&state, inner_db).await;
-        }
-    }
-
-    {
+    if let Some(db) = state.session_manager.get_metadata_store().await {
+        try_build_and_swap_rclone_transport(&state, &db).await;
         let staging_dir = vault_staging_dir(&vault_id);
-        let db_guard = state.database.read().await;
-        if let Some(ref inner_db) = *db_guard
-            && let Err(error) = crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
-        {
+        if let Err(error) = crate::storage::prepare_vault_storage(&db, &staging_dir).await {
             tracing::warn!(?error, "Failed to prepare vault storage on authenticate");
         }
     }
@@ -411,9 +353,9 @@ pub async fn create_vault(
             let conf_path = rclone_conf_path();
             let binary_path = rclone_binary_path(state.app_handle.get());
             if let Some(parent) = conf_path.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|e| IpcError::InternalError(format!("config dir: {e}")))?;
+                tokio::fs::create_dir_all(parent).await.map_err(|_| {
+                    IpcError::InternalError("Failed to create configuration directory".into())
+                })?;
             }
             // Normalise the blob section header to match rclone_remote_name so rclone can
             // find the remote, regardless of what section name the OAuth flow used.
@@ -461,7 +403,7 @@ pub async fn create_vault(
     let vault_dir = default_vault_root().join(&vault_id_str);
     tokio::fs::create_dir_all(&vault_dir).await.map_err(|e| {
         tracing::error!(?vault_dir, error = %e, "Failed to create vault directory");
-        IpcError::InternalError(e.to_string())
+        IpcError::from(e)
     })?;
     let db_path = vault_dir.join("vault.db");
 
@@ -516,43 +458,10 @@ pub async fn create_vault(
         return Err(IpcError::from(err));
     }
 
-    let _ = progress_ch.try_send_if_open(ProgressUpdate {
-        percent: 80,
-        bytes_processed: 0,
-        bytes_total: 0,
-        status: "Opening database…".into(),
-    });
-
-    let key_copy: [u8; 32] = state
-        .session_manager
-        .with_sqlcipher_key(|k| *k)
-        .await
-        .map_err(IpcError::from)?;
-    let key_zeroizing = Zeroizing::new(key_copy);
-    let db = SqlCipherMetadataStore::open(&db_path, &key_zeroizing)
-        .await
-        .map_err(|e| {
-            let err = IpcError::from(e);
-            tracing::error!(?err, "Failed to open vault DB after successful creation");
-            err
-        })?;
-    drop(key_zeroizing);
-
-    *state.database.write().await = Some(db);
-
-    {
-        let db_guard = state.database.read().await;
-        if let Some(ref inner_db) = *db_guard {
-            try_build_and_swap_rclone_transport(&state, inner_db).await;
-        }
-    }
-
-    {
+    if let Some(db) = state.session_manager.get_metadata_store().await {
+        try_build_and_swap_rclone_transport(&state, &db).await;
         let staging_dir = vault_staging_dir(&vault_id_str);
-        let db_guard = state.database.read().await;
-        if let Some(ref inner_db) = *db_guard
-            && let Err(error) = crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
-        {
+        if let Err(error) = crate::storage::prepare_vault_storage(&db, &staging_dir).await {
             tracing::warn!(?error, "Failed to prepare vault storage on create_vault");
         }
     }
@@ -613,13 +522,15 @@ pub async fn change_password(
     let cloud_transport_arc = state.cloud_transport.read().await.clone();
 
     let current_key_source: Option<FileKeySource> = current_key_file_path.map(FileKeySource::new);
+    let mut recovery_phrase = recovery_phrase;
+    let recovery_phrase_bytes = recovery_phrase.as_mut().map(sanitise_password);
     let request = ChangePasswordRequest {
         current_password_bytes: &current_bytes,
         new_password_bytes: &new_bytes,
         current_key_source: current_key_source
             .as_ref()
             .map(|s| s as &(dyn crate::auth::key_source::KeySource + Send + Sync)),
-        recovery_phrase: recovery_phrase.as_deref(),
+        recovery_phrase: recovery_phrase_bytes.as_ref().map(|z| &**z as &[u8]),
         argon2_params: Argon2Params::DEFAULT,
         argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
         vault_db_path: db_path.clone(),
@@ -643,18 +554,6 @@ pub async fn change_password(
             "Failed to persist updated vault-header.json after password change"
         );
     }
-
-    let key_copy: [u8; 32] = state
-        .session_manager
-        .with_sqlcipher_key(|k| *k)
-        .await
-        .map_err(IpcError::from)?;
-    let key_zeroizing = Zeroizing::new(key_copy);
-    let db = SqlCipherMetadataStore::open(&db_path, &key_zeroizing)
-        .await
-        .map_err(IpcError::from)?;
-    drop(key_zeroizing);
-    *state.database.write().await = Some(db);
 
     Ok(())
 }
@@ -709,11 +608,13 @@ pub async fn rotate_key_file(
     } else {
         new_key_file_destination
     };
+    let mut recovery_phrase = recovery_phrase;
+    let recovery_phrase_bytes = recovery_phrase.as_mut().map(sanitise_password);
     let request = RotateKeyFileRequest {
         password_bytes: &password_bytes,
         current_key_source: &current_key_source,
         target_new_key_file_path: new_key_file_destination,
-        recovery_phrase: recovery_phrase.as_deref(),
+        recovery_phrase: recovery_phrase_bytes.as_ref().map(|z| &**z as &[u8]),
         argon2_params: Argon2Params::DEFAULT,
         argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
         vault_db_path: db_path.clone(),
@@ -737,18 +638,6 @@ pub async fn rotate_key_file(
             "Failed to persist updated vault-header.json after key rotation"
         );
     }
-
-    let key_copy: [u8; 32] = state
-        .session_manager
-        .with_sqlcipher_key(|k| *k)
-        .await
-        .map_err(IpcError::from)?;
-    let key_zeroizing = Zeroizing::new(key_copy);
-    let db = SqlCipherMetadataStore::open(&db_path, &key_zeroizing)
-        .await
-        .map_err(IpcError::from)?;
-    drop(key_zeroizing);
-    *state.database.write().await = Some(db);
 
     Ok(())
 }
@@ -830,7 +719,7 @@ pub async fn setup_recovery(
 #[tauri::command]
 pub async fn recover_vault_with_phrase(
     vault_id: String,
-    phrase: String,
+    mut phrase: String,
     mut new_password: String,
     new_key_file_path: Option<PathBuf>,
     progress: Channel<ProgressUpdate>,
@@ -847,6 +736,7 @@ pub async fn recover_vault_with_phrase(
     });
 
     let new_password_bytes = sanitise_password(&mut new_password);
+    let phrase_bytes = sanitise_password(&mut phrase);
     validate_password(std::str::from_utf8(&new_password_bytes).unwrap_or(""))?;
 
     let (_, db_path, header_path) = resolve_vault_by_id(&vault_id)?;
@@ -864,7 +754,7 @@ pub async fn recover_vault_with_phrase(
     let cloud_transport_arc = state.cloud_transport.read().await.clone();
 
     let request = RecoverWithPhraseRequest {
-        phrase: &phrase,
+        phrase: &phrase_bytes,
         vault_db_path: db_path.clone(),
         new_password_bytes: &new_password_bytes,
         new_key_file_path: new_key_file_path.map(|p| {
@@ -905,39 +795,10 @@ pub async fn recover_vault_with_phrase(
         );
     }
 
-    let _ = progress_ch.try_send_if_open(ProgressUpdate {
-        percent: 80,
-        bytes_processed: 0,
-        bytes_total: 0,
-        status: "Opening database…".into(),
-    });
-
-    let key_copy: [u8; 32] = state
-        .session_manager
-        .with_sqlcipher_key(|k| *k)
-        .await
-        .map_err(IpcError::from)?;
-    let key_zeroizing = Zeroizing::new(key_copy);
-    let db = SqlCipherMetadataStore::open(&db_path, &key_zeroizing)
-        .await
-        .map_err(IpcError::from)?;
-    drop(key_zeroizing);
-
-    *state.database.write().await = Some(db);
-
-    {
-        let db_guard = state.database.read().await;
-        if let Some(ref inner_db) = *db_guard {
-            try_build_and_swap_rclone_transport(&state, inner_db).await;
-        }
-    }
-
-    {
+    if let Some(db) = state.session_manager.get_metadata_store().await {
+        try_build_and_swap_rclone_transport(&state, &db).await;
         let staging_dir = vault_staging_dir(&vault_id_str);
-        let db_guard = state.database.read().await;
-        if let Some(ref inner_db) = *db_guard
-            && let Err(error) = crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
-        {
+        if let Err(error) = crate::storage::prepare_vault_storage(&db, &staging_dir).await {
             tracing::warn!(
                 ?error,
                 "Failed to prepare vault storage after phrase recovery"
@@ -997,7 +858,6 @@ pub async fn delete_vault(
         tracing::warn!(?error, "Failed to remove vault directory during delete");
     }
 
-    *state.database.write().await = None;
     *state.active_vault_id.write().await = None;
 
     Ok(())
@@ -1017,11 +877,15 @@ async fn try_flush_on_lock(
         None => return Ok(()),
     };
     let staging_dir = vault_staging_dir(&vault_id);
-    let kek_raw: [u8; 32] = match state.session_manager.with_key_encryption_key(|k| *k).await {
+    let kek_raw: Zeroizing<[u8; 32]> = match state
+        .session_manager
+        .with_key_encryption_key(|k| Zeroizing::new(*k))
+        .await
+    {
         Ok(raw) => raw,
         Err(_) => return Ok(()),
     };
-    let kek = KeyEncryptionKey::from_secret_box(SecretBox::new(Box::new(kek_raw)));
+    let kek = KeyEncryptionKey::from_secret_box(SecretBox::new(Box::new(*kek_raw)));
     let chunk_size_bytes = match db.get_meta("chunk_size_bytes").await? {
         Some(value) => value.parse::<u64>().map_err(|_| {
             crate::storage::error::StorageError::Database("invalid chunk_size_bytes".to_owned())
@@ -1044,19 +908,18 @@ async fn try_flush_on_lock(
 pub async fn lock_session(state: State<'_, AppState>) -> Result<(), IpcError> {
     state.session_manager.reset_timer().await;
 
-    {
-        let db_guard = state.database.read().await;
-        if let Some(db) = db_guard.as_ref() {
-            let epoch_enabled = db
-                .get_meta("epoch_buffer_enabled")
-                .await
-                .ok()
-                .flatten()
-                .map(|v| v == "true")
-                .unwrap_or(false);
-            if epoch_enabled && let Err(error) = try_flush_on_lock(&state, db).await {
-                tracing::warn!(?error, "epoch flush on lock failed; continuing lock");
-            }
+    let vault_id = state.active_vault_id.read().await.clone();
+
+    if let Some(db) = state.session_manager.get_metadata_store().await {
+        let epoch_enabled = db
+            .get_meta("epoch_buffer_enabled")
+            .await
+            .ok()
+            .flatten()
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if epoch_enabled && let Err(error) = try_flush_on_lock(&state, &db).await {
+            tracing::warn!(?error, "epoch flush on lock failed; continuing lock");
         }
     }
 
@@ -1068,8 +931,16 @@ pub async fn lock_session(state: State<'_, AppState>) -> Result<(), IpcError> {
         tracing::warn!(?error, "Failed to destroy rclone.conf during lock");
     }
 
-    *state.database.write().await = None;
     *state.active_vault_id.write().await = None;
+
+    if let Some(ref id) = vault_id {
+        let cache_dir = vault_staging_dir(id).join("cache");
+        if let Err(error) = tokio::fs::remove_dir_all(&cache_dir).await
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(?error, "Failed to clear staging cache on lock");
+        }
+    }
 
     Ok(())
 }
@@ -1171,8 +1042,12 @@ pub async fn check_pending_vault_operations(state: State<'_, AppState>) -> Resul
 pub async fn retry_pending_vault_operation(
     mut password: String,
     _key_file_path: Option<PathBuf>,
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
 ) -> Result<(), IpcError> {
+    state.session_manager.reset_timer().await;
+    let _password_bytes = sanitise_password(&mut password);
+    require_active_session(&state).await?;
+
     let config_dir = dirs::config_dir()
         .ok_or_else(|| IpcError::InternalError("Could not determine config directory".into()))?
         .join("arx-runa");
@@ -1185,8 +1060,6 @@ pub async fn retry_pending_vault_operation(
 
     let pending: PendingVaultHeader = serde_json::from_str(&pending_json)
         .map_err(|_| IpcError::InternalError("Pending vault artifact is malformed".into()))?;
-
-    let _password_bytes = sanitise_password(&mut password);
 
     let (_vault_id, _db_path, _header_path) = resolve_vault_by_id(&pending.vault_id)?;
 
@@ -1266,6 +1139,7 @@ pub async fn configure_cloud(
 pub async fn recover_vault_from_cloud(
     mut password: String,
     key_file_path: Option<PathBuf>,
+    vault_name: Option<String>,
     primary_destination: DestinationSessionConfig,
     progress: Channel<ProgressUpdate>,
     state: State<'_, AppState>,
@@ -1341,12 +1215,10 @@ pub async fn recover_vault_from_cloud(
         status: "Downloading vault data…".into(),
     });
 
-    let header_bytes = tokio::fs::read(&probe_path)
-        .await
-        .map_err(|e| IpcError::InternalError(e.to_string()))?;
+    let header_bytes = tokio::fs::read(&probe_path).await.map_err(IpcError::from)?;
     let _ = tokio::fs::remove_file(&probe_path).await;
 
-    let vault_header: VaultHeader = serde_json::from_slice(&header_bytes).map_err(|_| {
+    let mut vault_header: VaultHeader = serde_json::from_slice(&header_bytes).map_err(|_| {
         IpcError::CloudError("Vault header at the cloud destination is malformed".into())
     })?;
     let cloud_vault_id = vault_header.vault_id.clone();
@@ -1361,13 +1233,13 @@ pub async fn recover_vault_from_cloud(
     }
     // Incomplete vault dir (db without header, or stale empty dir): wipe and re-recover.
     if vault_dir.exists() {
-        tokio::fs::remove_dir_all(&vault_dir).await.map_err(|e| {
-            IpcError::InternalError(format!("failed to remove incomplete vault dir: {e}"))
+        tokio::fs::remove_dir_all(&vault_dir).await.map_err(|_| {
+            IpcError::InternalError("Failed to clean up incomplete vault directory".into())
         })?;
     }
     tokio::fs::create_dir_all(&vault_dir)
         .await
-        .map_err(|e| IpcError::InternalError(e.to_string()))?;
+        .map_err(IpcError::from)?;
 
     let key_source_opt: Option<FileKeySource> = key_file_path.map(FileKeySource::new);
     let key_source_ref: Option<&(dyn crate::auth::KeySource + Send + Sync)> = key_source_opt
@@ -1381,15 +1253,24 @@ pub async fn recover_vault_from_cloud(
         status: "Restoring vault…".into(),
     });
 
+    // Embed the user-supplied vault name into the local header before writing.
+    // This field is intentionally absent from the cloud header (ZK boundary).
+    vault_header.name = vault_name.clone();
+
+    let local_header_bytes = serde_json::to_vec_pretty(&vault_header).map_err(|_| {
+        let _ = std::fs::remove_dir_all(&vault_dir);
+        IpcError::InternalError("Failed to serialise local vault header".into())
+    })?;
+
     // Write vault-header.json before the ceremony so the vault directory is
     // complete even if install_session succeeds but a subsequent step fails.
     // On Windows, remove_dir_all on a directory containing an open vault.db
     // can fail; writing the header first ensures the vault is always listable.
-    tokio::fs::write(vault_dir.join("vault-header.json"), &header_bytes)
+    tokio::fs::write(vault_dir.join("vault-header.json"), &local_header_bytes)
         .await
         .map_err(|e| {
             let _ = std::fs::remove_dir_all(&vault_dir);
-            IpcError::InternalError(e.to_string())
+            IpcError::from(e)
         })?;
 
     let vault_db_path = vault_dir.join("vault.db");
@@ -1410,57 +1291,28 @@ pub async fn recover_vault_from_cloud(
 
     let vault_id_str = vault_id.to_uuid().to_string();
 
-    let _ = progress_ch.try_send_if_open(ProgressUpdate {
-        percent: 85,
-        bytes_processed: 0,
-        bytes_total: 0,
-        status: "Opening database…".into(),
-    });
-
-    let key_copy: [u8; 32] = state
-        .session_manager
-        .with_sqlcipher_key(|k| *k)
-        .await
-        .map_err(IpcError::from)?;
-    let key_zeroizing = Zeroizing::new(key_copy);
-    let db = SqlCipherMetadataStore::open(&vault_db_path, &key_zeroizing)
-        .await
-        .map_err(IpcError::from)?;
-    drop(key_zeroizing);
-
-    *state.database.write().await = Some(db);
-
-    {
-        let db_guard = state.database.read().await;
-        if let Some(ref inner_db) = *db_guard {
-            // If the recovered vault DB has no primary destination (typical for
-            // a freshly recovered vault), persist the one the user supplied so
-            // build_session_rclone_conf produces a valid rclone.conf.
-            match get_primary_destination(inner_db).await {
-                Ok(None) => {
-                    if let Err(e) = insert_destination_session(inner_db, &dest_session).await {
-                        tracing::warn!(
-                            ?e,
-                            "Failed to persist recovery destination session into vault DB"
-                        );
-                    }
+    if let Some(db) = state.session_manager.get_metadata_store().await {
+        // If the recovered vault DB has no primary destination (typical for
+        // a freshly recovered vault), persist the one the user supplied so
+        // build_session_rclone_conf produces a valid rclone.conf.
+        match get_primary_destination(&db).await {
+            Ok(None) => {
+                if let Err(e) = insert_destination_session(&db, &dest_session).await {
+                    tracing::warn!(
+                        ?e,
+                        "Failed to persist recovery destination session into vault DB"
+                    );
                 }
-                Ok(Some(_)) => {}
-                Err(e) => tracing::warn!(
-                    ?e,
-                    "Failed to query primary destination after cloud recovery"
-                ),
             }
-            try_build_and_swap_rclone_transport(&state, inner_db).await;
+            Ok(Some(_)) => {}
+            Err(e) => tracing::warn!(
+                ?e,
+                "Failed to query primary destination after cloud recovery"
+            ),
         }
-    }
-
-    {
+        try_build_and_swap_rclone_transport(&state, &db).await;
         let staging_dir = vault_staging_dir(&vault_id_str);
-        let db_guard = state.database.read().await;
-        if let Some(ref inner_db) = *db_guard
-            && let Err(error) = crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
-        {
+        if let Err(error) = crate::storage::prepare_vault_storage(&db, &staging_dir).await {
             tracing::warn!(?error, "Failed to prepare vault storage after recovery");
         }
     }
@@ -1475,8 +1327,8 @@ pub async fn recover_vault_from_cloud(
     });
 
     Ok(AuthResponse {
-        vault_id: vault_id_str.clone(),
-        vault_name: vault_id_str,
+        vault_name: vault_name.unwrap_or_else(|| vault_id_str.clone()),
+        vault_id: vault_id_str,
     })
 }
 
@@ -1486,9 +1338,10 @@ pub async fn recover_vault_from_cloud(
 /// the new password, and installs the session.
 #[tauri::command]
 pub async fn recover_vault_from_cloud_with_phrase(
-    phrase: String,
+    mut phrase: String,
     mut new_password: String,
     new_key_file_path: Option<PathBuf>,
+    vault_name: Option<String>,
     primary_destination: DestinationSessionConfig,
     progress: Channel<ProgressUpdate>,
     state: State<'_, AppState>,
@@ -1504,6 +1357,7 @@ pub async fn recover_vault_from_cloud_with_phrase(
     });
 
     let new_password_bytes = sanitise_password(&mut new_password);
+    let phrase_bytes = sanitise_password(&mut phrase);
     validate_password(std::str::from_utf8(&new_password_bytes).unwrap_or(""))?;
 
     let dest_session = destination_from_config(&primary_destination);
@@ -1578,19 +1432,13 @@ pub async fn recover_vault_from_cloud_with_phrase(
         status: "Downloading vault data…".into(),
     });
 
-    let header_bytes = tokio::fs::read(&probe_path)
-        .await
-        .map_err(|e| IpcError::InternalError(e.to_string()))?;
+    let header_bytes = tokio::fs::read(&probe_path).await.map_err(IpcError::from)?;
     let _ = tokio::fs::remove_file(&probe_path).await;
 
     let vault_header: VaultHeader = serde_json::from_slice(&header_bytes).map_err(|_| {
         IpcError::CloudError("Vault header at the cloud destination is malformed".into())
     })?;
     let cloud_vault_id = vault_header.vault_id.clone();
-    let vault_name = vault_header
-        .name
-        .clone()
-        .unwrap_or_else(|| cloud_vault_id.clone());
 
     let vault_dir = default_vault_root().join(&cloud_vault_id);
     let vault_db_exists = vault_dir.join("vault.db").exists();
@@ -1602,13 +1450,13 @@ pub async fn recover_vault_from_cloud_with_phrase(
     }
     // Incomplete vault dir (db without header, or stale empty dir): wipe and re-recover.
     if vault_dir.exists() {
-        tokio::fs::remove_dir_all(&vault_dir).await.map_err(|e| {
-            IpcError::InternalError(format!("failed to remove incomplete vault dir: {e}"))
+        tokio::fs::remove_dir_all(&vault_dir).await.map_err(|_| {
+            IpcError::InternalError("Failed to clean up incomplete vault directory".into())
         })?;
     }
     tokio::fs::create_dir_all(&vault_dir)
         .await
-        .map_err(|e| IpcError::InternalError(e.to_string()))?;
+        .map_err(IpcError::from)?;
 
     let vault_db_path = vault_dir.join("vault.db");
 
@@ -1621,7 +1469,7 @@ pub async fn recover_vault_from_cloud_with_phrase(
 
     let (recovered_vault_id, updated_header) = ceremony_recover_with_phrase(
         RecoverWithPhraseRequest {
-            phrase: &phrase,
+            phrase: &phrase_bytes,
             vault_db_path: vault_db_path.clone(),
             new_password_bytes: &new_password_bytes,
             new_key_file_path: new_key_file_path.map(|p| {
@@ -1646,66 +1494,40 @@ pub async fn recover_vault_from_cloud_with_phrase(
 
     let vault_id_str = recovered_vault_id.to_uuid().to_string();
 
-    let header_json = serde_json::to_string_pretty(&updated_header)
+    // Embed the user-supplied vault name into the local header (ZK: name absent from cloud).
+    let mut local_header = updated_header;
+    local_header.name = vault_name.clone();
+    let header_json = serde_json::to_string_pretty(&local_header)
         .map_err(|_| IpcError::InternalError("failed to serialise vault header".into()))?;
     tokio::fs::write(vault_dir.join("vault-header.json"), &header_json)
         .await
         .map_err(|e| {
             let _ = std::fs::remove_dir_all(&vault_dir);
-            IpcError::InternalError(e.to_string())
+            IpcError::from(e)
         })?;
 
-    let _ = progress_ch.try_send_if_open(ProgressUpdate {
-        percent: 85,
-        bytes_processed: 0,
-        bytes_total: 0,
-        status: "Opening database…".into(),
-    });
-
-    let key_copy: [u8; 32] = state
-        .session_manager
-        .with_sqlcipher_key(|k| *k)
-        .await
-        .map_err(IpcError::from)?;
-    let key_zeroizing = Zeroizing::new(key_copy);
-    let db = SqlCipherMetadataStore::open(&vault_db_path, &key_zeroizing)
-        .await
-        .map_err(IpcError::from)?;
-    drop(key_zeroizing);
-
-    *state.database.write().await = Some(db);
-
-    {
-        let db_guard = state.database.read().await;
-        if let Some(ref inner_db) = *db_guard {
-            // If the recovered vault DB has no primary destination (typical for
-            // a freshly recovered vault), persist the one the user supplied so
-            // build_session_rclone_conf produces a valid rclone.conf.
-            match get_primary_destination(inner_db).await {
-                Ok(None) => {
-                    if let Err(e) = insert_destination_session(inner_db, &dest_session).await {
-                        tracing::warn!(
-                            ?e,
-                            "Failed to persist recovery destination session into vault DB"
-                        );
-                    }
+    if let Some(db) = state.session_manager.get_metadata_store().await {
+        // If the recovered vault DB has no primary destination (typical for
+        // a freshly recovered vault), persist the one the user supplied so
+        // build_session_rclone_conf produces a valid rclone.conf.
+        match get_primary_destination(&db).await {
+            Ok(None) => {
+                if let Err(e) = insert_destination_session(&db, &dest_session).await {
+                    tracing::warn!(
+                        ?e,
+                        "Failed to persist recovery destination session into vault DB"
+                    );
                 }
-                Ok(Some(_)) => {}
-                Err(e) => tracing::warn!(
-                    ?e,
-                    "Failed to query primary destination after cloud phrase recovery"
-                ),
             }
-            try_build_and_swap_rclone_transport(&state, inner_db).await;
+            Ok(Some(_)) => {}
+            Err(e) => tracing::warn!(
+                ?e,
+                "Failed to query primary destination after cloud phrase recovery"
+            ),
         }
-    }
-
-    {
+        try_build_and_swap_rclone_transport(&state, &db).await;
         let staging_dir = vault_staging_dir(&vault_id_str);
-        let db_guard = state.database.read().await;
-        if let Some(ref inner_db) = *db_guard
-            && let Err(error) = crate::storage::prepare_vault_storage(inner_db, &staging_dir).await
-        {
+        if let Err(error) = crate::storage::prepare_vault_storage(&db, &staging_dir).await {
             tracing::warn!(
                 ?error,
                 "Failed to prepare vault storage after cloud phrase recovery"
@@ -1723,8 +1545,8 @@ pub async fn recover_vault_from_cloud_with_phrase(
     });
 
     Ok(AuthResponse {
+        vault_name: vault_name.unwrap_or_else(|| vault_id_str.clone()),
         vault_id: vault_id_str,
-        vault_name,
     })
 }
 

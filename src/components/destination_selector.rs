@@ -416,9 +416,9 @@ pub fn DestinationSelector(
     view! {
         <div class="space-y-3">
             {render_option(DestinationKind::Local, "Local Filesystem",
-                "Store vault data on this computer", false)}
+                "Store vault data on this machine only — cannot be opened from other devices", false)}
             {render_option(DestinationKind::ExternalDrive, "External Drive",
-                "USB drive or network share — specify a local path", false)}
+                "USB drive or network share — drive must be physically connected to access the vault", false)}
             {render_option(DestinationKind::BackblazeB2, "Backblaze B2",
                 "Object storage via Backblaze B2 — key ID and application key", true)}
             {render_option(DestinationKind::OneDrive, "OneDrive",

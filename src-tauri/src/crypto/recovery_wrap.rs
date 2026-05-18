@@ -276,11 +276,16 @@ mod tests {
 
         let pretend_file_wrapped = WrappedFileKey(wrapped_recovery.0);
         let kek_same_bytes = KeyEncryptionKey::from_bytes([0x77u8; 32]);
-        let result: Result<FileKey, _> = unwrap_file_key(&pretend_file_wrapped, &kek_same_bytes);
+        use crate::crypto::types::FileId;
+        let result: Result<FileKey, _> = unwrap_file_key(
+            &pretend_file_wrapped,
+            &FileId::new([0u8; 16]),
+            &kek_same_bytes,
+        );
 
         assert!(
             matches!(result, Err(CryptoError::DecryptionFailed)),
-            "recovery-AAD wrap must not be decryptable via empty-AAD file-key unwrap"
+            "recovery-AAD wrap must not be decryptable via file-key-AAD unwrap path"
         );
     }
 }

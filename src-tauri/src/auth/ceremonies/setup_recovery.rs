@@ -9,7 +9,7 @@ use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
-use crate::crypto::{VaultId, wrap_master_key_for_recovery};
+use crate::crypto::{FileId, VaultId, wrap_master_key_for_recovery};
 use crate::storage::cloud::upload_vault_header;
 use crate::storage::cloud::vault_header::{RecoverySlot, VaultHeader};
 
@@ -37,11 +37,6 @@ pub async fn setup_recovery(
 
     let current_salt = decode_base64_32(&vault_header.argon2_salt)?;
     let current_params = argon2_params_from_json(&vault_header.argon2_params);
-    let resolved_argon2_params = resolve_existing_vault_argon2(
-        &current_params,
-        &request.argon2_params,
-        request.argon2_migration_intent,
-    )?;
 
     let current_key_file_bytes: Option<Zeroizing<[u8; 32]>> =
         match (vault_header.tier, request.current_key_source) {
@@ -68,8 +63,13 @@ pub async fn setup_recovery(
     let fresh_session_keys = SessionKeys::from_master_key_bytes(&master_key)?;
     let verify_sqlcipher_key = sqlcipher_key_from_array(fresh_session_keys.sqlcipher_key.expose());
     let verify_kek = key_encryption_key_from_array(fresh_session_keys.key_encryption_key.expose());
-    verify_credentials_via_identity_row(&request.vault_db_path, verify_sqlcipher_key, verify_kek)
-        .await?;
+    verify_credentials_via_identity_row(
+        &request.vault_db_path,
+        verify_sqlcipher_key,
+        verify_kek,
+        FileId::new(*vault_id.as_bytes()),
+    )
+    .await?;
     drop(fresh_session_keys);
 
     let mut entropy: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
@@ -85,7 +85,7 @@ pub async fn setup_recovery(
     derive_recovery_key_into(
         phrase_string.as_bytes(),
         &recovery_salt,
-        &resolved_argon2_params,
+        &current_params,
         &mut recovery_key_bytes,
     )?;
     let recovery_key = recovery_key_from_array(&recovery_key_bytes);
@@ -96,11 +96,13 @@ pub async fn setup_recovery(
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     drop(master_key_typed);
     drop(recovery_key);
+    drop(master_key);
+    drop(current_key_file_bytes);
 
     let slot = RecoverySlot {
         method: "bip39".into(),
         argon2_salt: encode_base64(recovery_salt.as_slice()),
-        argon2_params: argon2_params_to_json(&resolved_argon2_params),
+        argon2_params: argon2_params_to_json(&current_params),
         wrapped_master_key: encode_base64(wrapped.as_bytes()),
     };
     vault_header.recovery_slots.push(slot);
@@ -112,9 +114,7 @@ pub async fn setup_recovery(
         return Err(map_vault_header_sync_error(error));
     }
 
-    drop(master_key);
     drop(recovery_salt);
-    drop(current_key_file_bytes);
     Ok(phrase_string)
 }
 

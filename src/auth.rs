@@ -629,7 +629,7 @@ pub fn VaultCreationPage(
                         />
                         <Show when=is_gdrive_selected>
                             <div class="mt-3 p-3 border border-green-800/40 rounded bg-green-900/20 text-sm">
-                                <p class="font-medium text-green-400 mb-0.5">"✓ Sharing supported"</p>
+                                <p class="font-medium text-green-400 mb-0.5">"Sharing supported"</p>
                                 <p class="text-text-secondary mb-2">
                                     "Google Drive supports file sharing. To share files, you need a GCP Service Account key. "
                                     "You can set this up now or later from the Destinations page."
@@ -637,7 +637,7 @@ pub fn VaultCreationPage(
                                 {move || {
                                     if pending_sa_path.get().is_some() {
                                         view! {
-                                            <p class="text-green-400 text-sm">"✓ Service account key selected"</p>
+                                            <p class="text-green-400 text-sm">"Service account key selected"</p>
                                         }
                                         .into_any()
                                     } else {
@@ -656,7 +656,7 @@ pub fn VaultCreationPage(
                         </Show>
                         <Show when=is_b2_selected>
                             <div class="mt-3 p-3 border border-green-800/40 rounded bg-green-900/20 text-sm">
-                                <p class="font-medium text-green-400 mb-0.5">"✓ Sharing supported"</p>
+                                <p class="font-medium text-green-400 mb-0.5">"Sharing supported"</p>
                                 <p class="text-text-secondary">
                                     "Backblaze B2 supports file sharing. No additional setup is required."
                                 </p>

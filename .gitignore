@@ -19,3 +19,25 @@ secrets/
 .cursor/
 # mdBook build output
 docs/book/
+
+# stuff i dont want anymore
+
+docs/architecture-decisions/
+docs/deferred_items_handling/
+docs/design-reviews/
+docs/research-alternatives/
+docs/report-log/
+docs/research/authentication-and-session-management.md
+docs/research/compression-and-cloud-cost.md
+docs/research/market-and-future-directions.md
+docs/research/mfa-for-vault-authentication.md
+docs/research/mobile-photo-backup.md
+docs/research/multi-cloud-and-storage-destinations.md
+docs/research/bin-packing.md
+docs/research/rust-programming-language.md
+docs/roadmap.md
+.claude/plans/
+.github/plans/
+.claude/reviews/
+.claude/runs/
+docs/notes/

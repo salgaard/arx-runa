@@ -7,9 +7,6 @@
 use std::io::{ErrorKind, Write};
 use std::path::Path;
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
 use chacha20poly1305::{
     AeadInPlace, KeyInit, XChaCha20Poly1305, aead::generic_array::GenericArray,
 };
@@ -18,6 +15,7 @@ use zeroize::Zeroizing;
 
 use super::{CloudTransport, CloudTransportError};
 use crate::crypto::SqlcipherKey;
+use crate::crypto::VaultId;
 use crate::crypto::error::CryptoError;
 use crate::crypto::nonce::generate_nonce;
 use crate::storage::schema::{validate_manifest_meta, validate_schema_integrity};
@@ -63,18 +61,20 @@ pub enum ManifestBackupSyncError {
     DbPersistIo(String),
 }
 
-/// Encrypts caller-owned `plaintext` under `manifest_key` with XChaCha20-Poly1305 and no AAD.
+/// Encrypts caller-owned `plaintext` under `manifest_key` with XChaCha20-Poly1305.
 ///
+/// AAD is `vault_id.as_bytes()` (16 bytes), binding the ciphertext to vault identity.
 /// Returns the wire-format blob `[nonce || ciphertext || tag]`.
 pub(crate) fn encrypt_manifest_backup(
     mut plaintext: Zeroizing<Vec<u8>>,
     manifest_key: &[u8; 32],
+    vault_id: &VaultId,
 ) -> Result<Vec<u8>, CryptoError> {
     let nonce_bytes = generate_nonce();
     let cipher = XChaCha20Poly1305::new(GenericArray::from_slice(manifest_key));
     let nonce = GenericArray::from_slice(&nonce_bytes);
     let tag = cipher
-        .encrypt_in_place_detached(nonce, &[], plaintext.as_mut_slice())
+        .encrypt_in_place_detached(nonce, vault_id.as_bytes(), plaintext.as_mut_slice())
         .map_err(|_| CryptoError::EncryptionFailed)?;
 
     let mut wire = Vec::with_capacity(NONCE_LEN + plaintext.len() + TAG_LEN);
@@ -86,10 +86,12 @@ pub(crate) fn encrypt_manifest_backup(
 
 /// Decrypts a wire-format manifest backup blob under `manifest_key`.
 ///
+/// AAD is `vault_id.as_bytes()` (16 bytes); decryption fails if vault identity does not match.
 /// Returns plaintext bytes wrapped in [`Zeroizing`] for controlled lifetime.
 pub(crate) fn decrypt_manifest_backup(
     wire: &[u8],
     manifest_key: &[u8; 32],
+    vault_id: &VaultId,
 ) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
     if wire.len() < NONCE_LEN + TAG_LEN {
         return Err(CryptoError::DecryptionFailed);
@@ -104,7 +106,7 @@ pub(crate) fn decrypt_manifest_backup(
 
     let mut plaintext: Zeroizing<Vec<u8>> = Zeroizing::new(ciphertext_slice.to_vec());
     cipher
-        .decrypt_in_place_detached(nonce, &[], plaintext.as_mut_slice(), tag)
+        .decrypt_in_place_detached(nonce, vault_id.as_bytes(), plaintext.as_mut_slice(), tag)
         .map_err(|_| CryptoError::DecryptionFailed)?;
     Ok(plaintext)
 }
@@ -114,6 +116,7 @@ pub async fn upload_manifest_backup(
     vault_db_path: &Path,
     sqlcipher_key: &SqlcipherKey,
     manifest_key: &[u8; 32],
+    vault_id: &VaultId,
     cloud_transport: &dyn CloudTransport,
     staging_dir: &Path,
 ) -> Result<(), ManifestBackupSyncError> {
@@ -146,7 +149,7 @@ pub async fn upload_manifest_backup(
         .await
         .map_err(|error| ManifestBackupSyncError::StagingIo(error.to_string()))?;
 
-    let wire = encrypt_manifest_backup(plaintext, manifest_key)
+    let wire = encrypt_manifest_backup(plaintext, manifest_key, vault_id)
         .map_err(|_| ManifestBackupSyncError::CryptoFailed)?;
 
     let upload_staging_path = staging_dir.join(MANIFEST_BACKUP_UPLOAD_STAGING_FILE_NAME);
@@ -177,6 +180,7 @@ pub async fn download_manifest_backup(
     cloud_transport: &dyn CloudTransport,
     staging_dir: &Path,
     manifest_key: &[u8; 32],
+    vault_id: &VaultId,
     destination_db_path: &Path,
     sqlcipher_key: &SqlcipherKey,
 ) -> Result<(), ManifestBackupSyncError> {
@@ -237,7 +241,7 @@ pub async fn download_manifest_backup(
         }
     };
 
-    let plaintext = decrypt_manifest_backup(&wire, manifest_key)
+    let plaintext = decrypt_manifest_backup(&wire, manifest_key, vault_id)
         .map_err(|_| ManifestBackupSyncError::CryptoFailed)?;
 
     if let Some(parent) = destination_db_path.parent() {
@@ -302,11 +306,8 @@ fn run_vacuum_into_export(
         .map_err(|error| ManifestBackupSyncError::Vacuum(error.to_string()))?;
     drop(conn);
 
-    #[cfg(unix)]
-    {
-        std::fs::set_permissions(export_path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|error| ManifestBackupSyncError::StagingIo(error.to_string()))?;
-    }
+    crate::platform::permissions::set_file_owner_only(export_path)
+        .map_err(|error| ManifestBackupSyncError::StagingIo(error.to_string()))?;
 
     Ok(())
 }
@@ -328,14 +329,8 @@ fn persist_manifest_database_atomically(
         .as_file()
         .sync_all()
         .map_err(|error| ManifestBackupSyncError::DbPersistIo(error.to_string()))?;
-    #[cfg(unix)]
-    {
-        std::fs::set_permissions(
-            temporary_file.path(),
-            std::fs::Permissions::from_mode(0o600),
-        )
+    crate::platform::permissions::set_file_owner_only(temporary_file.path())
         .map_err(|error| ManifestBackupSyncError::DbPersistIo(error.to_string()))?;
-    }
     temporary_file
         .persist_noclobber(destination_db_path)
         .map_err(|error| ManifestBackupSyncError::DbPersistIo(error.error.to_string()))?;
@@ -418,29 +413,37 @@ mod tests {
     #[tokio::test]
     async fn test_manifest_backup_round_trip_returns_plaintext() {
         let manifest_key = [0x11u8; 32];
+        let vault_id = VaultId::new([0x01u8; 16]);
         let plaintext = b"CREATE TABLE foo (id INTEGER);";
 
-        let wire = encrypt_manifest_backup(Zeroizing::new(plaintext.to_vec()), &manifest_key)
-            .expect("encrypt must succeed");
+        let wire =
+            encrypt_manifest_backup(Zeroizing::new(plaintext.to_vec()), &manifest_key, &vault_id)
+                .expect("encrypt must succeed");
         let recovered =
-            decrypt_manifest_backup(&wire, &manifest_key).expect("decrypt must succeed");
+            decrypt_manifest_backup(&wire, &manifest_key, &vault_id).expect("decrypt must succeed");
 
         assert_eq!(recovered.as_slice(), plaintext);
     }
 
     #[tokio::test]
     async fn test_manifest_backup_wrong_key_returns_decryption_failed() {
-        let wire = encrypt_manifest_backup(Zeroizing::new(b"payload".to_vec()), &[0x11u8; 32])
-            .expect("encrypt must succeed");
+        let vault_id = VaultId::new([0x01u8; 16]);
+        let wire = encrypt_manifest_backup(
+            Zeroizing::new(b"payload".to_vec()),
+            &[0x11u8; 32],
+            &vault_id,
+        )
+        .expect("encrypt must succeed");
 
-        let result = decrypt_manifest_backup(&wire, &[0x22u8; 32]);
+        let result = decrypt_manifest_backup(&wire, &[0x22u8; 32], &vault_id);
 
         assert!(matches!(result, Err(CryptoError::DecryptionFailed)));
     }
 
     #[tokio::test]
     async fn test_manifest_backup_truncated_wire_returns_decryption_failed() {
-        let result = decrypt_manifest_backup(&[0u8; 10], &[0x11u8; 32]);
+        let vault_id = VaultId::new([0x01u8; 16]);
+        let result = decrypt_manifest_backup(&[0u8; 10], &[0x11u8; 32], &vault_id);
 
         assert!(matches!(result, Err(CryptoError::DecryptionFailed)));
     }
@@ -448,14 +451,39 @@ mod tests {
     #[tokio::test]
     async fn test_manifest_backup_corrupted_tag_returns_decryption_failed() {
         let manifest_key = [0x11u8; 32];
-        let mut wire = encrypt_manifest_backup(Zeroizing::new(b"payload".to_vec()), &manifest_key)
-            .expect("encrypt must succeed");
+        let vault_id = VaultId::new([0x01u8; 16]);
+        let mut wire = encrypt_manifest_backup(
+            Zeroizing::new(b"payload".to_vec()),
+            &manifest_key,
+            &vault_id,
+        )
+        .expect("encrypt must succeed");
         let tag_index = wire.len() - 1;
         wire[tag_index] ^= 0x01;
 
-        let result = decrypt_manifest_backup(&wire, &manifest_key);
+        let result = decrypt_manifest_backup(&wire, &manifest_key, &vault_id);
 
         assert!(matches!(result, Err(CryptoError::DecryptionFailed)));
+    }
+
+    #[tokio::test]
+    async fn test_manifest_backup_wrong_vault_id_returns_decryption_failed() {
+        let manifest_key = [0x11u8; 32];
+        let vault_id_a = VaultId::new([0xAAu8; 16]);
+        let vault_id_b = VaultId::new([0xBBu8; 16]);
+        let wire = encrypt_manifest_backup(
+            Zeroizing::new(b"payload".to_vec()),
+            &manifest_key,
+            &vault_id_a,
+        )
+        .expect("encrypt must succeed");
+
+        let result = decrypt_manifest_backup(&wire, &manifest_key, &vault_id_b);
+
+        assert!(
+            matches!(result, Err(CryptoError::DecryptionFailed)),
+            "cross-vault substitution must be rejected"
+        );
     }
 
     #[tokio::test]
@@ -467,12 +495,14 @@ mod tests {
         let sqlcipher_key = sqlcipher_key_from_bytes(sqlcipher_key_bytes);
         let manifest_key = [0x51u8; 32];
         let cloud_transport = MockCloudTransport::new();
+        let vault_id = VaultId::new([0x11u8; 16]);
 
         create_manifest_database(&source_db_path, &sqlcipher_key_bytes).await;
         upload_manifest_backup(
             &source_db_path,
             &sqlcipher_key,
             &manifest_key,
+            &vault_id,
             &cloud_transport,
             &staging_dir,
         )
@@ -505,6 +535,7 @@ mod tests {
         let sqlcipher_key = sqlcipher_key_from_bytes(sqlcipher_key_bytes);
         let manifest_key = [0x52u8; 32];
         let cloud_transport = MockCloudTransport::new();
+        let vault_id = VaultId::new([0x11u8; 16]);
 
         create_manifest_database(&source_db_path, &sqlcipher_key_bytes).await;
         cloud_transport
@@ -515,6 +546,7 @@ mod tests {
             &source_db_path,
             &sqlcipher_key,
             &manifest_key,
+            &vault_id,
             &cloud_transport,
             &staging_dir,
         )
@@ -544,12 +576,14 @@ mod tests {
         let sqlcipher_key = sqlcipher_key_from_bytes(sqlcipher_key_bytes);
         let manifest_key = [0x53u8; 32];
         let cloud_transport = MockCloudTransport::new();
+        let vault_id = VaultId::new([0x11u8; 16]);
 
         create_manifest_database(&source_db_path, &sqlcipher_key_bytes).await;
         upload_manifest_backup(
             &source_db_path,
             &sqlcipher_key,
             &manifest_key,
+            &vault_id,
             &cloud_transport,
             &upload_staging_dir,
         )
@@ -560,6 +594,7 @@ mod tests {
             &cloud_transport,
             &download_staging_dir,
             &manifest_key,
+            &vault_id,
             &recovered_db_path,
             &sqlcipher_key,
         )
@@ -589,6 +624,7 @@ mod tests {
         let sqlcipher_key = sqlcipher_key_from_bytes(sqlcipher_key_bytes);
         let manifest_key = [0x68u8; 32];
         let cloud_transport = MockCloudTransport::new();
+        let vault_id = VaultId::new([0x11u8; 16]);
 
         let store = SqlCipherMetadataStore::create(
             &source_db_path,
@@ -609,6 +645,7 @@ mod tests {
             &source_db_path,
             &sqlcipher_key,
             &manifest_key,
+            &vault_id,
             &cloud_transport,
             &upload_staging_dir,
         )
@@ -619,6 +656,7 @@ mod tests {
             &cloud_transport,
             &download_staging_dir,
             &manifest_key,
+            &vault_id,
             &destination_db_path,
             &sqlcipher_key,
         )
@@ -644,12 +682,14 @@ mod tests {
         let wrong_sqlcipher_key = sqlcipher_key_from_bytes([0xBBu8; 32]);
         let manifest_key = [0xCCu8; 32];
         let cloud_transport = MockCloudTransport::new();
+        let vault_id = VaultId::new([0x11u8; 16]);
 
         create_manifest_database(&source_db_path, &upload_key_bytes).await;
         upload_manifest_backup(
             &source_db_path,
             &upload_sqlcipher_key,
             &manifest_key,
+            &vault_id,
             &cloud_transport,
             &upload_staging_dir,
         )
@@ -660,6 +700,7 @@ mod tests {
             &cloud_transport,
             &download_staging_dir,
             &manifest_key,
+            &vault_id,
             &destination_db_path,
             &wrong_sqlcipher_key,
         )
@@ -679,6 +720,7 @@ mod tests {
         let download_staging_dir = temp.path().join("download-staging");
         let manifest_key = [0x55u8; 32];
         let cloud_transport = MockCloudTransport::new();
+        let vault_id = VaultId::new([0x11u8; 16]);
         let sqlcipher_key = sqlcipher_key_from_bytes([0u8; 32]);
 
         upload_raw_remote_blob(
@@ -693,6 +735,7 @@ mod tests {
             &cloud_transport,
             &download_staging_dir,
             &manifest_key,
+            &vault_id,
             &destination_db_path,
             &sqlcipher_key,
         )
@@ -715,12 +758,14 @@ mod tests {
         let sqlcipher_key = sqlcipher_key_from_bytes(sqlcipher_key_bytes);
         let manifest_key = [0x6Au8; 32];
         let cloud_transport = MockCloudTransport::new();
+        let vault_id = VaultId::new([0x11u8; 16]);
 
         create_manifest_database(&source_db_path, &sqlcipher_key_bytes).await;
         upload_manifest_backup(
             &source_db_path,
             &sqlcipher_key,
             &manifest_key,
+            &vault_id,
             &cloud_transport,
             &upload_staging_dir,
         )
@@ -751,6 +796,7 @@ mod tests {
             &cloud_transport,
             &download_staging_dir,
             &manifest_key,
+            &vault_id,
             &destination_db_path,
             &sqlcipher_key,
         )
@@ -773,6 +819,7 @@ mod tests {
         let download_staging_dir = temp.path().join("download-staging");
         let manifest_key = [0x56u8; 32];
         let cloud_transport = MockCloudTransport::new();
+        let vault_id = VaultId::new([0x11u8; 16]);
         let sqlcipher_key = sqlcipher_key_from_bytes([0u8; 32]);
         tokio::fs::write(&destination_db_path, b"existing")
             .await
@@ -782,6 +829,7 @@ mod tests {
             &cloud_transport,
             &download_staging_dir,
             &manifest_key,
+            &vault_id,
             &destination_db_path,
             &sqlcipher_key,
         )
@@ -805,12 +853,14 @@ mod tests {
         let download_staging_dir = temp.path().join("download-staging");
         let manifest_key = [0x57u8; 32];
         let cloud_transport = MockCloudTransport::new();
+        let vault_id = VaultId::new([0x11u8; 16]);
         let sqlcipher_key = sqlcipher_key_from_bytes([0u8; 32]);
 
         let result = download_manifest_backup(
             &cloud_transport,
             &download_staging_dir,
             &manifest_key,
+            &vault_id,
             &destination_db_path,
             &sqlcipher_key,
         )
@@ -838,11 +888,13 @@ mod tests {
         let sqlcipher_key = sqlcipher_key_from_bytes([0x48u8; 32]);
         let manifest_key = [0x58u8; 32];
         let cloud_transport = MockCloudTransport::new();
+        let vault_id = VaultId::new([0x11u8; 16]);
 
         let result = upload_manifest_backup(
             &missing_db_path,
             &sqlcipher_key,
             &manifest_key,
+            &vault_id,
             &cloud_transport,
             &staging_dir,
         )
@@ -860,6 +912,7 @@ mod tests {
         let sqlcipher_key = sqlcipher_key_from_bytes(sqlcipher_key_bytes);
         let manifest_key = [0x59u8; 32];
         let cloud_transport = MockCloudTransport::new();
+        let vault_id = VaultId::new([0x11u8; 16]);
 
         create_manifest_database(&source_db_path, &sqlcipher_key_bytes).await;
         tokio::fs::write(&staging_path_that_is_file, b"seed")
@@ -870,6 +923,7 @@ mod tests {
             &source_db_path,
             &sqlcipher_key,
             &manifest_key,
+            &vault_id,
             &cloud_transport,
             &staging_path_that_is_file,
         )
@@ -926,12 +980,14 @@ mod tests {
         let download_staging_dir = temp.path().join("download-staging");
         let manifest_key = [0x57u8; 32];
         let transport = SilentOkCloudTransport;
+        let vault_id = VaultId::new([0x11u8; 16]);
         let sqlcipher_key = sqlcipher_key_from_bytes([0u8; 32]);
 
         let result = download_manifest_backup(
             &transport,
             &download_staging_dir,
             &manifest_key,
+            &vault_id,
             &destination_db_path,
             &sqlcipher_key,
         )

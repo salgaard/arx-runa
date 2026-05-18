@@ -464,7 +464,12 @@ pub async fn decrypt_epoch_file(
         WrappedFileKey::new(record.file_key_wrapped.try_into().map_err(|_| {
             StorageError::Database("epoch blob key_wrapped has wrong length".to_owned())
         })?);
-    let file_key = unwrap_file_key(&wrapped_file_key, kek).map_err(StorageError::from)?;
+    let file_key = unwrap_file_key(
+        &wrapped_file_key,
+        &FileId::from_uuid(record.epoch_blob_id),
+        kek,
+    )
+    .map_err(StorageError::from)?;
 
     let decrypted = decrypt_chunk(
         verified_blob,
@@ -553,7 +558,12 @@ pub async fn decrypt_epoch_file_to_memory(
         WrappedFileKey::new(record.file_key_wrapped.try_into().map_err(|_| {
             StorageError::Database("epoch blob key_wrapped has wrong length".to_owned())
         })?);
-    let file_key = unwrap_file_key(&wrapped_file_key, kek).map_err(StorageError::from)?;
+    let file_key = unwrap_file_key(
+        &wrapped_file_key,
+        &FileId::from_uuid(record.epoch_blob_id),
+        kek,
+    )
+    .map_err(StorageError::from)?;
 
     let decrypted = decrypt_chunk(
         verified_blob,
@@ -1280,7 +1290,9 @@ mod tests {
 
         let kek = KeyEncryptionKey::from_bytes([0xAB; 32]);
         let file_key = generate_file_key();
-        let wrapped = wrap_file_key(&file_key, &kek).expect("wrap should succeed");
+        let epoch_blob_id = Uuid::new_v4();
+        let wrapped = wrap_file_key(&file_key, &FileId::from_uuid(epoch_blob_id), &kek)
+            .expect("wrap should succeed");
 
         let plaintext_a = vec![0x11u8; 300];
         let plaintext_b = vec![0x22u8; 200];
@@ -1290,8 +1302,6 @@ mod tests {
         packed.extend_from_slice(&plaintext_a);
         packed.extend_from_slice(&plaintext_b);
         packed.resize(chunk_size, 0u8);
-
-        let epoch_blob_id = Uuid::new_v4();
         let blob_name = epoch_blob_id.hyphenated().to_string();
 
         let encrypted = encrypt_chunk(

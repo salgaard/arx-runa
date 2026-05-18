@@ -177,6 +177,14 @@ impl From<crate::storage::SyncError> for IpcError {
     }
 }
 
+impl From<std::io::Error> for IpcError {
+    /// Maps IO errors to a sanitised IpcError without leaking filesystem paths or OS detail.
+    fn from(error: std::io::Error) -> Self {
+        tracing::error!("io error: {:?}", error);
+        IpcError::InternalError("File system error".into())
+    }
+}
+
 impl From<crate::storage::CloudTransportError> for IpcError {
     /// Maps cloud transport errors to sanitised IPC error variants without leaking internal details.
     fn from(error: crate::storage::CloudTransportError) -> Self {

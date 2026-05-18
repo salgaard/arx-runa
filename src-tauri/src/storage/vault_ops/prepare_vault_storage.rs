@@ -14,6 +14,11 @@ pub async fn prepare_vault_storage(
 ) -> Result<usize, StorageError> {
     staging::ensure_staging_directory(staging_directory).await?;
     staging::migrate_flat_staging_blobs(staging_directory).await?;
+    // Remove any stale mirror-temp subtrees left by a crashed or interrupted sync.
+    let mirror_temp = staging_directory.join("mirror-temp");
+    if tokio::fs::try_exists(&mirror_temp).await.unwrap_or(false) {
+        let _ = tokio::fs::remove_dir_all(&mirror_temp).await;
+    }
     staging::cleanup_orphaned_blobs(staging_directory, store).await
 }
 

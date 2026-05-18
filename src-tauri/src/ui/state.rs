@@ -12,7 +12,6 @@ use tokio::sync::RwLock;
 use crate::auth::{DeviceMonitor, SessionManager};
 #[cfg(not(any(test, feature = "test-utils")))]
 use crate::storage::CloudTransportError;
-use crate::storage::SqlCipherMetadataStore;
 use crate::storage::cloud::CloudTransport;
 use crate::ui::types::SyncStatus;
 
@@ -35,8 +34,6 @@ pub struct OAuthSetupHandle {
 /// Contains only IPC and runtime orchestration handles — no key material,
 /// no passwords, and no file-content buffers.
 pub struct AppState {
-    /// Encrypted manifest database. `None` until a vault is opened.
-    pub(crate) database: Arc<RwLock<Option<SqlCipherMetadataStore>>>,
     /// Cloud transport implementation; swappable post-authenticate.
     ///
     /// Default is `NoOpCloudTransport`. After authenticate/create_vault,
@@ -144,7 +141,6 @@ impl AppState {
             Arc::new(crate::auth::device_monitor::MacOsDeviceMonitor::new());
 
         Self {
-            database: Arc::new(RwLock::new(None)),
             cloud_transport,
             device_monitor,
             session_manager: Arc::new(SessionManager::from_config()),

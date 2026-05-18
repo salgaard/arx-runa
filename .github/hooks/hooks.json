@@ -15,10 +15,6 @@
         "powershell": "./scripts/hooks/block-sensitive-files.ps1",
         "timeoutSec": 10,
         "comment": "Block access to .env files and secrets/"
-      },
-      {
-        "type": "command",
-        "bash": "rtk hook claude"
       }
     ],
     "postToolUse": [

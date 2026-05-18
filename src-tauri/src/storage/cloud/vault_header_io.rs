@@ -47,12 +47,19 @@ pub enum VaultHeaderSyncError {
 }
 
 /// Serialises and uploads the plaintext vault header JSON to cloud root.
+///
+/// `key_file_blake3` and `name` are stripped before upload so the cloud never
+/// receives the key-file fingerprint (ZK correlation leak) or the human-readable
+/// vault name (ZK metadata leak).
 pub async fn upload_vault_header(
     header: &VaultHeader,
     cloud_transport: &dyn CloudTransport,
     staging_dir: &Path,
 ) -> Result<(), VaultHeaderSyncError> {
-    let json_bytes = serialise_pretty_json(header)?;
+    let mut cloud_header = header.clone();
+    cloud_header.key_file_blake3 = None;
+    cloud_header.name = None;
+    let json_bytes = serialise_pretty_json(&cloud_header)?;
     let staging_path = staging_dir.join(VAULT_HEADER_UPLOAD_STAGING_FILE_NAME);
     if let Err(error) = write_owner_only_staging_file(&staging_path, &json_bytes).await {
         let _ = remove_staging_file_if_present(&staging_path).await;
@@ -398,7 +405,12 @@ mod tests {
             download_vault_header(&cloud, directory.path(), VaultHeaderTrustPolicy::Bootstrap)
                 .await
                 .expect("download should succeed");
-        assert_eq!(recovered, header);
+
+        // Cloud header must not carry key_file_blake3 or name (ZK boundary).
+        let mut expected = header.clone();
+        expected.key_file_blake3 = None;
+        expected.name = None;
+        assert_eq!(recovered, expected);
     }
 
     #[tokio::test]
@@ -643,7 +655,35 @@ mod tests {
             download_vault_header(&cloud, directory.path(), VaultHeaderTrustPolicy::Bootstrap)
                 .await
                 .expect("download should succeed");
-        assert_eq!(recovered, second);
+
+        // Cloud header must not carry key_file_blake3 or name (ZK boundary).
+        let mut expected = second.clone();
+        expected.key_file_blake3 = None;
+        expected.name = None;
+        assert_eq!(recovered, expected);
+    }
+
+    #[tokio::test]
+    async fn test_upload_vault_header_strips_key_file_blake3_and_name_from_cloud_json() {
+        let cloud = MockCloudTransport::new();
+        let directory = tempdir().expect("tempdir");
+        let mut header = sample_tier_two_header_with_recovery_slot();
+        header.name = Some("My Secret Vault".to_owned());
+
+        upload_vault_header(&header, &cloud, directory.path())
+            .await
+            .expect("upload should succeed");
+
+        let bytes = read_uploaded_header(&cloud, directory.path()).await;
+        let json = std::str::from_utf8(&bytes).expect("cloud JSON must be UTF-8");
+        assert!(
+            !json.contains("key_file_blake3"),
+            "cloud header must not contain key_file_blake3"
+        );
+        assert!(
+            !json.contains("name"),
+            "cloud header must not contain vault name"
+        );
     }
 
     #[tokio::test]

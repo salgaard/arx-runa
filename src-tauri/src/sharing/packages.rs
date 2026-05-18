@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::crypto::types::{FileKey, KeyEncryptionKey, WrappedFileKey};
+use crate::crypto::types::{FileId, FileKey, KeyEncryptionKey, WrappedFileKey};
 use crate::crypto::{unwrap_file_key, wrap_file_key};
 use crate::sharing::error::SharingError;
 use crate::sharing::hpke;
@@ -74,8 +74,12 @@ pub(crate) async fn create_share_package(
     let wrapped_bytes = node
         .file_key_wrapped
         .ok_or_else(|| SharingError::Backend("file node has no wrapped key".to_owned()))?;
-    let file_key = unwrap_file_key(&WrappedFileKey::new(wrapped_bytes), key_encryption_key)
-        .map_err(|_| SharingError::Backend("file key unwrap failed".to_owned()))?;
+    let file_key = unwrap_file_key(
+        &WrappedFileKey::new(wrapped_bytes),
+        &FileId::from_uuid(file_id),
+        key_encryption_key,
+    )
+    .map_err(|_| SharingError::Backend("file key unwrap failed".to_owned()))?;
 
     let chunks = metadata_store
         .get_chunks(file_id)
@@ -150,8 +154,14 @@ pub(crate) async fn import_share_package(
     let file_key = FileKey::from_secret_box(SecretBox::<[u8; 32]>::init_with_mut(|buffer| {
         buffer.copy_from_slice(&*file_key_bytes);
     }));
-    let wrapped = wrap_file_key(&file_key, key_encryption_key)
-        .map_err(|_| SharingError::Backend("file key wrap failed".to_owned()))?;
+    let share_file_id_uuid = uuid::Uuid::parse_str(&payload.file_id)
+        .map_err(|_| SharingError::InvalidJsonPayload("invalid file_id".to_owned()))?;
+    let wrapped = wrap_file_key(
+        &file_key,
+        &FileId::from_uuid(share_file_id_uuid),
+        key_encryption_key,
+    )
+    .map_err(|_| SharingError::Backend("file key wrap failed".to_owned()))?;
 
     let mut cloud_endpoint = payload.cloud_endpoint;
     if payload.file_size > 0 {
@@ -456,17 +466,19 @@ mod tests {
         KeyEncryptionKey::from_bytes([0xAA; 32])
     }
 
-    fn make_wrapped_file_key(kek: &KeyEncryptionKey) -> [u8; 72] {
+    fn make_wrapped_file_key(kek: &KeyEncryptionKey, node_id: Uuid) -> [u8; 72] {
         use crate::crypto::generate_file_key::generate_file_key;
+        use crate::crypto::types::FileId;
         use crate::crypto::wrap_key::wrap_file_key;
         let file_key = generate_file_key();
-        let wrapped = wrap_file_key(&file_key, kek).expect("wrap must succeed");
+        let wrapped =
+            wrap_file_key(&file_key, &FileId::from_uuid(node_id), kek).expect("wrap must succeed");
         *wrapped.as_bytes()
     }
 
-    fn make_test_node(file_key_wrapped: [u8; 72]) -> Node {
+    fn make_test_node(node_id: Uuid, file_key_wrapped: [u8; 72]) -> Node {
         Node::new(
-            Uuid::new_v4(),
+            node_id,
             None,
             NodeType::File,
             "test-document.pdf".to_owned(),
@@ -505,8 +517,9 @@ mod tests {
     #[tokio::test]
     async fn test_create_import_round_trip_recovers_share_metadata() {
         let kek = make_test_kek();
-        let wrapped = make_wrapped_file_key(&kek);
-        let node = make_test_node(wrapped);
+        let node_id = Uuid::new_v4();
+        let wrapped = make_wrapped_file_key(&kek, node_id);
+        let node = make_test_node(node_id, wrapped);
         let chunks = make_test_chunks(&node.node_id);
         let (sender_secret, sender_public_key) = make_x25519_keypair();
         let (recipient_secret, recipient_public_key) = make_x25519_keypair();
@@ -559,8 +572,9 @@ mod tests {
     #[tokio::test]
     async fn test_create_import_round_trip_preserves_none_expires_at() {
         let kek = make_test_kek();
-        let wrapped = make_wrapped_file_key(&kek);
-        let node = make_test_node(wrapped);
+        let node_id = Uuid::new_v4();
+        let wrapped = make_wrapped_file_key(&kek, node_id);
+        let node = make_test_node(node_id, wrapped);
         let chunks = make_test_chunks(&node.node_id);
         let (_sender_secret, sender_public_key) = make_x25519_keypair();
         let (recipient_secret, recipient_public_key) = make_x25519_keypair();
@@ -698,8 +712,9 @@ mod tests {
     #[tokio::test]
     async fn test_import_populates_file_key_wrapped_and_sender_public_key() {
         let kek = make_test_kek();
-        let wrapped = make_wrapped_file_key(&kek);
-        let node = make_test_node(wrapped);
+        let node_id = Uuid::new_v4();
+        let wrapped = make_wrapped_file_key(&kek, node_id);
+        let node = make_test_node(node_id, wrapped);
         let chunks = make_test_chunks(&node.node_id);
         let (_sender_secret, sender_public_key) = make_x25519_keypair();
         let (recipient_secret, recipient_public_key) = make_x25519_keypair();

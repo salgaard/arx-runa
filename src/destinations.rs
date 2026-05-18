@@ -365,7 +365,7 @@ fn DestinationItem(
                             } else {
                                 view! {
                                     <span class="px-2 py-0.5 text-xs font-medium bg-green-900/40 text-green-400 border border-green-800/40 rounded">
-                                        "In sync ✓"
+                                        "In sync"
                                     </span>
                                 }
                                 .into_any()
@@ -376,7 +376,7 @@ fn DestinationItem(
                         {if sharing_supported {
                             view! {
                                 <span class="px-2 py-0.5 text-xs font-medium bg-green-900/40 text-green-400 border border-green-800/40 rounded">
-                                    "Sharing ✓"
+                                    "Sharing Supported"
                                 </span>
                             }
                             .into_any()
@@ -629,7 +629,7 @@ fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
                     if is_gdrive_selected() {
                         view! {
                             <div class="p-3 border border-green-800/40 rounded bg-green-900/20 text-sm">
-                                <p class="font-medium text-green-400 mb-0.5">"✓ Sharing supported"</p>
+                                <p class="font-medium text-green-400 mb-0.5">"Sharing supported"</p>
                                 <p class="text-text-secondary mb-2">
                                     "Google Drive supports file sharing. To share files, you need a GCP Service "
                                     "Account key. You can set this up now or later from the destination list."
@@ -646,7 +646,7 @@ fn AddDestinationForm(on_added: Arc<dyn Fn() + Send + Sync>) -> impl IntoView {
                     } else if is_b2_selected() {
                         view! {
                             <div class="p-3 border border-green-800/40 rounded bg-green-900/20 text-sm">
-                                <p class="font-medium text-green-400 mb-0.5">"✓ Sharing supported"</p>
+                                <p class="font-medium text-green-400 mb-0.5">"Sharing supported"</p>
                                 <p class="text-text-secondary">
                                     "Backblaze B2 supports file sharing. No additional setup is required."
                                 </p>
@@ -784,7 +784,7 @@ pub fn DestinationList() -> impl IntoView {
 
             <div>
                 <h3 class="text-lg font-semibold text-bone mb-3">"Configured Destinations"</h3>
-                <Suspense fallback=move || {
+                <Transition fallback=move || {
                     view! { <p class="text-text-secondary">"Loading destinations…"</p> }
                 }>
                     {move || {
@@ -841,7 +841,7 @@ pub fn DestinationList() -> impl IntoView {
                             }
                         })
                     }}
-                </Suspense>
+                </Transition>
             </div>
 
             <AddDestinationForm on_added=on_refresh_add />

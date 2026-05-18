@@ -14,7 +14,7 @@ use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::{Argon2Params, derive_master_key_into};
 use crate::auth::session::SessionKeys;
 use crate::crypto::{
-    FileKey, KeyEncryptionKey, MasterKey, RecoveryKey, SqlcipherKey, WrappedFileKey,
+    FileId, FileKey, KeyEncryptionKey, MasterKey, RecoveryKey, SqlcipherKey, WrappedFileKey,
     unwrap_file_key, wrap_file_key,
 };
 use crate::storage::cloud::VaultHeaderSyncError;
@@ -230,36 +230,39 @@ pub(super) fn rekey_sqlcipher(
     Ok(())
 }
 
-/// Wraps 32-byte plaintext under the active session KEK.
+/// Wraps 32-byte plaintext under the active session KEK, bound to `file_id`.
 pub(super) fn wrap_with_session_kek(
     session_keys: &SessionKeys,
+    file_id: &FileId,
     plaintext_bytes: &[u8; 32],
 ) -> Result<WrappedFileKey, AuthenticationError> {
     let key_encryption_key =
         key_encryption_key_from_array(session_keys.key_encryption_key.expose());
     let file_key = file_key_from_array(plaintext_bytes);
-    wrap_file_key(&file_key, &key_encryption_key)
+    wrap_file_key(&file_key, file_id, &key_encryption_key)
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)
 }
 
 #[cfg(test)]
 pub(super) fn wrap_with_kek_bytes(
     key_encryption_key_bytes: &[u8; 32],
+    file_id: &FileId,
     plaintext_bytes: &[u8; 32],
 ) -> Result<WrappedFileKey, AuthenticationError> {
     let key_encryption_key = key_encryption_key_from_array(key_encryption_key_bytes);
     let file_key = file_key_from_array(plaintext_bytes);
-    wrap_file_key(&file_key, &key_encryption_key)
+    wrap_file_key(&file_key, file_id, &key_encryption_key)
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)
 }
 
 #[cfg(test)]
 pub(super) fn unwrap_with_kek_bytes(
     wrapped: &WrappedFileKey,
+    file_id: &FileId,
     key_encryption_key_bytes: &[u8; 32],
 ) -> Result<FileKey, AuthenticationError> {
     let key_encryption_key = key_encryption_key_from_array(key_encryption_key_bytes);
-    unwrap_file_key(wrapped, &key_encryption_key)
+    unwrap_file_key(wrapped, file_id, &key_encryption_key)
         .map_err(|_| AuthenticationError::InvalidCredentials)
 }
 
@@ -285,10 +288,14 @@ pub(super) fn derive_recovery_key_into(
 }
 
 /// Verifies credentials by unwrapping the persisted identity key with fresh keys.
+///
+/// `identity_file_id` must be the `FileId` used when the identity key was
+/// originally wrapped (typically `FileId::new(*vault_id.as_bytes())`).
 pub(super) async fn verify_credentials_via_identity_row(
     vault_db_path: &Path,
     sqlcipher_key: SqlcipherKey,
     key_encryption_key: KeyEncryptionKey,
+    identity_file_id: FileId,
 ) -> Result<(), AuthenticationError> {
     let vault_db_path = vault_db_path.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
@@ -304,7 +311,7 @@ pub(super) async fn verify_credentials_via_identity_row(
             .try_into()
             .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
         let wrapped = WrappedFileKey::new(wrapped_array);
-        unwrap_file_key(&wrapped, &key_encryption_key)
+        unwrap_file_key(&wrapped, &identity_file_id, &key_encryption_key)
             .map_err(|_| AuthenticationError::InvalidCredentials)?;
         Ok(())
     })

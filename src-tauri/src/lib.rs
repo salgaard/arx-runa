@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod crypto;
 pub mod memory;
+pub(crate) mod platform;
 pub mod sharing;
 pub mod storage;
 pub mod sync;
@@ -118,6 +119,7 @@ pub fn run() {
 
             let state = app.state::<AppState>();
             let app_handle = app.handle().clone();
+            let active_vault_id = state.active_vault_id.clone();
 
             // Store the AppHandle for event emission.
             let _ = state.app_handle.set(app_handle.clone());
@@ -151,6 +153,22 @@ pub fn run() {
                 (app.get_webview_window("main"), app.default_window_icon())
             {
                 let _ = window.set_icon(icon.clone());
+            }
+
+            // Wipe staging/cache when the user closes the window so cached preview
+            // blobs don't accumulate across sessions.  Uses a synchronous remove —
+            // it's fast (directory entries only) and the process exits immediately after.
+            if let Some(window) = app.get_webview_window("main") {
+                window.on_window_event(move |event| {
+                    if matches!(event, tauri::WindowEvent::CloseRequested { .. })
+                        && let Ok(guard) = active_vault_id.try_read()
+                        && let Some(ref vault_id) = *guard
+                    {
+                        let cache_dir =
+                            crate::ui::vault_paths::vault_staging_dir(vault_id).join("cache");
+                        let _ = std::fs::remove_dir_all(&cache_dir);
+                    }
+                });
             }
 
             #[cfg(debug_assertions)]

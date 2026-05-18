@@ -1,5 +1,8 @@
 # Download
 
+> ⚠️ **Early demo — expect bugs and data loss**
+> This is pre-release software. Encrypted vaults, keys, and file metadata may be lost or corrupted between versions. Do **not** rely on this as your only copy of important files.
+
 All releases are available on GitHub.
 
 **[→ View all releases on GitHub](https://github.com/salgaard/arx-runa/releases)**

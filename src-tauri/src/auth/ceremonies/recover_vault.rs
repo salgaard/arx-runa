@@ -67,16 +67,6 @@ pub async fn recover_vault(
             let bytes = source
                 .read_key()
                 .map_err(|_| AuthenticationError::KeyFileNotFound)?;
-            let expected_hex = header
-                .key_file_blake3
-                .as_ref()
-                .ok_or(AuthenticationError::VaultHeaderInvalid)?;
-            let expected_digest =
-                hex::decode(expected_hex).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-            let actual_digest = blake3::hash(bytes.as_slice());
-            if expected_digest.as_slice() != actual_digest.as_bytes() {
-                return Err(AuthenticationError::KeyFileNotFound);
-            }
             let mut buffer: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
             buffer.copy_from_slice(bytes.as_slice());
             Some(buffer)
@@ -94,6 +84,7 @@ pub async fn recover_vault(
         &mut master_key,
     )?;
     let session_keys = SessionKeys::from_master_key_bytes(&master_key)?;
+    drop(master_key);
     let manifest_key_bytes = Zeroizing::new(*session_keys.manifest_key.expose());
     let sqlcipher_key = {
         use secrecy::SecretBox;
@@ -110,6 +101,7 @@ pub async fn recover_vault(
         cloud_transport,
         &storage_staging_dir,
         &manifest_key_bytes,
+        &vault_id,
         &request.vault_db_path,
         &sqlcipher_key,
     )
@@ -125,7 +117,6 @@ pub async fn recover_vault(
         )
         .await?;
 
-    drop(master_key);
     drop(key_file_bytes);
     Ok(vault_id)
 }

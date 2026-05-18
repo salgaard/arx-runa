@@ -22,3 +22,4 @@ Targets Win/macOS/Linux; preserve behavior across all three; platform-specific c
 - Markdown → jdocmunch-mcp
 - Library APIs → context7
 - Source code → jcodemunch-mcp
+- RTK (token optimization) → See `~/.claude/RTK.md`

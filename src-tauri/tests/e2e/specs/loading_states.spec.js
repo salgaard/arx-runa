@@ -111,11 +111,18 @@ describe("Loading states: vault creation", function () {
 
     await syncBtn.click();
 
-    // Immediately after click the button must be disabled.
-    const disabledAfterClick = await syncBtn.getAttribute("disabled");
-    assert.ok(
-      disabledAfterClick !== null,
-      "sync button must be disabled while a sync is in-flight",
+    // The button must be disabled while the sync IPC is in-flight.  In CI the
+    // backend can return almost instantly (no real destination), so the window
+    // is narrow — poll for up to 1 s rather than doing a single bare read.
+    await browser.waitUntil(
+      async () => {
+        const d = await syncBtn.getAttribute("disabled");
+        return d !== null;
+      },
+      {
+        timeout: 1000,
+        timeoutMsg: "sync button must be disabled while a sync is in-flight",
+      },
     );
 
     // Wait for sync to complete (button re-enables).

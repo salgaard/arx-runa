@@ -74,9 +74,9 @@ fn ChangePasswordForm() -> impl IntoView {
 
             match invoke_command::<ChangePasswordRequest, ()>("change_password", &request).await {
                 Ok(()) => {
-                    current_pw.set(String::new());
-                    new_pw.set(String::new());
-                    confirm_pw.set(String::new());
+                    current_pw.update(|s| s.zeroize());
+                    new_pw.update(|s| s.zeroize());
+                    confirm_pw.update(|s| s.zeroize());
                     rp.zeroize();
                     recovery_phrase.update(|s| s.zeroize());
                     success.set(true);
@@ -482,6 +482,7 @@ fn SetupRecoveryForm() -> impl IntoView {
     let error = RwSignal::new(Option::<String>::None);
     let success = RwSignal::new(false);
     let phrase = RwSignal::new(String::new());
+    on_cleanup(move || phrase.update(|s| s.zeroize()));
     let show_modal = RwSignal::new(false);
     let acknowledged = RwSignal::new(false);
 
@@ -641,7 +642,7 @@ fn SetupRecoveryForm() -> impl IntoView {
                 </div>
                 <Button
                     on_click=on_done_click
-                    loading=move || !acknowledged.get()
+                    disabled=Signal::derive(move || !acknowledged.get())
                     variant="primary"
                 >
                     "Done"
@@ -737,7 +738,8 @@ fn DeleteVaultForm() -> impl IntoView {
 
                 <Button
                     on_click=on_delete
-                    loading=delete_button_disabled
+                    loading=loading
+                    disabled=Signal::derive(delete_button_disabled)
                     variant="danger"
                 >
                     {move || if loading.get() { "Deleting…" } else { "Delete Vault" }}

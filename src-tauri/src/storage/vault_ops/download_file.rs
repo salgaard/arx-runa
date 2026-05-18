@@ -3,7 +3,7 @@ use std::path::Path;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::crypto::{KeyEncryptionKey, WrappedFileKey, unwrap_file_key};
+use crate::crypto::{FileId, KeyEncryptionKey, WrappedFileKey, unwrap_file_key};
 use crate::storage::MetadataStore;
 use crate::storage::error::StorageError;
 use crate::storage::pipeline::{
@@ -62,8 +62,12 @@ pub async fn download_file(
         StorageError::ConstraintViolation("file node missing wrapped key".to_owned())
     })?;
     let wrapped_file_key = WrappedFileKey::new(wrapped_key);
-    let file_key =
-        unwrap_file_key(&wrapped_file_key, key_encryption_key).map_err(StorageError::from)?;
+    let file_key = unwrap_file_key(
+        &wrapped_file_key,
+        &FileId::from_uuid(*node.node_id.as_uuid()),
+        key_encryption_key,
+    )
+    .map_err(StorageError::from)?;
     decrypt_file(
         destination,
         *node.node_id.as_uuid(),
@@ -124,8 +128,12 @@ pub async fn download_file_to_memory(
         StorageError::ConstraintViolation("file node missing wrapped key".to_owned())
     })?;
     let wrapped_file_key = WrappedFileKey::new(wrapped_key);
-    let file_key =
-        unwrap_file_key(&wrapped_file_key, key_encryption_key).map_err(StorageError::from)?;
+    let file_key = unwrap_file_key(
+        &wrapped_file_key,
+        &FileId::from_uuid(*node.node_id.as_uuid()),
+        key_encryption_key,
+    )
+    .map_err(StorageError::from)?;
     decrypt_file_to_memory(
         *node.node_id.as_uuid(),
         &file_key,
@@ -184,8 +192,12 @@ pub async fn download_file_range_to_memory(
         StorageError::ConstraintViolation("file node missing wrapped key".to_owned())
     })?;
     let wrapped_file_key = WrappedFileKey::new(wrapped_key);
-    let file_key =
-        unwrap_file_key(&wrapped_file_key, key_encryption_key).map_err(StorageError::from)?;
+    let file_key = unwrap_file_key(
+        &wrapped_file_key,
+        &FileId::from_uuid(*node.node_id.as_uuid()),
+        key_encryption_key,
+    )
+    .map_err(StorageError::from)?;
 
     decrypt_file_range_to_memory(
         *node.node_id.as_uuid(),

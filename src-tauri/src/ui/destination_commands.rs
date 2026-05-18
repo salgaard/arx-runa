@@ -208,10 +208,12 @@ pub async fn add_destination(
         device_id,
     };
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     insert_destination_session(db, &session)
         .await
@@ -253,10 +255,12 @@ pub async fn list_destinations(
     state.session_manager.reset_timer().await;
     require_active_session(&state).await?;
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     let sessions = list_destination_sessions(db)
         .await
@@ -311,10 +315,12 @@ pub async fn delete_destination(
         ));
     }
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     let primary = get_primary_destination(db).await.map_err(IpcError::from)?;
     if primary.is_some_and(|p| p.destination_id == destination_id) {
@@ -353,10 +359,12 @@ pub async fn set_primary_destination_cmd(
         ));
     }
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     set_primary_destination(db, &destination_id)
         .await
@@ -366,8 +374,6 @@ pub async fn set_primary_destination_cmd(
         .await
         .map_err(IpcError::from)?
         .ok_or_else(|| IpcError::InternalError("Primary destination missing after swap".into()))?;
-
-    drop(db_guard);
 
     let app_handle = state
         .app_handle
@@ -381,8 +387,7 @@ pub async fn set_primary_destination_cmd(
 
     // Load the GDrive SA JSON (if configured) so share operations work immediately
     // after changing the primary destination, without requiring a vault re-lock/unlock.
-    let db_guard = state.database.read().await;
-    let sa_config = if let Some(db) = db_guard.as_ref() {
+    let sa_config = if let Some(db) = state.session_manager.get_metadata_store().await {
         db.get_gdrive_sharing_config()
             .await
             .ok()
@@ -391,7 +396,6 @@ pub async fn set_primary_destination_cmd(
     } else {
         None
     };
-    drop(db_guard);
     let transport = transport.with_sharing_config(sa_config);
 
     state.swap_cloud_transport(Arc::new(transport)).await;

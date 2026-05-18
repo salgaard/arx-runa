@@ -174,7 +174,11 @@ mod security_audit {
     fn test_password_string_zeroized_before_ipc_dispatch() {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         let ui_src = Path::new(manifest_dir).join("src/ui");
-        let target = concat!("Zeroizing::new(pass", "word");
+        // `sanitise_password` zeroizes the backing String bytes and returns a
+        // `Zeroizing<Vec<u8>>`. Split across concat! so the test does not
+        // accidentally match its own source when scanning the ui/ directory.
+        let target = concat!("sanitise_pass", "word");
+        let password_param = concat!("pass", "word: String");
 
         let files = collect_rs_source(&ui_src);
         assert!(
@@ -182,13 +186,17 @@ mod security_audit {
             "No .rs files found under {ui_src:?} — check CARGO_MANIFEST_DIR",
         );
 
-        let found = files.iter().any(|(_, content)| content.contains(target));
+        let violations: Vec<String> = files
+            .iter()
+            .filter(|(_, content)| content.contains(password_param) && !content.contains(target))
+            .map(|(path, _)| path.display().to_string())
+            .collect();
 
         assert!(
-            found,
-            "Zero-Trace invariant broken: no IPC handler in `src/ui/` contains `{}`. \
-             Password strings must be wrapped with Zeroizing::new() before dispatch.",
-            target,
+            violations.is_empty(),
+            "Zero-Trace invariant broken: these IPC handlers accept a password String \
+             but do not call {target} on it:\n  {}",
+            violations.join("\n  "),
         );
     }
 
@@ -258,6 +266,29 @@ mod security_audit {
             assert!(
                 !s.trim().is_empty(),
                 "CS-001 violation: `app.security.csp` in tauri.conf.json is an empty string",
+            );
+        }
+        if let Some(obj) = csp.as_object() {
+            let script_src = obj.get("script-src").and_then(|v| v.as_str()).unwrap_or("");
+            assert!(
+                !script_src.contains("'unsafe-inline'"),
+                "CSP violation: script-src must not contain 'unsafe-inline'; found: {script_src}",
+            );
+            assert!(
+                script_src.contains("'wasm-unsafe-eval'"),
+                "CSP violation: script-src must contain 'wasm-unsafe-eval'; found: {script_src}",
+            );
+            let connect_src = obj
+                .get("connect-src")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            assert!(
+                connect_src.contains("ipc:"),
+                "CSP violation: connect-src must contain 'ipc:'; found: {connect_src}",
+            );
+            assert!(
+                connect_src.contains("http://ipc.localhost"),
+                "CSP violation: connect-src must contain 'http://ipc.localhost'; found: {connect_src}",
             );
         }
     }

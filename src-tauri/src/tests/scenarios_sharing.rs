@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::crypto::{
-    KeyEncryptionKey, WrappedFileKey, generate_file_key, unwrap_file_key, wrap_file_key,
+    FileId, KeyEncryptionKey, WrappedFileKey, generate_file_key, unwrap_file_key, wrap_file_key,
 };
 use crate::sharing::{
     Contact, ContactId, ReceivedShare, ShareRecord, SharingError, SharingStore, X25519PublicKey,
@@ -134,11 +134,12 @@ async fn test_share_package_round_trip_recipient_decrypts_file_key() {
     // File key — original value that the recipient must recover.
     let file_key = generate_file_key();
 
-    // Wrap file_key with sender KEK for storage in the metadata store.
-    let wrapped = wrap_file_key(&file_key, &sender_kek).expect("wrap_file_key must succeed");
-
     // Build node and insert into metadata store.
     let file_id = Uuid::new_v4();
+
+    // Wrap file_key with sender KEK for storage in the metadata store.
+    let wrapped = wrap_file_key(&file_key, &FileId::from_uuid(file_id), &sender_kek)
+        .expect("wrap_file_key must succeed");
     let node = Node::new(
         file_id,
         None,
@@ -190,8 +191,12 @@ async fn test_share_package_round_trip_recipient_decrypts_file_key() {
     .expect("import_share_package must succeed");
 
     // Unwrap the file key stored in the received share using the recipient KEK.
+    let share_file_id = FileId::from_uuid(
+        Uuid::parse_str(&received_share.file_id).expect("share file_id must be valid uuid"),
+    );
     let recovered_key = unwrap_file_key(
         &WrappedFileKey::new(received_share.file_key_wrapped),
+        &share_file_id,
         &recipient_kek,
     )
     .expect("file key must unwrap with recipient KEK");

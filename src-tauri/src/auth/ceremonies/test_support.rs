@@ -178,6 +178,7 @@ pub(crate) async fn upload_manifest_backup_for(vault: &TierOneVault) {
         &vault.vault_db_path,
         &sqlcipher_key,
         &manifest_key,
+        &vault.vault_id,
         &vault.cloud,
         staging_root.path(),
     )
@@ -192,7 +193,12 @@ pub(crate) async fn upload_manifest_backup_payload_for(vault: &TierOneVault, pay
     derive_master_key_into(TEST_PASSWORD, None, &salt, &params, &mut master).unwrap();
     let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
     let manifest_key: [u8; 32] = *keys.manifest_key.expose();
-    let wire = encrypt_manifest_backup(Zeroizing::new(payload.to_vec()), &manifest_key).unwrap();
+    let wire = encrypt_manifest_backup(
+        Zeroizing::new(payload.to_vec()),
+        &manifest_key,
+        &vault.vault_id,
+    )
+    .unwrap();
     let staging_root = tempfile::tempdir().expect("payload bypass staging tempdir must exist");
     let upload_path = staging_root
         .path()
@@ -317,6 +323,7 @@ pub(crate) async fn upload_manifest_backup_for_tier_two(vault: &TierTwoVault) {
         &vault.vault_db_path,
         &sqlcipher_key,
         &manifest_key,
+        &vault.vault_id,
         &vault.cloud,
         staging_root.path(),
     )
