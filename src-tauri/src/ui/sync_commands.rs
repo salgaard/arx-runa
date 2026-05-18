@@ -8,7 +8,7 @@ use secrecy::SecretBox;
 use tauri::State;
 use tauri::ipc::Channel;
 
-use crate::crypto::{ManifestKey, SqlcipherKey};
+use crate::crypto::{ManifestKey, SqlcipherKey, VaultId};
 use crate::storage::SqlCipherMetadataStore;
 use crate::storage::cloud::destination_session::{
     BackupSyncMode, DestinationSession, DestinationType, build_session_rclone_conf,
@@ -525,10 +525,12 @@ pub async fn sync_to_cloud(
         .map_err(|e| IpcError::InternalError(format!("vault header parse failed: {e}")))?;
 
     // Acquire database and cloud transport.
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
     let cloud_transport = state.cloud_transport.read().await.clone();
 
     // Extract keys inside session closures — raw bytes never leave the closures.
@@ -651,11 +653,15 @@ pub async fn recover_from_cloud(
     let manifest_key = extract_manifest_key(&state.session_manager).await?;
 
     let manifest_key_bytes: [u8; 32] = manifest_key.with_exposed(|bytes| *bytes);
+    let crypto_vault_id = uuid::Uuid::parse_str(&vault_id)
+        .map_err(|_| IpcError::InternalError("An error occurred".into()))
+        .map(VaultId::from_uuid)?;
 
     download_manifest_backup(
         &*cloud_transport,
         &staging_dir,
         &manifest_key_bytes,
+        &crypto_vault_id,
         &db_path,
         &sqlcipher_key,
     )
@@ -699,8 +705,11 @@ pub async fn recover_from_cloud(
         IpcError::CloudError("Cloud operation failed".into())
     })?;
 
-    let mut db_guard = state.database.write().await;
-    *db_guard = Some(new_store);
+    state
+        .session_manager
+        .replace_metadata_store(Some(Arc::new(new_store)))
+        .await
+        .map_err(IpcError::from)?;
 
     Ok(())
 }
@@ -729,22 +738,20 @@ pub async fn pull_and_reconcile(
     let staging_dir = vault_staging_dir(&vault_id);
     let probe_path = staging_dir.join("probe-reconcile.db");
 
-    // Quick liveness check — drop immediately so the write lock can be acquired later.
-    {
-        let db_guard = state.database.read().await;
-        if db_guard.as_ref().is_none() {
-            return Err(IpcError::VaultLocked("Vault is locked".into()));
-        }
+    // Quick liveness check.
+    if state.session_manager.get_metadata_store().await.is_none() {
+        return Err(IpcError::VaultLocked("Vault is locked".into()));
     }
 
     // Capture locally pending state before the DB is replaced so re-insertion
     // can restore it into the cloud manifest afterwards.
     let pending_local_state = {
-        let db_guard = state.database.read().await;
-        let db = db_guard
-            .as_ref()
+        let db_store = state
+            .session_manager
+            .get_metadata_store()
+            .await
             .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
-        collect_pending_local_state(db, &staging_dir).await?
+        collect_pending_local_state(&db_store, &staging_dir).await?
     };
 
     let cloud_transport = state.cloud_transport.read().await.clone();
@@ -768,11 +775,15 @@ pub async fn pull_and_reconcile(
 
     // Remove a stale probe DB if present (download_manifest_backup errors if dest exists).
     let _ = tokio::fs::remove_file(&probe_path).await;
+    let crypto_vault_id = uuid::Uuid::parse_str(&vault_id)
+        .map_err(|_| IpcError::InternalError("An error occurred".into()))
+        .map(VaultId::from_uuid)?;
 
     download_manifest_backup(
         &*cloud_transport,
         &staging_dir,
         &manifest_key_bytes,
+        &crypto_vault_id,
         &probe_path,
         &sqlcipher_key,
     )
@@ -791,73 +802,83 @@ pub async fn pull_and_reconcile(
     // UUID and complete file hierarchy) rather than attempting a partial merge
     // that fails when devices have divergent root UUIDs.
     let sqlcipher_key_bytes = sqlcipher_key.with_exposed(|b| *b);
-    {
-        let mut db_write = state.database.write().await;
-        // Drop the existing store — closes the SQLite connection and
-        // checkpoints the WAL so the underlying file can be replaced.
-        *db_write = None;
 
-        // Remove stale WAL/SHM files that a dirty shutdown may have left.
-        let _ = tokio::fs::remove_file(vault_db_path.with_extension("db-wal")).await;
-        let _ = tokio::fs::remove_file(vault_db_path.with_extension("db-shm")).await;
+    // Drop the existing store — signals WAL checkpoint intent; outstanding Arc
+    // clones release naturally as handlers complete their in-flight ops.
+    state
+        .session_manager
+        .replace_metadata_store(None)
+        .await
+        .map_err(IpcError::from)?;
 
-        // Replace the vault DB atomically.  Rust's rename on Windows uses
-        // MoveFileExW(MOVEFILE_REPLACE_EXISTING), which handles an existing
-        // destination without a separate delete step.
-        //
-        // On Windows, antivirus or search-indexer processes may hold the file
-        // open after SQLite closes it.  Retry on SHARING_VIOLATION (os error
-        // 32) with exponential backoff totalling ~34 s before giving up.  On
-        // failure the existing vault.db is still intact, so the vault is
-        // re-opened to avoid leaving the database handle in a broken state.
-        let mut last_replace_err: Option<std::io::Error> = None;
-        'replace: for delay_ms in [0u64, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 15_000] {
-            if delay_ms > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+    // Remove stale WAL/SHM files that a dirty shutdown may have left.
+    let _ = tokio::fs::remove_file(vault_db_path.with_extension("db-wal")).await;
+    let _ = tokio::fs::remove_file(vault_db_path.with_extension("db-shm")).await;
+
+    // Replace the vault DB atomically.  Rust's rename on Windows uses
+    // MoveFileExW(MOVEFILE_REPLACE_EXISTING), which handles an existing
+    // destination without a separate delete step.
+    //
+    // On Windows, antivirus or search-indexer processes may hold the file
+    // open after SQLite closes it.  Retry on SHARING_VIOLATION (os error
+    // 32) with exponential backoff totalling ~34 s before giving up.  On
+    // failure the existing vault.db is still intact, so the vault is
+    // re-opened to avoid leaving the database handle in a broken state.
+    let mut last_replace_err: Option<std::io::Error> = None;
+    'replace: for delay_ms in [0u64, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 15_000] {
+        if delay_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        }
+        match tokio::fs::rename(&probe_path, &vault_db_path).await {
+            Ok(()) => {
+                last_replace_err = None;
+                break 'replace;
             }
-            match tokio::fs::rename(&probe_path, &vault_db_path).await {
-                Ok(()) => {
-                    last_replace_err = None;
-                    break 'replace;
-                }
-                Err(e) if e.raw_os_error() == Some(32) => {
-                    last_replace_err = Some(e);
-                }
-                Err(_cross_device_err) => {
-                    match tokio::fs::copy(&probe_path, &vault_db_path).await {
-                        Ok(_) => {
-                            let _ = tokio::fs::remove_file(&probe_path).await;
-                            last_replace_err = None;
-                        }
-                        Err(e) => last_replace_err = Some(e),
+            Err(e) if e.raw_os_error() == Some(32) => {
+                last_replace_err = Some(e);
+            }
+            Err(_cross_device_err) => {
+                match tokio::fs::copy(&probe_path, &vault_db_path).await {
+                    Ok(_) => {
+                        let _ = tokio::fs::remove_file(&probe_path).await;
+                        last_replace_err = None;
                     }
-                    break 'replace;
+                    Err(e) => last_replace_err = Some(e),
                 }
+                break 'replace;
             }
         }
-        if let Some(e) = last_replace_err {
-            if let Ok(recovered) =
-                SqlCipherMetadataStore::open(&vault_db_path, &sqlcipher_key_bytes).await
-            {
-                *db_write = Some(recovered);
-            }
-            return Err(IpcError::InternalError(format!("replace vault DB: {e}")));
-        }
-
-        let new_db = SqlCipherMetadataStore::open(&vault_db_path, &sqlcipher_key_bytes)
-            .await
-            .map_err(IpcError::from)?;
-        *db_write = Some(new_db);
     }
+    if let Some(e) = last_replace_err {
+        if let Ok(recovered) =
+            SqlCipherMetadataStore::open(&vault_db_path, &sqlcipher_key_bytes).await
+        {
+            let _ = state
+                .session_manager
+                .replace_metadata_store(Some(Arc::new(recovered)))
+                .await;
+        }
+        return Err(IpcError::InternalError(format!("replace vault DB: {e}")));
+    }
+
+    let new_db = SqlCipherMetadataStore::open(&vault_db_path, &sqlcipher_key_bytes)
+        .await
+        .map_err(IpcError::from)?;
+    state
+        .session_manager
+        .replace_metadata_store(Some(Arc::new(new_db)))
+        .await
+        .map_err(IpcError::from)?;
 
     // Re-register pending local files into the new (cloud) manifest DB so the
     // subsequent sync picks them up and uploads the still-present staging blobs.
     let conflicts_renamed = {
-        let db_guard = state.database.read().await;
-        let db = db_guard
-            .as_ref()
+        let db_store = state
+            .session_manager
+            .get_metadata_store()
+            .await
             .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
-        reinsert_pending_state(db, &pending_local_state).await?
+        reinsert_pending_state(&db_store, &pending_local_state).await?
     };
 
     let _ = progress.send(SyncProgressUpdate {
@@ -869,10 +890,12 @@ pub async fn pull_and_reconcile(
 
     // Read cloud_counter from the newly opened DB (it matches the manifest backup counter).
     let (pending_deletions_drained, cloud_counter) = {
-        let db_guard = state.database.read().await;
-        let db = db_guard
-            .as_ref()
+        let db_store = state
+            .session_manager
+            .get_metadata_store()
+            .await
             .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+        let db = &*db_store;
 
         let drained = drain_pending_deletions(db, &*cloud_transport)
             .await
@@ -915,9 +938,8 @@ pub async fn pull_and_reconcile(
 pub async fn get_sync_status(state: State<'_, AppState>) -> Result<SyncStatus, IpcError> {
     state.session_manager.reset_timer().await;
     let mut status = state.sync_status.read().await.clone();
-    let db_guard = state.database.read().await;
-    if let Some(db) = db_guard.as_ref() {
-        status.pending_changes = db.get_epoch_buffer_count().await.unwrap_or(0);
+    if let Some(db_store) = state.session_manager.get_metadata_store().await {
+        status.pending_changes = db_store.get_epoch_buffer_count().await.unwrap_or(0);
     }
     Ok(status)
 }
@@ -964,11 +986,16 @@ pub async fn migrate_vault(
         })
         .await
         .map_err(IpcError::from)?;
+    let crypto_vault_id = uuid::Uuid::parse_str(&vault_id)
+        .map_err(|_| IpcError::InternalError("An error occurred".into()))
+        .map(VaultId::from_uuid)?;
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     let all_sessions = list_destination_sessions(db)
         .await
@@ -1059,6 +1086,7 @@ pub async fn migrate_vault(
         &db_path,
         &sqlcipher_key,
         &manifest_key_bytes,
+        &crypto_vault_id,
         &*new_transport,
         &staging_dir,
     )
@@ -1161,11 +1189,16 @@ pub async fn sync_backup(
         })
         .await
         .map_err(IpcError::from)?;
+    let crypto_vault_id = uuid::Uuid::parse_str(&vault_id)
+        .map_err(|_| IpcError::InternalError("An error occurred".into()))
+        .map(VaultId::from_uuid)?;
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     // Flush any epoch-buffered files before pushing to backup destinations.
     {
@@ -1388,6 +1421,7 @@ pub async fn sync_backup(
             &db_path,
             &sqlcipher_key,
             &manifest_key_bytes,
+            &crypto_vault_id,
             &transport,
             &staging_dir,
         )
@@ -1513,10 +1547,12 @@ pub async fn get_backup_health(
     state.session_manager.reset_timer().await;
     require_active_session(&state).await?;
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     let failure_counts = db
         .get_backup_failure_counts()

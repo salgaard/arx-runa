@@ -2,14 +2,12 @@
 //!
 //! Wrapped file keys are stored in the local SQLCipher manifest; the wire
 //! format is `[24-byte nonce | 32-byte ciphertext | 16-byte tag] = 72 bytes`.
-//! AAD is intentionally empty — the wrapped blob is scoped by the
-//! `key_encryption_key` domain and the SQLCipher manifest, so no external
-//! context binding is required. Recovery-slot wrapping uses distinct
-//! functions with non-empty AAD and is owned by Phase 2.
+//! AAD is the 16-byte `file_id` UUID bytes, binding the wrapped blob to its
+//! file identity and preventing cross-file key substitution.
 
 use crate::crypto::error::CryptoError;
 use crate::crypto::nonce::generate_nonce;
-use crate::crypto::types::{FileKey, KeyEncryptionKey, WrappedFileKey};
+use crate::crypto::types::{FileId, FileKey, KeyEncryptionKey, WrappedFileKey};
 use chacha20poly1305::{
     AeadInPlace, KeyInit, XChaCha20Poly1305, aead::generic_array::GenericArray,
 };
@@ -23,9 +21,12 @@ const WRAPPED_LEN: usize = NONCE_LEN + KEY_LEN + TAG_LEN;
 
 /// Wraps a 32-byte file key with the key-encryption key.
 ///
-/// Uses XChaCha20-Poly1305 with a fresh CSPRNG nonce and empty AAD. The
-/// 72-byte output embeds the nonce, the encrypted key, and the Poly1305 tag
-/// so the wrapped blob is self-contained.
+/// Uses XChaCha20-Poly1305 with a fresh CSPRNG nonce. `file_id.as_bytes()`
+/// (16 bytes) is passed as AAD, binding the wrapped blob to its file identity
+/// and rejecting cross-file key substitution at the AEAD layer.
+///
+/// The 72-byte output embeds the nonce, the encrypted key, and the Poly1305
+/// tag so the wrapped blob is self-contained.
 ///
 /// The plaintext file key is copied into a `Zeroizing` buffer so the
 /// in-place encryption target is zeroed on drop even if the function
@@ -38,6 +39,7 @@ const WRAPPED_LEN: usize = NONCE_LEN + KEY_LEN + TAG_LEN;
 /// failures instead of panicking.
 pub fn wrap_file_key(
     file_key: &FileKey,
+    file_id: &FileId,
     key_encryption_key: &KeyEncryptionKey,
 ) -> Result<WrappedFileKey, CryptoError> {
     let nonce_bytes = generate_nonce();
@@ -48,7 +50,7 @@ pub fn wrap_file_key(
     let nonce = GenericArray::from_slice(&nonce_bytes);
 
     let tag = cipher
-        .encrypt_in_place_detached(nonce, &[], ciphertext.as_mut_slice())
+        .encrypt_in_place_detached(nonce, file_id.as_bytes(), ciphertext.as_mut_slice())
         .map_err(|_| CryptoError::KeyWrapFailed)?;
 
     let mut wire = [0u8; WRAPPED_LEN];
@@ -61,15 +63,19 @@ pub fn wrap_file_key(
 
 /// Unwraps a `WrappedFileKey`, returning a fresh `FileKey`.
 ///
+/// `file_id` must match the value used during [`wrap_file_key`]; a mismatch
+/// causes AEAD authentication failure and returns `CryptoError::DecryptionFailed`.
+///
 /// Decryption runs inside a `SecretBox<[u8; 32]>` via `init_with_mut`, so on
 /// authentication failure the partial-keystream buffer is zeroized by the
 /// `SecretBox`'s `Drop` rather than lingering on the stack.
 ///
 /// # Errors
 /// Returns `CryptoError::DecryptionFailed` if the authentication tag does
-/// not verify (wrong `key_encryption_key` or tampered wrapped blob).
+/// not verify (wrong `key_encryption_key`, wrong `file_id`, or tampered blob).
 pub fn unwrap_file_key(
     wrapped: &WrappedFileKey,
+    file_id: &FileId,
     key_encryption_key: &KeyEncryptionKey,
 ) -> Result<FileKey, CryptoError> {
     let nonce_slice = &wrapped.0[..NONCE_LEN];
@@ -83,7 +89,8 @@ pub fn unwrap_file_key(
     let mut decrypt_result: Result<(), chacha20poly1305::Error> = Ok(());
     let file_key_secret_box = SecretBox::<[u8; KEY_LEN]>::init_with_mut(|buffer| {
         buffer.copy_from_slice(ciphertext_slice);
-        decrypt_result = cipher.decrypt_in_place_detached(nonce, &[], buffer.as_mut_slice(), tag);
+        decrypt_result =
+            cipher.decrypt_in_place_detached(nonce, file_id.as_bytes(), buffer.as_mut_slice(), tag);
     });
 
     match decrypt_result {
@@ -101,7 +108,7 @@ pub fn unwrap_file_key(
 mod tests {
     use super::{WRAPPED_LEN, unwrap_file_key, wrap_file_key};
     use crate::crypto::error::CryptoError;
-    use crate::crypto::types::{FileKey, KeyEncryptionKey, WrappedFileKey};
+    use crate::crypto::types::{FileId, FileKey, KeyEncryptionKey, WrappedFileKey};
 
     fn make_file_key(byte: u8) -> FileKey {
         FileKey::from_bytes([byte; 32])
@@ -111,22 +118,28 @@ mod tests {
         KeyEncryptionKey::from_bytes([byte; 32])
     }
 
+    fn make_file_id(byte: u8) -> FileId {
+        FileId::new([byte; 16])
+    }
+
     #[test]
     fn test_wrap_unwrap_file_key_round_trip_returns_original_bytes() {
         let original = make_file_key(0x11);
+        let file_id = make_file_id(0xAA);
         let kek = make_kek(0x22);
         let original_bytes = *original.expose();
 
-        let wrapped = wrap_file_key(&original, &kek).expect("wrap must succeed");
-        let recovered = unwrap_file_key(&wrapped, &kek).expect("round trip must succeed");
+        let wrapped = wrap_file_key(&original, &file_id, &kek).expect("wrap must succeed");
+        let recovered = unwrap_file_key(&wrapped, &file_id, &kek).expect("round trip must succeed");
 
         assert_eq!(*recovered.expose(), original_bytes);
     }
 
     #[test]
     fn test_wrap_file_key_wire_format_is_seventy_two_bytes() {
-        let wrapped =
-            wrap_file_key(&make_file_key(0xAA), &make_kek(0xBB)).expect("wrap must succeed");
+        let file_id = make_file_id(0xCC);
+        let wrapped = wrap_file_key(&make_file_key(0xAA), &file_id, &make_kek(0xBB))
+            .expect("wrap must succeed");
         assert_eq!(wrapped.0.len(), WRAPPED_LEN);
         assert_eq!(WRAPPED_LEN, 72);
     }
@@ -134,10 +147,11 @@ mod tests {
     #[test]
     fn test_wrap_file_key_two_calls_produce_different_blobs() {
         let file_key = make_file_key(0xCD);
+        let file_id = make_file_id(0x01);
         let kek = make_kek(0xEF);
 
-        let first = wrap_file_key(&file_key, &kek).expect("wrap must succeed");
-        let second = wrap_file_key(&file_key, &kek).expect("wrap must succeed");
+        let first = wrap_file_key(&file_key, &file_id, &kek).expect("wrap must succeed");
+        let second = wrap_file_key(&file_key, &file_id, &kek).expect("wrap must succeed");
 
         assert_ne!(
             first.0, second.0,
@@ -149,22 +163,41 @@ mod tests {
     #[test]
     fn test_unwrap_file_key_wrong_kek_fails_with_decryption_failed() {
         let file_key = make_file_key(0x11);
-        let wrapped = wrap_file_key(&file_key, &make_kek(0x22)).expect("wrap must succeed");
+        let file_id = make_file_id(0x01);
+        let wrapped =
+            wrap_file_key(&file_key, &file_id, &make_kek(0x22)).expect("wrap must succeed");
 
-        let result = unwrap_file_key(&wrapped, &make_kek(0x33));
+        let result = unwrap_file_key(&wrapped, &file_id, &make_kek(0x33));
 
         assert!(matches!(result, Err(CryptoError::DecryptionFailed)));
     }
 
     #[test]
+    fn test_unwrap_file_key_wrong_file_id_fails_with_decryption_failed() {
+        let file_key = make_file_key(0x11);
+        let file_id_a = make_file_id(0xAA);
+        let file_id_b = make_file_id(0xBB);
+        let kek = make_kek(0x22);
+        let wrapped = wrap_file_key(&file_key, &file_id_a, &kek).expect("wrap must succeed");
+
+        let result = unwrap_file_key(&wrapped, &file_id_b, &kek);
+
+        assert!(
+            matches!(result, Err(CryptoError::DecryptionFailed)),
+            "wrong file_id must be rejected by AEAD"
+        );
+    }
+
+    #[test]
     fn test_unwrap_file_key_corrupted_nonce_fails_with_decryption_failed() {
         let file_key = make_file_key(0x11);
+        let file_id = make_file_id(0x01);
         let kek = make_kek(0x22);
-        let mut wrapped = wrap_file_key(&file_key, &kek).expect("wrap must succeed");
+        let mut wrapped = wrap_file_key(&file_key, &file_id, &kek).expect("wrap must succeed");
 
         wrapped.0[0] ^= 0x01;
 
-        let result = unwrap_file_key(&wrapped, &kek);
+        let result = unwrap_file_key(&wrapped, &file_id, &kek);
 
         assert!(matches!(result, Err(CryptoError::DecryptionFailed)));
     }
@@ -172,13 +205,14 @@ mod tests {
     #[test]
     fn test_unwrap_file_key_corrupted_ciphertext_fails_with_decryption_failed() {
         let file_key = make_file_key(0x11);
+        let file_id = make_file_id(0x01);
         let kek = make_kek(0x22);
-        let mut wrapped = wrap_file_key(&file_key, &kek).expect("wrap must succeed");
+        let mut wrapped = wrap_file_key(&file_key, &file_id, &kek).expect("wrap must succeed");
 
         // Offset 24..56 is the 32-byte ciphertext region.
         wrapped.0[24 + 5] ^= 0x01;
 
-        let result = unwrap_file_key(&wrapped, &kek);
+        let result = unwrap_file_key(&wrapped, &file_id, &kek);
 
         assert!(matches!(result, Err(CryptoError::DecryptionFailed)));
     }
@@ -186,23 +220,25 @@ mod tests {
     #[test]
     fn test_unwrap_file_key_corrupted_tag_fails_with_decryption_failed() {
         let file_key = make_file_key(0x11);
+        let file_id = make_file_id(0x01);
         let kek = make_kek(0x22);
-        let mut wrapped = wrap_file_key(&file_key, &kek).expect("wrap must succeed");
+        let mut wrapped = wrap_file_key(&file_key, &file_id, &kek).expect("wrap must succeed");
 
         let tag_index = wrapped.0.len() - 1;
         wrapped.0[tag_index] ^= 0x01;
 
-        let result = unwrap_file_key(&wrapped, &kek);
+        let result = unwrap_file_key(&wrapped, &file_id, &kek);
 
         assert!(matches!(result, Err(CryptoError::DecryptionFailed)));
     }
 
     #[test]
     fn test_unwrap_file_key_all_zero_wrapped_blob_fails_with_decryption_failed() {
+        let file_id = make_file_id(0x01);
         let kek = make_kek(0x22);
         let wrapped = WrappedFileKey([0u8; 72]);
 
-        let result = unwrap_file_key(&wrapped, &kek);
+        let result = unwrap_file_key(&wrapped, &file_id, &kek);
 
         assert!(matches!(result, Err(CryptoError::DecryptionFailed)));
     }

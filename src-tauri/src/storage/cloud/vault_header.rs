@@ -51,7 +51,8 @@ pub struct VaultHeader {
     pub argon2_salt: String,
     /// Argon2id parameters for the primary slot.
     pub argon2_params: Argon2ParamsJson,
-    /// BLAKE3 hex digest of the USB key file; `None` for tier 1.
+    /// BLAKE3 hex digest of the USB key file; local-only hint, never uploaded to cloud.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_file_blake3: Option<String>,
     /// Recovery slots; empty until `setup_recovery` runs.
     #[serde(default)]
@@ -103,20 +104,15 @@ impl VaultHeader {
             ));
         }
         match self.tier {
-            1 => {
-                if self.key_file_blake3.is_some() {
-                    return Err(VaultHeaderError::Tier1WithKeyFileBlake3);
-                }
-            }
-            2 => {
-                let hex_digest = self
-                    .key_file_blake3
-                    .as_ref()
-                    .ok_or(VaultHeaderError::Tier2MissingKeyFileBlake3)?;
-                let digest = hex::decode(hex_digest)
-                    .map_err(|_| VaultHeaderError::KeyFileBlake3DecodeFailed)?;
-                if digest.len() != 32 {
-                    return Err(VaultHeaderError::KeyFileBlake3WrongLength);
+            1 | 2 => {
+                // key_file_blake3 is a local-only hint field stripped before cloud upload;
+                // validate format only when present.
+                if let Some(hex_digest) = &self.key_file_blake3 {
+                    let digest = hex::decode(hex_digest)
+                        .map_err(|_| VaultHeaderError::KeyFileBlake3DecodeFailed)?;
+                    if digest.len() != 32 {
+                        return Err(VaultHeaderError::KeyFileBlake3WrongLength);
+                    }
                 }
             }
             other => return Err(VaultHeaderError::UnsupportedTier(other)),
@@ -181,12 +177,6 @@ pub enum VaultHeaderError {
     /// Tier field is neither `1` nor `2`.
     #[error("unsupported tier: {0}")]
     UnsupportedTier(u8),
-    /// A tier 1 header incorrectly carries a `key_file_blake3` value.
-    #[error("tier 1 vault must not carry a key_file_blake3 field")]
-    Tier1WithKeyFileBlake3,
-    /// A tier 2 header is missing its mandatory `key_file_blake3` value.
-    #[error("tier 2 vault missing key_file_blake3 field")]
-    Tier2MissingKeyFileBlake3,
     /// The `key_file_blake3` field is not valid hex.
     #[error("key_file_blake3 failed hex decode")]
     KeyFileBlake3DecodeFailed,
@@ -315,32 +305,6 @@ mod tests {
         assert!(matches!(
             result,
             Err(VaultHeaderError::UnsupportedSchemaVersion(999))
-        ));
-    }
-
-    #[test]
-    fn test_vault_header_validate_rejects_tier1_with_key_file_blake3() {
-        let mut header = valid_tier1_header();
-        header.key_file_blake3 = Some("f".repeat(64));
-
-        let result = header.validate();
-
-        assert!(matches!(
-            result,
-            Err(VaultHeaderError::Tier1WithKeyFileBlake3)
-        ));
-    }
-
-    #[test]
-    fn test_vault_header_validate_rejects_tier2_missing_key_file_blake3() {
-        let mut header = valid_tier2_header();
-        header.key_file_blake3 = None;
-
-        let result = header.validate();
-
-        assert!(matches!(
-            result,
-            Err(VaultHeaderError::Tier2MissingKeyFileBlake3)
         ));
     }
 

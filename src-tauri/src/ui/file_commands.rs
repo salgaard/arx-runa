@@ -11,6 +11,7 @@ use secrecy::SecretBox;
 use tauri::State;
 use tauri::ipc::Channel;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::crypto::KeyEncryptionKey;
 use crate::storage::cloud::sync::fetch_missing_file_blobs;
@@ -160,16 +161,16 @@ async fn require_vault_id(state: &AppState) -> Result<String, IpcError> {
 
 /// Copies the KEK out of the session guard and wraps it in a `KeyEncryptionKey`.
 ///
-/// The raw bytes are moved directly into the `SecretBox` heap buffer so no
-/// cleartext copy remains on the stack longer than necessary.
+/// The intermediate stack copy is wrapped in `Zeroizing` so it is cleared
+/// before the `SecretBox` heap allocation takes ownership.
 pub(crate) async fn extract_kek(state: &AppState) -> Result<KeyEncryptionKey, IpcError> {
-    let kek_raw: [u8; 32] = state
+    let kek_raw: Zeroizing<[u8; 32]> = state
         .session_manager
-        .with_key_encryption_key(|k| *k)
+        .with_key_encryption_key(|k| Zeroizing::new(*k))
         .await
         .map_err(IpcError::from)?;
     Ok(KeyEncryptionKey::from_secret_box(SecretBox::new(Box::new(
-        kek_raw,
+        *kek_raw,
     ))))
 }
 
@@ -191,10 +192,12 @@ pub async fn list_directory(
     let normalised = normalise_vault_path(&path);
     validate_vault_path(normalised)?;
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     // Determine the parent UUID to list.
     // Phase 6.5: empty path → look up "root_id" in manifest_meta.
@@ -263,10 +266,12 @@ pub async fn upload_file(
     let vault_id = require_vault_id(&state).await?;
     let staging_dir = vault_staging_dir(&vault_id);
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     let kek = extract_kek(&state).await?;
 
@@ -330,10 +335,12 @@ pub async fn download_file(
     let vault_id = require_vault_id(&state).await?;
     let staging_dir = vault_staging_dir(&vault_id);
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     let kek = extract_kek(&state).await?;
 
@@ -386,10 +393,12 @@ pub async fn delete_file(file_id: String, state: State<'_, AppState>) -> Result<
     let vault_id = require_vault_id(&state).await?;
     let staging_dir = vault_staging_dir(&vault_id);
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     vault_delete(node_uuid, db, &staging_dir)
         .await
@@ -415,10 +424,12 @@ pub async fn delete_directory(
     let vault_id = require_vault_id(&state).await?;
     let staging_dir = vault_staging_dir(&vault_id);
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     vault_delete_directory(node_uuid, db, &staging_dir)
         .await
@@ -445,10 +456,12 @@ pub async fn get_file_content(
     let node_uuid =
         Uuid::parse_str(&file_id).map_err(|_| IpcError::InvalidInput("Invalid file ID".into()))?;
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     // Check manifest size BEFORE decrypting to enforce the 50 MiB limit.
     let node = db.get_node(node_uuid).await.map_err(IpcError::from)?;
@@ -521,10 +534,12 @@ pub async fn prefetch_video(
     let vault_id = require_vault_id(&state).await?;
     let staging_dir = vault_staging_dir(&vault_id);
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     let progress_ch = ProgressChannel::new(progress);
     let _ = progress_ch.try_send_if_open(ProgressUpdate {
@@ -614,10 +629,12 @@ pub async fn flush_epoch_buffer(
     let vault_id = require_vault_id(&state).await?;
     let staging_dir = vault_staging_dir(&vault_id);
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     let kek = extract_kek(&state).await?;
     let chunk_size_bytes = crate::storage::pipeline::read_chunk_size_bytes(db)
@@ -743,10 +760,12 @@ pub async fn create_vault_directory(
         .ok_or_else(|| IpcError::InvalidInput("Vault path has no valid directory name".into()))?
         .to_owned();
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     let parent_id = resolve_parent_uuid(vault_path, db).await?;
 

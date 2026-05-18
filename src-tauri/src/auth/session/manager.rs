@@ -646,7 +646,6 @@ impl SessionManager {
     /// # Errors
     /// Returns `AuthenticationError::SessionNotActive` if no session is
     /// currently installed.
-    #[allow(dead_code)]
     pub(crate) async fn with_key_encryption_key<F, R>(
         &self,
         callback: F,
@@ -668,7 +667,6 @@ impl SessionManager {
     /// # Errors
     /// Returns `AuthenticationError::SessionNotActive` if no session is
     /// currently installed.
-    #[allow(dead_code)]
     pub(crate) async fn with_sqlcipher_key<F, R>(
         &self,
         callback: F,
@@ -710,6 +708,24 @@ impl SessionManager {
         session_guard
             .as_ref()
             .and_then(|keys| keys.get_metadata_store())
+    }
+
+    /// Replaces the metadata store in the active session.
+    ///
+    /// Used by cloud-recovery flows that open a fresh SQLCipher connection after
+    /// replacing the vault DB file on disk. Passing `None` drops the current
+    /// connection (triggering WAL checkpoint when all cloned Arcs are released).
+    /// Returns `Err(SessionNotActive)` if there is no active session.
+    pub async fn replace_metadata_store(
+        &self,
+        store: Option<Arc<SqlCipherMetadataStore>>,
+    ) -> Result<(), AuthenticationError> {
+        let mut session_guard = self.session.write().await;
+        let keys = session_guard
+            .as_mut()
+            .ok_or(AuthenticationError::SessionNotActive)?;
+        keys.metadata_store = store;
+        Ok(())
     }
 
     /// Returns the seconds remaining until session timeout, or `None` if not `Active`.

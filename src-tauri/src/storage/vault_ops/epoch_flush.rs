@@ -116,7 +116,8 @@ async fn flush_one_blob(
 
     let epoch_blob_id = Uuid::new_v4();
     let file_key: FileKey = generate_file_key();
-    let wrapped_file_key = wrap_file_key(&file_key, kek).map_err(StorageError::from)?;
+    let wrapped_file_key = wrap_file_key(&file_key, &FileId::from_uuid(epoch_blob_id), kek)
+        .map_err(StorageError::from)?;
 
     let packed_owned = std::mem::take(packed.as_mut());
     let encrypted = encrypt_chunk(

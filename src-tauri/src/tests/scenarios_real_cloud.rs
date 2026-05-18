@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use crate::auth::ceremonies::test_support::*;
-use crate::crypto::{KeyEncryptionKey, ManifestKey, SqlcipherKey, WrappedFileKey, unwrap_file_key};
+use crate::crypto::{
+    FileId, KeyEncryptionKey, ManifestKey, SqlcipherKey, WrappedFileKey, unwrap_file_key,
+};
 use crate::storage::cloud::{CloudTransport, MANIFEST_BACKUP_BLOB_NAME};
 use crate::storage::{
     BackupSyncMode, CloudEndpoint, DestinationSessionPublic, DestinationType, MetadataStore,
@@ -392,8 +394,12 @@ async fn test_b2_backup_round_trip_bytes_survive_upload_and_download() {
     let wrapped_bytes = node
         .file_key_wrapped
         .expect("uploaded node must carry a wrapped file key");
-    let file_key = unwrap_file_key(&WrappedFileKey::new(wrapped_bytes), &kek)
-        .expect("file key must unwrap with the same KEK used at upload");
+    let file_key = unwrap_file_key(
+        &WrappedFileKey::new(wrapped_bytes),
+        &FileId::from_uuid(node_id),
+        &kek,
+    )
+    .expect("file key must unwrap with the same KEK used at upload");
 
     let dest_temp = temp_dir();
     let dest_path = dest_temp.path().join("output.bin");
@@ -566,8 +572,12 @@ async fn test_gdrive_backup_round_trip_bytes_survive_upload_and_download() {
     let wrapped_bytes = node
         .file_key_wrapped
         .expect("uploaded node must carry a wrapped file key");
-    let file_key = unwrap_file_key(&WrappedFileKey::new(wrapped_bytes), &kek)
-        .expect("file key must unwrap with the same KEK used at upload");
+    let file_key = unwrap_file_key(
+        &WrappedFileKey::new(wrapped_bytes),
+        &FileId::from_uuid(node_id),
+        &kek,
+    )
+    .expect("file key must unwrap with the same KEK used at upload");
 
     let dest_temp = temp_dir();
     let dest_path = dest_temp.path().join("output.bin");
@@ -750,8 +760,12 @@ async fn test_onedrive_backup_round_trip_bytes_survive_upload_and_download() {
     let wrapped_bytes = node
         .file_key_wrapped
         .expect("uploaded node must carry a wrapped file key");
-    let file_key = unwrap_file_key(&WrappedFileKey::new(wrapped_bytes), &kek)
-        .expect("file key must unwrap with the same KEK used at upload");
+    let file_key = unwrap_file_key(
+        &WrappedFileKey::new(wrapped_bytes),
+        &FileId::from_uuid(node_id),
+        &kek,
+    )
+    .expect("file key must unwrap with the same KEK used at upload");
 
     let dest_temp = temp_dir();
     let dest_path = dest_temp.path().join("output.bin");

@@ -10,7 +10,7 @@ use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::{
-    RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
+    FileId, RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
     unwrap_master_key_from_recovery, wrap_file_key, wrap_master_key_for_recovery,
 };
 use crate::storage::cloud::vault_header::VaultHeader;
@@ -91,7 +91,9 @@ pub async fn rotate_key_file(
         match request.recovery_phrase {
             None => will_remove_slots = true,
             Some(phrase) => {
-                let mnemonic = parse_mnemonic(phrase)?;
+                let phrase_str = std::str::from_utf8(phrase)
+                    .map_err(|_| AuthenticationError::InvalidRecoveryPhrase)?;
+                let mnemonic = parse_mnemonic(phrase_str)?;
                 let canonical = canonicalize_phrase(&mnemonic);
                 let slot_index = vault_header
                     .recovery_slots
@@ -138,6 +140,7 @@ pub async fn rotate_key_file(
     let new_kek = key_encryption_key_from_array(new_session_keys.key_encryption_key.expose());
     let new_sqlcipher = sqlcipher_key_from_array(new_session_keys.sqlcipher_key.expose());
 
+    let vault_id_bytes = *vault_id.as_bytes();
     let vault_db_path = request.vault_db_path.clone();
     let rewrap_result: Result<(), AuthenticationError> =
         tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
@@ -157,13 +160,17 @@ pub async fn rotate_key_file(
                         .collect::<Result<_, _>>()
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
                     for (node_id, wrapped_blob) in rows {
+                        let file_id = FileId::from_uuid(
+                            uuid::Uuid::parse_str(&node_id)
+                                .map_err(|_| AuthenticationError::InvalidCredentials)?,
+                        );
                         let wrapped_array: [u8; 72] = wrapped_blob
                             .try_into()
                             .map_err(|_| AuthenticationError::InvalidCredentials)?;
                         let wrapped = WrappedFileKey::new(wrapped_array);
-                        let file_key = unwrap_file_key(&wrapped, &current_kek)
+                        let file_key = unwrap_file_key(&wrapped, &file_id, &current_kek)
                             .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                        let rewrapped = wrap_file_key(&file_key, &new_kek)
+                        let rewrapped = wrap_file_key(&file_key, &file_id, &new_kek)
                             .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
                         conn.execute(
                             "UPDATE nodes SET file_key_wrapped = ? WHERE node_id = ?",
@@ -172,6 +179,7 @@ pub async fn rotate_key_file(
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
                     }
                 }
+                let identity_file_id = FileId::new(vault_id_bytes);
                 let identity_wrapped: Option<Vec<u8>> = conn
                     .query_row(
                         "SELECT wrapped_private_key FROM vault_identity WHERE id = 1",
@@ -185,9 +193,9 @@ pub async fn rotate_key_file(
                         .try_into()
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
                     let wrapped = WrappedFileKey::new(wrapped_array);
-                    let file_key = unwrap_file_key(&wrapped, &current_kek)
+                    let file_key = unwrap_file_key(&wrapped, &identity_file_id, &current_kek)
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    let rewrapped = wrap_file_key(&file_key, &new_kek)
+                    let rewrapped = wrap_file_key(&file_key, &identity_file_id, &new_kek)
                         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
                     conn.execute(
                         "UPDATE vault_identity SET wrapped_private_key = ? WHERE id = 1",
@@ -259,6 +267,7 @@ pub async fn rotate_key_file(
         &request.vault_db_path,
         &new_sqlcipher_for_upload,
         &new_manifest_key_bytes,
+        vault_id,
         cloud_transport,
         &staging_dir,
     )
@@ -310,7 +319,8 @@ mod tests {
         CreateVaultRequest, SetupRecoveryRequest, Tier, create_vault, setup_recovery,
     };
     use crate::crypto::{
-        RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_master_key_from_recovery,
+        FileId, RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey,
+        unwrap_master_key_from_recovery,
     };
     use crate::storage::cloud::CloudTransport;
     use crate::storage::cloud::CloudTransportError;
@@ -523,7 +533,7 @@ mod tests {
             password_bytes: TEST_PASSWORD,
             current_key_source: &old_source,
             target_new_key_file_path: new_path,
-            recovery_phrase: Some(&phrase_string),
+            recovery_phrase: Some(phrase_string.as_bytes()),
             argon2_params: test_params(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
@@ -599,7 +609,7 @@ mod tests {
             password_bytes: TEST_PASSWORD,
             current_key_source: &old_source,
             target_new_key_file_path: new_path.clone(),
-            recovery_phrase: Some(&wrong_phrase),
+            recovery_phrase: Some(wrong_phrase.as_bytes()),
             argon2_params: test_params(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
@@ -784,10 +794,11 @@ mod tests {
         )
         .unwrap();
         let current_keys = SessionKeys::from_master_key_bytes(&current_master).unwrap();
-        let current_kek: [u8; 32] = *current_keys.key_encryption_key.expose();
-        let current_sqlcipher: [u8; 32] = *current_keys.sqlcipher_key.expose();
+        let current_kek = Zeroizing::new(*current_keys.key_encryption_key.expose());
+        let current_sqlcipher = Zeroizing::new(*current_keys.sqlcipher_key.expose());
 
-        let wrapped = wrap_with_kek_bytes(&current_kek, &[0x44u8; 32]).unwrap();
+        let wrapped =
+            wrap_with_kek_bytes(&current_kek, &FileId::new([0u8; 16]), &[0x44u8; 32]).unwrap();
         let wrapped_vec = wrapped.as_bytes().to_vec();
         let vault_db_path = vault.vault_db_path.clone();
         tokio::task::spawn_blocking(move || {

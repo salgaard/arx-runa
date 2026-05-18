@@ -14,7 +14,7 @@ use tauri::ipc::Channel;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::crypto::{KeyEncryptionKey, WrappedFileKey, unwrap_file_key};
+use crate::crypto::{FileId, KeyEncryptionKey, WrappedFileKey, unwrap_file_key};
 use crate::sharing::{
     Contact, ContactId, DisplayName, SharingStore, X25519PublicKey, export_public_key_bytes,
     import_share_package, public_key_qr_string,
@@ -73,16 +73,16 @@ fn days_since_epoch_to_date(days: u64) -> (u32, u32, u32) {
 
 /// Copies the KEK out of the session guard and wraps it in a `KeyEncryptionKey`.
 ///
-/// The raw bytes are moved directly into the `SecretBox` heap buffer so no
-/// cleartext copy remains on the stack longer than necessary.
+/// The intermediate stack copy is wrapped in `Zeroizing` so it is cleared
+/// before the `SecretBox` heap allocation takes ownership.
 async fn extract_kek(state: &AppState) -> Result<KeyEncryptionKey, IpcError> {
-    let kek_raw: [u8; 32] = state
+    let kek_raw: Zeroizing<[u8; 32]> = state
         .session_manager
-        .with_key_encryption_key(|k| *k)
+        .with_key_encryption_key(|k| Zeroizing::new(*k))
         .await
         .map_err(IpcError::from)?;
     Ok(KeyEncryptionKey::from_secret_box(SecretBox::new(Box::new(
-        kek_raw,
+        *kek_raw,
     ))))
 }
 
@@ -97,10 +97,10 @@ pub(crate) async fn sweep_expired_shares(state: &AppState) {
     let transport = state.cloud_transport.read().await.clone();
 
     let expired_ids: Vec<String> = {
-        let db_guard = state.database.read().await;
-        let Some(db) = db_guard.as_ref() else {
+        let Some(db_store) = state.session_manager.get_metadata_store().await else {
             return;
         };
+        let db = &*db_store;
         match db
             .with_connection_blocking(move |conn| {
                 let mut stmt = conn
@@ -131,10 +131,10 @@ pub(crate) async fn sweep_expired_shares(state: &AppState) {
     };
 
     for share_id in &expired_ids {
-        let db_guard = state.database.read().await;
-        let Some(db) = db_guard.as_ref() else {
+        let Some(db_store) = state.session_manager.get_metadata_store().await else {
             continue;
         };
+        let db = &*db_store;
         if let Err(e) =
             crate::sharing::revoke_share(share_id, now, db as &dyn SharingStore, &*transport).await
         {
@@ -156,10 +156,12 @@ pub async fn export_public_key(
     state.session_manager.reset_timer().await;
     require_active_session(&state).await?;
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     let public_key = (db as &dyn SharingStore)
         .get_own_public_key()
@@ -185,10 +187,12 @@ pub async fn get_own_public_key_b64(state: State<'_, AppState>) -> Result<String
     state.session_manager.reset_timer().await;
     require_active_session(&state).await?;
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     let public_key = (db as &dyn SharingStore)
         .get_own_public_key()
@@ -244,10 +248,12 @@ pub async fn add_contact(
         created_at,
     };
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     (db as &dyn SharingStore)
         .insert_contact(&contact)
@@ -271,10 +277,12 @@ pub async fn list_contacts(state: State<'_, AppState>) -> Result<Vec<ContactEntr
     state.session_manager.reset_timer().await;
     require_active_session(&state).await?;
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     let contacts = (db as &dyn SharingStore)
         .list_contacts()
@@ -341,10 +349,12 @@ pub async fn share_file(
     let transport = state.cloud_transport.read().await.clone();
 
     let (output, contact_email) = {
-        let db_guard = state.database.read().await;
-        let db = db_guard
-            .as_ref()
+        let db_store = state
+            .session_manager
+            .get_metadata_store()
+            .await
             .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+        let db = &*db_store;
 
         let contact = (db as &dyn SharingStore)
             .get_contact(contact_domain_id)
@@ -446,10 +456,12 @@ pub async fn import_share(
 
     // Scope the DB lock: import, look up sender name, then release before async upload.
     let (share_id, file_name, sender_name, import_receipt_ctx) = {
-        let db_guard = state.database.read().await;
-        let db = db_guard
-            .as_ref()
+        let db_store = state
+            .session_manager
+            .get_metadata_store()
+            .await
             .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+        let db = &*db_store;
 
         // Retrieve the wrapped X25519 private key from the vault identity row.
         let wrapped_blob: Vec<u8> = db
@@ -470,10 +482,15 @@ pub async fn import_share(
             .try_into()
             .map_err(|_| IpcError::InternalError("Vault identity key blob corrupted".into()))?;
 
+        let vault_uuid_for_identity = Uuid::parse_str(&vault_id)
+            .map_err(|_| IpcError::InternalError("Invalid vault ID".into()))?;
         let wrapped_key = WrappedFileKey::new(wrapped_array);
-        let private_key_secret = unwrap_file_key(&wrapped_key, &kek).map_err(|_| {
-            IpcError::AuthenticationFailed("Vault identity key unwrap failed".into())
-        })?;
+        let private_key_secret = unwrap_file_key(
+            &wrapped_key,
+            &FileId::from_uuid(vault_uuid_for_identity),
+            &kek,
+        )
+        .map_err(|_| IpcError::AuthenticationFailed("Vault identity key unwrap failed".into()))?;
 
         let private_key_bytes: Zeroizing<[u8; 32]> =
             Zeroizing::new(private_key_secret.with_exposed(|bytes| *bytes));
@@ -568,10 +585,12 @@ pub async fn revoke_share(share_id: String, state: State<'_, AppState>) -> Resul
     let transport = state.cloud_transport.read().await.clone();
 
     let (download_key_id, download_folder_id) = {
-        let db_guard = state.database.read().await;
-        let db = db_guard
-            .as_ref()
+        let db_store = state
+            .session_manager
+            .get_metadata_store()
+            .await
             .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+        let db = &*db_store;
         let sharing = db as &dyn SharingStore;
         sharing
             .get_share(&share_id)
@@ -581,17 +600,17 @@ pub async fn revoke_share(share_id: String, state: State<'_, AppState>) -> Resul
             .unwrap_or((None, None))
     };
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     // Use the fully qualified path to avoid shadowing this command function.
     crate::sharing::revoke_share(&share_id, now, db as &dyn SharingStore, &*transport)
         .await
         .map_err(IpcError::from)?;
-
-    drop(db_guard);
 
     let conf_path = crate::ui::auth_commands::rclone_conf_path();
 
@@ -715,10 +734,12 @@ pub async fn list_shares(state: State<'_, AppState>) -> Result<Vec<ShareEntry>, 
     state.session_manager.reset_timer().await;
     require_active_session(&state).await?;
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     // SharingStore trait has no list_all_shares; query directly with a JOIN.
     let rows: Vec<ShareRow> = db
@@ -797,10 +818,12 @@ pub async fn list_received_shares(
     state.session_manager.reset_timer().await;
     require_active_session(&state).await?;
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     let received_shares = (db as &dyn SharingStore)
         .list_received_shares()
@@ -898,10 +921,12 @@ pub async fn download_received_share(
         receipt_ctx,
         local_blobs,
     ) = {
-        let db_guard = state.database.read().await;
-        let db = db_guard
-            .as_ref()
+        let db_store = state
+            .session_manager
+            .get_metadata_store()
+            .await
             .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+        let db = &*db_store;
         let sharing = db as &dyn SharingStore;
 
         let share = sharing
@@ -909,10 +934,14 @@ pub async fn download_received_share(
             .await
             .map_err(IpcError::from)?;
 
-        let file_key = unwrap_file_key(&WrappedFileKey::new(share.file_key_wrapped), &kek)
-            .map_err(|_| IpcError::InternalError("File key unwrap failed".into()))?;
         let file_id_uuid = Uuid::parse_str(&share.file_id)
             .map_err(|_| IpcError::InternalError("Invalid file ID in received share".into()))?;
+        let file_key = unwrap_file_key(
+            &WrappedFileKey::new(share.file_key_wrapped),
+            &FileId::from_uuid(file_id_uuid),
+            &kek,
+        )
+        .map_err(|_| IpcError::InternalError("File key unwrap failed".into()))?;
         let file_size = share
             .cloud_endpoint
             .get("_file_size")
@@ -1056,10 +1085,12 @@ pub async fn get_received_share_content(
     const FIFTY_MIB: u64 = 50 * 1024 * 1024;
 
     let (file_key, file_id_uuid, chunk_uuids, chunk_count, chunk_size, file_size, local_blobs) = {
-        let db_guard = state.database.read().await;
-        let db = db_guard
-            .as_ref()
+        let db_store = state
+            .session_manager
+            .get_metadata_store()
+            .await
             .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+        let db = &*db_store;
         let sharing = db as &dyn SharingStore;
 
         let share = sharing
@@ -1079,10 +1110,14 @@ pub async fn get_received_share_content(
             ));
         }
 
-        let file_key = unwrap_file_key(&WrappedFileKey::new(share.file_key_wrapped), &kek)
-            .map_err(|_| IpcError::InternalError("File key unwrap failed".into()))?;
         let file_id_uuid = Uuid::parse_str(&share.file_id)
             .map_err(|_| IpcError::InternalError("Invalid file ID in received share".into()))?;
+        let file_key = unwrap_file_key(
+            &WrappedFileKey::new(share.file_key_wrapped),
+            &FileId::from_uuid(file_id_uuid),
+            &kek,
+        )
+        .map_err(|_| IpcError::InternalError("File key unwrap failed".into()))?;
 
         let local_blobs = crate::sharing::cloud::fetch_received_share_to_local(
             &share_id,
@@ -1351,10 +1386,12 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
 
     // Unwrap the vault's own private key for HPKE.Open of receipt blobs.
     let private_key_bytes: Zeroizing<[u8; 32]> = {
-        let db_guard = state.database.read().await;
-        let db = db_guard
-            .as_ref()
+        let db_store = state
+            .session_manager
+            .get_metadata_store()
+            .await
             .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+        let db = &*db_store;
         let wrapped_blob: Vec<u8> = db
             .with_connection_blocking(|conn| {
                 conn.query_row(
@@ -1370,18 +1407,25 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
             WrappedFileKey::new(wrapped_blob.try_into().map_err(|_| {
                 IpcError::InternalError("Vault identity key blob corrupted".into())
             })?);
-        let secret = unwrap_file_key(&wrapped_key, &kek).map_err(|_| {
-            IpcError::AuthenticationFailed("Vault identity key unwrap failed".into())
-        })?;
+        let vault_uuid_for_identity = Uuid::parse_str(&vault_id)
+            .map_err(|_| IpcError::InternalError("Invalid vault ID".into()))?;
+        let secret = unwrap_file_key(
+            &wrapped_key,
+            &FileId::from_uuid(vault_uuid_for_identity),
+            &kek,
+        )
+        .map_err(|_| IpcError::AuthenticationFailed("Vault identity key unwrap failed".into()))?;
         Zeroizing::new(secret.with_exposed(|b| *b))
     };
 
     // Fetch shares that need download-receipt checking.
     let pending_download: Vec<(String, String)> = {
-        let db_guard = state.database.read().await;
-        let db = db_guard
-            .as_ref()
+        let db_store = state
+            .session_manager
+            .get_metadata_store()
+            .await
             .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+        let db = &*db_store;
         db.with_connection_blocking(|conn| {
             let mut stmt = conn
                 .prepare(
@@ -1457,30 +1501,31 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
             }
         }
 
-        if let Some(ts) = earliest_downloaded_at {
-            let db_guard = state.database.read().await;
-            if let Some(db) = db_guard.as_ref() {
-                let sid = share_id.clone();
-                let _ = db
-                    .with_connection_blocking(move |conn| {
-                        conn.execute(
-                            "UPDATE shares SET receipt_received_at = ?1 WHERE share_id = ?2",
-                            rusqlite::params![ts, sid],
-                        )
-                        .map_err(StorageError::from_rusqlite)?;
-                        Ok(())
-                    })
-                    .await;
-            }
+        if let Some(ts) = earliest_downloaded_at
+            && let Some(db) = state.session_manager.get_metadata_store().await
+        {
+            let sid = share_id.clone();
+            let _ = db
+                .with_connection_blocking(move |conn| {
+                    conn.execute(
+                        "UPDATE shares SET receipt_received_at = ?1 WHERE share_id = ?2",
+                        rusqlite::params![ts, sid],
+                    )
+                    .map_err(StorageError::from_rusqlite)?;
+                    Ok(())
+                })
+                .await;
         }
     }
 
     // Second pass: check import receipts for shares that haven't been imported yet.
     let pending_import: Vec<(String, String)> = {
-        let db_guard = state.database.read().await;
-        let db = db_guard
-            .as_ref()
+        let db_store = state
+            .session_manager
+            .get_metadata_store()
+            .await
             .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+        let db = &*db_store;
         db.with_connection_blocking(|conn| {
             let mut stmt = conn
                 .prepare(
@@ -1555,21 +1600,20 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
             }
         }
 
-        if let Some(ts) = earliest_imported_at {
-            let db_guard = state.database.read().await;
-            if let Some(db) = db_guard.as_ref() {
-                let sid = share_id.clone();
-                let _ = db
-                    .with_connection_blocking(move |conn| {
-                        conn.execute(
-                            "UPDATE shares SET import_receipt_received_at = ?1 WHERE share_id = ?2",
-                            rusqlite::params![ts, sid],
-                        )
-                        .map_err(StorageError::from_rusqlite)?;
-                        Ok(())
-                    })
-                    .await;
-            }
+        if let Some(ts) = earliest_imported_at
+            && let Some(db) = state.session_manager.get_metadata_store().await
+        {
+            let sid = share_id.clone();
+            let _ = db
+                .with_connection_blocking(move |conn| {
+                    conn.execute(
+                        "UPDATE shares SET import_receipt_received_at = ?1 WHERE share_id = ?2",
+                        rusqlite::params![ts, sid],
+                    )
+                    .map_err(StorageError::from_rusqlite)?;
+                    Ok(())
+                })
+                .await;
         }
     }
 
@@ -1650,10 +1694,12 @@ pub async fn set_gdrive_service_account(
     }
 
     let now = now_unix_seconds();
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     db.upsert_gdrive_sharing_config(None, sa_json.to_string(), now)
         .await
@@ -1671,10 +1717,12 @@ pub async fn has_gdrive_service_account(state: State<'_, AppState>) -> Result<bo
     state.session_manager.reset_timer().await;
     require_active_session(&state).await?;
 
-    let db_guard = state.database.read().await;
-    let db = db_guard
-        .as_ref()
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
 
     let has = db
         .get_gdrive_sharing_config()

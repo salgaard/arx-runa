@@ -14,7 +14,7 @@ use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
-use crate::crypto::VaultId;
+use crate::crypto::{FileId, VaultId};
 use crate::storage::SqlCipherMetadataStore;
 use crate::storage::cloud::destination_session::insert_destination_session;
 use crate::storage::cloud::upload_vault_header;
@@ -137,6 +137,7 @@ pub async fn create_vault(
         &mut master_key,
     );
     if let Err(error) = derive_result {
+        drop(master_key);
         if let Some(kfp) = written_key_file_path.as_deref() {
             remove_file_if_exists(kfp).await;
         }
@@ -146,19 +147,25 @@ pub async fn create_vault(
     let session_keys = match SessionKeys::from_master_key_bytes(&master_key) {
         Ok(keys) => keys,
         Err(error) => {
+            drop(master_key);
             if let Some(kfp) = written_key_file_path.as_deref() {
                 remove_file_if_exists(kfp).await;
             }
             return Err(error);
         }
     };
+    drop(master_key);
 
     let static_secret = StaticSecret::random_from_rng(OsRng);
     let x25519_secret_bytes: Zeroizing<[u8; 32]> = Zeroizing::new(static_secret.to_bytes());
     let public_key = PublicKey::from(&static_secret);
     let public_key_bytes = public_key.to_bytes();
 
-    let wrapped_private_key = match wrap_with_session_kek(&session_keys, &x25519_secret_bytes) {
+    let wrapped_private_key = match wrap_with_session_kek(
+        &session_keys,
+        &FileId::new(*vault_id.as_bytes()),
+        &x25519_secret_bytes,
+    ) {
         Ok(wrapped) => wrapped,
         Err(error) => {
             if let Some(kfp) = written_key_file_path.as_deref() {
@@ -287,7 +294,6 @@ pub async fn create_vault(
         )
         .await?;
 
-    drop(master_key);
     drop(x25519_secret_bytes);
     drop(argon2_salt);
     drop(key_file_bytes);
@@ -377,8 +383,21 @@ mod tests {
         let key_bytes = std::fs::read(&vault.key_file_path).expect("key file must exist");
         assert_eq!(key_bytes.len(), 32);
         let expected_hex = hex::encode(blake3::hash(&key_bytes).as_bytes());
+
+        // Cloud header must NOT carry key_file_blake3 (ZK boundary).
+        assert!(
+            vault.header.key_file_blake3.is_none(),
+            "cloud header must not contain key_file_blake3"
+        );
+
+        // Local vault-header.json MUST carry key_file_blake3 (USB auto-detection).
+        let local_header_path = vault._temp.path().join("vault-header.json");
+        let local_bytes =
+            std::fs::read(&local_header_path).expect("local vault-header.json must exist");
+        let local_header: VaultHeader =
+            serde_json::from_slice(&local_bytes).expect("local header must deserialize");
         assert_eq!(
-            vault.header.key_file_blake3.as_deref(),
+            local_header.key_file_blake3.as_deref(),
             Some(expected_hex.as_str())
         );
     }

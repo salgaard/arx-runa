@@ -41,15 +41,17 @@ pub async fn reencrypt_file(
     let wrapped_bytes = node
         .file_key_wrapped
         .ok_or_else(|| StorageError::Database("file node has no wrapped file key".to_owned()))?;
-    let old_file_key: FileKey =
-        unwrap_file_key(&WrappedFileKey::new(wrapped_bytes), key_encryption_key)
-            .map_err(StorageError::from)?;
+    let file_id_crypto = FileId::from_uuid(file_id);
+    let old_file_key: FileKey = unwrap_file_key(
+        &WrappedFileKey::new(wrapped_bytes),
+        &file_id_crypto,
+        key_encryption_key,
+    )
+    .map_err(StorageError::from)?;
 
     let new_file_key = generate_file_key();
-    let new_file_key_wrapped =
-        wrap_file_key(&new_file_key, key_encryption_key).map_err(StorageError::from)?;
-
-    let file_id_crypto = FileId::from_uuid(file_id);
+    let new_file_key_wrapped = wrap_file_key(&new_file_key, &file_id_crypto, key_encryption_key)
+        .map_err(StorageError::from)?;
     old_chunks.sort_by_key(|c| c.chunk_index);
 
     let mut new_chunks: Vec<ChunkRecord> = Vec::with_capacity(old_chunks.len());
@@ -221,8 +223,8 @@ mod tests {
         let kek = KeyEncryptionKey::from_bytes([42u8; 32]);
         let file_id = Uuid::new_v4();
         let file_key = generate_file_key();
-        let wrapped = wrap_file_key(&file_key, &kek).expect("wrap should succeed");
         let file_id_crypto = FileId::from_uuid(file_id);
+        let wrapped = wrap_file_key(&file_key, &file_id_crypto, &kek).expect("wrap should succeed");
 
         let blob_0 = encrypt_chunk(
             vec![0xAAu8; 64],

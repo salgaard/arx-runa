@@ -24,7 +24,7 @@ paths:
 - `upload_file`/`download_file`: `progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>` (bytes_processed, bytes_total); `push_vault`/`pull_vault`: `progress: Option<&(dyn Fn(u32, u32, Option<&str>) + Send + Sync)>` (files_processed, files_total, current_file_name); storage must never depend on `tauri::` — `Channel<T>` is wrapped into `dyn Fn` at IPC layer
 
 ## Cloud backup
-- Manifest encrypted with `manifest_key`; singleton blob (no AAD); vault header stays plaintext JSON at cloud root
+- Manifest encrypted with `manifest_key`; singleton blob; AAD = `vault_id.as_bytes()` (16 bytes); vault header stays plaintext JSON at cloud root
 - Backup blob path: `manifest/manifest-backup.blob` (constant `storage::cloud::manifest_backup::MANIFEST_BACKUP_BLOB_NAME`)
 - Push: upload manifest backup, then vault header idempotently; `snapshot_counter` increments each push
 - `rollback_snapshot_counter`: SQLCipher-specific on `SqlCipherMetadataStore` (not `MetadataStore`); push-only after manifest-upload failure; enforce current counter = previous+1 before rollback

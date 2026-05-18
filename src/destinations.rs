@@ -784,7 +784,7 @@ pub fn DestinationList() -> impl IntoView {
 
             <div>
                 <h3 class="text-lg font-semibold text-bone mb-3">"Configured Destinations"</h3>
-                <Suspense fallback=move || {
+                <Transition fallback=move || {
                     view! { <p class="text-text-secondary">"Loading destinations…"</p> }
                 }>
                     {move || {
@@ -841,7 +841,7 @@ pub fn DestinationList() -> impl IntoView {
                             }
                         })
                     }}
-                </Suspense>
+                </Transition>
             </div>
 
             <AddDestinationForm on_added=on_refresh_add />

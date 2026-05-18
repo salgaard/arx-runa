@@ -25,7 +25,7 @@ use super::vault_header_io::{VAULT_HEADER_BLOB_NAME, VaultHeaderSyncError, uploa
 use super::{CloudTransport, CloudTransportError, SyncConfig};
 #[cfg(test)]
 use crate::crypto::compute_checksum;
-use crate::crypto::{ManifestKey, SqlcipherKey};
+use crate::crypto::{ManifestKey, SqlcipherKey, VaultId};
 use crate::storage::error::StorageError;
 use crate::storage::metadata_store::MetadataStore;
 use crate::storage::sqlcipher::{SqlCipherMetadataStore, read_snapshot_state_from_database};
@@ -167,6 +167,7 @@ pub(crate) async fn read_cloud_snapshot_state(
     cloud_transport: &dyn CloudTransport,
     staging_dir: &Path,
     manifest_key: &ManifestKey,
+    vault_id: &VaultId,
     sqlcipher_key: &SqlcipherKey,
 ) -> Result<Option<CloudSnapshotState>, SyncError> {
     let probe_path = staging_dir.join(CONFLICT_PROBE_DB_FILE_NAME);
@@ -177,6 +178,7 @@ pub(crate) async fn read_cloud_snapshot_state(
         cloud_transport,
         staging_dir,
         &manifest_key_bytes,
+        vault_id,
         &probe_path,
         sqlcipher_key,
     )
@@ -492,6 +494,10 @@ pub async fn push_vault(
     sync_config
         .validate()
         .map_err(|source| SyncError::Transport { source })?;
+    let vault_uuid = Uuid::parse_str(&vault_header.vault_id).map_err(|_| SyncError::Storage {
+        source: StorageError::Database("invalid vault_id in vault header".to_owned()),
+    })?;
+    let vault_id = VaultId::from_uuid(vault_uuid);
     let started = Instant::now();
     let local_counter = read_required_u64_meta(metadata_store, "snapshot_counter").await?;
     let local_last_synced = read_optional_i64_meta(metadata_store, "last_synced_at").await?;
@@ -505,6 +511,7 @@ pub async fn push_vault(
         cloud_transport,
         staging_dir,
         manifest_key,
+        &vault_id,
         sqlcipher_key,
     )
     .await
@@ -581,6 +588,7 @@ pub async fn push_vault(
         vault_db_path,
         sqlcipher_key,
         &manifest_key_bytes,
+        &vault_id,
         cloud_transport,
         staging_dir,
     )
@@ -928,16 +936,18 @@ mod tests {
     use tempfile::tempdir;
     use uuid::Uuid;
 
-    use crate::crypto::{ManifestKey, SqlcipherKey};
+    use crate::crypto::{ManifestKey, SqlcipherKey, VaultId};
     use crate::storage::MetadataStore;
     use crate::storage::cloud::CloudTransport;
     use crate::storage::cloud::mock::{CloudTransportErrorKind, MockCloudTransport};
     use crate::storage::cloud::vault_header::{Argon2ParamsJson, VaultHeader};
     use crate::storage::types::{ChunkRecord, Node, NodeType};
 
+    const SAMPLE_VAULT_UUID: &str = "00000000-0000-4000-8000-000000000001";
+
     fn sample_header() -> VaultHeader {
         VaultHeader {
-            vault_id: Uuid::new_v4().hyphenated().to_string(),
+            vault_id: SAMPLE_VAULT_UUID.to_owned(),
             schema_version: VaultHeader::SCHEMA_VERSION,
             tier: 1,
             argon2_salt: base64::engine::general_purpose::STANDARD.encode([0x11u8; 32]),
@@ -1022,10 +1032,17 @@ mod tests {
         let cloud = MockCloudTransport::new();
         let manifest_key = ManifestKey::from_bytes([2; 32]);
         let sqlcipher_key = SqlcipherKey::from_bytes([3; 32]);
+        let vault_id = VaultId::new([0x02u8; 16]);
 
-        let result = read_cloud_snapshot_state(&cloud, temp.path(), &manifest_key, &sqlcipher_key)
-            .await
-            .expect("state lookup should succeed");
+        let result = read_cloud_snapshot_state(
+            &cloud,
+            temp.path(),
+            &manifest_key,
+            &vault_id,
+            &sqlcipher_key,
+        )
+        .await
+        .expect("state lookup should succeed");
         assert!(result.is_none());
         assert!(!temp.path().join(CONFLICT_PROBE_DB_FILE_NAME).exists());
     }
@@ -1049,20 +1066,28 @@ mod tests {
             .set_meta("last_synced_at", "123")
             .await
             .expect("set_meta should succeed");
+        let vault_id = VaultId::new([0x09u8; 16]);
         upload_manifest_backup(
             &db_path,
             &sqlcipher_key,
             manifest_key.expose(),
+            &vault_id,
             &cloud,
             temp.path(),
         )
         .await
         .expect("manifest upload should succeed");
 
-        let state = read_cloud_snapshot_state(&cloud, temp.path(), &manifest_key, &sqlcipher_key)
-            .await
-            .expect("state lookup should succeed")
-            .expect("manifest should exist");
+        let state = read_cloud_snapshot_state(
+            &cloud,
+            temp.path(),
+            &manifest_key,
+            &vault_id,
+            &sqlcipher_key,
+        )
+        .await
+        .expect("state lookup should succeed")
+        .expect("manifest should exist");
         assert_eq!(state.snapshot_counter, 1);
         assert_eq!(state.last_synced_at, Some(123));
         assert!(!temp.path().join(CONFLICT_PROBE_DB_FILE_NAME).exists());
@@ -1080,19 +1105,26 @@ mod tests {
         let _store = setup_store(&db_path, &key_bytes)
             .await
             .expect("store should be created");
+        let vault_id = VaultId::new([0x09u8; 16]);
         upload_manifest_backup(
             &db_path,
             &sqlcipher_key,
             manifest_key.expose(),
+            &vault_id,
             &cloud,
             temp.path(),
         )
         .await
         .expect("manifest upload should succeed");
 
-        let result =
-            read_cloud_snapshot_state(&cloud, temp.path(), &wrong_manifest_key, &sqlcipher_key)
-                .await;
+        let result = read_cloud_snapshot_state(
+            &cloud,
+            temp.path(),
+            &wrong_manifest_key,
+            &vault_id,
+            &sqlcipher_key,
+        )
+        .await;
         assert!(matches!(
             result,
             Err(SyncError::CloudManifestUnreadable { .. })
@@ -1188,10 +1220,12 @@ mod tests {
             .await
             .expect("old store should be created");
         let old_manifest_key_bytes = Zeroizing::new(old_manifest_key.with_exposed(|bytes| *bytes));
+        let old_vault_id = VaultId::new([0x01u8; 16]);
         upload_manifest_backup(
             &old_db_path,
             &old_sqlcipher_key,
             &old_manifest_key_bytes,
+            &old_vault_id,
             &cloud,
             staging_dir,
         )
@@ -1259,10 +1293,12 @@ mod tests {
             .increment_snapshot_counter()
             .await
             .expect("counter increment should succeed");
+        let sample_vault_id = VaultId::from_uuid(Uuid::parse_str(SAMPLE_VAULT_UUID).unwrap());
         upload_manifest_backup(
             &cloud_db,
             &sqlcipher_key,
             manifest_key.expose(),
+            &sample_vault_id,
             &cloud,
             temp.path(),
         )

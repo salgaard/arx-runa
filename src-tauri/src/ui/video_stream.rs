@@ -102,11 +102,11 @@ async fn serve_video_range<R: tauri::Runtime>(
         Err(_) => return plain_error(tauri::http::StatusCode::INTERNAL_SERVER_ERROR, "Key error"),
     };
 
-    let db_guard = state.database.read().await;
-    let db = match db_guard.as_ref() {
-        Some(db) => db,
+    let db_store = match state.session_manager.get_metadata_store().await {
+        Some(s) => s,
         None => return plain_error(tauri::http::StatusCode::FORBIDDEN, "Vault locked"),
     };
+    let db = &*db_store;
 
     let node = match db.get_node(node_uuid).await {
         Ok(n) => n,

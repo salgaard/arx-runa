@@ -3,7 +3,7 @@ use std::path::Path;
 use tokio::io::AsyncReadExt as _;
 use uuid::Uuid;
 
-use crate::crypto::{FileKey, KeyEncryptionKey, generate_file_key, wrap_file_key};
+use crate::crypto::{FileId, FileKey, KeyEncryptionKey, generate_file_key, wrap_file_key};
 use crate::storage::MetadataStore;
 use crate::storage::NodeId;
 use crate::storage::error::StorageError;
@@ -88,8 +88,12 @@ pub async fn upload_file(
             let file_size = plaintext.len() as u64;
             let sentinel_file_key =
                 FileKey::from_secret_box(secrecy::SecretBox::new(Box::new([0u8; 32])));
-            let sentinel_wrapped = wrap_file_key(&sentinel_file_key, key_encryption_key)
-                .map_err(StorageError::from)?;
+            let sentinel_wrapped = wrap_file_key(
+                &sentinel_file_key,
+                &FileId::from_uuid(node_id),
+                key_encryption_key,
+            )
+            .map_err(StorageError::from)?;
             let node = Node::new(
                 node_id,
                 parent_id,
@@ -108,7 +112,8 @@ pub async fn upload_file(
         RouteDecision::Immediate => {
             let file_key = generate_file_key();
             let wrapped_file_key =
-                wrap_file_key(&file_key, key_encryption_key).map_err(StorageError::from)?;
+                wrap_file_key(&file_key, &FileId::from_uuid(node_id), key_encryption_key)
+                    .map_err(StorageError::from)?;
             let mut chunks = match stripped {
                 Some(bytes) => {
                     pipeline::encrypt_bytes(

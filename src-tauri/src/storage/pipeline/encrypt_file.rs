@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use tokio::fs::File;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncReadExt, BufReader};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -139,25 +139,14 @@ async fn read_chunk_plaintext(
     Ok(bytes_read)
 }
 
-/// Writes an encrypted blob to staging with the `.blob` extension.
+/// Writes an encrypted blob to staging with the `.blob` extension, owner-only permissions.
 async fn write_blob_file(
     staging_directory: &Path,
     blob_name: &str,
     wire_blob: &[u8],
 ) -> Result<(), StorageError> {
     let blob_path = staging_directory.join(format!("{blob_name}.blob"));
-    let blob_file = File::create(blob_path)
-        .await
-        .map_err(|error| StorageError::Io(error.to_string()))?;
-    let mut blob_writer = BufWriter::new(blob_file);
-    blob_writer
-        .write_all(wire_blob)
-        .await
-        .map_err(|error| StorageError::Io(error.to_string()))?;
-    blob_writer
-        .flush()
-        .await
-        .map_err(|error| StorageError::Io(error.to_string()))
+    crate::storage::staging::write_owner_only(&blob_path, wire_blob).await
 }
 
 /// Encrypts an in-memory byte slice into fixed-size encrypted chunk blobs in staging.

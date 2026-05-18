@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 use crate::auth::ceremonies::test_support::*;
-use crate::crypto::{KeyEncryptionKey, WrappedFileKey, unwrap_file_key};
+use crate::crypto::{FileId, KeyEncryptionKey, WrappedFileKey, unwrap_file_key};
 use crate::storage::pipeline::exif::strip_exif;
 use crate::storage::{
     MetadataStore, SqlCipherMetadataStore, decrypt_file, download_file_to_memory, upload_file,
@@ -137,8 +137,12 @@ async fn test_backup_encrypt_decrypt_round_trip_bytes_identical() {
     let wrapped_bytes = node
         .file_key_wrapped
         .expect("uploaded file node must carry a wrapped file key");
-    let file_key = unwrap_file_key(&WrappedFileKey::new(wrapped_bytes), &kek)
-        .expect("file key must unwrap with the same KEK used at upload");
+    let file_key = unwrap_file_key(
+        &WrappedFileKey::new(wrapped_bytes),
+        &FileId::from_uuid(node_id),
+        &kek,
+    )
+    .expect("file key must unwrap with the same KEK used at upload");
 
     let chunks = store
         .get_chunks(node_id)
@@ -270,8 +274,12 @@ async fn test_atomic_temp_file_not_left_on_decrypt_error() {
 
     // Tamper with the first blob to force a checksum mismatch.
     let wrapped_bytes = node.file_key_wrapped.expect("node must carry wrapped key");
-    let file_key =
-        unwrap_file_key(&WrappedFileKey::new(wrapped_bytes), &kek).expect("key must unwrap");
+    let file_key = unwrap_file_key(
+        &WrappedFileKey::new(wrapped_bytes),
+        &FileId::from_uuid(node_id),
+        &kek,
+    )
+    .expect("key must unwrap");
     let chunks = store
         .get_chunks(node_id)
         .await

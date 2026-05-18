@@ -11,7 +11,7 @@ use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::{
-    RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
+    FileId, RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
     unwrap_master_key_from_recovery, wrap_file_key, wrap_master_key_for_recovery,
 };
 use crate::storage;
@@ -37,7 +37,9 @@ pub async fn recover_with_phrase(
 ) -> Result<(VaultId, VaultHeader), AuthenticationError> {
     let install_reservation = session_manager.reserve_session_install().await?;
 
-    let mnemonic = parse_mnemonic(request.phrase)?;
+    let phrase_str = std::str::from_utf8(request.phrase)
+        .map_err(|_| AuthenticationError::InvalidRecoveryPhrase)?;
+    let mnemonic = parse_mnemonic(phrase_str)?;
     let canonical = canonicalize_phrase(&mnemonic);
 
     let db_exists = tokio::fs::try_exists(&request.vault_db_path)
@@ -135,6 +137,7 @@ pub async fn recover_with_phrase(
             cloud_transport,
             &storage_staging_dir,
             &manifest_key_bytes,
+            &vault_id,
             &request.vault_db_path,
             &original_sqlcipher_key,
         )
@@ -186,6 +189,7 @@ pub async fn recover_with_phrase(
     let new_kek = key_encryption_key_from_array(new_session_keys.key_encryption_key.expose());
     let new_sqlcipher = sqlcipher_key_from_array(new_session_keys.sqlcipher_key.expose());
 
+    let vault_id_bytes = *vault_id.as_bytes();
     let vault_db_path = request.vault_db_path.clone();
     let rewrap_result: Result<(), AuthenticationError> =
         tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
@@ -205,13 +209,17 @@ pub async fn recover_with_phrase(
                         .collect::<Result<_, _>>()
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
                     for (node_id, wrapped_blob) in rows {
+                        let file_id = FileId::from_uuid(
+                            uuid::Uuid::parse_str(&node_id)
+                                .map_err(|_| AuthenticationError::InvalidCredentials)?,
+                        );
                         let wrapped_array: [u8; 72] = wrapped_blob
                             .try_into()
                             .map_err(|_| AuthenticationError::InvalidCredentials)?;
                         let wrapped = WrappedFileKey::new(wrapped_array);
-                        let file_key = unwrap_file_key(&wrapped, &current_kek)
+                        let file_key = unwrap_file_key(&wrapped, &file_id, &current_kek)
                             .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                        let rewrapped = wrap_file_key(&file_key, &new_kek)
+                        let rewrapped = wrap_file_key(&file_key, &file_id, &new_kek)
                             .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
                         conn.execute(
                             "UPDATE nodes SET file_key_wrapped = ? WHERE node_id = ?",
@@ -229,13 +237,14 @@ pub async fn recover_with_phrase(
                     .optional()
                     .map_err(|_| AuthenticationError::InvalidCredentials)?;
                 if let Some(wrapped_blob) = identity_wrapped {
+                    let identity_file_id = FileId::new(vault_id_bytes);
                     let wrapped_array: [u8; 72] = wrapped_blob
                         .try_into()
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
                     let wrapped = WrappedFileKey::new(wrapped_array);
-                    let file_key = unwrap_file_key(&wrapped, &current_kek)
+                    let file_key = unwrap_file_key(&wrapped, &identity_file_id, &current_kek)
                         .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    let rewrapped = wrap_file_key(&file_key, &new_kek)
+                    let rewrapped = wrap_file_key(&file_key, &identity_file_id, &new_kek)
                         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
                     conn.execute(
                         "UPDATE vault_identity SET wrapped_private_key = ? WHERE id = 1",
@@ -314,6 +323,7 @@ pub async fn recover_with_phrase(
             &request.vault_db_path,
             &new_sqlcipher_for_upload,
             &new_manifest_key_bytes,
+            &vault_id,
             cloud_transport,
             &storage_staging_dir,
         )
@@ -391,7 +401,7 @@ mod tests {
         vault_db_path: std::path::PathBuf,
     ) -> RecoverWithPhraseRequest<'a> {
         RecoverWithPhraseRequest {
-            phrase,
+            phrase: phrase.as_bytes(),
             vault_db_path,
             new_password_bytes: TEST_NEW_PASSWORD,
             new_key_file_path: None,

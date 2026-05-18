@@ -28,7 +28,7 @@ async fn test_tier1_full_recovery_via_phrase_restores_active_session() {
 
     let (recovered_id, _header) = recover_with_phrase(
         RecoverWithPhraseRequest {
-            phrase: phrase.as_str(),
+            phrase: phrase.as_bytes(),
             vault_db_path: new_temp.path().join("recovered.db"),
             new_password_bytes: TEST_NEW_PASSWORD,
             new_key_file_path: None,
@@ -128,7 +128,7 @@ async fn test_change_password_with_phrase_recovery_slot_preserved_in_header() {
             current_password_bytes: TEST_PASSWORD,
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
-            recovery_phrase: Some(phrase.as_str()),
+            recovery_phrase: Some(phrase.as_bytes()),
             argon2_params: test_params(),
             argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
@@ -204,7 +204,7 @@ async fn test_recovery_phrase_non_bip39_word_rejected_as_invalid_recovery_phrase
 
     let result = recover_with_phrase(
         RecoverWithPhraseRequest {
-            phrase: bad_phrase,
+            phrase: bad_phrase.as_bytes(),
             vault_db_path: new_temp.path().join("bad-phrase.db"),
             new_password_bytes: TEST_NEW_PASSWORD,
             new_key_file_path: None,
@@ -244,7 +244,7 @@ async fn test_tier2_full_recovery_via_phrase_creates_new_key_file_and_restores_s
 
     let (recovered_id, _header) = recover_with_phrase(
         RecoverWithPhraseRequest {
-            phrase: phrase.as_str(),
+            phrase: phrase.as_bytes(),
             vault_db_path: new_vault_db_path,
             new_password_bytes: TEST_NEW_PASSWORD,
             new_key_file_path: Some(new_key_file_path.clone()),

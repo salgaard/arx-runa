@@ -112,8 +112,8 @@ fn classify_non_zero_exit(
     })
 }
 
-fn is_authentication_failure(stderr_sanitised: &str) -> bool {
-    let normalized = stderr_sanitised.to_ascii_lowercase();
+fn is_authentication_failure(stderr_raw: &str) -> bool {
+    let normalized = stderr_raw.to_ascii_lowercase();
     const AUTH_FAILURE_PATTERNS: [&str; 8] = [
         "authentication failed",
         "auth failed",

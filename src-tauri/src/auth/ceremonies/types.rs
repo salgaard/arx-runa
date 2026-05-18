@@ -107,7 +107,7 @@ pub struct ChangePasswordRequest<'a> {
     pub current_key_source: Option<&'a (dyn KeySource + Send + Sync)>,
     /// Optional recovery phrase; if present, the recovery slot is re-wrapped
     /// under the new master key instead of being cleared.
-    pub recovery_phrase: Option<&'a str>,
+    pub recovery_phrase: Option<&'a [u8]>,
     /// Argon2id cost parameters for the new slot.
     pub argon2_params: Argon2Params,
     /// Argon2 parameter migration intent.
@@ -126,7 +126,7 @@ pub struct RotateKeyFileRequest<'a> {
     /// The file must not already exist.
     pub target_new_key_file_path: PathBuf,
     /// Optional recovery phrase to re-wrap the recovery slot.
-    pub recovery_phrase: Option<&'a str>,
+    pub recovery_phrase: Option<&'a [u8]>,
     /// Argon2id cost parameters.
     pub argon2_params: Argon2Params,
     /// Argon2 parameter migration intent.
@@ -162,7 +162,7 @@ pub struct SetupRecoveryRequest<'a> {
 /// Request payload for [`recover_with_phrase`].
 pub struct RecoverWithPhraseRequest<'a> {
     /// BIP-39 recovery phrase entered by the user.
-    pub phrase: &'a str,
+    pub phrase: &'a [u8],
     /// Destination path for the recovered vault DB.
     pub vault_db_path: PathBuf,
     /// New password bytes to re-key the vault to after phrase recovery.
