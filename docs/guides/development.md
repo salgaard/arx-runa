@@ -384,6 +384,16 @@ doesn't rely on potentially stale training data for API signatures.
 
 ---
 
+## Pushing releases
+
+### Delete a tag
+git tag -d v0.1.0                                                                                                                          
+git push origin --delete v0.1.0
+
+### Push new tag
+git tag v0.1.0
+git push origin v0.1.0
+
 ## 4. Encryption stack (for context)
 
 | Component | Technology |
