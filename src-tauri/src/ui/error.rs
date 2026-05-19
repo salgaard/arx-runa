@@ -53,12 +53,11 @@ pub enum IpcError {
 impl From<crate::auth::AuthenticationError> for IpcError {
     /// Maps authentication errors to sanitised IPC error variants without leaking internal details.
     fn from(error: crate::auth::AuthenticationError) -> Self {
-        tracing::error!("auth error: {:?}", error);
+        tracing::warn!(kind = %error.kind_name(), "auth error");
         use crate::auth::AuthenticationError as A;
         match error {
-            A::InvalidCredentials => IpcError::AuthenticationFailed("Invalid credentials".into()),
-            A::KeyFileNotFound => {
-                IpcError::AuthenticationFailed("Key file not found — insert USB drive".into())
+            A::InvalidCredentials | A::KeyFileNotFound | A::KeySource(_) => {
+                IpcError::AuthenticationFailed("Invalid credentials".into())
             }
             A::MemoryLockFailed(_) => {
                 IpcError::InternalError("Cannot lock memory for session keys".into())
@@ -71,9 +70,6 @@ impl From<crate::auth::AuthenticationError> for IpcError {
             A::InvalidRecoveryPhrase => IpcError::InvalidInput("Recovery phrase is invalid".into()),
             A::NoRecoverySlot => {
                 IpcError::InvalidInput("No recovery slot configured for this vault".into())
-            }
-            A::KeySource(_) => {
-                IpcError::AuthenticationFailed("Key file is missing or invalid".into())
             }
             _ => IpcError::InternalError("An error occurred".into()),
         }
@@ -241,6 +237,33 @@ mod tests {
                 "variant kind mismatch for {expected_kind}"
             );
         }
+    }
+
+    /// Verifies that KeyFileNotFound and KeySource produce the same message as InvalidCredentials.
+    #[test]
+    fn test_from_auth_error_key_file_not_found_matches_invalid_credentials() {
+        let ic = serde_json::to_value(IpcError::from(
+            crate::auth::AuthenticationError::InvalidCredentials,
+        ))
+        .unwrap();
+        let kfnf = serde_json::to_value(IpcError::from(
+            crate::auth::AuthenticationError::KeyFileNotFound,
+        ))
+        .unwrap();
+        let ks = serde_json::to_value(IpcError::from(crate::auth::AuthenticationError::KeySource(
+            crate::auth::KeySourceError::NotFound,
+        )))
+        .unwrap();
+        assert_eq!(
+            ic["message"], kfnf["message"],
+            "KeyFileNotFound must produce same message as InvalidCredentials"
+        );
+        assert_eq!(
+            ic["message"], ks["message"],
+            "KeySource must produce same message as InvalidCredentials"
+        );
+        assert_eq!(ic["kind"], kfnf["kind"]);
+        assert_eq!(ic["kind"], ks["kind"]);
     }
 
     /// Verifies that `From<AuthenticationError>` never leaks source detail into the message.

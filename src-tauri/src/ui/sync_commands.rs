@@ -16,9 +16,10 @@ use crate::storage::cloud::destination_session::{
     set_primary_destination,
 };
 use crate::storage::cloud::manifest_backup::{download_manifest_backup, upload_manifest_backup};
+use crate::storage::cloud::remote_path::validate_remote_name;
 use crate::storage::cloud::sync::drain_pending_deletions;
 use crate::storage::cloud::vault_header::VaultHeader;
-use crate::storage::cloud::vault_header_io::VAULT_HEADER_BLOB_NAME;
+use crate::storage::cloud::vault_header_io::upload_vault_header;
 use crate::storage::cloud::{
     CloudEndpoint, CloudTransport, CloudTransportError, DestinationSessionPublic, RcloneTransport,
     SyncConfig, pull_vault, push_vault,
@@ -27,6 +28,7 @@ use crate::storage::device_id::get_or_create_device_id;
 use crate::storage::metadata_store::MetadataStore;
 use crate::storage::staging::write_owner_only;
 use crate::storage::types::{ChunkRecord, EpochBlobRecord, Node, NodeId, NodeType};
+use crate::storage::validation::validate_blob_name_uuid_v4;
 use crate::ui::commands_common::{ProgressChannel, require_active_session};
 use crate::ui::error::IpcError;
 use crate::ui::file_commands::extract_kek;
@@ -451,6 +453,8 @@ pub(crate) async fn build_destination_transport(
 
     let config_blob = match dest.destination_type {
         DestinationType::LocalPath | DestinationType::ExternalDrive => {
+            validate_remote_name(&dest.rclone_remote_name)
+                .map_err(|e| IpcError::CloudError(e.to_string()))?;
             format!("[{}]\ntype = local\n", dest.rclone_remote_name)
         }
         DestinationType::Cloud => dest.rclone_config_blob.clone(),
@@ -1093,8 +1097,12 @@ pub async fn migrate_vault(
     .await
     .map_err(|e| IpcError::CloudError(format!("manifest backup: {e}")))?;
 
-    new_transport
-        .upload_blob(&header_path, VAULT_HEADER_BLOB_NAME)
+    let header_json = tokio::fs::read_to_string(&header_path)
+        .await
+        .map_err(|e| IpcError::CloudError(format!("vault header: {e}")))?;
+    let vault_header: VaultHeader = serde_json::from_str(&header_json)
+        .map_err(|_| IpcError::InternalError("An error occurred".into()))?;
+    upload_vault_header(&vault_header, &*new_transport, &staging_dir)
         .await
         .map_err(|e| IpcError::CloudError(format!("vault header: {e}")))?;
 
@@ -1178,6 +1186,16 @@ pub async fn sync_backup(
     let (_, db_path, header_path) = resolve_vault_by_id(&vault_id)?;
 
     let staging_dir = vault_staging_dir(&vault_id);
+
+    // Parse header once before the destination loop so sensitive fields can be stripped.
+    let header_json = tokio::fs::read_to_string(&header_path).await.map_err(|e| {
+        tracing::error!(error = %e, "sync_backup: failed to read vault header");
+        IpcError::InternalError("An error occurred".into())
+    })?;
+    let vault_header: VaultHeader = serde_json::from_str(&header_json).map_err(|e| {
+        tracing::error!(error = %e, "sync_backup: failed to parse vault header");
+        IpcError::InternalError("An error occurred".into())
+    })?;
 
     let sqlcipher_key = extract_sqlcipher_key(&state.session_manager).await?;
     let manifest_key_bytes: [u8; 32] = state
@@ -1434,11 +1452,8 @@ pub async fn sync_backup(
             );
         }
 
-        // Upload vault header (plaintext JSON) for recovery bootstrapping.
-        if let Err(e) = transport
-            .upload_blob(&header_path, VAULT_HEADER_BLOB_NAME)
-            .await
-        {
+        // Upload vault header (sensitive fields stripped) for recovery bootstrapping.
+        if let Err(e) = upload_vault_header(&vault_header, &transport, &staging_dir).await {
             tracing::warn!(
                 destination_id = %dest.destination_id,
                 error = %e,
@@ -1479,6 +1494,14 @@ pub async fn sync_backup(
                             .and_then(|s| s.strip_suffix(".blob"))
                             .unwrap_or("");
                         if !blob_name.is_empty() && !all_blob_names.contains(blob_name) {
+                            if validate_blob_name_uuid_v4(blob_name).is_err() {
+                                tracing::warn!(
+                                    destination_id = %dest.destination_id,
+                                    %remote_path,
+                                    "mirror: skipping blob with non-UUID-v4 name returned by list_blobs"
+                                );
+                                continue;
+                            }
                             let delete_result =
                                 transport.delete_blob(remote_path).await.map_err(|e| {
                                     tracing::warn!(

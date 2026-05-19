@@ -259,8 +259,8 @@ impl SessionManager {
 
         // Open SQLCipher database with derived key after keys are validated.
         let db_path = vault_db_path(&vault_id);
-        let sqlcipher_key_bytes = {
-            let mut key_bytes = [0u8; 32];
+        let sqlcipher_key_bytes: Zeroizing<[u8; 32]> = {
+            let mut key_bytes = Zeroizing::new([0u8; 32]);
             key_bytes.copy_from_slice(derived.sqlcipher_key.expose());
             key_bytes
         };
@@ -476,8 +476,8 @@ impl SessionManager {
 
         // Open SQLCipher database with derived key for ceremony-created session.
         let db_path = vault_db_path_arg.to_path_buf();
-        let sqlcipher_key_bytes = {
-            let mut key_bytes = [0u8; 32];
+        let sqlcipher_key_bytes: Zeroizing<[u8; 32]> = {
+            let mut key_bytes = Zeroizing::new([0u8; 32]);
             key_bytes.copy_from_slice(keys.sqlcipher_key.expose());
             key_bytes
         };
@@ -592,8 +592,8 @@ impl SessionManager {
                 }
             }
         };
-        let sqlcipher_key_bytes = {
-            let mut key_bytes = [0u8; 32];
+        let sqlcipher_key_bytes: Zeroizing<[u8; 32]> = {
+            let mut key_bytes = Zeroizing::new([0u8; 32]);
             key_bytes.copy_from_slice(new_keys.sqlcipher_key.expose());
             key_bytes
         };

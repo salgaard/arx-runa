@@ -1019,7 +1019,20 @@ pub async fn download_received_share(
         let _ = tokio::fs::remove_file(blob_path).await;
     }
 
-    decrypt_result.map_err(|e| IpcError::InternalError(format!("decrypt failed: {e}")))?;
+    decrypt_result.map_err(|e| {
+        tracing::warn!(error = %e, "decrypt_received_share_blobs failed");
+        IpcError::InternalError("Decryption failed".into())
+    })?;
+
+    // Register the destination so reveal_in_explorer can open it this session.
+    match std::path::Path::new(&destination_path).canonicalize() {
+        Ok(canonical) => {
+            state.allowed_reveal_paths.lock().await.insert(canonical);
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to register download path for reveal");
+        }
+    }
 
     let _ = progress_ch.try_send_if_open(ProgressUpdate {
         percent: 100,

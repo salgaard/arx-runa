@@ -1,4 +1,5 @@
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 /// Domain representation of a staged plaintext entry in the epoch buffer.
 #[derive(Debug, Clone)]
@@ -8,7 +9,7 @@ pub struct EpochBufferEntry {
     /// Owning file node identifier.
     pub node_id: Uuid,
     /// Raw plaintext bytes for this file.
-    pub plaintext: Vec<u8>,
+    pub plaintext: Zeroizing<Vec<u8>>,
     /// Size of the plaintext in bytes.
     pub size_bytes: u64,
 }

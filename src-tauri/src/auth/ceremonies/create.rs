@@ -14,7 +14,7 @@ use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
-use crate::crypto::{FileId, VaultId};
+use crate::crypto::{FileId, SqlcipherKey, VaultId};
 use crate::storage::SqlCipherMetadataStore;
 use crate::storage::cloud::destination_session::insert_destination_session;
 use crate::storage::cloud::upload_vault_header;
@@ -175,7 +175,7 @@ pub async fn create_vault(
         }
     };
 
-    let sqlcipher_key = sqlcipher_key_from_array(session_keys.sqlcipher_key.expose());
+    let sqlcipher_key = SqlcipherKey::from_slice(session_keys.sqlcipher_key.expose());
     let vault_db_path_owned = request.vault_db_path.clone();
     let vault_id_uuid = vault_id.to_uuid();
     let chunk_size_bytes = request.chunk_size_bytes;

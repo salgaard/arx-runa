@@ -1,6 +1,6 @@
 //! Shared application state for Tauri IPC commands.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -62,6 +62,11 @@ pub struct AppState {
     /// Uses `tokio::sync::Mutex` so it can be held across `.await` points
     /// inside `poll_oauth_setup`.
     pub(crate) oauth_setups: Arc<tokio::sync::Mutex<HashMap<String, OAuthSetupHandle>>>,
+    /// Canonical paths that `reveal_in_explorer` is permitted to open this session.
+    ///
+    /// Populated by `download_received_share` on successful decryption; cleared on
+    /// vault lock. Also allows any path under `app_data_dir`.
+    pub(crate) allowed_reveal_paths: Arc<tokio::sync::Mutex<HashSet<PathBuf>>>,
 }
 
 /// No-op cloud transport used until Phase 6.5 wires a real `RcloneTransport`.
@@ -150,6 +155,7 @@ impl AppState {
             flush_mutex: Arc::new(tokio::sync::Mutex::new(())),
             sync_mutex: Arc::new(tokio::sync::Mutex::new(())),
             oauth_setups: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            allowed_reveal_paths: Arc::new(tokio::sync::Mutex::new(HashSet::new())),
         }
     }
 

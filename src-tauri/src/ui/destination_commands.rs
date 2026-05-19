@@ -54,6 +54,21 @@ fn validate_local_path(path_prefix: &str) -> Result<(), IpcError> {
         ));
     }
 
+    if path_prefix.chars().any(char::is_control) {
+        return Err(IpcError::InvalidInput(
+            "Path must not contain control characters".into(),
+        ));
+    }
+
+    if path
+        .components()
+        .any(|c| c == std::path::Component::ParentDir)
+    {
+        return Err(IpcError::InvalidInput(
+            "Path must not contain '..' components".into(),
+        ));
+    }
+
     // Reject the home directory itself.
     if let Some(home) = dirs::home_dir()
         && path == home
@@ -625,5 +640,29 @@ mod tests {
     fn test_empty_destination_id_rejected() {
         let destination_id = "";
         assert!(destination_id.is_empty());
+    }
+
+    #[test]
+    fn test_validate_local_path_rejects_parent_dir_component() {
+        let result = validate_local_path("/tmp/foo/../bar");
+        assert!(matches!(result, Err(IpcError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_validate_local_path_rejects_double_dot_only_segment() {
+        let result = validate_local_path("/tmp/..");
+        assert!(matches!(result, Err(IpcError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_validate_local_path_rejects_control_character() {
+        let result = validate_local_path("/tmp/foo\x01bar");
+        assert!(matches!(result, Err(IpcError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_validate_local_path_rejects_nul_byte() {
+        let result = validate_local_path("/tmp/foo\x00bar");
+        assert!(matches!(result, Err(IpcError::InvalidInput(_))));
     }
 }

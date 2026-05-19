@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::storage::error::StorageError;
 use crate::storage::types::{ChunkRecord, EpochBlobRecord, EpochBufferEntry, Node};
@@ -106,14 +107,14 @@ pub trait MetadataStore: Send + Sync {
     async fn insert_file_node_and_stage_epoch_entry(
         &self,
         node: &Node,
-        plaintext: Vec<u8>,
+        plaintext: Zeroizing<Vec<u8>>,
     ) -> Result<(), StorageError>;
 
     /// Stages a plaintext entry in the epoch buffer for the given node.
     async fn stage_epoch_entry(
         &self,
         node_id: Uuid,
-        plaintext: Vec<u8>,
+        plaintext: Zeroizing<Vec<u8>>,
     ) -> Result<(), StorageError>;
 
     /// Returns the total number of bytes currently staged in the epoch buffer.

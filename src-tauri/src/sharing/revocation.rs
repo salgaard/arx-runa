@@ -136,6 +136,15 @@ pub(crate) async fn strong_revoke_share(
         .cloned()
         .collect();
 
+    let old_chunks = sqlcipher_store
+        .get_chunks(file_id)
+        .await
+        .map_err(|error| SharingError::Backend(error.to_string()))?;
+    let old_shared_blob_paths: Vec<String> = old_chunks
+        .iter()
+        .map(|chunk| format!("shared/{}/{}.blob", old_file_share_id, chunk.blob_name))
+        .collect();
+
     let new_chunks = reencrypt_file(
         file_id,
         now_unix_seconds,
@@ -228,19 +237,18 @@ pub(crate) async fn strong_revoke_share(
         });
     }
 
-    match cloud
+    sqlcipher_store
+        .enqueue_pending_deletions(&old_shared_blob_paths, now_unix_seconds)
+        .await
+        .map_err(|error| SharingError::Backend(error.to_string()))?;
+
+    // Attempt immediate deletion; failures are already durably queued above.
+    if let Ok(old_blob_list) = cloud
         .list_blobs(&format!("shared/{}/", old_file_share_id))
         .await
     {
-        Ok(old_blob_list) => {
-            for blob_path in old_blob_list {
-                let _ = cloud.delete_blob(&blob_path).await;
-            }
-        }
-        Err(_) => {
-            // best-effort: proceed even if listing fails.
-            // NOTE: old blobs may linger if list_blobs fails; the caller
-            // can retry cooperative revocation to clean them up.
+        for blob_path in old_blob_list {
+            let _ = cloud.delete_blob(&blob_path).await;
         }
     }
 
@@ -273,14 +281,23 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
+    use tempfile::TempDir;
     use uuid::Uuid;
+    use zeroize::Zeroizing;
 
-    use super::revoke_share;
+    use super::{revoke_share, strong_revoke_share};
+    use crate::crypto::{
+        ChunkIndex, FileId, KeyEncryptionKey, compute_checksum, encrypt_chunk, generate_file_key,
+        wrap_file_key,
+    };
     use crate::sharing::error::SharingError;
     use crate::sharing::store::{Contact, ReceivedShare, ShareRecord, SharingStore};
     use crate::sharing::types::{ContactId, X25519PublicKey};
     use crate::storage::CloudTransport;
+    use crate::storage::SqlCipherMetadataStore;
     use crate::storage::cloud::mock::{CloudTransportErrorKind, MockCloudTransport};
+    use crate::storage::metadata_store::MetadataStore;
+    use crate::storage::types::{ChunkRecord, Node, NodeId, NodeType};
 
     /// Minimal in-memory state backing `MockSharingStore`.
     #[derive(Debug, Default)]
@@ -638,6 +655,140 @@ mod tests {
         assert!(
             share.revoked_at.is_none(),
             "revoked_at must not be set when blob deletion fails"
+        );
+    }
+
+    /// Creates a `SqlCipherMetadataStore` with one encrypted chunk file written to staging.
+    /// Returns the store, KEK, file UUID, old blob name, and the temp dir handle (must be kept
+    /// alive for the duration of the test).
+    async fn setup_store_with_one_chunk() -> (
+        TempDir,
+        SqlCipherMetadataStore,
+        KeyEncryptionKey,
+        Uuid,
+        String,
+    ) {
+        let temp = TempDir::new().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &[1u8; 32], Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+
+        let staging_dir = temp.path().join("staging");
+        tokio::fs::create_dir_all(&staging_dir)
+            .await
+            .expect("staging dir should be created");
+
+        let kek = KeyEncryptionKey::from_bytes([42u8; 32]);
+        let file_id = Uuid::new_v4();
+        let file_key = generate_file_key();
+        let file_id_crypto = FileId::from_uuid(file_id);
+        let wrapped = wrap_file_key(&file_key, &file_id_crypto, &kek).expect("wrap should succeed");
+
+        let blob_data = encrypt_chunk(
+            Zeroizing::new(vec![0xAAu8; 64]),
+            &file_key,
+            &file_id_crypto,
+            ChunkIndex::new(0),
+        )
+        .expect("encrypt_chunk should succeed");
+        let checksum = compute_checksum(&blob_data);
+        let blob_name = Uuid::new_v4().hyphenated().to_string();
+
+        tokio::fs::write(staging_dir.join(format!("{}.blob", blob_name)), &blob_data)
+            .await
+            .expect("blob should write to staging");
+
+        let node = Node::new(
+            file_id,
+            None,
+            NodeType::File,
+            "test.bin".to_owned(),
+            1,
+            1,
+            64,
+            Some(*wrapped.as_bytes()),
+        );
+        let chunk = ChunkRecord {
+            chunk_id: Uuid::new_v4(),
+            node_id: NodeId::new(file_id),
+            chunk_index: 0,
+            blob_name: blob_name.clone(),
+            size_padded: 4_194_304,
+            blake3_checksum: checksum.0,
+            epoch_blob_id: None,
+            byte_offset: None,
+            byte_length: None,
+        };
+        store
+            .insert_file_with_chunks(&node, &[chunk])
+            .await
+            .expect("insert_file_with_chunks should succeed");
+
+        (temp, store, kek, file_id, blob_name)
+    }
+
+    /// Verifies that `strong_revoke_share` enqueues old shared blob paths into
+    /// `pending_deletions` so the sync worker can delete them durably, even when
+    /// `list_blobs` fails and immediate deletion is impossible.
+    #[tokio::test]
+    async fn test_strong_revoke_share_on_list_blobs_failure_enqueues_old_shared_blobs_to_pending_deletions()
+     {
+        let (temp, store, kek, file_id, blob_name) = setup_store_with_one_chunk().await;
+        let staging_dir = temp.path().join("staging");
+
+        let sharing_store = MockSharingStore::new();
+        let file_share_id = Uuid::new_v4().hyphenated().to_string();
+        let file_id_str = file_id.hyphenated().to_string();
+        sharing_store.seed_share(ShareRecord {
+            share_id: "share-1".to_owned(),
+            file_id: file_id_str,
+            contact_id: ContactId::from_uuid(Uuid::new_v4()),
+            file_share_id: file_share_id.clone(),
+            cloud_path: format!("shared/{}/", file_share_id),
+            created_at: 1_000,
+            expires_at: None,
+            revoked_at: None,
+            download_key_id: None,
+            download_folder_id: None,
+            receipt_requested: false,
+            receipt_received_at: None,
+        });
+
+        let cloud = MockCloudTransport::new();
+        cloud
+            .inject_failure(
+                &format!("shared/{}/", file_share_id),
+                CloudTransportErrorKind::Timeout,
+            )
+            .await;
+
+        let result = strong_revoke_share(
+            "share-1",
+            2_000,
+            &sharing_store,
+            &store,
+            &cloud,
+            &kek,
+            &staging_dir,
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "strong_revoke_share should succeed: {:?}",
+            result.err()
+        );
+
+        let expected_path = format!("shared/{}/{}.blob", file_share_id, blob_name);
+        let pending = store
+            .list_pending_deletions(10)
+            .await
+            .expect("list_pending_deletions should succeed");
+        assert!(
+            pending.contains(&expected_path),
+            "old shared blob must be queued for durable deletion; pending_deletions: {:?}",
+            pending
         );
     }
 }

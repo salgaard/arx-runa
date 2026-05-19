@@ -177,6 +177,9 @@ async fn serve_video_range<R: tauri::Runtime>(
         builder = builder.status(tauri::http::StatusCode::OK);
     }
 
+    // `bytes` (Zeroizing<Vec<u8>>) zeroes on drop at end of scope. The Vec<u8> copy
+    // passed to builder.body() is Tauri-owned after the move; post-handoff zeroization
+    // is not possible with this API. Accepted limitation.
     builder.body(bytes.to_vec()).unwrap_or_else(|_| {
         plain_error(
             tauri::http::StatusCode::INTERNAL_SERVER_ERROR,

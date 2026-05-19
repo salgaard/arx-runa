@@ -203,6 +203,14 @@ async fn validate_storage_destination(
 /// Failures are logged as warnings. The caller must not treat this as fatal.
 async fn try_build_and_swap_rclone_transport(state: &AppState, db: &SqlCipherMetadataStore) {
     let conf_path = rclone_conf_path();
+    // Remove any rclone.conf left by a previous crash before writing a new one.
+    if let Err(error) = destroy_session_rclone_conf(&conf_path).await {
+        tracing::warn!(
+            ?error,
+            path = %conf_path.display(),
+            "Failed to remove pre-existing rclone.conf before session start"
+        );
+    }
     if let Err(error) = build_session_rclone_conf(db, &conf_path).await {
         tracing::warn!(?error, "Failed to write rclone.conf");
         return;
@@ -383,7 +391,10 @@ pub async fn create_vault(
                     &dest_public,
                     SyncConfig::default(),
                 )
-                .map_err(|e| IpcError::CloudError(e.to_string()))?,
+                .map_err(|e| {
+                    tracing::warn!(error = %e, "RcloneTransport::new failed");
+                    IpcError::CloudError("Cloud connection failed".into())
+                })?,
             )
         } else {
             state.cloud_transport.read().await.clone()
@@ -932,6 +943,7 @@ pub async fn lock_session(state: State<'_, AppState>) -> Result<(), IpcError> {
     }
 
     *state.active_vault_id.write().await = None;
+    state.allowed_reveal_paths.lock().await.clear();
 
     if let Some(ref id) = vault_id {
         let cache_dir = vault_staging_dir(id).join("cache");
@@ -1162,9 +1174,10 @@ pub async fn recover_vault_from_cloud(
     let binary_path = rclone_binary_path(state.app_handle.get());
 
     if let Some(parent) = conf_path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| IpcError::InternalError(format!("config dir: {e}")))?;
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            tracing::warn!(error = %e, "config dir creation failed");
+            IpcError::InternalError("Internal error".into())
+        })?;
     }
     let normalised_blob = validate_single_remote_stanza(
         &dest_session.rclone_config_blob,
@@ -1190,7 +1203,10 @@ pub async fn recover_vault_from_cloud(
         &dest_public,
         SyncConfig::default(),
     )
-    .map_err(|e| IpcError::CloudError(e.to_string()))?;
+    .map_err(|e| {
+        tracing::warn!(error = %e, "RcloneTransport::new failed");
+        IpcError::CloudError("Cloud connection failed".into())
+    })?;
 
     let probe_path = std::env::temp_dir().join("arx-runa-recover-header-probe.json");
     transport
@@ -1365,9 +1381,10 @@ pub async fn recover_vault_from_cloud_with_phrase(
     let binary_path = rclone_binary_path(state.app_handle.get());
 
     if let Some(parent) = conf_path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| IpcError::InternalError(format!("config dir: {e}")))?;
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            tracing::warn!(error = %e, "config dir creation failed");
+            IpcError::InternalError("Internal error".into())
+        })?;
     }
     let config_blob = match dest_session.destination_type {
         DestinationType::LocalPath | DestinationType::ExternalDrive => {
@@ -1407,7 +1424,10 @@ pub async fn recover_vault_from_cloud_with_phrase(
         &dest_public,
         SyncConfig::default(),
     )
-    .map_err(|e| IpcError::CloudError(e.to_string()))?;
+    .map_err(|e| {
+        tracing::warn!(error = %e, "RcloneTransport::new failed");
+        IpcError::CloudError("Cloud connection failed".into())
+    })?;
 
     let probe_path = std::env::temp_dir().join("arx-runa-phrase-recover-header-probe.json");
     transport
@@ -1726,5 +1746,20 @@ mod tests {
             .await
             .expect("command should not error");
         assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn test_destroy_session_rclone_conf_removes_stale_file() {
+        use tempfile::tempdir;
+        let directory = tempdir().expect("tempdir must succeed");
+        let conf_path = directory.path().join("rclone.conf");
+        tokio::fs::write(&conf_path, b"[stale_remote]\ntype = s3\n")
+            .await
+            .expect("stale conf write must succeed");
+        assert!(conf_path.exists(), "stale conf must exist before cleanup");
+        destroy_session_rclone_conf(&conf_path)
+            .await
+            .expect("destroy must succeed on stale conf");
+        assert!(!conf_path.exists(), "stale conf must be removed by destroy");
     }
 }

@@ -72,7 +72,7 @@ impl BackupSyncMode {
 }
 
 /// Session-scoped destination configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DestinationSession {
     pub destination_id: String,
     pub label: String,
@@ -87,6 +87,23 @@ pub struct DestinationSession {
     /// pre-v7 rows.  `LocalPath`/`ExternalDrive` destinations are only used on
     /// the device whose ID matches this field.
     pub device_id: Option<String>,
+}
+
+impl std::fmt::Debug for DestinationSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DestinationSession")
+            .field("destination_id", &self.destination_id)
+            .field("label", &self.label)
+            .field("destination_type", &self.destination_type)
+            .field("rclone_remote_name", &self.rclone_remote_name)
+            .field("rclone_config_blob", &"<redacted>")
+            .field("bucket", &self.bucket)
+            .field("path_prefix", &self.path_prefix)
+            .field("is_primary", &self.is_primary)
+            .field("backup_mode", &self.backup_mode)
+            .field("device_id", &self.device_id)
+            .finish()
+    }
 }
 
 /// Public destination session shape that excludes credential-bearing configuration blobs.
@@ -532,6 +549,20 @@ mod tests {
         assert!(
             conf.contains("[remote-legacy]"),
             "conf should contain normalised header '[remote-legacy]', got:\n{conf}"
+        );
+    }
+
+    #[test]
+    fn test_destination_session_debug_redacts_rclone_config_blob() {
+        let session = sample_session("redact-test", true);
+        let debug_str = format!("{session:?}");
+        assert!(
+            debug_str.contains("<redacted>"),
+            "debug output must redact rclone_config_blob, got: {debug_str}"
+        );
+        assert!(
+            !debug_str.contains("type = s3"),
+            "debug output must not contain blob content, got: {debug_str}"
         );
     }
 }

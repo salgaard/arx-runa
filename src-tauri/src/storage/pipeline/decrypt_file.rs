@@ -98,14 +98,13 @@ pub async fn decrypt_file(
             let expected_hash = Blake3Hash(chunk.blake3_checksum);
             let verified_blob =
                 verify_checksum(encrypted_blob, &expected_hash).map_err(StorageError::from)?;
-            let padded_plaintext = decrypt_chunk(
+            let plaintext = decrypt_chunk(
                 verified_blob,
                 file_key,
                 &crypto_file_id,
                 ChunkIndex::new(chunk.chunk_index),
             )
             .map_err(StorageError::from)?;
-            let plaintext = Zeroizing::new(padded_plaintext);
             let bytes_to_write = if position + 1 == sorted_chunks.len() {
                 file_size
                     .checked_sub(u64::from(chunk.chunk_index) * chunk_size_bytes)
@@ -742,7 +741,7 @@ mod tests {
         async fn insert_file_node_and_stage_epoch_entry(
             &self,
             _node: &crate::storage::types::Node,
-            _plaintext: Vec<u8>,
+            _plaintext: zeroize::Zeroizing<Vec<u8>>,
         ) -> Result<(), crate::storage::error::StorageError> {
             Err(crate::storage::error::StorageError::Database(
                 "unused test helper method".to_owned(),
@@ -753,7 +752,7 @@ mod tests {
         async fn stage_epoch_entry(
             &self,
             _node_id: uuid::Uuid,
-            _plaintext: Vec<u8>,
+            _plaintext: zeroize::Zeroizing<Vec<u8>>,
         ) -> Result<(), crate::storage::error::StorageError> {
             Err(crate::storage::error::StorageError::Database(
                 "unused test helper method".to_owned(),
@@ -1230,12 +1229,16 @@ mod tests {
         async fn insert_file_node_and_stage_epoch_entry(
             &self,
             _: &Node,
-            _: Vec<u8>,
+            _: zeroize::Zeroizing<Vec<u8>>,
         ) -> Result<(), StorageError> {
             Err(StorageError::Database("unused".to_owned()))
         }
 
-        async fn stage_epoch_entry(&self, _: Uuid, _: Vec<u8>) -> Result<(), StorageError> {
+        async fn stage_epoch_entry(
+            &self,
+            _: Uuid,
+            _: zeroize::Zeroizing<Vec<u8>>,
+        ) -> Result<(), StorageError> {
             Err(StorageError::Database("unused".to_owned()))
         }
 
@@ -1305,7 +1308,7 @@ mod tests {
         let blob_name = epoch_blob_id.hyphenated().to_string();
 
         let encrypted = encrypt_chunk(
-            packed.to_vec(),
+            Zeroizing::new(packed.to_vec()),
             &file_key,
             &FileId::from_uuid(epoch_blob_id),
             ChunkIndex::new(0),

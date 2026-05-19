@@ -180,7 +180,7 @@ mod tests {
         async fn insert_file_node_and_stage_epoch_entry(
             &self,
             _node: &crate::storage::types::Node,
-            _plaintext: Vec<u8>,
+            _plaintext: zeroize::Zeroizing<Vec<u8>>,
         ) -> Result<(), crate::storage::error::StorageError> {
             Err(crate::storage::error::StorageError::Database(
                 "unused test helper method".to_owned(),
@@ -191,7 +191,7 @@ mod tests {
         async fn stage_epoch_entry(
             &self,
             _node_id: uuid::Uuid,
-            _plaintext: Vec<u8>,
+            _plaintext: zeroize::Zeroizing<Vec<u8>>,
         ) -> Result<(), crate::storage::error::StorageError> {
             Err(crate::storage::error::StorageError::Database(
                 "unused test helper method".to_owned(),

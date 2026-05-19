@@ -81,11 +81,6 @@ pub(super) fn key_encryption_key_from_array(bytes: &[u8; 32]) -> KeyEncryptionKe
     KeyEncryptionKey::from_secret_box(secret_box_from_array(bytes))
 }
 
-/// Constructs a `SqlcipherKey` from borrowed bytes without by-value constructors.
-pub(super) fn sqlcipher_key_from_array(bytes: &[u8; 32]) -> SqlcipherKey {
-    SqlcipherKey::from_secret_box(secret_box_from_array(bytes))
-}
-
 /// Constructs a `MasterKey` from borrowed bytes without by-value constructors.
 pub(super) fn master_key_from_array(bytes: &[u8; 32]) -> MasterKey {
     MasterKey::from_secret_box(secret_box_from_array(bytes))

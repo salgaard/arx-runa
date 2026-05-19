@@ -9,7 +9,7 @@ use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
-use crate::crypto::{FileId, VaultId, wrap_master_key_for_recovery};
+use crate::crypto::{FileId, SqlcipherKey, VaultId, wrap_master_key_for_recovery};
 use crate::storage::cloud::upload_vault_header;
 use crate::storage::cloud::vault_header::{RecoverySlot, VaultHeader};
 
@@ -61,7 +61,7 @@ pub async fn setup_recovery(
         &mut master_key,
     )?;
     let fresh_session_keys = SessionKeys::from_master_key_bytes(&master_key)?;
-    let verify_sqlcipher_key = sqlcipher_key_from_array(fresh_session_keys.sqlcipher_key.expose());
+    let verify_sqlcipher_key = SqlcipherKey::from_slice(fresh_session_keys.sqlcipher_key.expose());
     let verify_kek = key_encryption_key_from_array(fresh_session_keys.key_encryption_key.expose());
     verify_credentials_via_identity_row(
         &request.vault_db_path,

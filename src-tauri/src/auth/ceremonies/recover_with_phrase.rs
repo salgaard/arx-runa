@@ -11,7 +11,7 @@ use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::{
-    FileId, RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
+    FileId, RecoveryKey, SqlcipherKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
     unwrap_master_key_from_recovery, wrap_file_key, wrap_master_key_for_recovery,
 };
 use crate::storage;
@@ -116,13 +116,8 @@ pub async fn recover_with_phrase(
 
     let original_session_keys = SessionKeys::from_master_key_bytes(&master_key)?;
     let manifest_key_bytes = Zeroizing::new(*original_session_keys.manifest_key.expose());
-    let original_sqlcipher_key = {
-        use crate::crypto::SqlcipherKey;
-        use secrecy::SecretBox;
-        let mut boxed = Box::new([0u8; 32]);
-        boxed.copy_from_slice(original_session_keys.sqlcipher_key.expose());
-        SqlcipherKey::from_secret_box(SecretBox::new(boxed))
-    };
+    let original_sqlcipher_key =
+        SqlcipherKey::from_slice(original_session_keys.sqlcipher_key.expose());
 
     let storage_staging_dir = storage::staging::default_staging_directory()
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
@@ -185,9 +180,11 @@ pub async fn recover_with_phrase(
 
     let current_kek =
         key_encryption_key_from_array(original_session_keys.key_encryption_key.expose());
-    let current_sqlcipher = sqlcipher_key_from_array(original_session_keys.sqlcipher_key.expose());
+    let current_sqlcipher = SqlcipherKey::from_slice(original_session_keys.sqlcipher_key.expose());
+    drop(original_session_keys);
+    drop(master_key);
     let new_kek = key_encryption_key_from_array(new_session_keys.key_encryption_key.expose());
-    let new_sqlcipher = sqlcipher_key_from_array(new_session_keys.sqlcipher_key.expose());
+    let new_sqlcipher = SqlcipherKey::from_slice(new_session_keys.sqlcipher_key.expose());
 
     let vault_id_bytes = *vault_id.as_bytes();
     let vault_db_path = request.vault_db_path.clone();
@@ -312,13 +309,8 @@ pub async fn recover_with_phrase(
     // encrypted with the old key) when checking the snapshot counter.
     {
         let new_manifest_key_bytes = Zeroizing::new(*new_session_keys.manifest_key.expose());
-        let new_sqlcipher_for_upload = {
-            use crate::crypto::SqlcipherKey;
-            use secrecy::SecretBox;
-            let mut boxed = Box::new([0u8; 32]);
-            boxed.copy_from_slice(new_session_keys.sqlcipher_key.expose());
-            SqlcipherKey::from_secret_box(SecretBox::new(boxed))
-        };
+        let new_sqlcipher_for_upload =
+            SqlcipherKey::from_slice(new_session_keys.sqlcipher_key.expose());
         if let Err(error) = upload_manifest_backup(
             &request.vault_db_path,
             &new_sqlcipher_for_upload,
@@ -345,7 +337,6 @@ pub async fn recover_with_phrase(
         )
         .await?;
 
-    drop(master_key);
     drop(new_master_key);
     drop(new_salt);
     drop(new_key_file_bytes);
@@ -902,7 +893,7 @@ mod tests {
         let derived_keys = SessionKeys::from_master_key_bytes(&derived_master).unwrap();
         let sqlcipher_arr: [u8; 32] = *derived_keys.sqlcipher_key.expose();
         let opens = tokio::task::spawn_blocking(move || {
-            let key = sqlcipher_key_from_array(&sqlcipher_arr);
+            let key = SqlcipherKey::from_slice(&sqlcipher_arr);
             match open_sqlcipher(&new_db_path, &key) {
                 Ok(conn) => conn
                     .query_row("SELECT id FROM vault_identity WHERE id = 1", [], |row| {

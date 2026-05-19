@@ -10,7 +10,7 @@ use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::{
-    FileId, RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
+    FileId, RecoveryKey, SqlcipherKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
     unwrap_master_key_from_recovery, wrap_file_key, wrap_master_key_for_recovery,
 };
 use crate::storage::cloud::vault_header::VaultHeader;
@@ -69,7 +69,8 @@ pub async fn rotate_key_file(
     let current_session_keys = SessionKeys::from_master_key_bytes(&current_master_key)?;
     let current_kek =
         key_encryption_key_from_array(current_session_keys.key_encryption_key.expose());
-    let current_sqlcipher = sqlcipher_key_from_array(current_session_keys.sqlcipher_key.expose());
+    let current_sqlcipher = SqlcipherKey::from_slice(current_session_keys.sqlcipher_key.expose());
+    drop(current_session_keys);
 
     let parent = request
         .target_new_key_file_path
@@ -138,7 +139,7 @@ pub async fn rotate_key_file(
     )?;
     let new_session_keys = SessionKeys::from_master_key_bytes(&new_master_key)?;
     let new_kek = key_encryption_key_from_array(new_session_keys.key_encryption_key.expose());
-    let new_sqlcipher = sqlcipher_key_from_array(new_session_keys.sqlcipher_key.expose());
+    let new_sqlcipher = SqlcipherKey::from_slice(new_session_keys.sqlcipher_key.expose());
 
     let vault_id_bytes = *vault_id.as_bytes();
     let vault_db_path = request.vault_db_path.clone();
@@ -248,13 +249,8 @@ pub async fn rotate_key_file(
     drop(recovery_key_for_rewrap);
 
     let new_manifest_key_bytes = Zeroizing::new(*new_session_keys.manifest_key.expose());
-    let new_sqlcipher_for_upload = {
-        use crate::crypto::SqlcipherKey;
-        use secrecy::SecretBox;
-        let mut boxed = Box::new([0u8; 32]);
-        boxed.copy_from_slice(new_session_keys.sqlcipher_key.expose());
-        SqlcipherKey::from_secret_box(SecretBox::new(boxed))
-    };
+    let new_sqlcipher_for_upload =
+        SqlcipherKey::from_slice(new_session_keys.sqlcipher_key.expose());
     let staging_dir = staging::staging_directory().await?;
     session_manager
         .swap_active_session(new_session_keys, vault_id.to_uuid().to_string())
@@ -392,7 +388,7 @@ mod tests {
 
         let vault_db_path = vault.vault_db_path.clone();
         let old_public_key: Vec<u8> = tokio::task::spawn_blocking(move || {
-            let sqlcipher_key = sqlcipher_key_from_array(&old_sqlcipher);
+            let sqlcipher_key = SqlcipherKey::from_slice(&old_sqlcipher);
             let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key).unwrap();
             conn.query_row(
                 "SELECT public_key FROM vault_identity WHERE id = 1",
@@ -443,7 +439,7 @@ mod tests {
 
         let vault_db_path = vault.vault_db_path.clone();
         let new_public_key: Vec<u8> = tokio::task::spawn_blocking(move || {
-            let sqlcipher_key = sqlcipher_key_from_array(&new_sqlcipher);
+            let sqlcipher_key = SqlcipherKey::from_slice(&new_sqlcipher);
             let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key).unwrap();
             conn.query_row(
                 "SELECT public_key FROM vault_identity WHERE id = 1",
@@ -802,7 +798,7 @@ mod tests {
         let wrapped_vec = wrapped.as_bytes().to_vec();
         let vault_db_path = vault.vault_db_path.clone();
         tokio::task::spawn_blocking(move || {
-            let sqlcipher_key = sqlcipher_key_from_array(&current_sqlcipher);
+            let sqlcipher_key = SqlcipherKey::from_slice(&current_sqlcipher);
             let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key).unwrap();
             conn.execute(
                 "INSERT INTO nodes (node_id, parent_id, node_type, name, created_at, modified_at, size_bytes, file_key_wrapped) VALUES (NULL, NULL, 'file', 'malformed', 0, 0, 0, ?)",

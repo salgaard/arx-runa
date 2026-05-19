@@ -11,7 +11,7 @@ use crate::auth::Argon2Params;
 use crate::auth::MockKeySource;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
-use crate::crypto::VaultId;
+use crate::crypto::{SqlcipherKey, VaultId};
 use crate::storage::cloud::CloudTransport;
 use crate::storage::cloud::manifest_backup::encrypt_manifest_backup;
 use crate::storage::cloud::mock::MockCloudTransport;
@@ -171,7 +171,7 @@ pub(crate) async fn upload_manifest_backup_for(vault: &TierOneVault) {
     let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
     derive_master_key_into(TEST_PASSWORD, None, &salt, &params, &mut master).unwrap();
     let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
-    let sqlcipher_key = sqlcipher_key_from_array(keys.sqlcipher_key.expose());
+    let sqlcipher_key = SqlcipherKey::from_slice(keys.sqlcipher_key.expose());
     let manifest_key: [u8; 32] = *keys.manifest_key.expose();
     let staging_root = tempfile::tempdir().expect("manifest backup staging tempdir must exist");
     upload_manifest_backup(
@@ -315,7 +315,7 @@ pub(crate) async fn upload_manifest_backup_for_tier_two(vault: &TierTwoVault) {
     )
     .unwrap();
     let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
-    let sqlcipher_key = sqlcipher_key_from_array(keys.sqlcipher_key.expose());
+    let sqlcipher_key = SqlcipherKey::from_slice(keys.sqlcipher_key.expose());
     let manifest_key: [u8; 32] = *keys.manifest_key.expose();
     let staging_root =
         tempfile::tempdir().expect("tier 2 manifest backup staging tempdir must exist");

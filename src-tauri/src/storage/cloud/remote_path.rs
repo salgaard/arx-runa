@@ -88,7 +88,7 @@ pub fn compose_remote_root(
     }
 }
 
-fn validate_remote_name(remote_name: &str) -> Result<&str, CloudTransportError> {
+pub(crate) fn validate_remote_name(remote_name: &str) -> Result<&str, CloudTransportError> {
     if remote_name.is_empty() {
         return Err(CloudTransportError::Other(
             "remote root rejected: remote_name is empty".to_owned(),
@@ -160,7 +160,9 @@ pub(crate) fn validate_remote_root_component<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{compose_remote_root, validate_remote_path, validate_remote_prefix};
+    use super::{
+        compose_remote_root, validate_remote_name, validate_remote_path, validate_remote_prefix,
+    };
     use crate::storage::cloud::CloudTransportError;
 
     #[test]
@@ -226,5 +228,28 @@ mod tests {
     fn test_compose_remote_root_rejects_bucket_with_slash_boundary() {
         let result = compose_remote_root("remote", "/bucket", "vault");
         assert!(matches!(result, Err(CloudTransportError::Other(_))));
+    }
+
+    #[test]
+    fn test_validate_remote_name_rejects_closing_bracket() {
+        let result = validate_remote_name("bad]name");
+        assert!(matches!(result, Err(CloudTransportError::Other(_))));
+    }
+
+    #[test]
+    fn test_validate_remote_name_rejects_newline() {
+        let result = validate_remote_name("bad\nname");
+        assert!(matches!(result, Err(CloudTransportError::Other(_))));
+    }
+
+    #[test]
+    fn test_validate_remote_name_rejects_equals_sign() {
+        let result = validate_remote_name("bad=name");
+        assert!(matches!(result, Err(CloudTransportError::Other(_))));
+    }
+
+    #[test]
+    fn test_validate_remote_name_accepts_arx_uuid_prefix_format() {
+        assert!(validate_remote_name("arx_550e8400").is_ok());
     }
 }
