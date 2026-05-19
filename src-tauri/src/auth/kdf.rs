@@ -42,7 +42,7 @@ pub(crate) fn derive_master_key_into(
     password_utf8_bytes: &[u8],
     key_file_bytes: Option<&[u8; KEY_FILE_LENGTH_BYTES]>,
     salt: &[u8; 32],
-    params: &Argon2Params,
+    parameters: &Argon2Params,
     output: &mut [u8; MASTER_KEY_LENGTH_BYTES],
 ) -> Result<(), AuthenticationError> {
     let combined_input_length =
@@ -55,9 +55,9 @@ pub(crate) fn derive_master_key_into(
     }
 
     let argon2_params = Params::new(
-        params.memory_cost_kib,
-        params.time_cost,
-        params.parallelism,
+        parameters.memory_cost_kib,
+        parameters.time_cost,
+        parameters.parallelism,
         Some(MASTER_KEY_LENGTH_BYTES),
     )
     .map_err(|_| AuthenticationError::InvalidCredentials)?;

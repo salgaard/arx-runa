@@ -44,7 +44,7 @@ pub async fn change_password(
     }
 
     let current_salt = decode_base64_32(&vault_header.argon2_salt)?;
-    let current_params = argon2_params_from_json(&vault_header.argon2_params);
+    let current_params = argon2_parameters_from_json(&vault_header.argon2_params);
     let resolved_argon2_params = resolve_existing_vault_argon2(
         &current_params,
         &request.argon2_params,
@@ -96,7 +96,7 @@ pub async fn change_password(
                     .ok_or(AuthenticationError::NoRecoverySlot)?;
                 let slot = &vault_header.recovery_slots[slot_index];
                 let slot_salt = decode_base64_32(&slot.argon2_salt)?;
-                let slot_params = argon2_params_from_json(&slot.argon2_params);
+                let slot_params = argon2_parameters_from_json(&slot.argon2_params);
                 let wrapped_bytes = decode_base64_72(&slot.wrapped_master_key)?;
                 let wrapped = WrappedMasterKey::new(wrapped_bytes);
 
@@ -218,7 +218,7 @@ pub async fn change_password(
     rewrap_result?;
 
     vault_header.argon2_salt = encode_base64(new_salt.as_slice());
-    vault_header.argon2_params = argon2_params_to_json(&resolved_argon2_params);
+    vault_header.argon2_params = argon2_parameters_to_json(&resolved_argon2_params);
     if will_remove_slots {
         vault_header.recovery_slots.clear();
     } else if let Some(recovery_key) = recovery_key_for_rewrap.as_ref() {
@@ -350,7 +350,7 @@ mod tests {
         let mut vault = create_tier_one_vault().await;
 
         let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let current_params = argon2_params_from_json(&vault.header.argon2_params);
+        let current_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut old_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_PASSWORD,
@@ -388,7 +388,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -403,7 +403,7 @@ mod tests {
         .expect("change_password must succeed");
 
         let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let new_params = argon2_params_from_json(&vault.header.argon2_params);
+        let new_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_NEW_PASSWORD,
@@ -444,7 +444,7 @@ mod tests {
         let mut vault = create_tier_one_vault().await;
 
         let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let current_params = argon2_params_from_json(&vault.header.argon2_params);
+        let current_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut current_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_PASSWORD,
@@ -482,7 +482,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -497,7 +497,7 @@ mod tests {
         .expect("change_password must succeed");
 
         let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let new_params = argon2_params_from_json(&vault.header.argon2_params);
+        let new_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_NEW_PASSWORD,
@@ -536,7 +536,7 @@ mod tests {
         let _lock = ceremony_lock().await;
         let mut vault = create_tier_one_vault().await;
         let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let current_params = argon2_params_from_json(&vault.header.argon2_params);
+        let current_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut old_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_PASSWORD,
@@ -554,7 +554,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -569,7 +569,7 @@ mod tests {
         .expect("change_password must succeed");
 
         let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let new_params = argon2_params_from_json(&vault.header.argon2_params);
+        let new_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_NEW_PASSWORD,
@@ -620,7 +620,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: Some(phrase_string.as_bytes()),
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -637,7 +637,7 @@ mod tests {
 
         let slot = &vault.header.recovery_slots[0];
         let slot_salt = decode_base64_32(&slot.argon2_salt).unwrap();
-        let slot_params = argon2_params_from_json(&slot.argon2_params);
+        let slot_params = argon2_parameters_from_json(&slot.argon2_params);
         let wrapped = WrappedMasterKey::new(decode_base64_72(&slot.wrapped_master_key).unwrap());
 
         let mut recovery_key_bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
@@ -653,7 +653,7 @@ mod tests {
             .expect("unwrap with phrase must succeed after password change");
 
         let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let new_params = argon2_params_from_json(&vault.header.argon2_params);
+        let new_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_NEW_PASSWORD,
@@ -678,7 +678,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -699,7 +699,7 @@ mod tests {
         let _lock = ceremony_lock().await;
         let mut vault = create_tier_one_vault().await;
         let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let current_params = argon2_params_from_json(&vault.header.argon2_params);
+        let current_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut old_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_PASSWORD,
@@ -734,7 +734,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -784,7 +784,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -803,7 +803,7 @@ mod tests {
         assert_ne!(vault.header.argon2_salt, old_salt);
 
         let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let new_params = argon2_params_from_json(&vault.header.argon2_params);
+        let new_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_NEW_PASSWORD,
@@ -834,8 +834,15 @@ mod tests {
         let _lock = ceremony_lock().await;
         let mut vault = create_tier_one_vault().await;
 
+        let pending_path = staging::staging_directory()
+            .await
+            .expect("staging dir must exist")
+            .join(STAGING_FILE_NAME);
+        let _ = staging::remove_if_exists(&pending_path).await;
+        let _ = tokio::fs::remove_dir_all(&pending_path).await;
+
         let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let current_params = argon2_params_from_json(&vault.header.argon2_params);
+        let current_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut current_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_PASSWORD,
@@ -870,7 +877,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -890,12 +897,19 @@ mod tests {
         let _lock = ceremony_lock().await;
         let mut vault = create_tier_one_vault().await;
 
+        let pending_path = staging::staging_directory()
+            .await
+            .expect("staging dir must exist")
+            .join(STAGING_FILE_NAME);
+        let _ = staging::remove_if_exists(&pending_path).await;
+        let _ = tokio::fs::remove_dir_all(&pending_path).await;
+
         let migrate_to_non_default = ChangePasswordRequest {
             current_password_bytes: TEST_PASSWORD,
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::MigrateToRequested,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -909,8 +923,8 @@ mod tests {
         .await
         .expect("explicit migration to non-default params must succeed");
         assert_eq!(
-            argon2_params_from_json(&vault.header.argon2_params),
-            test_params()
+            argon2_parameters_from_json(&vault.header.argon2_params),
+            test_parameters()
         );
 
         let preserve_request = ChangePasswordRequest {
@@ -932,8 +946,8 @@ mod tests {
         .await
         .expect("preserve mode must not block change-password");
         assert_eq!(
-            argon2_params_from_json(&vault.header.argon2_params),
-            test_params()
+            argon2_parameters_from_json(&vault.header.argon2_params),
+            test_parameters()
         );
 
         let migrate_back_to_default = ChangePasswordRequest {
@@ -955,7 +969,7 @@ mod tests {
         .await
         .expect("explicit migration back to defaults must succeed");
         assert_eq!(
-            argon2_params_from_json(&vault.header.argon2_params),
+            argon2_parameters_from_json(&vault.header.argon2_params),
             crate::auth::Argon2Params::DEFAULT
         );
     }

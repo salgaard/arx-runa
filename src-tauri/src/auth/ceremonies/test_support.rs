@@ -28,7 +28,7 @@ pub(crate) async fn ceremony_lock() -> tokio::sync::MutexGuard<'static, ()> {
     CEREMONY_TEST_LOCK.lock().await
 }
 
-pub(crate) fn test_params() -> Argon2Params {
+pub(crate) fn test_parameters() -> Argon2Params {
     Argon2Params {
         memory_cost_kib: 1024,
         time_cost: 1,
@@ -149,7 +149,7 @@ pub(crate) async fn add_recovery_slot_and_return_phrase(
     let request = SetupRecoveryRequest {
         current_password_bytes: TEST_PASSWORD,
         current_key_source: None,
-        argon2_params: test_params(),
+        argon2_params: test_parameters(),
         argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
         vault_db_path: vault.vault_db_path.clone(),
     };
@@ -167,9 +167,9 @@ pub(crate) async fn add_recovery_slot_and_return_phrase(
 
 pub(crate) async fn upload_manifest_backup_for(vault: &TierOneVault) {
     let salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-    let params = argon2_params_from_json(&vault.header.argon2_params);
+    let parameters = argon2_parameters_from_json(&vault.header.argon2_params);
     let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-    derive_master_key_into(TEST_PASSWORD, None, &salt, &params, &mut master).unwrap();
+    derive_master_key_into(TEST_PASSWORD, None, &salt, &parameters, &mut master).unwrap();
     let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
     let sqlcipher_key = SqlcipherKey::from_slice(keys.sqlcipher_key.expose());
     let manifest_key: [u8; 32] = *keys.manifest_key.expose();
@@ -188,9 +188,9 @@ pub(crate) async fn upload_manifest_backup_for(vault: &TierOneVault) {
 
 pub(crate) async fn upload_manifest_backup_payload_for(vault: &TierOneVault, payload: &[u8]) {
     let salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-    let params = argon2_params_from_json(&vault.header.argon2_params);
+    let parameters = argon2_parameters_from_json(&vault.header.argon2_params);
     let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-    derive_master_key_into(TEST_PASSWORD, None, &salt, &params, &mut master).unwrap();
+    derive_master_key_into(TEST_PASSWORD, None, &salt, &parameters, &mut master).unwrap();
     let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
     let manifest_key: [u8; 32] = *keys.manifest_key.expose();
     let wire = encrypt_manifest_backup(
@@ -257,9 +257,9 @@ pub(crate) struct DerivedVaultKeys {
 /// Derives all vault keys for a Tier 1 vault using the test password.
 pub(crate) fn derive_vault_keys_tier_one(vault: &TierOneVault) -> DerivedVaultKeys {
     let salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-    let params = argon2_params_from_json(&vault.header.argon2_params);
+    let parameters = argon2_parameters_from_json(&vault.header.argon2_params);
     let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-    derive_master_key_into(TEST_PASSWORD, None, &salt, &params, &mut master).unwrap();
+    derive_master_key_into(TEST_PASSWORD, None, &salt, &parameters, &mut master).unwrap();
     let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
     DerivedVaultKeys {
         sqlcipher_key: *keys.sqlcipher_key.expose(),
@@ -280,7 +280,7 @@ pub(crate) async fn add_recovery_slot_and_return_phrase_tier_two(
     let request = SetupRecoveryRequest {
         current_password_bytes: TEST_PASSWORD,
         current_key_source: Some(&key_source),
-        argon2_params: test_params(),
+        argon2_params: test_parameters(),
         argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
         vault_db_path: vault.vault_db_path.clone(),
     };
@@ -304,13 +304,13 @@ pub(crate) async fn upload_manifest_backup_for_tier_two(vault: &TierTwoVault) {
         .try_into()
         .expect("key file must be 32 bytes");
     let salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-    let params = argon2_params_from_json(&vault.header.argon2_params);
+    let parameters = argon2_parameters_from_json(&vault.header.argon2_params);
     let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
     derive_master_key_into(
         TEST_PASSWORD,
         Some(key_bytes_32),
         &salt,
-        &params,
+        &parameters,
         &mut master,
     )
     .unwrap();

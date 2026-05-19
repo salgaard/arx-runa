@@ -21,7 +21,8 @@
       "Read(.env.*)",
       "Read(secrets/**)",
       "Bash(git reset*)",
-      "Bash(git clean*)"
+      "Bash(git clean*)",
+      "Bash(git stash*)"
     ],
     "ask": [
       "Bash(git push:*)",

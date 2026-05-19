@@ -9,17 +9,18 @@ use std::sync::Arc;
 use crate::storage::cloud::destination_session::{
     BackupSyncMode, DestinationSession, DestinationType, delete_destination_session,
     get_primary_destination, insert_destination_session, list_destination_sessions,
-    set_primary_destination,
+    set_primary_destination as set_primary_destination_in_db,
 };
 use crate::storage::cloud::{
-    OAuthProvider, begin_oauth_setup, cancel_oauth_setup, complete_oauth_setup,
+    OAuthProvider, begin_oauth_setup, cancel_oauth_setup as cancel_oauth_setup_process,
+    complete_oauth_setup,
 };
 use crate::storage::device_id::get_or_create_device_id;
 use crate::ui::auth_commands::rclone_conf_path;
-use crate::ui::commands_common::require_active_session;
+use crate::ui::commands_common::{rclone_binary_path, require_active_session};
 use crate::ui::error::IpcError;
 use crate::ui::state::{AppState, OAuthSetupHandle};
-use crate::ui::sync_commands::{build_destination_transport, rclone_binary_path};
+use crate::ui::sync_commands::build_destination_transport;
 use crate::ui::types::{
     BeginOauthSetupResponse, DestinationEntry, DestinationSessionConfig, OauthPollResponse,
 };
@@ -361,7 +362,7 @@ pub async fn delete_destination(
 /// Also hot-swaps `AppState.cloud_transport` so subsequent syncs use the new
 /// primary's rclone config without requiring a lock/unlock cycle.
 #[tauri::command]
-pub async fn set_primary_destination_cmd(
+pub async fn set_primary_destination(
     destination_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), IpcError> {
@@ -381,7 +382,7 @@ pub async fn set_primary_destination_cmd(
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
     let db = &*db_store;
 
-    set_primary_destination(db, &destination_id)
+    set_primary_destination_in_db(db, &destination_id)
         .await
         .map_err(IpcError::from)?;
 
@@ -394,7 +395,7 @@ pub async fn set_primary_destination_cmd(
         .app_handle
         .get()
         .ok_or_else(|| IpcError::InternalError("App handle not initialised".into()))?;
-    let binary_path = rclone_binary_path(app_handle);
+    let binary_path = rclone_binary_path(Some(app_handle));
 
     let conf_path = rclone_conf_path();
 
@@ -431,7 +432,7 @@ pub async fn begin_google_drive_setup(
         .app_handle
         .get()
         .ok_or_else(|| IpcError::InternalError("App handle not initialised".into()))?;
-    let binary_path = rclone_binary_path(app_handle);
+    let binary_path = rclone_binary_path(Some(app_handle));
 
     let begun = begin_oauth_setup(OAuthProvider::GoogleDrive, &binary_path)
         .await
@@ -472,7 +473,7 @@ pub async fn begin_onedrive_setup(
         .app_handle
         .get()
         .ok_or_else(|| IpcError::InternalError("App handle not initialised".into()))?;
-    let binary_path = rclone_binary_path(app_handle);
+    let binary_path = rclone_binary_path(Some(app_handle));
 
     let begun = begin_oauth_setup(OAuthProvider::OneDrive, &binary_path)
         .await
@@ -515,7 +516,7 @@ pub async fn poll_oauth_setup(
         .app_handle
         .get()
         .ok_or_else(|| IpcError::InternalError("App handle not initialised".into()))?;
-    let binary_path = rclone_binary_path(app_handle);
+    let binary_path = rclone_binary_path(Some(app_handle));
 
     let mut setups = state.oauth_setups.lock().await;
 
@@ -563,7 +564,7 @@ pub async fn poll_oauth_setup(
 /// Kills the rclone subprocess and removes the temporary config file.  Safe to
 /// call even if the setup has already completed or been removed.
 #[tauri::command]
-pub async fn cancel_oauth_setup_cmd(
+pub async fn cancel_oauth_setup(
     setup_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), IpcError> {
@@ -573,7 +574,7 @@ pub async fn cancel_oauth_setup_cmd(
     };
     drop(setups);
 
-    cancel_oauth_setup(&mut handle.child, &handle.temp_config_path).await;
+    cancel_oauth_setup_process(&mut handle.child, &handle.temp_config_path).await;
     Ok(())
 }
 

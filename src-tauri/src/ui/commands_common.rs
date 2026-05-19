@@ -6,9 +6,11 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use secrecy::SecretBox;
 use zeroize::Zeroizing;
 
 use crate::auth::LifecycleState;
+use crate::crypto::KeyEncryptionKey;
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
 
@@ -68,6 +70,78 @@ pub(crate) async fn require_active_session(state: &AppState) -> Result<(), IpcEr
     } else {
         Err(IpcError::VaultLocked("Vault is locked".into()))
     }
+}
+
+/// Returns the path to the rclone binary.
+///
+/// Tries the app resource directory first (production bundle), then falls back to the system
+/// PATH (development mode). Pass `None` at session-setup time when the `AppHandle` is not yet
+/// guaranteed to be present (e.g., in `auth_commands`).
+pub(crate) fn rclone_binary_path(handle: Option<&tauri::AppHandle>) -> std::path::PathBuf {
+    use tauri::Manager as _;
+    if let Some(handle) = handle
+        && let Ok(resource_dir) = handle.path().resource_dir()
+    {
+        let name = if cfg!(target_os = "windows") {
+            "rclone.exe"
+        } else {
+            "rclone"
+        };
+        let candidate = resource_dir.join("bin").join(name);
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    std::path::PathBuf::from(if cfg!(target_os = "windows") {
+        "rclone.exe"
+    } else {
+        "rclone"
+    })
+}
+
+/// Converts a Unix timestamp (seconds since 1970-01-01T00:00:00Z) to an ISO 8601 string.
+///
+/// Implemented with pure stdlib arithmetic so the crate does not need `chrono` or `time`.
+pub(crate) fn unix_ts_to_iso8601(ts: i64) -> String {
+    let ts = if ts < 0 { 0u64 } else { ts as u64 };
+    let secs = ts % 60;
+    let mins = (ts / 60) % 60;
+    let hours = (ts / 3600) % 24;
+    let total_days = ts / 86400;
+    let (year, month, day) = days_since_epoch_to_date(total_days);
+    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{mins:02}:{secs:02}Z")
+}
+
+/// Maps days since the Unix epoch to a proleptic Gregorian (year, month, day) triple.
+///
+/// Algorithm: http://howardhinnant.github.io/date_algorithms.html "civil_from_days".
+pub(crate) fn days_since_epoch_to_date(days: u64) -> (u32, u32, u32) {
+    let z = days as i64 + 719_468;
+    let era: i64 = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let y = (if m <= 2 { y + 1 } else { y }) as u32;
+    (y, m, d)
+}
+
+/// Copies the KEK out of the session guard and wraps it in a `KeyEncryptionKey`.
+///
+/// The intermediate stack copy is wrapped in `Zeroizing` so it is cleared
+/// before the `SecretBox` heap allocation takes ownership.
+pub(crate) async fn extract_kek(state: &AppState) -> Result<KeyEncryptionKey, IpcError> {
+    let kek_raw: Zeroizing<[u8; 32]> = state
+        .session_manager
+        .with_key_encryption_key(|k| Zeroizing::new(*k))
+        .await
+        .map_err(IpcError::from)?;
+    Ok(KeyEncryptionKey::from_secret_box(SecretBox::new(Box::new(
+        *kek_raw,
+    ))))
 }
 
 /// Converts a password `String` to a `Zeroizing<Vec<u8>>`, scrubbing the original.

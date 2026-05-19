@@ -1,4 +1,5 @@
 //! Sharing-store implementation backed by SQLCipher metadata storage.
+//! Trait definition and domain types live in [`crate::sharing`].
 
 use async_trait::async_trait;
 use rusqlite::{OptionalExtension, Row, params};

@@ -54,8 +54,6 @@ pub async fn decrypt_file(
     let expected_blob_len = chunk_size_bytes.checked_add(40).ok_or_else(|| {
         StorageError::Database("chunk_size_bytes overflow while sizing blob".to_owned())
     })?;
-    let expected_blob_len_usize = usize::try_from(expected_blob_len)
-        .map_err(|error| StorageError::Database(error.to_string()))?;
     let expected_chunk_count_u64 = if file_size == 0 {
         0
     } else {
@@ -92,8 +90,7 @@ pub async fn decrypt_file(
         for (position, chunk) in sorted_chunks.iter().enumerate() {
             validate_blob_name_uuid_v4(&chunk.blob_name)?;
             let blob_path = resolve_blob_path(blob_directory, &chunk.blob_name).await;
-            let encrypted_blob =
-                read_encrypted_blob(&blob_path, expected_blob_len, expected_blob_len_usize).await?;
+            let encrypted_blob = read_encrypted_blob(&blob_path, expected_blob_len).await?;
 
             let expected_hash = Blake3Hash(chunk.blake3_checksum);
             let verified_blob =
@@ -155,7 +152,6 @@ pub async fn decrypt_file(
 async fn read_encrypted_blob(
     blob_path: &Path,
     expected_blob_len: u64,
-    expected_blob_len_usize: usize,
 ) -> Result<Vec<u8>, StorageError> {
     let blob_metadata = tokio::fs::metadata(blob_path)
         .await
@@ -165,6 +161,8 @@ async fn read_encrypted_blob(
             "encrypted blob length mismatch for configured chunk_size_bytes".to_owned(),
         ));
     }
+    let expected_blob_len_usize = usize::try_from(expected_blob_len)
+        .map_err(|error| StorageError::Database(error.to_string()))?;
     let encrypted_blob_file = File::open(blob_path)
         .await
         .map_err(|error| StorageError::Io(error.to_string()))?;
@@ -232,8 +230,6 @@ pub async fn decrypt_file_to_memory(
     let expected_blob_len = chunk_size_bytes.checked_add(40).ok_or_else(|| {
         StorageError::Database("chunk_size_bytes overflow while sizing blob".to_owned())
     })?;
-    let expected_blob_len_usize = usize::try_from(expected_blob_len)
-        .map_err(|error| StorageError::Database(error.to_string()))?;
     let expected_chunk_count_u64 = if file_size == 0 {
         0
     } else {
@@ -267,8 +263,7 @@ pub async fn decrypt_file_to_memory(
     for (position, chunk) in sorted_chunks.iter().enumerate() {
         validate_blob_name_uuid_v4(&chunk.blob_name)?;
         let blob_path = resolve_blob_path(blob_directory, &chunk.blob_name).await;
-        let encrypted_blob =
-            read_encrypted_blob(&blob_path, expected_blob_len, expected_blob_len_usize).await?;
+        let encrypted_blob = read_encrypted_blob(&blob_path, expected_blob_len).await?;
 
         let expected_hash = Blake3Hash(chunk.blake3_checksum);
         let verified_blob =
@@ -338,8 +333,6 @@ pub async fn decrypt_file_range_to_memory(
     let expected_blob_len = chunk_size_bytes.checked_add(40).ok_or_else(|| {
         StorageError::Database("chunk_size_bytes overflow while sizing blob".to_owned())
     })?;
-    let expected_blob_len_usize = usize::try_from(expected_blob_len)
-        .map_err(|error| StorageError::Database(error.to_string()))?;
 
     let expected_chunk_count_u64 = file_size.div_ceil(chunk_size_bytes);
     let expected_chunk_count = usize::try_from(expected_chunk_count_u64)
@@ -375,8 +368,7 @@ pub async fn decrypt_file_range_to_memory(
     {
         validate_blob_name_uuid_v4(&chunk.blob_name)?;
         let blob_path = resolve_blob_path(blob_directory, &chunk.blob_name).await;
-        let encrypted_blob =
-            read_encrypted_blob(&blob_path, expected_blob_len, expected_blob_len_usize).await?;
+        let encrypted_blob = read_encrypted_blob(&blob_path, expected_blob_len).await?;
 
         let expected_hash = Blake3Hash(chunk.blake3_checksum);
         let verified_blob =

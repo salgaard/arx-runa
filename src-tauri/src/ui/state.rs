@@ -33,6 +33,23 @@ pub struct OAuthSetupHandle {
 ///
 /// Contains only IPC and runtime orchestration handles — no key material,
 /// no passwords, and no file-content buffers.
+///
+/// # Lock acquisition order
+///
+/// When a handler must hold more than one lock simultaneously, always acquire
+/// them in this order to prevent deadlock:
+///
+/// 1. `sync_mutex`
+/// 2. `flush_mutex`
+/// 3. `oauth_setups`
+/// 4. `allowed_reveal_paths`
+/// 5. `cloud_transport` (RwLock)
+/// 6. `sync_status` (RwLock)
+/// 7. `active_vault_id` (RwLock)
+///
+/// In practice `flush_mutex` is always released before `cloud_transport` is
+/// acquired (e.g. `sync_backup`), so concurrent holding of multiple locks is
+/// rare. Respect this order in any new multi-lock code path.
 pub struct AppState {
     /// Cloud transport implementation; swappable post-authenticate.
     ///

@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 /// Progress update for file upload and download operations.
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProgressUpdate {
     /// Completion percentage from 0 to 100.

@@ -251,7 +251,7 @@ pub fn DestinationSelector(
         if let OAuthFlowState::WaitingForBrowser { setup_id, .. } = current_state {
             leptos::task::spawn_local(async move {
                 let _ = invoke_command::<_, ()>(
-                    "cancel_oauth_setup_cmd",
+                    "cancel_oauth_setup",
                     &CancelOauthSetupRequest { setup_id },
                 )
                 .await;
@@ -360,7 +360,7 @@ pub fn DestinationSelector(
         if let OAuthFlowState::WaitingForBrowser { setup_id, .. } = current_state {
             leptos::task::spawn_local(async move {
                 let _ = invoke_command::<_, ()>(
-                    "cancel_oauth_setup_cmd",
+                    "cancel_oauth_setup",
                     &CancelOauthSetupRequest { setup_id },
                 )
                 .await;

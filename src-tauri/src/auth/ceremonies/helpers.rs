@@ -18,19 +18,19 @@ use crate::crypto::{
     unwrap_file_key, wrap_file_key,
 };
 use crate::storage::cloud::VaultHeaderSyncError;
-use crate::storage::cloud::vault_header::Argon2ParamsJson;
+use crate::storage::cloud::vault_header::Argon2ParametersJson;
 
 /// Converts runtime Argon2 parameters into vault-header JSON shape.
-pub(super) fn argon2_params_to_json(params: &Argon2Params) -> Argon2ParamsJson {
-    Argon2ParamsJson {
-        memory_cost: params.memory_cost_kib,
-        time_cost: params.time_cost,
-        parallelism: params.parallelism,
+pub(super) fn argon2_parameters_to_json(parameters: &Argon2Params) -> Argon2ParametersJson {
+    Argon2ParametersJson {
+        memory_cost: parameters.memory_cost_kib,
+        time_cost: parameters.time_cost,
+        parallelism: parameters.parallelism,
     }
 }
 
 /// Converts vault-header Argon2 JSON fields into runtime parameters.
-pub(super) fn argon2_params_from_json(json: &Argon2ParamsJson) -> Argon2Params {
+pub(super) fn argon2_parameters_from_json(json: &Argon2ParametersJson) -> Argon2Params {
     Argon2Params {
         memory_cost_kib: json.memory_cost,
         time_cost: json.time_cost,
@@ -40,9 +40,9 @@ pub(super) fn argon2_params_from_json(json: &Argon2ParamsJson) -> Argon2Params {
 
 /// Enforces canonical Argon2 defaults for new-vault creation only.
 pub(super) fn validate_new_vault_argon2_defaults(
-    params: &Argon2Params,
+    parameters: &Argon2Params,
 ) -> Result<(), AuthenticationError> {
-    if *params == Argon2Params::DEFAULT {
+    if *parameters == Argon2Params::DEFAULT {
         Ok(())
     } else {
         Err(AuthenticationError::VaultHeaderInvalid)
@@ -54,13 +54,13 @@ pub(super) fn validate_new_vault_argon2_defaults(
 /// Default behavior preserves trusted header parameters. Explicit migration
 /// intent is required before requested parameters are applied.
 pub(super) fn resolve_existing_vault_argon2(
-    trusted_header_params: &Argon2Params,
-    requested_params: &Argon2Params,
+    trusted_header_parameters: &Argon2Params,
+    requested_parameters: &Argon2Params,
     migration_intent: Argon2MigrationIntent,
 ) -> Result<Argon2Params, AuthenticationError> {
     match migration_intent {
-        Argon2MigrationIntent::PreserveTrusted => Ok(*trusted_header_params),
-        Argon2MigrationIntent::MigrateToRequested => Ok(*requested_params),
+        Argon2MigrationIntent::PreserveTrusted => Ok(*trusted_header_parameters),
+        Argon2MigrationIntent::MigrateToRequested => Ok(*requested_parameters),
     }
 }
 
@@ -276,10 +276,10 @@ pub(super) fn canonicalize_phrase(mnemonic: &Mnemonic) -> Zeroizing<String> {
 pub(super) fn derive_recovery_key_into(
     phrase_canonical_bytes: &[u8],
     salt: &[u8; 32],
-    params: &Argon2Params,
+    parameters: &Argon2Params,
     output: &mut [u8; 32],
 ) -> Result<(), AuthenticationError> {
-    derive_master_key_into(phrase_canonical_bytes, None, salt, params, output)
+    derive_master_key_into(phrase_canonical_bytes, None, salt, parameters, output)
 }
 
 /// Verifies credentials by unwrapping the persisted identity key with fresh keys.

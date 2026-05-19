@@ -8,19 +8,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use rusqlite::OptionalExtension;
-use secrecy::SecretBox;
 use tauri::State;
 use tauri::ipc::Channel;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::crypto::{FileId, KeyEncryptionKey, WrappedFileKey, unwrap_file_key};
+use crate::crypto::{FileId, WrappedFileKey, unwrap_file_key};
 use crate::sharing::{
     Contact, ContactId, DisplayName, SharingStore, X25519PublicKey, export_public_key_bytes,
     import_share_package, public_key_qr_string,
 };
 use crate::storage::{MetadataStore, StorageError};
-use crate::ui::commands_common::{ProgressChannel, require_active_session};
+use crate::ui::commands_common::{
+    ProgressChannel, extract_kek, require_active_session, unix_ts_to_iso8601,
+};
 use crate::ui::error::IpcError;
 use crate::ui::file_commands::detect_mime_type;
 use crate::ui::state::AppState;
@@ -39,51 +40,6 @@ fn now_unix_seconds() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
-}
-
-/// Converts a Unix timestamp (seconds since 1970-01-01T00:00:00Z) to an ISO 8601 string.
-///
-/// Implemented with pure stdlib arithmetic so the crate does not need `chrono` or `time`.
-fn unix_ts_to_iso8601(ts: i64) -> String {
-    let ts = if ts < 0 { 0u64 } else { ts as u64 };
-    let secs = ts % 60;
-    let mins = (ts / 60) % 60;
-    let hours = (ts / 3600) % 24;
-    let total_days = ts / 86400;
-    let (year, month, day) = days_since_epoch_to_date(total_days);
-    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{mins:02}:{secs:02}Z")
-}
-
-/// Maps days since the Unix epoch to a proleptic Gregorian (year, month, day) triple.
-///
-/// Algorithm: http://howardhinnant.github.io/date_algorithms.html "civil_from_days".
-fn days_since_epoch_to_date(days: u64) -> (u32, u32, u32) {
-    let z = days as i64 + 719_468;
-    let era: i64 = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
-    let y = (if m <= 2 { y + 1 } else { y }) as u32;
-    (y, m, d)
-}
-
-/// Copies the KEK out of the session guard and wraps it in a `KeyEncryptionKey`.
-///
-/// The intermediate stack copy is wrapped in `Zeroizing` so it is cleared
-/// before the `SecretBox` heap allocation takes ownership.
-async fn extract_kek(state: &AppState) -> Result<KeyEncryptionKey, IpcError> {
-    let kek_raw: Zeroizing<[u8; 32]> = state
-        .session_manager
-        .with_key_encryption_key(|k| Zeroizing::new(*k))
-        .await
-        .map_err(IpcError::from)?;
-    Ok(KeyEncryptionKey::from_secret_box(SecretBox::new(Box::new(
-        *kek_raw,
-    ))))
 }
 
 /// Revokes all outgoing shares whose `expires_at` has passed.
@@ -343,7 +299,7 @@ pub async fn share_file(
         .read()
         .await
         .clone()
-        .ok_or_else(|| IpcError::VaultLocked("No active vault".into()))?;
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
     let staging_dir = vault_staging_dir(&vault_id);
 
     let transport = state.cloud_transport.read().await.clone();
@@ -435,7 +391,7 @@ pub async fn import_share(
         .read()
         .await
         .clone()
-        .ok_or_else(|| IpcError::VaultLocked("No active vault".into()))?;
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
     let staging_dir = vault_staging_dir(&vault_id);
 
     let rclone_bin: Option<PathBuf> = state.app_handle.get().map(|h| {
@@ -888,7 +844,7 @@ pub async fn download_received_share(
         .read()
         .await
         .clone()
-        .ok_or_else(|| IpcError::VaultLocked("No active vault".into()))?;
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
     let staging_dir = vault_staging_dir(&vault_id);
     let kek = extract_kek(&state).await?;
     let transport = state.cloud_transport.read().await.clone();
@@ -1074,7 +1030,7 @@ pub async fn get_received_share_content(
         .read()
         .await
         .clone()
-        .ok_or_else(|| IpcError::VaultLocked("No active vault".into()))?;
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
     let staging_dir = vault_staging_dir(&vault_id);
     let kek = extract_kek(&state).await?;
     let transport = state.cloud_transport.read().await.clone();
@@ -1394,7 +1350,7 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
         .read()
         .await
         .clone()
-        .ok_or_else(|| IpcError::VaultLocked("No active vault".into()))?;
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
     let staging_dir = vault_staging_dir(&vault_id);
 
     // Unwrap the vault's own private key for HPKE.Open of receipt blobs.

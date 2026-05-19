@@ -939,7 +939,7 @@ mod tests {
     use crate::storage::MetadataStore;
     use crate::storage::cloud::CloudTransport;
     use crate::storage::cloud::mock::{CloudTransportErrorKind, MockCloudTransport};
-    use crate::storage::cloud::vault_header::{Argon2ParamsJson, VaultHeader};
+    use crate::storage::cloud::vault_header::{Argon2ParametersJson, VaultHeader};
     use crate::storage::types::{ChunkRecord, Node, NodeType};
 
     const SAMPLE_VAULT_UUID: &str = "00000000-0000-4000-8000-000000000001";
@@ -950,7 +950,7 @@ mod tests {
             schema_version: VaultHeader::SCHEMA_VERSION,
             tier: 1,
             argon2_salt: base64::engine::general_purpose::STANDARD.encode([0x11u8; 32]),
-            argon2_params: Argon2ParamsJson {
+            argon2_params: Argon2ParametersJson {
                 memory_cost: 65_536,
                 time_cost: 3,
                 parallelism: 4,

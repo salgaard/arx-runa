@@ -414,7 +414,7 @@ fn DestinationItem(
                                     let on_ref = on_refresh_promote.clone();
                                     leptos::task::spawn_local(async move {
                                         match invoke_command::<SetPrimaryDestinationRequest, ()>(
-                                            "set_primary_destination_cmd",
+                                            "set_primary_destination",
                                             &SetPrimaryDestinationRequest {
                                                 destination_id: dest_id,
                                             },

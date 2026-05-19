@@ -49,7 +49,6 @@ pub enum IpcError {
     SharingNotSupported(String),
 }
 
-#[allow(unreachable_patterns)]
 impl From<crate::auth::AuthenticationError> for IpcError {
     /// Maps authentication errors to sanitised IPC error variants without leaking internal details.
     fn from(error: crate::auth::AuthenticationError) -> Self {
@@ -71,7 +70,6 @@ impl From<crate::auth::AuthenticationError> for IpcError {
             A::NoRecoverySlot => {
                 IpcError::InvalidInput("No recovery slot configured for this vault".into())
             }
-            _ => IpcError::InternalError("An error occurred".into()),
         }
     }
 }
@@ -141,7 +139,6 @@ impl From<crate::sharing::SharingError> for IpcError {
     }
 }
 
-#[allow(unreachable_patterns)]
 impl From<crate::storage::SyncError> for IpcError {
     /// Maps sync errors to sanitised IPC error variants without leaking internal details.
     fn from(error: crate::storage::SyncError) -> Self {
@@ -162,10 +159,6 @@ impl From<crate::storage::SyncError> for IpcError {
             }
             Sy::Storage { source } => IpcError::from(source),
             Sy::Io(_) | Sy::ManifestBackup { .. } | Sy::RollbackFailed { .. } => {
-                tracing::error!("sync error: {:?}", error);
-                IpcError::InternalError("An error occurred".into())
-            }
-            _ => {
                 tracing::error!("sync error: {:?}", error);
                 IpcError::InternalError("An error occurred".into())
             }

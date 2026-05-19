@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 /// Progress update emitted during `migrate_vault`.
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MigrationProgress {
     /// Overall migration progress from 0 to 100.

@@ -1,4 +1,4 @@
-//! Cloud upload/download helpers for `vault-header.json`.
+//! Cloud upload/download helpers for `vault-header.json`. Types live in [`vault_header`].
 
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write};
@@ -11,7 +11,7 @@ use std::path::Path;
 use thiserror::Error;
 
 use super::vault_header::{
-    Argon2ParamsJson, VaultHeader, VaultHeaderError, VaultHeaderTrustPolicy,
+    Argon2ParametersJson, VaultHeader, VaultHeaderError, VaultHeaderTrustPolicy,
 };
 use super::{CloudTransport, CloudTransportError};
 
@@ -167,11 +167,11 @@ fn warn_if_bootstrap_below_defaults(policy: VaultHeaderTrustPolicy<'_>, header: 
         return;
     }
 
-    let primary_below_defaults = params_below_arx_defaults(&header.argon2_params);
+    let primary_below_defaults = parameters_below_arx_defaults(&header.argon2_params);
     let recovery_below_defaults = header
         .recovery_slots
         .iter()
-        .filter(|slot| params_below_arx_defaults(&slot.argon2_params))
+        .filter(|slot| parameters_below_arx_defaults(&slot.argon2_params))
         .count();
 
     if primary_below_defaults || recovery_below_defaults > 0 {
@@ -190,10 +190,10 @@ fn warn_if_bootstrap_below_defaults(policy: VaultHeaderTrustPolicy<'_>, header: 
 }
 
 /// Returns whether a parameter set is below Arx default values.
-fn params_below_arx_defaults(params: &Argon2ParamsJson) -> bool {
-    params.memory_cost < DEFAULT_ARGON2_MEMORY_COST_KIB
-        || params.time_cost < DEFAULT_ARGON2_TIME_COST
-        || params.parallelism < DEFAULT_ARGON2_PARALLELISM
+fn parameters_below_arx_defaults(parameters: &Argon2ParametersJson) -> bool {
+    parameters.memory_cost < DEFAULT_ARGON2_MEMORY_COST_KIB
+        || parameters.time_cost < DEFAULT_ARGON2_TIME_COST
+        || parameters.parallelism < DEFAULT_ARGON2_PARALLELISM
 }
 
 #[cfg(test)]
@@ -207,7 +207,7 @@ mod tests {
     use crate::storage::cloud::CloudTransport;
     use crate::storage::cloud::mock::{CloudTransportErrorKind, MockCloudTransport};
     use crate::storage::cloud::vault_header::{
-        Argon2ParamsJson, RecoverySlot, TrustedVaultHeaderAnchor, VaultHeader, VaultHeaderError,
+        Argon2ParametersJson, RecoverySlot, TrustedVaultHeaderAnchor, VaultHeader, VaultHeaderError,
     };
 
     fn sample_tier_one_header() -> VaultHeader {
@@ -216,7 +216,7 @@ mod tests {
             schema_version: VaultHeader::SCHEMA_VERSION,
             tier: 1,
             argon2_salt: base64::engine::general_purpose::STANDARD.encode([0x11u8; 32]),
-            argon2_params: Argon2ParamsJson {
+            argon2_params: Argon2ParametersJson {
                 memory_cost: 65_536,
                 time_cost: 3,
                 parallelism: 4,
@@ -233,7 +233,7 @@ mod tests {
             schema_version: VaultHeader::SCHEMA_VERSION,
             tier: 2,
             argon2_salt: base64::engine::general_purpose::STANDARD.encode([0x22u8; 32]),
-            argon2_params: Argon2ParamsJson {
+            argon2_params: Argon2ParametersJson {
                 memory_cost: 65_536,
                 time_cost: 3,
                 parallelism: 4,
@@ -242,7 +242,7 @@ mod tests {
             recovery_slots: vec![RecoverySlot {
                 method: "bip39".to_owned(),
                 argon2_salt: base64::engine::general_purpose::STANDARD.encode([0x44u8; 32]),
-                argon2_params: Argon2ParamsJson {
+                argon2_params: Argon2ParametersJson {
                     memory_cost: 65_536,
                     time_cost: 3,
                     parallelism: 4,
@@ -622,7 +622,7 @@ mod tests {
         let cloud = MockCloudTransport::new();
         let directory = tempdir().expect("tempdir");
         let mut header = sample_tier_one_header();
-        header.argon2_params = Argon2ParamsJson {
+        header.argon2_params = Argon2ParametersJson {
             memory_cost: 19_456,
             time_cost: 2,
             parallelism: 1,

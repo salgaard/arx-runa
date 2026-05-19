@@ -177,7 +177,7 @@ impl SessionManager {
         password_utf8_bytes: &[u8],
         key_source: Option<&(dyn KeySource + Send + Sync)>,
         salt: &[u8; 32],
-        params: &Argon2Params,
+        parameters: &Argon2Params,
         vault_id: String,
     ) -> Result<(), AuthenticationError> {
         let _authenticate_permit = self
@@ -222,11 +222,16 @@ impl SessionManager {
         let password_owned = Zeroizing::new(password_utf8_bytes.to_vec());
         let key_file_owned = key_file_bytes;
         let salt_owned = *salt;
-        let params_owned = *params;
+        let parameters_owned = *parameters;
 
         let raw = tokio::task::spawn_blocking(move || {
             let key_file_ref = key_file_owned.as_deref();
-            SessionKeys::derive(&password_owned, key_file_ref, &salt_owned, &params_owned)
+            SessionKeys::derive(
+                &password_owned,
+                key_file_ref,
+                &salt_owned,
+                &parameters_owned,
+            )
         })
         .await;
 
@@ -464,7 +469,7 @@ impl SessionManager {
         _reservation: SessionInstallReservation,
         mut keys: SessionKeys,
         vault_id: String,
-        vault_db_path_arg: &std::path::Path,
+        vault_db_path: &std::path::Path,
     ) -> Result<(), AuthenticationError> {
         if !Self::derived_keys_are_initialized(&keys) {
             tracing::error!("install_session received an all-zero session key buffer");
@@ -475,7 +480,7 @@ impl SessionManager {
         }
 
         // Open SQLCipher database with derived key for ceremony-created session.
-        let db_path = vault_db_path_arg.to_path_buf();
+        let db_path = vault_db_path.to_path_buf();
         let sqlcipher_key_bytes: Zeroizing<[u8; 32]> = {
             let mut key_bytes = Zeroizing::new([0u8; 32]);
             key_bytes.copy_from_slice(keys.sqlcipher_key.expose());
@@ -548,10 +553,10 @@ impl SessionManager {
         &self,
         keys: SessionKeys,
         vault_id: String,
-        vault_db_path_arg: &std::path::Path,
+        vault_db_path: &std::path::Path,
     ) -> Result<(), AuthenticationError> {
         let reservation = self.reserve_session_install().await?;
-        self.finalize_session_install(reservation, keys, vault_id, vault_db_path_arg)
+        self.finalize_session_install(reservation, keys, vault_id, vault_db_path)
             .await
     }
 

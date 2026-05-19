@@ -7,13 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use secrecy::SecretBox;
 use tauri::State;
 use tauri::ipc::Channel;
 use uuid::Uuid;
-use zeroize::Zeroizing;
 
-use crate::crypto::KeyEncryptionKey;
 use crate::storage::cloud::sync::fetch_missing_file_blobs;
 use crate::storage::vault_ops::{
     delete_directory as vault_delete_directory, delete_file as vault_delete,
@@ -21,7 +18,9 @@ use crate::storage::vault_ops::{
     upload_file as vault_upload,
 };
 use crate::storage::{MetadataStore, Node, NodeType};
-use crate::ui::commands_common::{ProgressChannel, require_active_session};
+use crate::ui::commands_common::{
+    ProgressChannel, extract_kek, require_active_session, unix_ts_to_iso8601,
+};
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
 use crate::ui::types::{FileContent, FileEntry, LocalEntry, ProgressUpdate, RemoteFileEntry};
@@ -76,36 +75,6 @@ async fn resolve_parent_uuid(vault_path: &str, db: &dyn MetadataStore) -> Result
     }
 }
 
-/// Converts a Unix timestamp (seconds since 1970-01-01T00:00:00Z) to an ISO 8601 string.
-///
-/// Implemented with pure stdlib arithmetic so the crate does not need `chrono` or `time`.
-fn unix_ts_to_iso8601(ts: i64) -> String {
-    let ts = if ts < 0 { 0u64 } else { ts as u64 };
-    let secs = ts % 60;
-    let mins = (ts / 60) % 60;
-    let hours = (ts / 3600) % 24;
-    let total_days = ts / 86400;
-    let (year, month, day) = days_since_epoch_to_date(total_days);
-    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{mins:02}:{secs:02}Z")
-}
-
-/// Maps days since the Unix epoch to a proleptic Gregorian (year, month, day) triple.
-///
-/// Algorithm: http://howardhinnant.github.io/date_algorithms.html "civil_from_days".
-fn days_since_epoch_to_date(days: u64) -> (u32, u32, u32) {
-    let z = days as i64 + 719_468;
-    let era: i64 = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
-    let y = (if m <= 2 { y + 1 } else { y }) as u32;
-    (y, m, d)
-}
-
 /// Detects a MIME type from the leading bytes of a file.
 ///
 /// Recognises JPEG, PNG, GIF, PDF and ZIP by magic bytes.
@@ -156,22 +125,7 @@ async fn require_vault_id(state: &AppState) -> Result<String, IpcError> {
         .session_manager
         .active_vault_id()
         .await
-        .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))
-}
-
-/// Copies the KEK out of the session guard and wraps it in a `KeyEncryptionKey`.
-///
-/// The intermediate stack copy is wrapped in `Zeroizing` so it is cleared
-/// before the `SecretBox` heap allocation takes ownership.
-pub(crate) async fn extract_kek(state: &AppState) -> Result<KeyEncryptionKey, IpcError> {
-    let kek_raw: Zeroizing<[u8; 32]> = state
-        .session_manager
-        .with_key_encryption_key(|k| Zeroizing::new(*k))
-        .await
-        .map_err(IpcError::from)?;
-    Ok(KeyEncryptionKey::from_secret_box(SecretBox::new(Box::new(
-        *kek_raw,
-    ))))
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))
 }
 
 // ─── IPC command handlers ─────────────────────────────────────────────────────

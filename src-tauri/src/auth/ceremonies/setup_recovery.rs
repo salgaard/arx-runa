@@ -36,7 +36,7 @@ pub async fn setup_recovery(
     }
 
     let current_salt = decode_base64_32(&vault_header.argon2_salt)?;
-    let current_params = argon2_params_from_json(&vault_header.argon2_params);
+    let current_params = argon2_parameters_from_json(&vault_header.argon2_params);
 
     let current_key_file_bytes: Option<Zeroizing<[u8; 32]>> =
         match (vault_header.tier, request.current_key_source) {
@@ -102,7 +102,7 @@ pub async fn setup_recovery(
     let slot = RecoverySlot {
         method: "bip39".into(),
         argon2_salt: encode_base64(recovery_salt.as_slice()),
-        argon2_params: argon2_params_to_json(&current_params),
+        argon2_params: argon2_parameters_to_json(&current_params),
         wrapped_master_key: encode_base64(wrapped.as_bytes()),
     };
     vault_header.recovery_slots.push(slot);
@@ -185,7 +185,7 @@ mod tests {
         let request = SetupRecoveryRequest {
             current_password_bytes: TEST_WRONG_PASSWORD,
             current_key_source: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -245,7 +245,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::MigrateToRequested,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -259,8 +259,8 @@ mod tests {
         .await
         .expect("explicit migration to non-default params must succeed");
         assert_eq!(
-            argon2_params_from_json(&vault.header.argon2_params),
-            test_params()
+            argon2_parameters_from_json(&vault.header.argon2_params),
+            test_parameters()
         );
 
         let setup_request = SetupRecoveryRequest {
@@ -284,6 +284,9 @@ mod tests {
             .recovery_slots
             .last()
             .expect("setup_recovery should append a slot");
-        assert_eq!(argon2_params_from_json(&slot.argon2_params), test_params());
+        assert_eq!(
+            argon2_parameters_from_json(&slot.argon2_params),
+            test_parameters()
+        );
     }
 }
