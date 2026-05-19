@@ -748,6 +748,11 @@ fn cache_blob_path(staging_dir: &Path, blob_name: &str) -> PathBuf {
 }
 
 fn build_blob_remote_path(blob_name: &str) -> Result<String, SyncError> {
+    if blob_name.contains('/') {
+        // Full path stored by non-vault callers (e.g. shared blobs from strong revocation).
+        validate_remote_path(blob_name)?;
+        return Ok(blob_name.to_owned());
+    }
     validate_blob_name_uuid_v4(blob_name)?;
     let remote_path = format!("vault/{blob_name}.blob");
     validate_remote_path(&remote_path)?;
@@ -771,7 +776,7 @@ async fn read_cloud_snapshot_from_probe_db(
     sqlcipher_key: &SqlcipherKey,
 ) -> Result<Option<CloudSnapshotState>, SyncError> {
     let probe_path = probe_path.to_path_buf();
-    let sqlcipher_key = sqlcipher_key_from_array(sqlcipher_key.with_exposed(|bytes| *bytes));
+    let sqlcipher_key = sqlcipher_key.with_exposed(SqlcipherKey::from_slice);
     tokio::task::spawn_blocking(move || -> Result<Option<CloudSnapshotState>, SyncError> {
         let (snapshot_counter, last_synced_at) =
             read_snapshot_state_from_database(&probe_path, &sqlcipher_key)?;
@@ -784,12 +789,6 @@ async fn read_cloud_snapshot_from_probe_db(
     .map_err(|error| SyncError::Storage {
         source: StorageError::Database(error.to_string()),
     })?
-}
-
-fn sqlcipher_key_from_array(bytes: [u8; 32]) -> SqlcipherKey {
-    let mut boxed = Box::new([0u8; 32]);
-    boxed.copy_from_slice(&bytes);
-    SqlcipherKey::from_secret_box(secrecy::SecretBox::new(boxed))
 }
 
 async fn remove_file_if_present(path: &Path) -> Result<(), std::io::Error> {
@@ -940,7 +939,7 @@ mod tests {
     use crate::storage::MetadataStore;
     use crate::storage::cloud::CloudTransport;
     use crate::storage::cloud::mock::{CloudTransportErrorKind, MockCloudTransport};
-    use crate::storage::cloud::vault_header::{Argon2ParamsJson, VaultHeader};
+    use crate::storage::cloud::vault_header::{Argon2ParametersJson, VaultHeader};
     use crate::storage::types::{ChunkRecord, Node, NodeType};
 
     const SAMPLE_VAULT_UUID: &str = "00000000-0000-4000-8000-000000000001";
@@ -951,7 +950,7 @@ mod tests {
             schema_version: VaultHeader::SCHEMA_VERSION,
             tier: 1,
             argon2_salt: base64::engine::general_purpose::STANDARD.encode([0x11u8; 32]),
-            argon2_params: Argon2ParamsJson {
+            argon2_params: Argon2ParametersJson {
                 memory_cost: 65_536,
                 time_cost: 3,
                 parallelism: 4,
@@ -1649,5 +1648,20 @@ mod tests {
             report.blobs_skipped_present, 1,
             "pending blob should be counted as already present"
         );
+    }
+
+    #[test]
+    fn test_build_blob_remote_path_constructs_vault_path_for_uuid() {
+        let uuid = uuid::Uuid::new_v4().hyphenated().to_string();
+        let result =
+            super::build_blob_remote_path(&uuid).expect("should succeed for valid UUID v4");
+        assert_eq!(result, format!("vault/{uuid}.blob"));
+    }
+
+    #[test]
+    fn test_build_blob_remote_path_passes_through_full_shared_path() {
+        let path = "shared/some-file-share-id/some-blob-uuid.blob";
+        let result = super::build_blob_remote_path(path).expect("should succeed for full path");
+        assert_eq!(result, path);
     }
 }

@@ -165,6 +165,11 @@ pub(crate) async fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), St
             .map_err(|error| StorageError::Io(format!("{}: {error}", path.display())))?;
         file.sync_all()
             .map_err(|error| StorageError::Io(format!("{}: {error}", path.display())))?;
+        #[cfg(windows)]
+        {
+            crate::platform::permissions::apply_owner_only_acl_windows(&path)
+                .map_err(|error| StorageError::Io(format!("{}: {error}", path.display())))?;
+        }
         Ok(())
     })
     .await
@@ -467,5 +472,85 @@ mod tests {
             .expect("write should succeed");
         let metadata = std::fs::metadata(path).expect("metadata should be readable");
         assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn test_write_owner_only_applies_owner_only_acl_on_windows() {
+        use windows::Win32::Foundation::{ERROR_SUCCESS, HLOCAL, LocalFree};
+        use windows::Win32::Security::Authorization::{
+            ConvertSecurityDescriptorToStringSecurityDescriptorW, GetNamedSecurityInfoW,
+            SDDL_REVISION_1, SE_FILE_OBJECT,
+        };
+        use windows::Win32::Security::{DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR};
+        use windows::core::{PCWSTR, PWSTR};
+
+        let temp = tempdir().expect("tempdir should be created");
+        let path = temp.path().join("owner-only-windows.bin");
+        write_owner_only(&path, b"payload")
+            .await
+            .expect("write should succeed");
+
+        let path_wide: Vec<u16> = {
+            use std::os::windows::ffi::OsStrExt;
+            let mut w: Vec<u16> = path.as_os_str().encode_wide().collect();
+            w.push(0);
+            w
+        };
+        let mut descriptor = PSECURITY_DESCRIPTOR::default();
+        // SAFETY: path_wide is null-terminated and descriptor is a writable out-param.
+        let status = unsafe {
+            GetNamedSecurityInfoW(
+                PCWSTR(path_wide.as_ptr()),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                None,
+                None,
+                &mut descriptor,
+            )
+        };
+        assert_eq!(status, ERROR_SUCCESS, "GetNamedSecurityInfoW must succeed");
+
+        let mut string_descriptor = PWSTR::null();
+        // SAFETY: descriptor is valid; string_descriptor is a writable out-param.
+        unsafe {
+            ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                descriptor,
+                SDDL_REVISION_1,
+                DACL_SECURITY_INFORMATION,
+                &mut string_descriptor,
+                None,
+            )
+        }
+        .expect("ConvertSecurityDescriptorToStringSecurityDescriptorW must succeed");
+
+        let mut len = 0usize;
+        // SAFETY: string_descriptor points to a valid null-terminated UTF-16 string.
+        unsafe {
+            while *string_descriptor.0.add(len) != 0 {
+                len += 1;
+            }
+        }
+        // SAFETY: len valid code units precede the null terminator.
+        let sddl = unsafe {
+            String::from_utf16_lossy(std::slice::from_raw_parts(string_descriptor.0, len))
+        };
+        // SAFETY: buffers were allocated by Windows and must be released with LocalFree.
+        unsafe {
+            let _ = LocalFree(Some(HLOCAL(descriptor.0)));
+            let _ = LocalFree(Some(HLOCAL(string_descriptor.0.cast())));
+        }
+
+        assert!(sddl.contains("D:P"), "DACL must be protected, got: {sddl}");
+        assert!(
+            sddl.contains(";;;OW"),
+            "owner ACE must be present, got: {sddl}"
+        );
+        assert!(
+            !sddl.contains(";;;WD"),
+            "world-accessible ACE must be absent, got: {sddl}"
+        );
     }
 }

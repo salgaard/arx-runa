@@ -6,7 +6,6 @@ pub mod memory;
 pub(crate) mod platform;
 pub mod sharing;
 pub mod storage;
-pub mod sync;
 pub mod ui;
 
 #[cfg(test)]
@@ -29,7 +28,7 @@ struct DeviceEventPayload {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-/// Starts the Arx Runa Tauri runtime with all 46 registered commands.
+/// Starts the Arx Runa Tauri runtime with 62 commands via `generate_handler!` plus `video_stream` registered separately (63 total).
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -43,7 +42,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(crate::ui::AppState::construct_default())
         .invoke_handler(tauri::generate_handler![
-            // Auth (17)
+            // Auth (18)
             ui::auth_commands::authenticate,
             ui::auth_commands::check_cloud_configured,
             ui::auth_commands::configure_cloud,
@@ -87,11 +86,11 @@ pub fn run() {
             ui::destination_commands::add_destination,
             ui::destination_commands::list_destinations,
             ui::destination_commands::delete_destination,
-            ui::destination_commands::set_primary_destination_cmd,
+            ui::destination_commands::set_primary_destination,
             ui::destination_commands::begin_google_drive_setup,
             ui::destination_commands::begin_onedrive_setup,
             ui::destination_commands::poll_oauth_setup,
-            ui::destination_commands::cancel_oauth_setup_cmd,
+            ui::destination_commands::cancel_oauth_setup,
             // Sharing (11)
             ui::sharing_commands::export_public_key,
             ui::sharing_commands::get_own_public_key_b64,

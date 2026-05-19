@@ -395,3 +395,406 @@ fn test_exif_stripped_from_jpeg_before_staging() {
         "APP1 marker must not appear in stripped output"
     );
 }
+
+// ---------------------------------------------------------------------------
+// sync_to_destination: per-destination backup logic
+// ---------------------------------------------------------------------------
+
+mod sync_to_destination_tests {
+    use std::collections::HashSet;
+
+    use tauri::ipc::Channel;
+    use uuid::Uuid;
+
+    use crate::auth::ceremonies::test_support::*;
+    use crate::crypto::{ManifestKey, SqlcipherKey};
+    use crate::storage::SqlCipherMetadataStore;
+    use crate::storage::cloud::mock::{CloudTransportErrorKind, MockCloudTransport};
+    use crate::storage::cloud::{CloudTransport, CloudTransportError};
+    use crate::ui::sync_commands::sync_to_destination;
+    use crate::ui::types::SyncProgressUpdate;
+
+    const DEST_ID: &str = "test-backup-dest";
+
+    fn noop_progress() -> Channel<SyncProgressUpdate> {
+        Channel::new(|_| Ok(()))
+    }
+
+    struct Ctx {
+        vault: TierOneVault,
+        store: SqlCipherMetadataStore,
+        sqlcipher_key: SqlcipherKey,
+        manifest_key: ManifestKey,
+        staging: tempfile::TempDir,
+        mirror_tmp: tempfile::TempDir,
+    }
+
+    async fn setup() -> Ctx {
+        let vault = create_tier_one_vault().await;
+        let derived = derive_vault_keys_tier_one(&vault);
+        let sqlcipher_key = SqlcipherKey::from_bytes(derived.sqlcipher_key);
+        let manifest_key = ManifestKey::from_bytes(derived.manifest_key);
+        let store = SqlCipherMetadataStore::open(&vault.vault_db_path, &derived.sqlcipher_key)
+            .await
+            .expect("store must open");
+        Ctx {
+            vault,
+            store,
+            sqlcipher_key,
+            manifest_key,
+            staging: temp_dir(),
+            mirror_tmp: temp_dir(),
+        }
+    }
+
+    /// Pending blob present in staging dir → upload succeeds, counts.uploaded = 1,
+    /// pending record cleared, blob reachable on dest transport.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_sync_to_destination_pending_blob_upload_succeeds_records_cleared() {
+        let _lock = ceremony_lock().await;
+        let ctx = setup().await;
+
+        let blob_name = Uuid::new_v4().to_string();
+        tokio::fs::write(
+            ctx.staging.path().join(format!("{blob_name}.blob")),
+            b"encrypted blob payload",
+        )
+        .await
+        .unwrap();
+
+        let mut all_blobs = HashSet::new();
+        all_blobs.insert(blob_name.clone());
+        ctx.store
+            .bulk_insert_pending_backup(std::slice::from_ref(&blob_name), DEST_ID)
+            .await
+            .unwrap();
+
+        let dest = MockCloudTransport::new();
+        let primary = MockCloudTransport::new();
+
+        let counts = sync_to_destination(
+            DEST_ID,
+            std::slice::from_ref(&blob_name),
+            &all_blobs,
+            &dest,
+            &primary,
+            &ctx.store,
+            &ctx.vault.vault_db_path,
+            &ctx.sqlcipher_key,
+            &ctx.manifest_key,
+            &ctx.vault.vault_id,
+            &ctx.vault.header,
+            ctx.staging.path(),
+            ctx.mirror_tmp.path(),
+            false,
+            &noop_progress(),
+        )
+        .await
+        .expect("sync_to_destination must succeed");
+
+        assert_eq!(counts.uploaded, 1, "one blob must be reported uploaded");
+        assert_eq!(counts.failed, 0, "no failures expected");
+
+        assert!(
+            ctx.store
+                .list_pending_backups(DEST_ID)
+                .await
+                .unwrap()
+                .is_empty(),
+            "pending record must be cleared on success"
+        );
+
+        let verify = ctx.mirror_tmp.path().join("verify.bin");
+        dest.download_blob(&format!("vault/{blob_name}.blob"), &verify)
+            .await
+            .expect("uploaded blob must be reachable on dest transport");
+    }
+
+    /// Blob in pending queue but absent from all_blob_names (orphan) → records cleared,
+    /// no upload attempted, counts all zero.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_sync_to_destination_orphan_blob_records_cleared_no_upload() {
+        let _lock = ceremony_lock().await;
+        let ctx = setup().await;
+
+        let orphan = Uuid::new_v4().to_string();
+        ctx.store
+            .bulk_insert_pending_backup(std::slice::from_ref(&orphan), DEST_ID)
+            .await
+            .unwrap();
+
+        let dest = MockCloudTransport::new();
+        let primary = MockCloudTransport::new();
+
+        let counts = sync_to_destination(
+            DEST_ID,
+            std::slice::from_ref(&orphan),
+            &HashSet::new(),
+            &dest,
+            &primary,
+            &ctx.store,
+            &ctx.vault.vault_db_path,
+            &ctx.sqlcipher_key,
+            &ctx.manifest_key,
+            &ctx.vault.vault_id,
+            &ctx.vault.header,
+            ctx.staging.path(),
+            ctx.mirror_tmp.path(),
+            false,
+            &noop_progress(),
+        )
+        .await
+        .expect("sync_to_destination must succeed");
+
+        assert_eq!(counts.uploaded, 0, "orphan must not be uploaded");
+        assert_eq!(counts.failed, 0, "orphan must not increment failures");
+
+        assert!(
+            ctx.store
+                .list_pending_backups(DEST_ID)
+                .await
+                .unwrap()
+                .is_empty(),
+            "orphan pending record must be cleared"
+        );
+
+        let verify = ctx.staging.path().join("verify.bin");
+        let result = dest
+            .download_blob(&format!("vault/{orphan}.blob"), &verify)
+            .await;
+        assert!(
+            matches!(result, Err(CloudTransportError::NotFound)),
+            "orphan must not have been uploaded to dest transport"
+        );
+    }
+
+    /// Blob in all_blob_names and pending queue but absent from both staging dir and primary
+    /// cloud → records cleared (blob is considered resolved), no failure increment.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_sync_to_destination_blob_absent_from_primary_records_cleared_no_failure() {
+        let _lock = ceremony_lock().await;
+        let ctx = setup().await;
+
+        let blob_name = Uuid::new_v4().to_string();
+        let mut all_blobs = HashSet::new();
+        all_blobs.insert(blob_name.clone());
+        ctx.store
+            .bulk_insert_pending_backup(std::slice::from_ref(&blob_name), DEST_ID)
+            .await
+            .unwrap();
+
+        // primary has no blobs — download returns NotFound
+        let dest = MockCloudTransport::new();
+        let primary = MockCloudTransport::new();
+
+        let counts = sync_to_destination(
+            DEST_ID,
+            std::slice::from_ref(&blob_name),
+            &all_blobs,
+            &dest,
+            &primary,
+            &ctx.store,
+            &ctx.vault.vault_db_path,
+            &ctx.sqlcipher_key,
+            &ctx.manifest_key,
+            &ctx.vault.vault_id,
+            &ctx.vault.header,
+            ctx.staging.path(),
+            ctx.mirror_tmp.path(),
+            false,
+            &noop_progress(),
+        )
+        .await
+        .expect("sync_to_destination must succeed");
+
+        assert_eq!(counts.uploaded, 0);
+        assert_eq!(
+            counts.failed, 0,
+            "absent-from-primary blob must not increment failures"
+        );
+
+        assert!(
+            ctx.store
+                .list_pending_backups(DEST_ID)
+                .await
+                .unwrap()
+                .is_empty(),
+            "pending record must be cleared when blob is absent from primary"
+        );
+    }
+
+    /// Upload to dest transport fails → record_backup_failure called, counts.failed = 1,
+    /// pending record NOT cleared.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_sync_to_destination_upload_failure_records_failure_and_increments_failed() {
+        let _lock = ceremony_lock().await;
+        let ctx = setup().await;
+
+        let blob_name = Uuid::new_v4().to_string();
+        tokio::fs::write(
+            ctx.staging.path().join(format!("{blob_name}.blob")),
+            b"encrypted blob payload",
+        )
+        .await
+        .unwrap();
+
+        let mut all_blobs = HashSet::new();
+        all_blobs.insert(blob_name.clone());
+        ctx.store
+            .bulk_insert_pending_backup(std::slice::from_ref(&blob_name), DEST_ID)
+            .await
+            .unwrap();
+
+        let dest = MockCloudTransport::new();
+        dest.inject_failure(
+            &format!("vault/{blob_name}.blob"),
+            CloudTransportErrorKind::Other("simulated upload failure".to_string()),
+        )
+        .await;
+        let primary = MockCloudTransport::new();
+
+        let counts = sync_to_destination(
+            DEST_ID,
+            std::slice::from_ref(&blob_name),
+            &all_blobs,
+            &dest,
+            &primary,
+            &ctx.store,
+            &ctx.vault.vault_db_path,
+            &ctx.sqlcipher_key,
+            &ctx.manifest_key,
+            &ctx.vault.vault_id,
+            &ctx.vault.header,
+            ctx.staging.path(),
+            ctx.mirror_tmp.path(),
+            false,
+            &noop_progress(),
+        )
+        .await
+        .expect("sync_to_destination must succeed despite upload failure");
+
+        assert_eq!(
+            counts.uploaded, 0,
+            "failed blob must not increment uploaded"
+        );
+        assert_eq!(
+            counts.failed, 1,
+            "failed upload must increment failed count"
+        );
+
+        let failure_counts = ctx.store.get_backup_failure_counts().await.unwrap();
+        assert_eq!(
+            failure_counts,
+            vec![(DEST_ID.to_string(), 1)],
+            "record_backup_failure must have been called exactly once"
+        );
+    }
+
+    /// Mirror mode: orphan UUID-v4 blob on dest is deleted; legitimate blob is kept;
+    /// non-UUID-v4 blob name is skipped (not deleted).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_sync_to_destination_mirror_mode_deletes_orphan_skips_non_uuid_v4() {
+        let _lock = ceremony_lock().await;
+        let ctx = setup().await;
+
+        let legitimate = Uuid::new_v4().to_string();
+        let orphan = Uuid::new_v4().to_string();
+        let non_uuid = "not-a-uuid";
+
+        let fake_blob = ctx.staging.path().join("fake.bin");
+        tokio::fs::write(&fake_blob, b"x").await.unwrap();
+
+        let dest = MockCloudTransport::new();
+        dest.upload_blob(&fake_blob, &format!("vault/{legitimate}.blob"))
+            .await
+            .unwrap();
+        dest.upload_blob(&fake_blob, &format!("vault/{orphan}.blob"))
+            .await
+            .unwrap();
+        dest.upload_blob(&fake_blob, &format!("vault/{non_uuid}.blob"))
+            .await
+            .unwrap();
+
+        let mut all_blobs = HashSet::new();
+        all_blobs.insert(legitimate.clone());
+
+        let primary = MockCloudTransport::new();
+
+        let counts = sync_to_destination(
+            DEST_ID,
+            &[],
+            &all_blobs,
+            &dest,
+            &primary,
+            &ctx.store,
+            &ctx.vault.vault_db_path,
+            &ctx.sqlcipher_key,
+            &ctx.manifest_key,
+            &ctx.vault.vault_id,
+            &ctx.vault.header,
+            ctx.staging.path(),
+            ctx.mirror_tmp.path(),
+            true,
+            &noop_progress(),
+        )
+        .await
+        .expect("sync_to_destination in mirror mode must succeed");
+
+        assert_eq!(
+            counts.deleted, 1,
+            "exactly one orphan UUID-v4 blob must be deleted"
+        );
+
+        let verify = ctx.mirror_tmp.path().join("verify.bin");
+
+        let result = dest
+            .download_blob(&format!("vault/{orphan}.blob"), &verify)
+            .await;
+        assert!(
+            matches!(result, Err(CloudTransportError::NotFound)),
+            "orphan blob must have been deleted from dest transport"
+        );
+
+        dest.download_blob(&format!("vault/{legitimate}.blob"), &verify)
+            .await
+            .expect("legitimate blob must remain after mirror mode");
+
+        dest.download_blob(&format!("vault/{non_uuid}.blob"), &verify)
+            .await
+            .expect("non-UUID-v4 blob must be skipped (not deleted) by mirror mode");
+    }
+
+    /// Empty pending list with mirror_mode = false → returns all-zero counts, no panic.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_sync_to_destination_empty_pending_returns_zero_counts() {
+        let _lock = ceremony_lock().await;
+        let ctx = setup().await;
+
+        let dest = MockCloudTransport::new();
+        let primary = MockCloudTransport::new();
+
+        let counts = sync_to_destination(
+            DEST_ID,
+            &[],
+            &HashSet::new(),
+            &dest,
+            &primary,
+            &ctx.store,
+            &ctx.vault.vault_db_path,
+            &ctx.sqlcipher_key,
+            &ctx.manifest_key,
+            &ctx.vault.vault_id,
+            &ctx.vault.header,
+            ctx.staging.path(),
+            ctx.mirror_tmp.path(),
+            false,
+            &noop_progress(),
+        )
+        .await
+        .expect("sync_to_destination with empty pending must succeed");
+
+        assert_eq!(counts.uploaded, 0);
+        assert_eq!(counts.failed, 0);
+        assert_eq!(counts.deleted, 0);
+    }
+}

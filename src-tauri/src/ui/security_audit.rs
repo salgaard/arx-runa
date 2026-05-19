@@ -255,19 +255,11 @@ mod security_audit {
 
         let csp = &json["app"]["security"]["csp"];
 
-        // Tauri v2 accepts CSP as either a structured JSON object or a plain string;
-        // both forms are valid and non-null. Reject only null/absent values.
         assert!(
-            csp.is_object() || csp.is_string(),
-            "CS-001 violation: `app.security.csp` in tauri.conf.json must be a non-null \
-             string or object. Found: {csp:?}",
+            csp.is_object(),
+            "CSP must be in object form for directive-level validation; \
+             string form bypasses 'unsafe-inline' and 'wasm-unsafe-eval' checks. Found: {csp:?}",
         );
-        if let Some(s) = csp.as_str() {
-            assert!(
-                !s.trim().is_empty(),
-                "CS-001 violation: `app.security.csp` in tauri.conf.json is an empty string",
-            );
-        }
         if let Some(obj) = csp.as_object() {
             let script_src = obj.get("script-src").and_then(|v| v.as_str()).unwrap_or("");
             assert!(

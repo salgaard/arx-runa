@@ -40,7 +40,7 @@ pub async fn flush_epoch_buffer(
     let total_bytes: u64 = entries.iter().map(|e| e.size_bytes).sum();
     let mut flushed_bytes: u64 = 0;
 
-    let mut current_blob_entries: Vec<(Uuid, Vec<u8>)> = Vec::new();
+    let mut current_blob_entries: Vec<(Uuid, Zeroizing<Vec<u8>>)> = Vec::new();
     let mut current_size: u64 = 0;
 
     for entry in &entries {
@@ -92,7 +92,7 @@ pub async fn flush_epoch_buffer(
 
 /// Encrypts one batch of entries into a single epoch blob and commits the result.
 async fn flush_one_blob(
-    entries: &[(Uuid, Vec<u8>)],
+    entries: &[(Uuid, Zeroizing<Vec<u8>>)],
     kek: &KeyEncryptionKey,
     staging_dir: &Path,
     chunk_size_bytes: u64,
@@ -119,9 +119,11 @@ async fn flush_one_blob(
     let wrapped_file_key = wrap_file_key(&file_key, &FileId::from_uuid(epoch_blob_id), kek)
         .map_err(StorageError::from)?;
 
-    let packed_owned = std::mem::take(packed.as_mut());
+    // Each epoch blob is an independent ciphertext unit with its own key and UUID.
+    // Its AEAD FileId is the blob's own UUID, not any constituent file's node UUID — by design.
+    let chunk = Zeroizing::new(std::mem::take(packed.as_mut()));
     let encrypted = encrypt_chunk(
-        packed_owned,
+        chunk,
         &file_key,
         &FileId::from_uuid(epoch_blob_id),
         ChunkIndex::new(0),
@@ -154,6 +156,7 @@ async fn flush_one_blob(
 mod tests {
     use tempfile::TempDir;
     use uuid::Uuid;
+    use zeroize::Zeroizing;
 
     use super::flush_epoch_buffer;
     use crate::crypto::KeyEncryptionKey;
@@ -194,7 +197,7 @@ mod tests {
 
         let plaintext = vec![0xBEu8; 512];
         store
-            .stage_epoch_entry(node_id, plaintext.clone())
+            .stage_epoch_entry(node_id, Zeroizing::new(plaintext.clone()))
             .await
             .expect("stage should succeed");
 
@@ -236,7 +239,7 @@ mod tests {
 
         let node_id = Uuid::new_v4();
         store
-            .stage_epoch_entry(node_id, vec![0x11u8; 1024])
+            .stage_epoch_entry(node_id, Zeroizing::new(vec![0x11u8; 1024]))
             .await
             .expect("stage should succeed");
 
@@ -262,11 +265,11 @@ mod tests {
         let node_a = Uuid::new_v4();
         let node_b = Uuid::new_v4();
         store
-            .stage_epoch_entry(node_a, vec![0x11u8; 400])
+            .stage_epoch_entry(node_a, Zeroizing::new(vec![0x11u8; 400]))
             .await
             .expect("stage a should succeed");
         store
-            .stage_epoch_entry(node_b, vec![0x22u8; 200])
+            .stage_epoch_entry(node_b, Zeroizing::new(vec![0x22u8; 200]))
             .await
             .expect("stage b should succeed");
 

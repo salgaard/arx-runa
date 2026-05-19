@@ -16,9 +16,10 @@ use crate::storage::cloud::destination_session::{
     set_primary_destination,
 };
 use crate::storage::cloud::manifest_backup::{download_manifest_backup, upload_manifest_backup};
+use crate::storage::cloud::remote_path::validate_remote_name;
 use crate::storage::cloud::sync::drain_pending_deletions;
 use crate::storage::cloud::vault_header::VaultHeader;
-use crate::storage::cloud::vault_header_io::VAULT_HEADER_BLOB_NAME;
+use crate::storage::cloud::vault_header_io::upload_vault_header;
 use crate::storage::cloud::{
     CloudEndpoint, CloudTransport, CloudTransportError, DestinationSessionPublic, RcloneTransport,
     SyncConfig, pull_vault, push_vault,
@@ -27,9 +28,11 @@ use crate::storage::device_id::get_or_create_device_id;
 use crate::storage::metadata_store::MetadataStore;
 use crate::storage::staging::write_owner_only;
 use crate::storage::types::{ChunkRecord, EpochBlobRecord, Node, NodeId, NodeType};
-use crate::ui::commands_common::{ProgressChannel, require_active_session};
+use crate::storage::validation::validate_blob_name_uuid_v4;
+use crate::ui::commands_common::{
+    ProgressChannel, extract_kek, rclone_binary_path, require_active_session,
+};
 use crate::ui::error::IpcError;
-use crate::ui::file_commands::extract_kek;
 use crate::ui::state::AppState;
 use crate::ui::types::{
     DestinationHealth, MigrationProgress, ReconcileResult, SyncProgressUpdate, SyncResult,
@@ -353,27 +356,6 @@ async fn reinsert_pending_state(
     Ok(conflicts_renamed)
 }
 
-/// Returns the bundled rclone binary path, falling back to `rclone` on PATH.
-pub(crate) fn rclone_binary_path(handle: &tauri::AppHandle) -> PathBuf {
-    use tauri::Manager;
-    if let Ok(rd) = handle.path().resource_dir() {
-        let name = if cfg!(target_os = "windows") {
-            "rclone.exe"
-        } else {
-            "rclone"
-        };
-        let candidate = rd.join("bin").join(name);
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-    PathBuf::from(if cfg!(target_os = "windows") {
-        "rclone.exe"
-    } else {
-        "rclone"
-    })
-}
-
 /// Formats the current instant as an ISO 8601 UTC timestamp string.
 ///
 /// Uses Howard Hinnant's `civil_from_days` algorithm so we have no
@@ -451,6 +433,8 @@ pub(crate) async fn build_destination_transport(
 
     let config_blob = match dest.destination_type {
         DestinationType::LocalPath | DestinationType::ExternalDrive => {
+            validate_remote_name(&dest.rclone_remote_name)
+                .map_err(|e| IpcError::CloudError(e.to_string()))?;
             format!("[{}]\ntype = local\n", dest.rclone_remote_name)
         }
         DestinationType::Cloud => dest.rclone_config_blob.clone(),
@@ -512,7 +496,7 @@ pub async fn sync_to_cloud(
         .session_manager
         .active_vault_id()
         .await
-        .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
     let (vault_id, db_path, header_path) = resolve_vault_by_id(&vault_id)?;
 
     let staging_dir = vault_staging_dir(&vault_id);
@@ -732,7 +716,7 @@ pub async fn pull_and_reconcile(
         .session_manager
         .active_vault_id()
         .await
-        .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
     let (vault_id, vault_db_path, _) = resolve_vault_by_id(&vault_id)?;
 
     let staging_dir = vault_staging_dir(&vault_id);
@@ -970,7 +954,7 @@ pub async fn migrate_vault(
         .session_manager
         .active_vault_id()
         .await
-        .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
     let (vault_id, db_path, header_path) = resolve_vault_by_id(&vault_id)?;
 
     let staging_dir = vault_staging_dir(&vault_id);
@@ -1027,7 +1011,7 @@ pub async fn migrate_vault(
         .app_handle
         .get()
         .ok_or_else(|| IpcError::InternalError("App handle not initialised".into()))?;
-    let binary_path = rclone_binary_path(app_handle);
+    let binary_path = rclone_binary_path(Some(app_handle));
 
     // Phase 1 — download blobs that are not yet in local staging.
     let _ = progress.send(MigrationProgress {
@@ -1093,8 +1077,12 @@ pub async fn migrate_vault(
     .await
     .map_err(|e| IpcError::CloudError(format!("manifest backup: {e}")))?;
 
-    new_transport
-        .upload_blob(&header_path, VAULT_HEADER_BLOB_NAME)
+    let header_json = tokio::fs::read_to_string(&header_path)
+        .await
+        .map_err(|e| IpcError::CloudError(format!("vault header: {e}")))?;
+    let vault_header: VaultHeader = serde_json::from_str(&header_json)
+        .map_err(|_| IpcError::InternalError("An error occurred".into()))?;
+    upload_vault_header(&vault_header, &*new_transport, &staging_dir)
         .await
         .map_err(|e| IpcError::CloudError(format!("vault header: {e}")))?;
 
@@ -1121,7 +1109,7 @@ pub async fn migrate_vault(
             endpoint: String::new(),
             path_prefix: primary.path_prefix.clone(),
         };
-        let binary = rclone_binary_path(app_handle);
+        let binary = rclone_binary_path(Some(app_handle));
         match RcloneTransport::new(binary, conf_path, &endpoint, &public, SyncConfig::default()) {
             Ok(t) => state.swap_cloud_transport(Arc::new(t)).await,
             Err(e) => tracing::warn!(?e, "migrate_vault: failed to build new RcloneTransport"),
@@ -1153,6 +1141,239 @@ pub async fn migrate_vault(
 /// that re-downloads from the primary transport when staging is empty is
 /// deferred to Phase 7.
 ///
+/// Per-destination upload/failure/deletion counts returned by [`sync_to_destination`].
+pub(crate) struct DestSyncCounts {
+    pub(crate) uploaded: u32,
+    pub(crate) failed: u32,
+    pub(crate) deleted: u32,
+}
+
+/// Executes the blob-upload, manifest-backup, vault-header-upload, and optional mirror-deletion
+/// logic for a single backup destination.
+///
+/// Extracted from [`sync_backup`] so the core per-destination logic can be tested with a
+/// [`MockCloudTransport`] without requiring the full Tauri runtime or rclone binary.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn sync_to_destination(
+    destination_id: &str,
+    pending_blobs: &[String],
+    all_blob_names: &std::collections::HashSet<String>,
+    dest_transport: &dyn CloudTransport,
+    primary_transport: &dyn CloudTransport,
+    db: &crate::storage::SqlCipherMetadataStore,
+    db_path: &std::path::Path,
+    sqlcipher_key: &SqlcipherKey,
+    manifest_key: &ManifestKey,
+    vault_id: &VaultId,
+    vault_header: &VaultHeader,
+    staging_dir: &std::path::Path,
+    mirror_temp_dir: &std::path::Path,
+    mirror_mode: bool,
+    progress: &Channel<SyncProgressUpdate>,
+) -> Result<DestSyncCounts, IpcError> {
+    let blobs_total = pending_blobs.len() as u32;
+    let _ = progress.send(SyncProgressUpdate {
+        percent: 0,
+        current_file: Some(destination_id.to_string()),
+        files_processed: 0,
+        files_total: blobs_total,
+    });
+
+    let mut uploaded: u32 = 0;
+    let mut failed: u32 = 0;
+
+    for blob_name in pending_blobs {
+        if !all_blob_names.contains(blob_name) {
+            let _ = db.clear_pending_backup(blob_name, destination_id).await;
+            let _ = db.clear_backup_failure(blob_name, destination_id).await;
+            continue;
+        }
+
+        let staging_path = staging_dir.join(format!("{blob_name}.blob"));
+        let local_path = if tokio::fs::try_exists(&staging_path).await.unwrap_or(false) {
+            Some(staging_path)
+        } else {
+            let temp_path = mirror_temp_dir.join(format!("{blob_name}.blob"));
+            if tokio::fs::try_exists(&temp_path).await.unwrap_or(false) {
+                Some(temp_path)
+            } else {
+                if let Err(e) = tokio::fs::create_dir_all(mirror_temp_dir).await {
+                    tracing::warn!(
+                        destination_id,
+                        blob_name = %blob_name,
+                        error = %e,
+                        "mirror-temp dir creation failed; skipping blob"
+                    );
+                    continue;
+                }
+                let remote_path = blob_remote_path(blob_name);
+                match primary_transport
+                    .download_blob(&remote_path, &temp_path)
+                    .await
+                {
+                    Ok(()) => Some(temp_path),
+                    Err(CloudTransportError::NotFound) => {
+                        tracing::warn!(
+                            destination_id,
+                            blob_name = %blob_name,
+                            "mirror: blob absent from primary — clearing pending record"
+                        );
+                        let _ = db.clear_pending_backup(blob_name, destination_id).await;
+                        let _ = db.clear_backup_failure(blob_name, destination_id).await;
+                        None
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            destination_id,
+                            blob_name = %blob_name,
+                            error = %e,
+                            "mirror: failed to pull blob from primary; will retry next run"
+                        );
+                        None
+                    }
+                }
+            }
+        };
+
+        let Some(local_path) = local_path else {
+            continue;
+        };
+
+        let remote_path = blob_remote_path(blob_name);
+        if let Err(e) = dest_transport.upload_blob(&local_path, &remote_path).await {
+            tracing::warn!(
+                destination_id,
+                blob_name = %blob_name,
+                error = %e,
+                "backup blob upload failed; continuing with remaining blobs"
+            );
+            let _ = db.record_backup_failure(blob_name, destination_id).await;
+            failed += 1;
+        } else {
+            let _ = db.clear_pending_backup(blob_name, destination_id).await;
+            let _ = db.clear_backup_failure(blob_name, destination_id).await;
+            uploaded += 1;
+        }
+
+        let _ = progress.send(SyncProgressUpdate {
+            percent: (uploaded * 100 / blobs_total.max(1)) as u8,
+            current_file: Some(blob_name.clone()),
+            files_processed: uploaded,
+            files_total: blobs_total,
+        });
+    }
+
+    // Upload encrypted manifest backup so the destination is independently recoverable.
+    let manifest_key_bytes = manifest_key.with_exposed(|b| *b);
+    if let Err(e) = upload_manifest_backup(
+        db_path,
+        sqlcipher_key,
+        &manifest_key_bytes,
+        vault_id,
+        dest_transport,
+        staging_dir,
+    )
+    .await
+    {
+        tracing::warn!(destination_id, error = %e, "backup manifest upload failed");
+    }
+
+    // Upload vault header (sensitive fields stripped) for recovery bootstrapping.
+    if let Err(e) = upload_vault_header(vault_header, dest_transport, staging_dir).await {
+        tracing::warn!(destination_id, error = %e, "backup vault header upload failed");
+    }
+
+    // Mirror mode: delete blobs on the remote that no longer exist in the vault.
+    let mut deleted: u32 = 0;
+    if mirror_mode {
+        const LIST_BLOBS_MAX_ATTEMPTS: u32 = 3;
+        const LIST_BLOBS_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+        let mut list_result = Err(CloudTransportError::Other("not started".to_string()));
+        for attempt in 1..=LIST_BLOBS_MAX_ATTEMPTS {
+            list_result = dest_transport.list_blobs("vault/").await;
+            match &list_result {
+                Ok(_) | Err(CloudTransportError::NotFound) => break,
+                Err(e) => {
+                    if attempt < LIST_BLOBS_MAX_ATTEMPTS {
+                        tracing::warn!(
+                            destination_id,
+                            attempt,
+                            max_attempts = LIST_BLOBS_MAX_ATTEMPTS,
+                            error = %e,
+                            "mirror list_blobs failed; retrying"
+                        );
+                        tokio::time::sleep(LIST_BLOBS_RETRY_DELAY).await;
+                    }
+                }
+            }
+        }
+
+        match list_result {
+            Ok(remote_paths) => {
+                for remote_path in &remote_paths {
+                    let blob_name = remote_path
+                        .strip_prefix("vault/")
+                        .and_then(|s| s.strip_suffix(".blob"))
+                        .unwrap_or("");
+                    if !blob_name.is_empty() && !all_blob_names.contains(blob_name) {
+                        if validate_blob_name_uuid_v4(blob_name).is_err() {
+                            tracing::warn!(
+                                destination_id,
+                                %remote_path,
+                                "mirror: skipping blob with non-UUID-v4 name returned by list_blobs"
+                            );
+                            continue;
+                        }
+                        let delete_result =
+                            dest_transport.delete_blob(remote_path).await.map_err(|e| {
+                                tracing::warn!(
+                                    destination_id,
+                                    remote_path = %remote_path,
+                                    error = %e,
+                                    "mirror delete failed for orphan blob; retrying"
+                                );
+                                e
+                            });
+                        let delete_result = if delete_result.is_err() {
+                            tokio::time::sleep(Duration::from_secs(3)).await;
+                            dest_transport.delete_blob(remote_path).await
+                        } else {
+                            delete_result
+                        };
+                        match delete_result {
+                            Ok(()) => deleted += 1,
+                            Err(e) => tracing::warn!(
+                                destination_id,
+                                remote_path = %remote_path,
+                                error = %e,
+                                "mirror delete failed for orphan blob after retry; blob will be retried on next sync"
+                            ),
+                        }
+                    }
+                }
+            }
+            Err(CloudTransportError::NotFound) => {
+                // Destination has no vault/ prefix yet. No orphans to delete.
+            }
+            Err(e) => {
+                tracing::warn!(
+                    destination_id,
+                    attempts = LIST_BLOBS_MAX_ATTEMPTS,
+                    error = %e,
+                    "mirror list_blobs failed after all attempts; orphan blobs will persist until next sync"
+                );
+            }
+        }
+    }
+
+    Ok(DestSyncCounts {
+        uploaded,
+        failed,
+        deleted,
+    })
+}
+
 /// If `destination_id` is `None`, syncs to all configured backup destinations.
 /// Progress is streamed via `progress` channel.
 #[tauri::command]
@@ -1173,22 +1394,24 @@ pub async fn sync_backup(
         .session_manager
         .active_vault_id()
         .await
-        .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
 
     let (_, db_path, header_path) = resolve_vault_by_id(&vault_id)?;
 
     let staging_dir = vault_staging_dir(&vault_id);
 
+    // Parse header once before the destination loop so sensitive fields can be stripped.
+    let header_json = tokio::fs::read_to_string(&header_path).await.map_err(|e| {
+        tracing::error!(error = %e, "sync_backup: failed to read vault header");
+        IpcError::InternalError("An error occurred".into())
+    })?;
+    let vault_header: VaultHeader = serde_json::from_str(&header_json).map_err(|e| {
+        tracing::error!(error = %e, "sync_backup: failed to parse vault header");
+        IpcError::InternalError("An error occurred".into())
+    })?;
+
     let sqlcipher_key = extract_sqlcipher_key(&state.session_manager).await?;
-    let manifest_key_bytes: [u8; 32] = state
-        .session_manager
-        .with_manifest_key(|k| {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(k);
-            arr
-        })
-        .await
-        .map_err(IpcError::from)?;
+    let manifest_key = extract_manifest_key(&state.session_manager).await?;
     let crypto_vault_id = uuid::Uuid::parse_str(&vault_id)
         .map_err(|_| IpcError::InternalError("An error occurred".into()))
         .map(VaultId::from_uuid)?;
@@ -1278,7 +1501,7 @@ pub async fn sync_backup(
         .app_handle
         .get()
         .ok_or_else(|| IpcError::InternalError("App handle not initialised".into()))?;
-    let binary_path = rclone_binary_path(app_handle);
+    let binary_path = rclone_binary_path(Some(app_handle));
     let primary_transport = state.cloud_transport.read().await.clone();
 
     let mut total_uploaded: u32 = 0;
@@ -1286,242 +1509,39 @@ pub async fn sync_backup(
     let mut total_failed: u32 = 0;
 
     for dest in &backup_dests {
-        // Per-destination config file — isolates each destination's rclone session so that
-        // processing one destination never corrupts another destination's config.
         let config_path = staging_dir.join(format!(".rclone-backup-{}.conf", dest.destination_id));
         let transport =
             build_destination_transport(binary_path.clone(), &config_path, dest).await?;
 
-        // Pending-backup queue drives which blobs this destination still needs.
         let pending_blobs = db
             .list_pending_backups(&dest.destination_id)
             .await
             .map_err(IpcError::from)?;
-        let blobs_total = pending_blobs.len() as u32;
 
-        let _ = progress.send(SyncProgressUpdate {
-            percent: 0,
-            current_file: Some(dest.destination_id.clone()),
-            files_processed: 0,
-            files_total: blobs_total,
-        });
-
-        let mut dest_uploaded: u32 = 0;
-        let mut dest_failed: u32 = 0;
-
-        for blob_name in &pending_blobs {
-            if !all_blob_names.contains(blob_name) {
-                // Blob was removed from the vault; discard the stale pending and failure records.
-                let _ = db
-                    .clear_pending_backup(blob_name, &dest.destination_id)
-                    .await;
-                let _ = db
-                    .clear_backup_failure(blob_name, &dest.destination_id)
-                    .await;
-                continue;
-            }
-
-            // Resolve local path: staging copy (still present from primary upload) takes
-            // priority. If absent, use a previously downloaded temp copy or download now.
-            // The temp file persists for the lifetime of this sync call so that subsequent
-            // mirror destinations for the same blob skip the Backblaze download entirely.
-            let staging_path = staging_dir.join(format!("{blob_name}.blob"));
-            let local_path = if tokio::fs::try_exists(&staging_path).await.unwrap_or(false) {
-                Some(staging_path)
-            } else {
-                let temp_path = mirror_temp_dir.join(format!("{blob_name}.blob"));
-                if tokio::fs::try_exists(&temp_path).await.unwrap_or(false) {
-                    // Already downloaded for an earlier mirror destination — reuse.
-                    Some(temp_path)
-                } else {
-                    if let Err(e) = tokio::fs::create_dir_all(&mirror_temp_dir).await {
-                        tracing::warn!(
-                            destination_id = %dest.destination_id,
-                            blob_name = %blob_name,
-                            error = %e,
-                            "mirror-temp dir creation failed; skipping blob"
-                        );
-                        continue;
-                    }
-                    let remote_path = blob_remote_path(blob_name);
-                    match primary_transport
-                        .download_blob(&remote_path, &temp_path)
-                        .await
-                    {
-                        Ok(()) => Some(temp_path),
-                        Err(CloudTransportError::NotFound) => {
-                            // Blob is absent from primary — already deleted via sync_to_cloud.
-                            // Clear the pending and failure records so this is not retried.
-                            tracing::warn!(
-                                destination_id = %dest.destination_id,
-                                blob_name = %blob_name,
-                                "mirror: blob absent from primary — clearing pending record"
-                            );
-                            let _ = db
-                                .clear_pending_backup(blob_name, &dest.destination_id)
-                                .await;
-                            let _ = db
-                                .clear_backup_failure(blob_name, &dest.destination_id)
-                                .await;
-                            None
-                        }
-                        Err(e) => {
-                            // Transient error (network, quota). Leave pending for retry.
-                            tracing::warn!(
-                                destination_id = %dest.destination_id,
-                                blob_name = %blob_name,
-                                error = %e,
-                                "mirror: failed to pull blob from primary; will retry next run"
-                            );
-                            None
-                        }
-                    }
-                }
-            };
-
-            let Some(local_path) = local_path else {
-                continue;
-            };
-
-            let remote_path = blob_remote_path(blob_name);
-            if let Err(e) = transport.upload_blob(&local_path, &remote_path).await {
-                tracing::warn!(
-                    destination_id = %dest.destination_id,
-                    blob_name = %blob_name,
-                    error = %e,
-                    "backup blob upload failed; continuing with remaining blobs"
-                );
-                let _ = db
-                    .record_backup_failure(blob_name, &dest.destination_id)
-                    .await;
-                dest_failed += 1;
-            } else {
-                let _ = db
-                    .clear_pending_backup(blob_name, &dest.destination_id)
-                    .await;
-                let _ = db
-                    .clear_backup_failure(blob_name, &dest.destination_id)
-                    .await;
-                dest_uploaded += 1;
-            }
-
-            let _ = progress.send(SyncProgressUpdate {
-                percent: (dest_uploaded * 100 / blobs_total.max(1)) as u8,
-                current_file: Some(blob_name.clone()),
-                files_processed: dest_uploaded,
-                files_total: blobs_total,
-            });
-        }
-
-        total_uploaded += dest_uploaded;
-        total_failed += dest_failed;
-
-        // Upload encrypted manifest backup so the destination is independently recoverable.
-        if let Err(e) = upload_manifest_backup(
+        let mirror_mode = dest.backup_mode == Some(BackupSyncMode::Mirror);
+        let counts = sync_to_destination(
+            &dest.destination_id,
+            &pending_blobs,
+            &all_blob_names,
+            &transport,
+            &*primary_transport,
+            db,
             &db_path,
             &sqlcipher_key,
-            &manifest_key_bytes,
+            &manifest_key,
             &crypto_vault_id,
-            &transport,
+            &vault_header,
             &staging_dir,
+            &mirror_temp_dir,
+            mirror_mode,
+            &progress,
         )
-        .await
-        {
-            tracing::warn!(
-                destination_id = %dest.destination_id,
-                error = %e,
-                "backup manifest upload failed"
-            );
-        }
+        .await?;
 
-        // Upload vault header (plaintext JSON) for recovery bootstrapping.
-        if let Err(e) = transport
-            .upload_blob(&header_path, VAULT_HEADER_BLOB_NAME)
-            .await
-        {
-            tracing::warn!(
-                destination_id = %dest.destination_id,
-                error = %e,
-                "backup vault header upload failed"
-            );
-        }
+        total_uploaded += counts.uploaded;
+        total_failed += counts.failed;
+        total_deleted += counts.deleted;
 
-        // Mirror mode: delete blobs that exist on the remote but no longer in the vault.
-        if dest.backup_mode == Some(BackupSyncMode::Mirror) {
-            const LIST_BLOBS_MAX_ATTEMPTS: u32 = 3;
-            const LIST_BLOBS_RETRY_DELAY: Duration = Duration::from_secs(5);
-
-            let mut list_result = Err(CloudTransportError::Other("not started".to_string()));
-            for attempt in 1..=LIST_BLOBS_MAX_ATTEMPTS {
-                list_result = transport.list_blobs("vault/").await;
-                match &list_result {
-                    Ok(_) | Err(CloudTransportError::NotFound) => break,
-                    Err(e) => {
-                        if attempt < LIST_BLOBS_MAX_ATTEMPTS {
-                            tracing::warn!(
-                                destination_id = %dest.destination_id,
-                                attempt,
-                                max_attempts = LIST_BLOBS_MAX_ATTEMPTS,
-                                error = %e,
-                                "mirror list_blobs failed; retrying"
-                            );
-                            tokio::time::sleep(LIST_BLOBS_RETRY_DELAY).await;
-                        }
-                    }
-                }
-            }
-
-            match list_result {
-                Ok(remote_paths) => {
-                    for remote_path in &remote_paths {
-                        let blob_name = remote_path
-                            .strip_prefix("vault/")
-                            .and_then(|s| s.strip_suffix(".blob"))
-                            .unwrap_or("");
-                        if !blob_name.is_empty() && !all_blob_names.contains(blob_name) {
-                            let delete_result =
-                                transport.delete_blob(remote_path).await.map_err(|e| {
-                                    tracing::warn!(
-                                        destination_id = %dest.destination_id,
-                                        remote_path = %remote_path,
-                                        error = %e,
-                                        "mirror delete failed for orphan blob; retrying"
-                                    );
-                                    e
-                                });
-                            let delete_result = if delete_result.is_err() {
-                                tokio::time::sleep(Duration::from_secs(3)).await;
-                                transport.delete_blob(remote_path).await
-                            } else {
-                                delete_result
-                            };
-                            match delete_result {
-                                Ok(()) => total_deleted += 1,
-                                Err(e) => tracing::warn!(
-                                    destination_id = %dest.destination_id,
-                                    remote_path = %remote_path,
-                                    error = %e,
-                                    "mirror delete failed for orphan blob after retry; blob will be retried on next sync"
-                                ),
-                            }
-                        }
-                    }
-                }
-                Err(CloudTransportError::NotFound) => {
-                    // Destination has no vault/ prefix yet (new or empty). No orphans to delete.
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        destination_id = %dest.destination_id,
-                        attempts = LIST_BLOBS_MAX_ATTEMPTS,
-                        error = %e,
-                        "mirror list_blobs failed after all attempts; orphan blobs will persist until next sync"
-                    );
-                }
-            }
-        }
-
-        // Wipe this destination's config file before moving to the next.
         let _ = destroy_session_rclone_conf(&config_path).await;
     }
 

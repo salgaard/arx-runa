@@ -338,7 +338,7 @@ mod tests {
         async fn insert_file_node_and_stage_epoch_entry(
             &self,
             node: &Node,
-            plaintext: Vec<u8>,
+            plaintext: zeroize::Zeroizing<Vec<u8>>,
         ) -> Result<(), StorageError> {
             self.inner
                 .insert_file_node_and_stage_epoch_entry(node, plaintext)
@@ -349,7 +349,7 @@ mod tests {
         async fn stage_epoch_entry(
             &self,
             node_id: Uuid,
-            plaintext: Vec<u8>,
+            plaintext: zeroize::Zeroizing<Vec<u8>>,
         ) -> Result<(), StorageError> {
             self.inner.stage_epoch_entry(node_id, plaintext).await
         }

@@ -1,10 +1,4 @@
-//! Vault header schema forward declaration for Phase 4.1 / Phase 4.3.
-//!
-//! Phase 2.4 defines the serialisation shape required by vault ceremonies.
-//! Phase 4.3 added `vault_header_io::{upload_vault_header, download_vault_header}`;
-//! startup retry is deferred to Phase 4.5. Phase 2.4
-//! ceremonies uphold the `MasterKey` containment rule: this module must not
-//! gain any field that stores a `MasterKey` (serialised or in memory).
+//! Vault header types and validation. I/O operations are in [`vault_header_io`].
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -16,7 +10,7 @@ const ARGON2_MIN_PARALLELISM: u32 = 1;
 
 /// Argon2id parameters as serialised inside the vault header.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Argon2ParamsJson {
+pub struct Argon2ParametersJson {
     /// Argon2id memory cost in KiB.
     pub memory_cost: u32,
     /// Argon2id time cost (iterations).
@@ -33,7 +27,7 @@ pub struct RecoverySlot {
     /// Base64-encoded 32-byte Argon2id salt for the recovery key derivation.
     pub argon2_salt: String,
     /// Argon2id parameters for the recovery key derivation.
-    pub argon2_params: Argon2ParamsJson,
+    pub argon2_params: Argon2ParametersJson,
     /// Base64-encoded 72-byte `WrappedMasterKey` wire blob.
     pub wrapped_master_key: String,
 }
@@ -50,7 +44,7 @@ pub struct VaultHeader {
     /// Base64-encoded 32-byte Argon2id salt for the primary slot.
     pub argon2_salt: String,
     /// Argon2id parameters for the primary slot.
-    pub argon2_params: Argon2ParamsJson,
+    pub argon2_params: Argon2ParametersJson,
     /// BLAKE3 hex digest of the USB key file; local-only hint, never uploaded to cloud.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_file_blake3: Option<String>,
@@ -70,7 +64,7 @@ pub struct TrustedVaultHeaderAnchor {
     /// Expected primary Argon2id salt.
     pub argon2_salt: String,
     /// Expected primary Argon2id parameters.
-    pub argon2_params: Argon2ParamsJson,
+    pub argon2_params: Argon2ParametersJson,
 }
 
 /// Trust-policy mode applied after structural vault-header validation.
@@ -143,10 +137,10 @@ impl VaultHeader {
         policy: VaultHeaderTrustPolicy<'_>,
     ) -> Result<(), VaultHeaderError> {
         self.validate_structure()?;
-        validate_argon2_params(&self.argon2_params)
+        validate_argon2_parameters(&self.argon2_params)
             .map_err(|_| VaultHeaderError::Argon2ParamsBelowMinimum)?;
         for slot in &self.recovery_slots {
-            validate_argon2_params(&slot.argon2_params)
+            validate_argon2_parameters(&slot.argon2_params)
                 .map_err(|_| VaultHeaderError::RecoverySlotArgon2ParamsBelowMinimum)?;
         }
         match policy {
@@ -227,10 +221,10 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
 }
 
 /// Checks whether Argon2 parameters meet the minimum accepted floor.
-fn validate_argon2_params(params: &Argon2ParamsJson) -> Result<(), ()> {
-    if params.memory_cost < ARGON2_MIN_MEMORY_COST_KIB
-        || params.time_cost < ARGON2_MIN_TIME_COST
-        || params.parallelism < ARGON2_MIN_PARALLELISM
+fn validate_argon2_parameters(parameters: &Argon2ParametersJson) -> Result<(), ()> {
+    if parameters.memory_cost < ARGON2_MIN_MEMORY_COST_KIB
+        || parameters.time_cost < ARGON2_MIN_TIME_COST
+        || parameters.parallelism < ARGON2_MIN_PARALLELISM
     {
         return Err(());
     }
@@ -246,8 +240,8 @@ mod tests {
         base64::engine::general_purpose::STANDARD.encode(bytes)
     }
 
-    fn valid_argon2_params() -> Argon2ParamsJson {
-        Argon2ParamsJson {
+    fn valid_argon2_parameters() -> Argon2ParametersJson {
+        Argon2ParametersJson {
             memory_cost: 65536,
             time_cost: 3,
             parallelism: 4,
@@ -260,7 +254,7 @@ mod tests {
             schema_version: VaultHeader::SCHEMA_VERSION,
             tier: 1,
             argon2_salt: encode_base64(&[0x11u8; 32]),
-            argon2_params: valid_argon2_params(),
+            argon2_params: valid_argon2_parameters(),
             key_file_blake3: None,
             recovery_slots: Vec::new(),
             name: None,
@@ -278,7 +272,7 @@ mod tests {
         RecoverySlot {
             method: "bip39".into(),
             argon2_salt: encode_base64(&[0x22u8; 32]),
-            argon2_params: valid_argon2_params(),
+            argon2_params: valid_argon2_parameters(),
             wrapped_master_key: encode_base64(&[0x33u8; 72]),
         }
     }
@@ -549,7 +543,7 @@ mod tests {
         let trusted_anchor = TrustedVaultHeaderAnchor {
             vault_id: header.vault_id.clone(),
             argon2_salt: header.argon2_salt.clone(),
-            argon2_params: Argon2ParamsJson {
+            argon2_params: Argon2ParametersJson {
                 memory_cost: 12345,
                 time_cost: header.argon2_params.time_cost,
                 parallelism: header.argon2_params.parallelism,

@@ -59,6 +59,25 @@ impl From<MemoryLockError> for AuthenticationError {
     }
 }
 
+impl AuthenticationError {
+    /// Returns a fixed variant name string with no inner payload, safe to log.
+    #[allow(unreachable_patterns)]
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            Self::InvalidCredentials => "InvalidCredentials",
+            Self::KeyFileNotFound => "KeyFileNotFound",
+            Self::MemoryLockFailed(_) => "MemoryLockFailed",
+            Self::VaultHeaderInvalid => "VaultHeaderInvalid",
+            Self::SessionAlreadyActive => "SessionAlreadyActive",
+            Self::SessionNotActive => "SessionNotActive",
+            Self::InvalidRecoveryPhrase => "InvalidRecoveryPhrase",
+            Self::NoRecoverySlot => "NoRecoverySlot",
+            Self::KeySource(_) => "KeySource",
+            _ => "Unknown",
+        }
+    }
+}
+
 /// Errors produced by a [`crate::auth::KeySource`] implementation.
 #[non_exhaustive]
 #[derive(Debug, Error)]
@@ -167,5 +186,47 @@ mod tests {
             AuthenticationError::NoRecoverySlot.to_string(),
             "no recovery slot is configured for this vault",
         );
+    }
+
+    /// Verifies that `kind_name()` returns a fixed string that never includes inner payload.
+    #[test]
+    fn test_authentication_error_kind_name_excludes_inner_payload() {
+        let cases: &[(AuthenticationError, &str)] = &[
+            (
+                AuthenticationError::InvalidCredentials,
+                "InvalidCredentials",
+            ),
+            (AuthenticationError::KeyFileNotFound, "KeyFileNotFound"),
+            (
+                AuthenticationError::MemoryLockFailed("secret platform text".into()),
+                "MemoryLockFailed",
+            ),
+            (
+                AuthenticationError::VaultHeaderInvalid,
+                "VaultHeaderInvalid",
+            ),
+            (
+                AuthenticationError::SessionAlreadyActive,
+                "SessionAlreadyActive",
+            ),
+            (AuthenticationError::SessionNotActive, "SessionNotActive"),
+            (
+                AuthenticationError::InvalidRecoveryPhrase,
+                "InvalidRecoveryPhrase",
+            ),
+            (AuthenticationError::NoRecoverySlot, "NoRecoverySlot"),
+            (
+                AuthenticationError::KeySource(KeySourceError::NotFound),
+                "KeySource",
+            ),
+        ];
+        for (error, expected) in cases {
+            let name = error.kind_name();
+            assert_eq!(name, *expected, "kind_name mismatch for {expected}");
+            assert!(
+                !name.contains("secret"),
+                "inner payload must not appear in kind_name: {name}"
+            );
+        }
     }
 }

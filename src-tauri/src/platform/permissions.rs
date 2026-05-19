@@ -1,9 +1,14 @@
-/// Sets owner-only permissions on an existing file.
+/// Applies the most restrictive file permissions compatible with the platform.
 ///
-/// On Unix the file mode is set to `0o600`.  On Windows an owner-only DACL
-/// (`D:P(A;;FA;;;OW)(A;;FA;;;SY)(A;;FA;;;BA)`) is applied via
-/// `SetNamedSecurityInfoW`.  The file must already exist.
-pub(crate) fn set_file_owner_only(path: &std::path::Path) -> std::io::Result<()> {
+/// - **Unix**: mode `0o600` (owner read/write only).
+/// - **Windows**: DACL `D:P(A;;FA;;;OW)(A;;FA;;;SY)(A;;FA;;;BA)` — Full Access
+///   for the file owner (`OW`), SYSTEM (`SY`), and Built-in Administrators (`BA`).
+///   SYSTEM and BA are included because excluding them breaks Windows Defender,
+///   VSS, and system recovery. This is an accepted platform limitation; see
+///   `docs/architecture/design-invariants.md` § "Out-of-Scope Architectural Limitations".
+///
+/// The file must already exist.
+pub(crate) fn set_file_private_permissions(path: &std::path::Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::fs::Permissions;
@@ -24,7 +29,7 @@ pub(crate) fn set_file_owner_only(path: &std::path::Path) -> std::io::Result<()>
 }
 
 #[cfg(windows)]
-fn apply_owner_only_acl_windows(path: &std::path::Path) -> std::io::Result<()> {
+pub(crate) fn apply_owner_only_acl_windows(path: &std::path::Path) -> std::io::Result<()> {
     use windows::Win32::Foundation::ERROR_SUCCESS;
     use windows::Win32::Security::Authorization::{SE_FILE_OBJECT, SetNamedSecurityInfoW};
     use windows::Win32::Security::{

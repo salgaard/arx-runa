@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chacha20poly1305::aead::OsRng;
 use rand::Rng;
@@ -14,7 +14,7 @@ use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
-use crate::crypto::{FileId, VaultId};
+use crate::crypto::{FileId, SqlcipherKey, VaultId};
 use crate::storage::SqlCipherMetadataStore;
 use crate::storage::cloud::destination_session::insert_destination_session;
 use crate::storage::cloud::upload_vault_header;
@@ -23,6 +23,17 @@ use crate::storage::schema::{apply_canonical_schema, seed_manifest_meta};
 
 #[cfg(test)]
 use super::{STAGING_FILE_NAME, VAULT_HEADER_BLOB_NAME};
+
+/// Removes the key file (if any was written) and the vault DB on ceremony failure.
+///
+/// Both removals are best-effort; errors are silently ignored. Safe to call before
+/// the DB file exists — `remove_file_if_exists` is a no-op on missing paths.
+async fn cleanup_failed_vault(key_file: Option<&Path>, db: &Path) {
+    if let Some(kfp) = key_file {
+        remove_file_if_exists(kfp).await;
+    }
+    remove_file_if_exists(db).await;
+}
 
 /// Creates a new vault: derives keys, creates the SQLCipher DB, builds and
 /// uploads the vault header, and installs the resulting session.
@@ -61,22 +72,23 @@ pub async fn create_vault(
 
     ensure_parent_directory_exists(&request.vault_db_path).await?;
 
+    // For Tier 2, validate key-file path and record whether it resolves to a directory.
+    // The result is reused below when resolving the final key-file path — no second I/O.
+    let mut key_file_is_dir = false;
     if request.tier == Tier::Two {
         let key_file_path = request
             .target_key_file_path
             .as_ref()
             .ok_or(AuthenticationError::VaultHeaderInvalid)?;
 
-        // Check if the given path is a directory or a file location
         match tokio::fs::metadata(key_file_path).await {
             Ok(m) => {
                 if !m.is_dir() {
-                    // Path exists but is not a directory
                     return Err(AuthenticationError::VaultHeaderInvalid);
                 }
+                key_file_is_dir = true;
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // Path doesn't exist; check if parent exists
                 let parent = key_file_path
                     .parent()
                     .ok_or(AuthenticationError::VaultHeaderInvalid)?;
@@ -104,15 +116,10 @@ pub async fn create_vault(
             .as_ref()
             .ok_or(AuthenticationError::VaultHeaderInvalid)?;
 
-        // If the path is a directory, append a filename
-        let key_file_path = if let Ok(metadata) = tokio::fs::metadata(key_file_path_input).await {
-            if metadata.is_dir() {
-                key_file_path_input.join("arx-runa.key")
-            } else {
-                key_file_path_input.clone()
-            }
+        // Reuse the metadata result from validation above — no second I/O call.
+        let key_file_path = if key_file_is_dir {
+            key_file_path_input.join("arx-runa.key")
         } else {
-            // Path doesn't exist; use as provided
             key_file_path_input.clone()
         };
 
@@ -138,9 +145,7 @@ pub async fn create_vault(
     );
     if let Err(error) = derive_result {
         drop(master_key);
-        if let Some(kfp) = written_key_file_path.as_deref() {
-            remove_file_if_exists(kfp).await;
-        }
+        cleanup_failed_vault(written_key_file_path.as_deref(), &request.vault_db_path).await;
         return Err(error);
     }
 
@@ -148,9 +153,7 @@ pub async fn create_vault(
         Ok(keys) => keys,
         Err(error) => {
             drop(master_key);
-            if let Some(kfp) = written_key_file_path.as_deref() {
-                remove_file_if_exists(kfp).await;
-            }
+            cleanup_failed_vault(written_key_file_path.as_deref(), &request.vault_db_path).await;
             return Err(error);
         }
     };
@@ -168,14 +171,13 @@ pub async fn create_vault(
     ) {
         Ok(wrapped) => wrapped,
         Err(error) => {
-            if let Some(kfp) = written_key_file_path.as_deref() {
-                remove_file_if_exists(kfp).await;
-            }
+            drop(session_keys);
+            cleanup_failed_vault(written_key_file_path.as_deref(), &request.vault_db_path).await;
             return Err(error);
         }
     };
 
-    let sqlcipher_key = sqlcipher_key_from_array(session_keys.sqlcipher_key.expose());
+    let sqlcipher_key = SqlcipherKey::from_slice(session_keys.sqlcipher_key.expose());
     let vault_db_path_owned = request.vault_db_path.clone();
     let vault_id_uuid = vault_id.to_uuid();
     let chunk_size_bytes = request.chunk_size_bytes;
@@ -199,10 +201,7 @@ pub async fn create_vault(
         .await
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     if let Err(error) = db_result {
-        if let Some(kfp) = written_key_file_path.as_deref() {
-            remove_file_if_exists(kfp).await;
-        }
-        remove_file_if_exists(&request.vault_db_path).await;
+        cleanup_failed_vault(written_key_file_path.as_deref(), &request.vault_db_path).await;
         return Err(error);
     }
 
@@ -224,10 +223,8 @@ pub async fn create_vault(
                         ?error,
                         "Failed to insert primary destination during vault creation"
                     );
-                    if let Some(kfp) = written_key_file_path.as_deref() {
-                        remove_file_if_exists(kfp).await;
-                    }
-                    remove_file_if_exists(&request.vault_db_path).await;
+                    cleanup_failed_vault(written_key_file_path.as_deref(), &request.vault_db_path)
+                        .await;
                     return Err(AuthenticationError::VaultHeaderInvalid);
                 }
             }
@@ -236,10 +233,8 @@ pub async fn create_vault(
                     ?error,
                     "Failed to open vault DB for primary destination insertion"
                 );
-                if let Some(kfp) = written_key_file_path.as_deref() {
-                    remove_file_if_exists(kfp).await;
-                }
-                remove_file_if_exists(&request.vault_db_path).await;
+                cleanup_failed_vault(written_key_file_path.as_deref(), &request.vault_db_path)
+                    .await;
                 return Err(error);
             }
         }
@@ -250,7 +245,7 @@ pub async fn create_vault(
         schema_version: VaultHeader::SCHEMA_VERSION,
         tier: request.tier.as_u8(),
         argon2_salt: encode_base64(argon2_salt.as_slice()),
-        argon2_params: argon2_params_to_json(&request.argon2_params),
+        argon2_params: argon2_parameters_to_json(&request.argon2_params),
         key_file_blake3: key_file_blake3_hex,
         recovery_slots: Vec::new(),
         name: request.vault_name.clone(),
@@ -267,10 +262,7 @@ pub async fn create_vault(
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     if let Err(error) = tokio::fs::write(&local_header_path, &header_json).await {
         tracing::error!(?local_header_path, %error, "Failed to write vault-header.json locally");
-        if let Some(kfp) = written_key_file_path.as_deref() {
-            remove_file_if_exists(kfp).await;
-        }
-        remove_file_if_exists(&request.vault_db_path).await;
+        cleanup_failed_vault(written_key_file_path.as_deref(), &request.vault_db_path).await;
         return Err(AuthenticationError::VaultHeaderInvalid);
     }
 
@@ -426,7 +418,7 @@ mod tests {
             password_bytes: TEST_PASSWORD,
             target_key_file_path: None,
             vault_db_path,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
             epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
             vault_name: None,
@@ -725,6 +717,50 @@ mod tests {
             crate::storage::cloud::destination_session::DestinationType::LocalPath,
         );
         session.lock().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_vault_tier_two_header_write_failure_cleans_key_file_and_db() {
+        let _lock = ceremony_lock().await;
+        let temp = temp_dir();
+        let vault_db_path = temp.path().join("vault.db");
+        let key_file_path = temp.path().join("new-key.bin");
+
+        // Force vault-header.json write to fail by pre-creating a directory at that path.
+        let header_path = temp.path().join("vault-header.json");
+        tokio::fs::create_dir_all(&header_path)
+            .await
+            .expect("directory at header path must be creatable");
+
+        let cloud = MockCloudTransport::new();
+        let session = test_session_manager();
+        let request = CreateVaultRequest {
+            tier: Tier::Two,
+            password_bytes: TEST_PASSWORD,
+            target_key_file_path: Some(key_file_path.clone()),
+            vault_db_path: vault_db_path.clone(),
+            argon2_params: Argon2Params::DEFAULT,
+            chunk_size_bytes: CreateVaultRequest::DEFAULT_CHUNK_SIZE_BYTES,
+            epoch_buffer_enabled: CreateVaultRequest::DEFAULT_EPOCH_BUFFER_ENABLED,
+            vault_name: None,
+            suggested_vault_id: None,
+            primary_destination: None,
+        };
+
+        let result = create_vault(request, &session, &cloud).await;
+
+        assert!(
+            result.is_err(),
+            "ceremony must fail when header write fails"
+        );
+        assert!(
+            !key_file_path.exists(),
+            "key file must be cleaned up after header write failure"
+        );
+        assert!(
+            !vault_db_path.exists(),
+            "vault DB must be cleaned up after header write failure"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -28,14 +28,14 @@ impl SessionKeys {
         password_utf8_bytes: &[u8],
         key_file_bytes: Option<&[u8; 32]>,
         salt: &[u8; 32],
-        params: &Argon2Params,
+        parameters: &Argon2Params,
     ) -> Result<Self, AuthenticationError> {
         let mut master_key: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             password_utf8_bytes,
             key_file_bytes,
             salt,
-            params,
+            parameters,
             &mut master_key,
         )?;
         Self::from_master_key_bytes(&master_key)

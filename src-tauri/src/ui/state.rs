@@ -1,6 +1,6 @@
 //! Shared application state for Tauri IPC commands.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -33,6 +33,23 @@ pub struct OAuthSetupHandle {
 ///
 /// Contains only IPC and runtime orchestration handles — no key material,
 /// no passwords, and no file-content buffers.
+///
+/// # Lock acquisition order
+///
+/// When a handler must hold more than one lock simultaneously, always acquire
+/// them in this order to prevent deadlock:
+///
+/// 1. `sync_mutex`
+/// 2. `flush_mutex`
+/// 3. `oauth_setups`
+/// 4. `allowed_reveal_paths`
+/// 5. `cloud_transport` (RwLock)
+/// 6. `sync_status` (RwLock)
+/// 7. `active_vault_id` (RwLock)
+///
+/// In practice `flush_mutex` is always released before `cloud_transport` is
+/// acquired (e.g. `sync_backup`), so concurrent holding of multiple locks is
+/// rare. Respect this order in any new multi-lock code path.
 pub struct AppState {
     /// Cloud transport implementation; swappable post-authenticate.
     ///
@@ -62,6 +79,11 @@ pub struct AppState {
     /// Uses `tokio::sync::Mutex` so it can be held across `.await` points
     /// inside `poll_oauth_setup`.
     pub(crate) oauth_setups: Arc<tokio::sync::Mutex<HashMap<String, OAuthSetupHandle>>>,
+    /// Canonical paths that `reveal_in_explorer` is permitted to open this session.
+    ///
+    /// Populated by `download_received_share` on successful decryption; cleared on
+    /// vault lock. Also allows any path under `app_data_dir`.
+    pub(crate) allowed_reveal_paths: Arc<tokio::sync::Mutex<HashSet<PathBuf>>>,
 }
 
 /// No-op cloud transport used until Phase 6.5 wires a real `RcloneTransport`.
@@ -150,6 +172,7 @@ impl AppState {
             flush_mutex: Arc::new(tokio::sync::Mutex::new(())),
             sync_mutex: Arc::new(tokio::sync::Mutex::new(())),
             oauth_setups: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            allowed_reveal_paths: Arc::new(tokio::sync::Mutex::new(HashSet::new())),
         }
     }
 

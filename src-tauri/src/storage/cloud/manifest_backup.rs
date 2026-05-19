@@ -131,7 +131,7 @@ pub async fn upload_manifest_backup(
 
     let vault_db_path = vault_db_path.to_path_buf();
     let export_path_for_task = export_path.clone();
-    let sqlcipher_key = sqlcipher_key_from_array(sqlcipher_key.with_exposed(|bytes| *bytes));
+    let sqlcipher_key = sqlcipher_key.with_exposed(SqlcipherKey::from_slice);
     tokio::task::spawn_blocking(move || {
         run_vacuum_into_export(&vault_db_path, &sqlcipher_key, &export_path_for_task)
     })
@@ -265,7 +265,7 @@ pub async fn download_manifest_backup(
     let destination_for_integrity = destination_db_path.clone();
     let key_bytes = sqlcipher_key.with_exposed(|bytes| *bytes);
     let integrity_join = tokio::task::spawn_blocking(move || {
-        let verify_key = sqlcipher_key_from_array(key_bytes);
+        let verify_key = SqlcipherKey::from_slice(&key_bytes);
         verify_manifest_database_integrity(&destination_for_integrity, &verify_key)
     })
     .await;
@@ -306,7 +306,7 @@ fn run_vacuum_into_export(
         .map_err(|error| ManifestBackupSyncError::Vacuum(error.to_string()))?;
     drop(conn);
 
-    crate::platform::permissions::set_file_owner_only(export_path)
+    crate::platform::permissions::set_file_private_permissions(export_path)
         .map_err(|error| ManifestBackupSyncError::StagingIo(error.to_string()))?;
 
     Ok(())
@@ -329,7 +329,7 @@ fn persist_manifest_database_atomically(
         .as_file()
         .sync_all()
         .map_err(|error| ManifestBackupSyncError::DbPersistIo(error.to_string()))?;
-    crate::platform::permissions::set_file_owner_only(temporary_file.path())
+    crate::platform::permissions::set_file_private_permissions(temporary_file.path())
         .map_err(|error| ManifestBackupSyncError::DbPersistIo(error.to_string()))?;
     temporary_file
         .persist_noclobber(destination_db_path)
@@ -352,12 +352,6 @@ fn verify_manifest_database_integrity(
     Ok(())
 }
 
-fn sqlcipher_key_from_array(bytes: [u8; 32]) -> SqlcipherKey {
-    let mut boxed = Box::new([0u8; 32]);
-    boxed.copy_from_slice(&bytes);
-    SqlcipherKey::from_secret_box(secrecy::SecretBox::new(boxed))
-}
-
 /// Removes a file if present, tolerating missing-file races.
 async fn remove_file_if_present(path: &Path) -> Result<(), std::io::Error> {
     match tokio::fs::remove_file(path).await {
@@ -369,7 +363,6 @@ async fn remove_file_if_present(path: &Path) -> Result<(), std::io::Error> {
 
 #[cfg(test)]
 mod tests {
-    use secrecy::SecretBox;
     use tempfile::tempdir;
     use uuid::Uuid;
 
@@ -380,9 +373,7 @@ mod tests {
 
     /// Creates a `SqlcipherKey` from fixed test bytes.
     fn sqlcipher_key_from_bytes(bytes: [u8; 32]) -> SqlcipherKey {
-        let mut boxed = Box::new([0u8; 32]);
-        boxed.copy_from_slice(&bytes);
-        SqlcipherKey::from_secret_box(SecretBox::new(boxed))
+        SqlcipherKey::from_slice(&bytes)
     }
 
     /// Seeds a SQLCipher manifest database on disk for upload tests.

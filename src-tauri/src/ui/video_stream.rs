@@ -11,8 +11,7 @@ use uuid::Uuid;
 use crate::storage::MetadataStore as _;
 use crate::storage::cloud::sync::fetch_missing_file_blobs;
 use crate::storage::vault_ops::download_file_range_to_memory;
-use crate::ui::commands_common::require_active_session;
-use crate::ui::file_commands::extract_kek;
+use crate::ui::commands_common::{extract_kek, require_active_session};
 use crate::ui::state::AppState;
 use crate::ui::validation::validate_file_id;
 use crate::ui::vault_paths::vault_staging_dir;
@@ -177,6 +176,9 @@ async fn serve_video_range<R: tauri::Runtime>(
         builder = builder.status(tauri::http::StatusCode::OK);
     }
 
+    // `bytes` (Zeroizing<Vec<u8>>) zeroes on drop at end of scope. The Vec<u8> copy
+    // passed to builder.body() is Tauri-owned after the move; post-handoff zeroization
+    // is not possible with this API. Accepted limitation.
     builder.body(bytes.to_vec()).unwrap_or_else(|_| {
         plain_error(
             tauri::http::StatusCode::INTERNAL_SERVER_ERROR,

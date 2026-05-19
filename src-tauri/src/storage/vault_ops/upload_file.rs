@@ -79,12 +79,12 @@ pub async fn upload_file(
 
     match route_decision {
         RouteDecision::EpochBuffer => {
-            let plaintext = match stripped {
+            let plaintext: zeroize::Zeroizing<Vec<u8>> = zeroize::Zeroizing::new(match stripped {
                 Some(bytes) => bytes,
                 None => tokio::fs::read(source)
                     .await
                     .map_err(|error| StorageError::Io(error.to_string()))?,
-            };
+            });
             let file_size = plaintext.len() as u64;
             let sentinel_file_key =
                 FileKey::from_secret_box(secrecy::SecretBox::new(Box::new([0u8; 32])));
@@ -310,7 +310,7 @@ mod tests {
         async fn insert_file_node_and_stage_epoch_entry(
             &self,
             node: &Node,
-            plaintext: Vec<u8>,
+            plaintext: zeroize::Zeroizing<Vec<u8>>,
         ) -> Result<(), StorageError> {
             self.inner
                 .insert_file_node_and_stage_epoch_entry(node, plaintext)
@@ -321,7 +321,7 @@ mod tests {
         async fn stage_epoch_entry(
             &self,
             node_id: Uuid,
-            plaintext: Vec<u8>,
+            plaintext: zeroize::Zeroizing<Vec<u8>>,
         ) -> Result<(), StorageError> {
             self.inner.stage_epoch_entry(node_id, plaintext).await
         }

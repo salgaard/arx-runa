@@ -155,8 +155,8 @@ exports.config = {
       return;
     }
     const buildArgs = process.env.E2E_RELEASE
-      ? ["tauri", "build", "--no-bundle"]
-      : ["tauri", "build", "--debug", "--no-bundle"];
+      ? ["tauri", "build", "--config", "src-tauri/tauri.conf.dev.json", "--no-bundle"]
+      : ["tauri", "build", "--config", "src-tauri/tauri.conf.dev.json", "--debug", "--no-bundle"];
     console.log(`Building app: cargo ${buildArgs.join(" ")}`);
     const result = spawnSync("cargo", buildArgs, {
       cwd: workspaceRoot,

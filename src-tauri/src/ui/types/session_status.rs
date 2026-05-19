@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 /// Current session status returned by `get_session_status`.
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStatus {
     /// Whether the vault is currently unlocked and a session is active.

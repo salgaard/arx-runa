@@ -144,7 +144,7 @@ pub struct DeleteDestinationRequest {
     pub destination_id: String,
 }
 
-/// Argument payload for the `set_primary_destination_cmd` Tauri command.
+/// Argument payload for the `set_primary_destination` Tauri command.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetPrimaryDestinationRequest {
@@ -329,7 +329,7 @@ pub struct PollOauthSetupRequest {
     pub setup_id: String,
 }
 
-/// Argument payload for the `cancel_oauth_setup_cmd` Tauri command.
+/// Argument payload for the `cancel_oauth_setup` Tauri command.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CancelOauthSetupRequest {

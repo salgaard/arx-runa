@@ -99,7 +99,7 @@ This reference captures cross-phase contracts that must stay consistent across a
 
 ### 13) Vault identity ownership and read-only sharing access
 
-**Invariant**: Exactly one `vault_identity` row exists per vault (`id = 1`). Identity creation is owned by `auth::ceremonies::create_vault`, credential rotations re-wrap the existing row in place, and sharing code may read `vault_identity.public_key` only.
+**Invariant**: Exactly one `vault_identity` row exists per vault (`id = 1`). Identity creation is owned by `auth::ceremonies::create_vault`, credential rotations re-wrap the existing row in place, and sharing code may read `vault_identity.public_key` only. The schema enforces `id INTEGER PRIMARY KEY CHECK (id = 1)`, so the single-row guarantee is a DB-level constraint independent of application logic.
 
 **Source designs**:
 - [Authentication & Session Management](designs/authentication-and-session-management/design.md)
@@ -153,6 +153,7 @@ This reference captures cross-phase contracts that must stay consistent across a
 3. **Malicious Rclone sidecar**: The Rclone binary is trusted if obtained from the official release channel. A compromised binary is equivalent to a compromised OS.
 4. **TOTP or authenticator apps**: Multi-factor auth must be deterministic for KDF derivation. Hardware keys (Tier 2 USB) satisfy this requirement; time-based codes do not.
 5. **Live sharing (always-latest files)**: Requires directory-level share agreements. Current design uses immutable snapshot packages (Phase 5). Live sharing is deferred.
+6. **Windows DACL includes SYSTEM and Built-in Administrators**: `set_file_private_permissions` applies `D:P(A;;FA;;;OW)(A;;FA;;;SY)(A;;FA;;;BA)` rather than a true owner-only ACL. SYSTEM (`SY`) and Built-in Administrators (`BA`) are included because excluding them breaks Windows Defender, Volume Shadow Copy, and system-recovery tooling. On Windows the OS-trust assumption (item 1 above) directly covers these accounts; they are treated as part of the trusted OS surface.
 
 ### Intentional MVP Limitations (Preserved in Phase 7+)
 
@@ -160,7 +161,8 @@ This reference captures cross-phase contracts that must stay consistent across a
 |---------|--------|----------------------|
 | Directory deletion | Files-only MVP | Candidate for Phase 7 feature (`delete_directory`) |
 | File-level conflict detection | Detect-and-block only | Phase 7 research: three-way merge, timestamp comparison |
-| EXIF stripping | JPEG/PNG only | Phase 7 candidate: video (MP4/WebM) with two-pass seek or spool |
+| EXIF stripping | JPEG/PNG only; TIFF, HEIC, MP4/QuickTime/MOV pass through unmodified — users should strip metadata before adding these files | Phase 7 candidate: `kamadak-exif` + `mp4parse` coverage |
+| `VaultHeader.tier` cloud visibility | Tier (1 = password-only, 2 = password + key file) is present in the plaintext cloud header — intentional; required for recovery bootstrapping to present the correct authentication prompt; it is a 1-bit classifier, not a user identifier | No change planned |
 | Revocation semantics | Default (future-fetch block) | Phase 7 option: strong revocation with key rotation |
 | Fingerprint verification | Display-only | Phase 7 candidate: verification history, contact trust model |
 

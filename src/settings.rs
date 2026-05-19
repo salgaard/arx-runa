@@ -36,9 +36,9 @@ fn ChangePasswordForm() -> impl IntoView {
         error.set(None);
         success.set(false);
 
-        let current = current_pw.get();
-        let new = new_pw.get();
-        let confirm = confirm_pw.get();
+        let mut current = current_pw.get();
+        let mut new = new_pw.get();
+        let mut confirm = confirm_pw.get();
 
         if current.is_empty() || new.is_empty() || confirm.is_empty() {
             error.set(Some("All password fields are required".to_string()));
@@ -72,13 +72,17 @@ fn ChangePasswordForm() -> impl IntoView {
                 current_key_file_path: key_file_path.get(),
             };
 
+            current.zeroize();
+            new.zeroize();
+            confirm.zeroize();
+            rp.zeroize();
+            current_pw.update(|s| s.zeroize());
+            new_pw.update(|s| s.zeroize());
+            confirm_pw.update(|s| s.zeroize());
+            recovery_phrase.update(|s| s.zeroize());
+
             match invoke_command::<ChangePasswordRequest, ()>("change_password", &request).await {
                 Ok(()) => {
-                    current_pw.update(|s| s.zeroize());
-                    new_pw.update(|s| s.zeroize());
-                    confirm_pw.update(|s| s.zeroize());
-                    rp.zeroize();
-                    recovery_phrase.update(|s| s.zeroize());
                     success.set(true);
                     session_actions.apply_status(
                         invoke_command::<(), crate::ipc_types::SessionStatus>(
@@ -315,13 +319,15 @@ fn RotateKeyFileForm() -> impl IntoView {
                 recovery_phrase: Some(rp.clone()).filter(|s| !s.is_empty()),
             };
 
+            // `current_pw_val` was moved into `request`; signal cleared here covers the reactive value.
+            rp.zeroize();
+            current_password.update(|s| s.zeroize());
+            recovery_phrase.update(|s| s.zeroize());
+
             match invoke_command::<RotateKeyFileRequest, ()>("rotate_key_file", &request).await {
                 Ok(()) => {
-                    current_password.update(|s| s.zeroize());
                     current_key_file.set(None);
                     selected_path.set(None);
-                    rp.zeroize();
-                    recovery_phrase.update(|s| s.zeroize());
                     success.set(true);
                 }
                 Err(err) => {

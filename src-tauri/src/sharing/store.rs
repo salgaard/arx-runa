@@ -1,4 +1,5 @@
 //! Sharing storage abstractions.
+//! The SQLCipher implementation of this trait is in [`crate::storage::sharing`].
 
 use async_trait::async_trait;
 

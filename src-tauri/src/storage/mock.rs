@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::storage::error::StorageError;
 use crate::storage::metadata_store::MetadataStore;
@@ -542,7 +543,7 @@ impl MetadataStore for MockMetadataStore {
     async fn insert_file_node_and_stage_epoch_entry(
         &self,
         node: &Node,
-        plaintext: Vec<u8>,
+        plaintext: Zeroizing<Vec<u8>>,
     ) -> Result<(), StorageError> {
         let mut guard = self
             .inner
@@ -571,7 +572,7 @@ impl MetadataStore for MockMetadataStore {
     async fn stage_epoch_entry(
         &self,
         node_id: Uuid,
-        plaintext: Vec<u8>,
+        plaintext: Zeroizing<Vec<u8>>,
     ) -> Result<(), StorageError> {
         let mut guard = self
             .inner
@@ -677,6 +678,7 @@ mod tests {
     use std::sync::Arc;
 
     use uuid::Uuid;
+    use zeroize::Zeroizing;
 
     use super::MockMetadataStore;
     use crate::storage::MetadataStore;
@@ -1310,11 +1312,11 @@ mod tests {
         let node_b = Uuid::new_v4();
 
         store
-            .stage_epoch_entry(node_a, vec![0x01u8; 64])
+            .stage_epoch_entry(node_a, Zeroizing::new(vec![0x01u8; 64]))
             .await
             .expect("staging node_a should succeed");
         store
-            .stage_epoch_entry(node_b, vec![0x02u8; 128])
+            .stage_epoch_entry(node_b, Zeroizing::new(vec![0x02u8; 128]))
             .await
             .expect("staging node_b should succeed");
 

@@ -7,10 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
-use secrecy::SecretBox;
 use thiserror::Error;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::auth::types::user::{AuthUser, AuthUserStore};
 use crate::crypto::SqlcipherKey;
@@ -68,7 +68,7 @@ impl SqlCipherMetadataStore {
     /// Opens an existing SQLCipher metadata store.
     pub async fn open(path: &Path, sqlcipher_key: &[u8; 32]) -> Result<Self, StorageError> {
         let path = path.to_path_buf();
-        let sqlcipher_key = protected_sqlcipher_key_from_slice(sqlcipher_key);
+        let sqlcipher_key = SqlcipherKey::from_slice(sqlcipher_key);
         let conn = tokio::task::spawn_blocking(move || -> Result<Connection, StorageError> {
             let conn = open_keyed_connection(&path, &sqlcipher_key)?;
             apply_epoch_v2_migration(&conn)?;
@@ -100,7 +100,7 @@ impl SqlCipherMetadataStore {
         epoch_buffer_enabled: bool,
     ) -> Result<Self, StorageError> {
         let path = path.to_path_buf();
-        let sqlcipher_key = protected_sqlcipher_key_from_slice(sqlcipher_key);
+        let sqlcipher_key = SqlcipherKey::from_slice(sqlcipher_key);
         let conn = tokio::task::spawn_blocking(move || -> Result<Connection, StorageError> {
             let conn = open_keyed_connection(&path, &sqlcipher_key)?;
             apply_canonical_schema(&conn)?;
@@ -711,6 +711,30 @@ impl SqlCipherMetadataStore {
         .await
     }
 
+    /// Enqueues a batch of blob names for pending deletion.
+    ///
+    /// Intentionally SQLCipher-specific; this method is not exposed on [`MetadataStore`].
+    pub(crate) async fn enqueue_pending_deletions(
+        &self,
+        blob_names: &[String],
+        now_unix_seconds: i64,
+    ) -> Result<(), StorageError> {
+        let blob_names = blob_names.to_owned();
+        self.with_connection_blocking(move |conn| {
+            let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
+            for blob_name in &blob_names {
+                tx.execute(
+                    "INSERT OR IGNORE INTO pending_deletions (blob_name, queued_at) VALUES (?1, ?2)",
+                    params![blob_name, now_unix_seconds],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            }
+            tx.commit().map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Records a failed backup blob upload, incrementing the retry count on conflict.
     pub(crate) async fn record_backup_failure(
         &self,
@@ -974,13 +998,6 @@ impl SqlCipherMetadataStore {
         .await
         .map_err(|error| StorageError::Database(error.to_string()))?
     }
-}
-
-/// Copies borrowed SQLCipher key bytes into protected heap storage.
-fn protected_sqlcipher_key_from_slice(bytes: &[u8; 32]) -> SqlcipherKey {
-    let mut boxed = Box::new([0u8; 32]);
-    boxed.copy_from_slice(bytes);
-    SqlcipherKey::from_secret_box(SecretBox::new(boxed))
 }
 
 /// Opens and keys a connection, verifies key correctness, and enables FK checks.
@@ -1867,7 +1884,7 @@ impl MetadataStore for SqlCipherMetadataStore {
     async fn insert_file_node_and_stage_epoch_entry(
         &self,
         node: &Node,
-        plaintext: Vec<u8>,
+        plaintext: Zeroizing<Vec<u8>>,
     ) -> Result<(), StorageError> {
         let node = node.clone();
         self.with_connection_blocking(move |conn| {
@@ -1895,7 +1912,7 @@ impl MetadataStore for SqlCipherMetadataStore {
             tx.execute(
                 "INSERT INTO epoch_buffer (entry_id, node_id, plaintext, size_bytes, queued_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![entry_id, node_id_text, plaintext, size_bytes, queued_at],
+                params![entry_id, node_id_text, plaintext.as_slice(), size_bytes, queued_at],
             )
             .map_err(StorageError::from_rusqlite)?;
             tx.commit().map_err(StorageError::from_rusqlite)?;
@@ -1908,7 +1925,7 @@ impl MetadataStore for SqlCipherMetadataStore {
     async fn stage_epoch_entry(
         &self,
         node_id: Uuid,
-        plaintext: Vec<u8>,
+        plaintext: Zeroizing<Vec<u8>>,
     ) -> Result<(), StorageError> {
         self.with_connection_blocking(move |conn| {
             let entry_id = Uuid::new_v4().hyphenated().to_string();
@@ -1918,7 +1935,13 @@ impl MetadataStore for SqlCipherMetadataStore {
             conn.execute(
                 "INSERT INTO epoch_buffer (entry_id, node_id, plaintext, size_bytes, queued_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![entry_id, node_id_text, plaintext, size_bytes, queued_at],
+                params![
+                    entry_id,
+                    node_id_text,
+                    plaintext.as_slice(),
+                    size_bytes,
+                    queued_at
+                ],
             )
             .map_err(StorageError::from_rusqlite)?;
             Ok(())
@@ -1971,7 +1994,7 @@ impl MetadataStore for SqlCipherMetadataStore {
                 entries.push(EpochBufferEntry {
                     entry_id,
                     node_id,
-                    plaintext,
+                    plaintext: Zeroizing::new(plaintext),
                     size_bytes: size_bytes_i64 as u64,
                 });
             }
@@ -2236,6 +2259,7 @@ mod tests {
     use rusqlite::params;
     use tempfile::tempdir;
     use uuid::Uuid;
+    use zeroize::Zeroizing;
 
     use super::SqlCipherMetadataStore;
     use crate::storage::MetadataStore;
@@ -3736,7 +3760,7 @@ mod tests {
         let plaintext_len = plaintext.len() as u64;
 
         store
-            .insert_file_node_and_stage_epoch_entry(&node, plaintext)
+            .insert_file_node_and_stage_epoch_entry(&node, Zeroizing::new(plaintext))
             .await
             .expect("atomic insert should succeed");
 
@@ -3751,5 +3775,55 @@ mod tests {
         let entry = &entries[0];
         assert_eq!(entry.node_id, node_id);
         assert_eq!(entry.size_bytes, plaintext_len);
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_pending_deletions_inserts_paths_into_pending_deletions() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [42u8; 32];
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+
+        let paths = vec![
+            "shared/file-share-id-1/blob-uuid-1.blob".to_owned(),
+            "shared/file-share-id-1/blob-uuid-2.blob".to_owned(),
+        ];
+        store
+            .enqueue_pending_deletions(&paths, 1_700_000_000)
+            .await
+            .expect("enqueue should succeed");
+
+        let pending = store
+            .list_pending_deletions(10)
+            .await
+            .expect("list should succeed");
+        assert_eq!(pending.len(), 2);
+        assert!(pending.contains(&paths[0]));
+        assert!(pending.contains(&paths[1]));
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_pending_deletions_on_empty_slice_is_no_op() {
+        let temp = tempdir().expect("tempdir should be created");
+        let db_path = temp.path().join("manifest.db");
+        let key = [43u8; 32];
+        let store =
+            SqlCipherMetadataStore::create(&db_path, &key, Uuid::new_v4(), 4_194_304, false)
+                .await
+                .expect("store should be created");
+
+        store
+            .enqueue_pending_deletions(&[], 1_700_000_000)
+            .await
+            .expect("empty enqueue should succeed");
+
+        let pending = store
+            .list_pending_deletions(10)
+            .await
+            .expect("list should succeed");
+        assert!(pending.is_empty());
     }
 }

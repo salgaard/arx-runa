@@ -31,7 +31,7 @@ use crate::storage::cloud::{
         BackupSyncMode, DestinationSession, DestinationType, build_session_rclone_conf,
         destroy_session_rclone_conf, get_primary_destination, insert_destination_session,
     },
-    validate_single_remote_stanza,
+    upload_vault_header, validate_single_remote_stanza,
     vault_header::VaultHeader,
 };
 use secrecy::SecretBox;
@@ -45,7 +45,9 @@ use crate::crypto::KeyEncryptionKey;
 use crate::storage::MetadataStore as _;
 use crate::storage::staging::write_owner_only;
 use crate::storage::vault_ops::flush_epoch_buffer;
-use crate::ui::commands_common::{ProgressChannel, require_active_session, sanitise_password};
+use crate::ui::commands_common::{
+    ProgressChannel, rclone_binary_path, require_active_session, sanitise_password,
+};
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
 use crate::ui::types::{
@@ -58,32 +60,6 @@ use crate::ui::vault_paths::{
 };
 
 // ─── Private helpers ────────────────────────────────────────────────────────
-
-/// Returns the path to the rclone binary.
-///
-/// Tries the app resource directory first (production bundle), then falls back
-/// to the system PATH (development mode).
-fn rclone_binary_path(handle: Option<&tauri::AppHandle>) -> PathBuf {
-    use tauri::Manager as _;
-    if let Some(handle) = handle
-        && let Ok(resource_dir) = handle.path().resource_dir()
-    {
-        let name = if cfg!(target_os = "windows") {
-            "rclone.exe"
-        } else {
-            "rclone"
-        };
-        let candidate = resource_dir.join("bin").join(name);
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-    PathBuf::from(if cfg!(target_os = "windows") {
-        "rclone.exe"
-    } else {
-        "rclone"
-    })
-}
 
 /// Returns the session-lived rclone configuration file path.
 pub(crate) fn rclone_conf_path() -> PathBuf {
@@ -203,6 +179,14 @@ async fn validate_storage_destination(
 /// Failures are logged as warnings. The caller must not treat this as fatal.
 async fn try_build_and_swap_rclone_transport(state: &AppState, db: &SqlCipherMetadataStore) {
     let conf_path = rclone_conf_path();
+    // Remove any rclone.conf left by a previous crash before writing a new one.
+    if let Err(error) = destroy_session_rclone_conf(&conf_path).await {
+        tracing::warn!(
+            ?error,
+            path = %conf_path.display(),
+            "Failed to remove pre-existing rclone.conf before session start"
+        );
+    }
     if let Err(error) = build_session_rclone_conf(db, &conf_path).await {
         tracing::warn!(?error, "Failed to write rclone.conf");
         return;
@@ -383,7 +367,10 @@ pub async fn create_vault(
                     &dest_public,
                     SyncConfig::default(),
                 )
-                .map_err(|e| IpcError::CloudError(e.to_string()))?,
+                .map_err(|e| {
+                    tracing::warn!(error = %e, "RcloneTransport::new failed");
+                    IpcError::CloudError("Cloud connection failed".into())
+                })?,
             )
         } else {
             state.cloud_transport.read().await.clone()
@@ -506,7 +493,7 @@ pub async fn change_password(
             .session_manager
             .active_vault_id()
             .await
-            .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
+            .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
         resolve_vault_by_id(&vault_id)?
     };
     let header_json = tokio::fs::read_to_string(&header_path)
@@ -580,7 +567,7 @@ pub async fn rotate_key_file(
             .session_manager
             .active_vault_id()
             .await
-            .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
+            .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
         resolve_vault_by_id(&vault_id)?
     };
 
@@ -663,7 +650,7 @@ pub async fn setup_recovery(
             .session_manager
             .active_vault_id()
             .await
-            .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
+            .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
         resolve_vault_by_id(&vault_id)?
     };
     let header_json = tokio::fs::read_to_string(&header_path)
@@ -842,7 +829,7 @@ pub async fn delete_vault(
         .session_manager
         .active_vault_id()
         .await
-        .ok_or_else(|| IpcError::VaultLocked("No active vault session".into()))?;
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
 
     state.session_manager.lock().await;
 
@@ -932,6 +919,7 @@ pub async fn lock_session(state: State<'_, AppState>) -> Result<(), IpcError> {
     }
 
     *state.active_vault_id.write().await = None;
+    state.allowed_reveal_paths.lock().await.clear();
 
     if let Some(ref id) = vault_id {
         let cache_dir = vault_staging_dir(id).join("cache");
@@ -1034,25 +1022,31 @@ pub async fn check_pending_vault_operations(state: State<'_, AppState>) -> Resul
     }
 }
 
-/// Retry a pending vault operation that was interrupted.
+/// Retry a pending vault operation that was interrupted before cloud upload.
 ///
-/// Reads the pending artifact, resumes the operation with provided credentials,
-/// and deletes the artifact on success.
+/// After a `change_password` or `rotate_key_file` that failed during the vault-header
+/// upload step, the new header is written to `pending-vault-header.json`. This command
+/// retries the upload and writes the updated header to local disk on success.
+///
+/// The session must already be active with the new credentials (the local DB was
+/// re-keyed during the interrupted ceremony). Credentials are accepted at the IPC
+/// boundary for future re-verification paths; the current implementation only re-uploads.
 #[tauri::command]
 pub async fn retry_pending_vault_operation(
     mut password: String,
-    _key_file_path: Option<PathBuf>,
+    key_file_path: Option<PathBuf>,
     state: State<'_, AppState>,
 ) -> Result<(), IpcError> {
     state.session_manager.reset_timer().await;
     let _password_bytes = sanitise_password(&mut password);
+    let _ = key_file_path; // accepted at IPC boundary; not consumed in upload-retry path
     require_active_session(&state).await?;
 
-    let config_dir = dirs::config_dir()
+    let pending_dir = dirs::config_dir()
         .ok_or_else(|| IpcError::InternalError("Could not determine config directory".into()))?
         .join("arx-runa");
 
-    let pending_path = config_dir.join("pending-vault-header.json");
+    let pending_path = pending_dir.join("pending-vault-header.json");
 
     let pending_json = tokio::fs::read_to_string(&pending_path)
         .await
@@ -1061,21 +1055,39 @@ pub async fn retry_pending_vault_operation(
     let pending: PendingVaultHeader = serde_json::from_str(&pending_json)
         .map_err(|_| IpcError::InternalError("Pending vault artifact is malformed".into()))?;
 
-    let (_vault_id, _db_path, _header_path) = resolve_vault_by_id(&pending.vault_id)?;
+    let (_vault_id, _db_path, header_path) = resolve_vault_by_id(&pending.vault_id)?;
 
-    match pending.operation {
-        PendingOperation::ChangePassword => {
-            tracing::info!(
-                vault_id = %pending.vault_id,
-                "Completing pending password change operation"
-            );
-        }
-        PendingOperation::RotateKeyFile => {
-            tracing::info!(
-                vault_id = %pending.vault_id,
-                "Completing pending key file rotation operation"
-            );
-        }
+    let vault_header: VaultHeader = serde_json::from_str(&pending.vault_header_json)
+        .map_err(|_| IpcError::InternalError("Pending vault header is malformed".into()))?;
+
+    let cloud_transport_arc = state.cloud_transport.read().await.clone();
+
+    let staging_dir = crate::auth::staging::staging_directory()
+        .await
+        .map_err(|_| IpcError::InternalError("Failed to resolve staging directory".into()))?;
+
+    let operation_label = match pending.operation {
+        PendingOperation::ChangePassword => "password change",
+        PendingOperation::RotateKeyFile => "key file rotation",
+    };
+
+    tracing::info!(
+        vault_id = %pending.vault_id,
+        operation = operation_label,
+        "Retrying vault header upload for interrupted operation"
+    );
+
+    upload_vault_header(&vault_header, cloud_transport_arc.as_ref(), &staging_dir)
+        .await
+        .map_err(|_| IpcError::InternalError("Failed to upload vault header".into()))?;
+
+    if let Ok(json) = serde_json::to_string_pretty(&vault_header)
+        && let Err(error) = tokio::fs::write(&header_path, json).await
+    {
+        tracing::warn!(
+            ?error,
+            "Failed to persist updated vault header to disk after retry"
+        );
     }
 
     if let Err(error) = tokio::fs::remove_file(&pending_path).await {
@@ -1093,11 +1105,11 @@ pub async fn retry_pending_vault_operation(
 /// Does not require an active session. Used at app startup to decide whether to
 /// show the cloud setup wizard.
 #[tauri::command]
-pub async fn check_cloud_configured() -> bool {
+pub async fn check_cloud_configured() -> Result<bool, IpcError> {
     crate::storage::cloud::cloud_config::load_primary_cloud_endpoint()
         .await
         .map(|opt| opt.is_some())
-        .unwrap_or(false)
+        .map_err(|e| IpcError::InternalError(e.to_string()))
 }
 
 /// Saves the primary cloud endpoint to `cloud-config.json`.
@@ -1162,9 +1174,10 @@ pub async fn recover_vault_from_cloud(
     let binary_path = rclone_binary_path(state.app_handle.get());
 
     if let Some(parent) = conf_path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| IpcError::InternalError(format!("config dir: {e}")))?;
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            tracing::warn!(error = %e, "config dir creation failed");
+            IpcError::InternalError("Internal error".into())
+        })?;
     }
     let normalised_blob = validate_single_remote_stanza(
         &dest_session.rclone_config_blob,
@@ -1190,7 +1203,10 @@ pub async fn recover_vault_from_cloud(
         &dest_public,
         SyncConfig::default(),
     )
-    .map_err(|e| IpcError::CloudError(e.to_string()))?;
+    .map_err(|e| {
+        tracing::warn!(error = %e, "RcloneTransport::new failed");
+        IpcError::CloudError("Cloud connection failed".into())
+    })?;
 
     let probe_path = std::env::temp_dir().join("arx-runa-recover-header-probe.json");
     transport
@@ -1365,9 +1381,10 @@ pub async fn recover_vault_from_cloud_with_phrase(
     let binary_path = rclone_binary_path(state.app_handle.get());
 
     if let Some(parent) = conf_path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| IpcError::InternalError(format!("config dir: {e}")))?;
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            tracing::warn!(error = %e, "config dir creation failed");
+            IpcError::InternalError("Internal error".into())
+        })?;
     }
     let config_blob = match dest_session.destination_type {
         DestinationType::LocalPath | DestinationType::ExternalDrive => {
@@ -1407,7 +1424,10 @@ pub async fn recover_vault_from_cloud_with_phrase(
         &dest_public,
         SyncConfig::default(),
     )
-    .map_err(|e| IpcError::CloudError(e.to_string()))?;
+    .map_err(|e| {
+        tracing::warn!(error = %e, "RcloneTransport::new failed");
+        IpcError::CloudError("Cloud connection failed".into())
+    })?;
 
     let probe_path = std::env::temp_dir().join("arx-runa-phrase-recover-header-probe.json");
     transport
@@ -1726,5 +1746,20 @@ mod tests {
             .await
             .expect("command should not error");
         assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn test_destroy_session_rclone_conf_removes_stale_file() {
+        use tempfile::tempdir;
+        let directory = tempdir().expect("tempdir must succeed");
+        let conf_path = directory.path().join("rclone.conf");
+        tokio::fs::write(&conf_path, b"[stale_remote]\ntype = s3\n")
+            .await
+            .expect("stale conf write must succeed");
+        assert!(conf_path.exists(), "stale conf must exist before cleanup");
+        destroy_session_rclone_conf(&conf_path)
+            .await
+            .expect("destroy must succeed on stale conf");
+        assert!(!conf_path.exists(), "stale conf must be removed by destroy");
     }
 }

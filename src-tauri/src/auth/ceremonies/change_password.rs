@@ -10,7 +10,7 @@ use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::{
-    FileId, RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
+    FileId, RecoveryKey, SqlcipherKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
     unwrap_master_key_from_recovery, wrap_file_key, wrap_master_key_for_recovery,
 };
 use crate::storage::cloud::vault_header::VaultHeader;
@@ -44,7 +44,7 @@ pub async fn change_password(
     }
 
     let current_salt = decode_base64_32(&vault_header.argon2_salt)?;
-    let current_params = argon2_params_from_json(&vault_header.argon2_params);
+    let current_params = argon2_parameters_from_json(&vault_header.argon2_params);
     let resolved_argon2_params = resolve_existing_vault_argon2(
         &current_params,
         &request.argon2_params,
@@ -77,7 +77,7 @@ pub async fn change_password(
     drop(current_master_key);
     let current_kek =
         key_encryption_key_from_array(current_session_keys.key_encryption_key.expose());
-    let current_sqlcipher = sqlcipher_key_from_array(current_session_keys.sqlcipher_key.expose());
+    let current_sqlcipher = SqlcipherKey::from_slice(current_session_keys.sqlcipher_key.expose());
 
     let mut will_remove_slots = false;
     let mut recovery_key_for_rewrap: Option<RecoveryKey> = None;
@@ -96,7 +96,7 @@ pub async fn change_password(
                     .ok_or(AuthenticationError::NoRecoverySlot)?;
                 let slot = &vault_header.recovery_slots[slot_index];
                 let slot_salt = decode_base64_32(&slot.argon2_salt)?;
-                let slot_params = argon2_params_from_json(&slot.argon2_params);
+                let slot_params = argon2_parameters_from_json(&slot.argon2_params);
                 let wrapped_bytes = decode_base64_72(&slot.wrapped_master_key)?;
                 let wrapped = WrappedMasterKey::new(wrapped_bytes);
 
@@ -131,7 +131,7 @@ pub async fn change_password(
     )?;
     let new_session_keys = SessionKeys::from_master_key_bytes(&new_master_key)?;
     let new_kek = key_encryption_key_from_array(new_session_keys.key_encryption_key.expose());
-    let new_sqlcipher = sqlcipher_key_from_array(new_session_keys.sqlcipher_key.expose());
+    let new_sqlcipher = SqlcipherKey::from_slice(new_session_keys.sqlcipher_key.expose());
 
     let vault_id_bytes = *vault_id.as_bytes();
     let vault_db_path = request.vault_db_path.clone();
@@ -218,7 +218,7 @@ pub async fn change_password(
     rewrap_result?;
 
     vault_header.argon2_salt = encode_base64(new_salt.as_slice());
-    vault_header.argon2_params = argon2_params_to_json(&resolved_argon2_params);
+    vault_header.argon2_params = argon2_parameters_to_json(&resolved_argon2_params);
     if will_remove_slots {
         vault_header.recovery_slots.clear();
     } else if let Some(recovery_key) = recovery_key_for_rewrap.as_ref() {
@@ -238,13 +238,8 @@ pub async fn change_password(
     drop(new_master_key);
 
     let new_manifest_key_bytes = Zeroizing::new(*new_session_keys.manifest_key.expose());
-    let new_sqlcipher_for_upload = {
-        use crate::crypto::SqlcipherKey;
-        use secrecy::SecretBox;
-        let mut boxed = Box::new([0u8; 32]);
-        boxed.copy_from_slice(new_session_keys.sqlcipher_key.expose());
-        SqlcipherKey::from_secret_box(SecretBox::new(boxed))
-    };
+    let new_sqlcipher_for_upload =
+        SqlcipherKey::from_slice(new_session_keys.sqlcipher_key.expose());
     let staging_dir = staging::staging_directory().await?;
     session_manager
         .swap_active_session(new_session_keys, vault_id.to_uuid().to_string())
@@ -355,7 +350,7 @@ mod tests {
         let mut vault = create_tier_one_vault().await;
 
         let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let current_params = argon2_params_from_json(&vault.header.argon2_params);
+        let current_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut old_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_PASSWORD,
@@ -377,7 +372,7 @@ mod tests {
         let vault_db_path = vault.vault_db_path.clone();
         let wrapped_vec = wrapped.as_bytes().to_vec();
         tokio::task::spawn_blocking(move || {
-            let sqlcipher_key = sqlcipher_key_from_array(&old_sqlcipher);
+            let sqlcipher_key = SqlcipherKey::from_slice(&old_sqlcipher);
             let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key).unwrap();
             conn.execute(
                 "INSERT INTO nodes (node_id, parent_id, node_type, name, created_at, modified_at, size_bytes, file_key_wrapped) VALUES (?, NULL, 'file', 'fixture', 0, 0, 0, ?)",
@@ -393,7 +388,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -408,7 +403,7 @@ mod tests {
         .expect("change_password must succeed");
 
         let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let new_params = argon2_params_from_json(&vault.header.argon2_params);
+        let new_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_NEW_PASSWORD,
@@ -423,7 +418,7 @@ mod tests {
 
         let vault_db_path = vault.vault_db_path.clone();
         let row_blob: Vec<u8> = tokio::task::spawn_blocking(move || {
-            let sqlcipher_key = sqlcipher_key_from_array(&new_sqlcipher);
+            let sqlcipher_key = SqlcipherKey::from_slice(&new_sqlcipher);
             let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key).unwrap();
             conn.query_row(
                 "SELECT file_key_wrapped FROM nodes WHERE node_id = ?",
@@ -449,7 +444,7 @@ mod tests {
         let mut vault = create_tier_one_vault().await;
 
         let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let current_params = argon2_params_from_json(&vault.header.argon2_params);
+        let current_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut current_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_PASSWORD,
@@ -471,7 +466,7 @@ mod tests {
         let vault_db_path = vault.vault_db_path.clone();
         let wrapped_vec = wrapped.as_bytes().to_vec();
         tokio::task::spawn_blocking(move || {
-            let sqlcipher_key = sqlcipher_key_from_array(&current_sqlcipher);
+            let sqlcipher_key = SqlcipherKey::from_slice(&current_sqlcipher);
             let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key).unwrap();
             conn.execute(
                 "INSERT INTO nodes (node_id, parent_id, node_type, name, created_at, modified_at, size_bytes, file_key_wrapped) VALUES (?, NULL, 'file', 'fixture', 0, 0, 0, ?)",
@@ -487,7 +482,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -502,7 +497,7 @@ mod tests {
         .expect("change_password must succeed");
 
         let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let new_params = argon2_params_from_json(&vault.header.argon2_params);
+        let new_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_NEW_PASSWORD,
@@ -518,7 +513,7 @@ mod tests {
 
         let vault_db_path = vault.vault_db_path.clone();
         let row_blob: Vec<u8> = tokio::task::spawn_blocking(move || {
-            let sqlcipher_key = sqlcipher_key_from_array(&new_sqlcipher);
+            let sqlcipher_key = SqlcipherKey::from_slice(&new_sqlcipher);
             let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key).unwrap();
             conn.query_row(
                 "SELECT file_key_wrapped FROM nodes WHERE node_id = ?",
@@ -541,7 +536,7 @@ mod tests {
         let _lock = ceremony_lock().await;
         let mut vault = create_tier_one_vault().await;
         let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let current_params = argon2_params_from_json(&vault.header.argon2_params);
+        let current_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut old_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_PASSWORD,
@@ -559,7 +554,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -574,7 +569,7 @@ mod tests {
         .expect("change_password must succeed");
 
         let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let new_params = argon2_params_from_json(&vault.header.argon2_params);
+        let new_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_NEW_PASSWORD,
@@ -589,7 +584,7 @@ mod tests {
 
         let vault_db_path_for_new = vault.vault_db_path.clone();
         let opens_with_new = tokio::task::spawn_blocking(move || {
-            let sqlcipher_key = sqlcipher_key_from_array(&new_sqlcipher);
+            let sqlcipher_key = SqlcipherKey::from_slice(&new_sqlcipher);
             open_sqlcipher(&vault_db_path_for_new, &sqlcipher_key).is_ok()
         })
         .await
@@ -598,7 +593,7 @@ mod tests {
 
         let vault_db_path_for_old = vault.vault_db_path.clone();
         let opens_with_old = tokio::task::spawn_blocking(move || {
-            let sqlcipher_key = sqlcipher_key_from_array(&old_sqlcipher);
+            let sqlcipher_key = SqlcipherKey::from_slice(&old_sqlcipher);
             match open_sqlcipher(&vault_db_path_for_old, &sqlcipher_key) {
                 Ok(conn) => conn
                     .query_row("SELECT id FROM vault_identity WHERE id = 1", [], |row| {
@@ -625,7 +620,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: Some(phrase_string.as_bytes()),
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -642,7 +637,7 @@ mod tests {
 
         let slot = &vault.header.recovery_slots[0];
         let slot_salt = decode_base64_32(&slot.argon2_salt).unwrap();
-        let slot_params = argon2_params_from_json(&slot.argon2_params);
+        let slot_params = argon2_parameters_from_json(&slot.argon2_params);
         let wrapped = WrappedMasterKey::new(decode_base64_72(&slot.wrapped_master_key).unwrap());
 
         let mut recovery_key_bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
@@ -658,7 +653,7 @@ mod tests {
             .expect("unwrap with phrase must succeed after password change");
 
         let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let new_params = argon2_params_from_json(&vault.header.argon2_params);
+        let new_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_NEW_PASSWORD,
@@ -683,7 +678,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -704,7 +699,7 @@ mod tests {
         let _lock = ceremony_lock().await;
         let mut vault = create_tier_one_vault().await;
         let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let current_params = argon2_params_from_json(&vault.header.argon2_params);
+        let current_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut old_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_PASSWORD,
@@ -722,7 +717,7 @@ mod tests {
         let bad_wrapped_for_insert = bad_wrapped.clone();
         let node_id = "00000000-0000-0000-0000-000000000003";
         tokio::task::spawn_blocking(move || {
-            let sqlcipher_key = sqlcipher_key_from_array(&old_sqlcipher);
+            let sqlcipher_key = SqlcipherKey::from_slice(&old_sqlcipher);
             let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key).unwrap();
             conn.execute(
                 "INSERT INTO nodes (node_id, parent_id, node_type, name, created_at, modified_at, size_bytes, file_key_wrapped) VALUES (?, NULL, 'file', 'fixture', 0, 0, 0, ?)",
@@ -739,7 +734,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -755,7 +750,7 @@ mod tests {
 
         let vault_db_path = vault.vault_db_path.clone();
         let row_blob: Vec<u8> = tokio::task::spawn_blocking(move || {
-            let sqlcipher_key = sqlcipher_key_from_array(&old_sqlcipher);
+            let sqlcipher_key = SqlcipherKey::from_slice(&old_sqlcipher);
             let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key).unwrap();
             conn.query_row(
                 "SELECT file_key_wrapped FROM nodes WHERE node_id = ?",
@@ -789,7 +784,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -808,7 +803,7 @@ mod tests {
         assert_ne!(vault.header.argon2_salt, old_salt);
 
         let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let new_params = argon2_params_from_json(&vault.header.argon2_params);
+        let new_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_NEW_PASSWORD,
@@ -839,8 +834,15 @@ mod tests {
         let _lock = ceremony_lock().await;
         let mut vault = create_tier_one_vault().await;
 
+        let pending_path = staging::staging_directory()
+            .await
+            .expect("staging dir must exist")
+            .join(STAGING_FILE_NAME);
+        let _ = staging::remove_if_exists(&pending_path).await;
+        let _ = tokio::fs::remove_dir_all(&pending_path).await;
+
         let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
-        let current_params = argon2_params_from_json(&vault.header.argon2_params);
+        let current_params = argon2_parameters_from_json(&vault.header.argon2_params);
         let mut current_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
         derive_master_key_into(
             TEST_PASSWORD,
@@ -859,7 +861,7 @@ mod tests {
         let wrapped_vec = wrapped.as_bytes().to_vec();
         let vault_db_path = vault.vault_db_path.clone();
         tokio::task::spawn_blocking(move || {
-            let sqlcipher_key = sqlcipher_key_from_array(&current_sqlcipher);
+            let sqlcipher_key = SqlcipherKey::from_slice(&current_sqlcipher);
             let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key).unwrap();
             conn.execute(
                 "INSERT INTO nodes (node_id, parent_id, node_type, name, created_at, modified_at, size_bytes, file_key_wrapped) VALUES (NULL, NULL, 'file', 'malformed', 0, 0, 0, ?)",
@@ -875,7 +877,7 @@ mod tests {
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -895,12 +897,19 @@ mod tests {
         let _lock = ceremony_lock().await;
         let mut vault = create_tier_one_vault().await;
 
+        let pending_path = staging::staging_directory()
+            .await
+            .expect("staging dir must exist")
+            .join(STAGING_FILE_NAME);
+        let _ = staging::remove_if_exists(&pending_path).await;
+        let _ = tokio::fs::remove_dir_all(&pending_path).await;
+
         let migrate_to_non_default = ChangePasswordRequest {
             current_password_bytes: TEST_PASSWORD,
             new_password_bytes: TEST_NEW_PASSWORD,
             current_key_source: None,
             recovery_phrase: None,
-            argon2_params: test_params(),
+            argon2_params: test_parameters(),
             argon2_migration_intent: crate::auth::Argon2MigrationIntent::MigrateToRequested,
             vault_db_path: vault.vault_db_path.clone(),
         };
@@ -914,8 +923,8 @@ mod tests {
         .await
         .expect("explicit migration to non-default params must succeed");
         assert_eq!(
-            argon2_params_from_json(&vault.header.argon2_params),
-            test_params()
+            argon2_parameters_from_json(&vault.header.argon2_params),
+            test_parameters()
         );
 
         let preserve_request = ChangePasswordRequest {
@@ -937,8 +946,8 @@ mod tests {
         .await
         .expect("preserve mode must not block change-password");
         assert_eq!(
-            argon2_params_from_json(&vault.header.argon2_params),
-            test_params()
+            argon2_parameters_from_json(&vault.header.argon2_params),
+            test_parameters()
         );
 
         let migrate_back_to_default = ChangePasswordRequest {
@@ -960,7 +969,7 @@ mod tests {
         .await
         .expect("explicit migration back to defaults must succeed");
         assert_eq!(
-            argon2_params_from_json(&vault.header.argon2_params),
+            argon2_parameters_from_json(&vault.header.argon2_params),
             crate::auth::Argon2Params::DEFAULT
         );
     }

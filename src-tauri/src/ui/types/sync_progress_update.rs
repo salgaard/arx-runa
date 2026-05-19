@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 /// Progress update emitted during `sync_to_cloud` and related operations.
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncProgressUpdate {
     /// Overall sync progress from 0 to 100.

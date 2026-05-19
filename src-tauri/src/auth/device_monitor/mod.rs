@@ -26,9 +26,9 @@ mod linux;
 pub use linux::LinuxDeviceMonitor;
 
 #[cfg(target_os = "windows")]
-mod windows_impl;
+mod windows;
 #[cfg(target_os = "windows")]
-pub use windows_impl::WindowsDeviceMonitor;
+pub use windows::WindowsDeviceMonitor;
 
 #[cfg(target_os = "macos")]
 mod macos;

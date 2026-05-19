@@ -11,6 +11,7 @@ use crate::crypto::{
     decrypt_chunk, encrypt_chunk, generate_file_key, unwrap_file_key, verify_checksum,
     wrap_file_key,
 };
+
 use crate::storage::MetadataStore;
 use crate::storage::SqlCipherMetadataStore;
 use crate::storage::error::StorageError;
@@ -113,8 +114,6 @@ async fn re_encrypt_single_chunk(
     let verified =
         verify_checksum(encrypted_bytes, &expected_checksum).map_err(StorageError::from)?;
 
-    // decrypt_chunk returns plaintext as Vec<u8>; passed directly to encrypt_chunk,
-    // which zeroizes it on both success and error paths (encrypt_chunk.rs:45,54).
     let plaintext = decrypt_chunk(
         verified,
         old_file_key,
@@ -194,6 +193,7 @@ async fn remove_staged_blobs(paths: &[PathBuf]) {
 mod tests {
     use tempfile::TempDir;
     use uuid::Uuid;
+    use zeroize::Zeroizing;
 
     use super::reencrypt_file;
     use crate::crypto::{
@@ -227,14 +227,14 @@ mod tests {
         let wrapped = wrap_file_key(&file_key, &file_id_crypto, &kek).expect("wrap should succeed");
 
         let blob_0 = encrypt_chunk(
-            vec![0xAAu8; 64],
+            Zeroizing::new(vec![0xAAu8; 64]),
             &file_key,
             &file_id_crypto,
             ChunkIndex::new(0),
         )
         .expect("encrypt chunk 0 should succeed");
         let blob_1 = encrypt_chunk(
-            vec![0xBBu8; 64],
+            Zeroizing::new(vec![0xBBu8; 64]),
             &file_key,
             &file_id_crypto,
             ChunkIndex::new(1),

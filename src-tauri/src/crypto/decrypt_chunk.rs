@@ -10,7 +10,7 @@ use crate::crypto::types::{ChunkIndex, FileId, FileKey, build_chunk_aad};
 use chacha20poly1305::{
     AeadInPlace, KeyInit, XChaCha20Poly1305, aead::generic_array::GenericArray,
 };
-use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 const NONCE_LEN: usize = 24;
 const TAG_LEN: usize = 16;
@@ -35,7 +35,7 @@ pub fn decrypt_chunk(
     file_key: &FileKey,
     file_id: &FileId,
     chunk_index: ChunkIndex,
-) -> Result<Vec<u8>, CryptoError> {
+) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
     let blob_bytes: Vec<u8> = blob.into_inner();
 
     if blob_bytes.len() < MIN_BLOB_LEN {
@@ -54,14 +54,11 @@ pub fn decrypt_chunk(
     let nonce = GenericArray::from_slice(nonce_slice);
     let tag = GenericArray::from_slice(tag_slice);
 
-    let mut buffer = ciphertext_slice.to_vec();
+    let mut buffer = Zeroizing::new(ciphertext_slice.to_vec());
 
     match cipher.decrypt_in_place_detached(nonce, &aad, buffer.as_mut_slice(), tag) {
         Ok(()) => Ok(buffer),
-        Err(_) => {
-            buffer.zeroize();
-            Err(CryptoError::DecryptionFailed)
-        }
+        Err(_) => Err(CryptoError::DecryptionFailed),
     }
 }
 
@@ -87,7 +84,13 @@ mod tests {
         file_id: &FileId,
         chunk_index: ChunkIndex,
     ) -> Vec<u8> {
-        encrypt_chunk(plaintext.to_vec(), key, file_id, chunk_index).expect("encrypt must succeed")
+        encrypt_chunk(
+            Zeroizing::new(plaintext.to_vec()),
+            key,
+            file_id,
+            chunk_index,
+        )
+        .expect("encrypt must succeed")
     }
 
     fn verified(blob: Vec<u8>) -> VerifiedBlob {
@@ -246,6 +249,6 @@ mod tests {
         let plaintext = decrypt_chunk(verified_blob, &key, &file_id, ChunkIndex::new(0))
             .expect("verified round trip must succeed");
 
-        assert_eq!(plaintext, b"hello verified world");
+        assert_eq!(plaintext.as_slice(), b"hello verified world");
     }
 }

@@ -135,7 +135,7 @@ fn create_owner_only_file_windows(
     };
     use windows::core::PCWSTR;
 
-    let security_descriptor = WindowsSecurityDescriptor::from_sddl(owner_only_file_sddl())?;
+    let security_descriptor = WindowsSecurityDescriptor::from_sddl(private_file_sddl())?;
     let security_attributes = security_descriptor.security_attributes();
     let path_wide = to_wide_null(path.as_os_str());
     let disposition = if require_new_file {
@@ -175,9 +175,9 @@ fn apply_owner_only_acl_windows(
     is_directory: bool,
 ) -> Result<(), AuthenticationError> {
     let sddl = if is_directory {
-        owner_only_directory_sddl()
+        private_directory_sddl()
     } else {
-        owner_only_file_sddl()
+        private_file_sddl()
     };
     apply_sddl_to_path_windows(path, sddl)
 }
@@ -218,12 +218,12 @@ fn apply_sddl_to_path_windows(path: &Path, sddl: &str) -> Result<(), Authenticat
 }
 
 #[cfg(windows)]
-fn owner_only_file_sddl() -> &'static str {
+fn private_file_sddl() -> &'static str {
     "D:P(A;;FA;;;OW)(A;;FA;;;SY)(A;;FA;;;BA)"
 }
 
 #[cfg(windows)]
-fn owner_only_directory_sddl() -> &'static str {
+fn private_directory_sddl() -> &'static str {
     "D:PAI(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
 }
 

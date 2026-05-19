@@ -59,7 +59,7 @@ pub async fn recover_vault(
         Uuid::parse_str(&header.vault_id).map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     let vault_id = VaultId::from_uuid(vault_uuid);
     let salt = decode_base64_32(&header.argon2_salt)?;
-    let params = argon2_params_from_json(&header.argon2_params);
+    let parameters = argon2_parameters_from_json(&header.argon2_params);
 
     let key_file_bytes: Option<Zeroizing<[u8; 32]>> = match (header.tier, request.key_source) {
         (1, _) => None,
@@ -80,7 +80,7 @@ pub async fn recover_vault(
         request.password_bytes,
         key_file_bytes.as_deref(),
         &salt,
-        &params,
+        &parameters,
         &mut master_key,
     )?;
     let session_keys = SessionKeys::from_master_key_bytes(&master_key)?;

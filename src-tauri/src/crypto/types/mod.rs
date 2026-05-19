@@ -96,6 +96,17 @@ impl SqlcipherKey {
         Self(secret_box)
     }
 
+    /// Constructs a `SqlcipherKey` from a borrowed 32-byte slice.
+    ///
+    /// `SecretBox` does not mlock the allocation; the page is swappable until
+    /// `SqlcipherKey` drops and zeroizes. True mlock requires a custom
+    /// allocator — this is the accepted protection level for this type.
+    pub(crate) fn from_slice(bytes: &[u8; 32]) -> Self {
+        let mut boxed = Box::new([0u8; 32]);
+        boxed.copy_from_slice(bytes);
+        Self(SecretBox::new(boxed))
+    }
+
     /// Constructs a SQLCipher key from raw key bytes for deterministic tests.
     ///
     /// Test-only helper to avoid exposing a production constructor that accepts
