@@ -47,11 +47,11 @@ fn validate_url_scheme(url: &str) -> Result<(), IpcError> {
     if url.starts_with("https://") {
         return Ok(());
     }
-    if url.starts_with("http://127.0.0.1") {
-        let rest = &url["http://127.0.0.1".len()..];
-        if rest.is_empty() || rest.starts_with(':') || rest.starts_with('/') {
-            return Ok(());
-        }
+    if url
+        .strip_prefix("http://127.0.0.1")
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(':') || rest.starts_with('/'))
+    {
+        return Ok(());
     }
     Err(IpcError::InvalidInput(
         "Only https:// and http://127.0.0.1 URLs are permitted".into(),

@@ -19,7 +19,9 @@
     "deny": [
       "Read(.env)",
       "Read(.env.*)",
-      "Read(secrets/**)"
+      "Read(secrets/**)",
+      "Bash(git reset*)",
+      "Bash(git clean*)"
     ],
     "ask": [
       "Bash(git push:*)",
@@ -67,6 +69,19 @@
           {
             "type": "command",
             "command": "cmd=$(jq -r '.tool_input.command // empty'); if echo \"$cmd\" | grep -qE 'curl[[:space:]]+.+\\|[[:space:]]*(ba)?sh|wget[[:space:]]+.+\\|[[:space:]]*(ba)?sh'; then echo 'Blocked: pipe-to-shell pattern rejected'; exit 2; fi"
+          },
+          {
+            "type": "command",
+            "command": "cmd=$(jq -r '.tool_input.command // empty'); if echo \"$cmd\" | grep -qE 'git[[:space:]]+(reset[[:space:]]+--hard|clean[[:space:]]+-[fdxFDX]+|checkout[[:space:]]+--|restore[[:space:]]+(\\.|--source)|push[[:space:]]+--force|stash[[:space:]]+(drop|clear|pop))|rm[[:space:]]+-[a-z]*r[a-z]*f|rm[[:space:]]+-[a-z]*f[a-z]*r'; then echo 'Blocked: destructive operation requires explicit user approval'; exit 2; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd=$(jq -r '.tool_input.command // empty'); if echo \"$cmd\" | grep -qE 'git[[:space:]]+(reset[[:space:]]+--hard|clean[[:space:]]+-[fdxFDX]+|checkout[[:space:]]+--|restore[[:space:]]+(\\.|--source)|push[[:space:]]+--force|stash[[:space:]]+(drop|clear|pop))|Remove-Item[[:space:]].*-Recurse.*-Force|Remove-Item[[:space:]].*-Force.*-Recurse'; then echo 'Blocked: destructive operation requires explicit user approval'; exit 2; fi"
           }
         ]
       },
