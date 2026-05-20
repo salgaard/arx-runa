@@ -49,6 +49,8 @@ jobs:
 
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: "false"
 
       - name: Install Trunk (WASM bundler)
         run: cargo install trunk --locked
