@@ -265,7 +265,9 @@ impl SqlCipherMetadataStore {
                     let epoch_blob_id = Uuid::parse_str(&epoch_blob_id_str).map_err(|e| {
                         StorageError::Database(format!("invalid epoch_blob_id: {e}"))
                     })?;
-                    let size_padded = size_padded_i64 as u64;
+                    let size_padded = u64::try_from(size_padded_i64).map_err(|_| {
+                        StorageError::Database("size_padded out of range".to_owned())
+                    })?;
                     let blake3_checksum: [u8; 32] = checksum_vec.try_into().map_err(|_| {
                         StorageError::Database(
                             "expected 32-byte checksum in epoch_blobs".to_owned(),
@@ -353,11 +355,12 @@ impl SqlCipherMetadataStore {
                 ],
             )
             .map_err(StorageError::from_rusqlite)?;
+            let size_padded_i64 = i64::try_from(record.size_padded)
+                .map_err(|error| StorageError::Database(error.to_string()))?;
+            let checksum_blob = record.blake3_checksum.to_vec();
             for (node_id, chunk_index, byte_offset, byte_length) in &extents {
                 let chunk_id = Uuid::new_v4().hyphenated().to_string();
                 let node_id_text = node_id.hyphenated().to_string();
-                let size_padded_i64 = i64::try_from(record.size_padded)
-                    .map_err(|e| StorageError::Database(e.to_string()))?;
                 tx.execute(
                     "INSERT INTO chunks (chunk_id, node_id, chunk_index, blob_name, size_padded, blake3_checksum, epoch_blob_id, byte_offset, byte_length)
                      VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7, ?8)",
@@ -366,10 +369,12 @@ impl SqlCipherMetadataStore {
                         node_id_text,
                         i64::from(*chunk_index),
                         size_padded_i64,
-                        record.blake3_checksum.to_vec(),
+                        checksum_blob,
                         epoch_blob_id_text,
-                        *byte_offset as i64,
-                        *byte_length as i64
+                        i64::try_from(*byte_offset)
+                            .map_err(|e| StorageError::Database(e.to_string()))?,
+                        i64::try_from(*byte_length)
+                            .map_err(|e| StorageError::Database(e.to_string()))?
                     ],
                 )
                 .map_err(StorageError::from_rusqlite)?;
@@ -1143,6 +1148,21 @@ fn validate_create_immutable_meta_matches(
     Ok(())
 }
 
+fn validate_parent_type(parent_type: Option<&str>) -> Result<(), StorageError> {
+    match parent_type {
+        Some("directory") => Ok(()),
+        Some("file") => Err(StorageError::ConstraintViolation(
+            "parent must be a directory".to_owned(),
+        )),
+        Some(_) => Err(StorageError::Database(
+            "invalid node_type stored for parent".to_owned(),
+        )),
+        None => Err(StorageError::ConstraintViolation(
+            "missing parent node_id".to_owned(),
+        )),
+    }
+}
+
 fn ensure_parent_is_directory_for_insert(
     tx: &rusqlite::Transaction<'_>,
     node: &Node,
@@ -1162,24 +1182,7 @@ fn ensure_parent_is_directory_for_insert(
             )
             .optional()
             .map_err(StorageError::from_rusqlite)?;
-        match parent_type.as_deref() {
-            Some("directory") => {}
-            Some("file") => {
-                return Err(StorageError::ConstraintViolation(
-                    "parent must be a directory".to_owned(),
-                ));
-            }
-            Some(_) => {
-                return Err(StorageError::Database(
-                    "invalid node_type stored for parent".to_owned(),
-                ));
-            }
-            None => {
-                return Err(StorageError::ConstraintViolation(
-                    "missing parent node_id".to_owned(),
-                ));
-            }
-        }
+        validate_parent_type(parent_type.as_deref())?;
     }
 
     Ok(())
@@ -1218,24 +1221,7 @@ fn ensure_move_respects_hierarchy(
             )
             .optional()
             .map_err(StorageError::from_rusqlite)?;
-        match parent_type.as_deref() {
-            Some("directory") => {}
-            Some("file") => {
-                return Err(StorageError::ConstraintViolation(
-                    "parent must be a directory".to_owned(),
-                ));
-            }
-            Some(_) => {
-                return Err(StorageError::Database(
-                    "invalid node_type stored for parent".to_owned(),
-                ));
-            }
-            None => {
-                return Err(StorageError::ConstraintViolation(
-                    "missing parent node_id".to_owned(),
-                ));
-            }
-        }
+        validate_parent_type(parent_type.as_deref())?;
 
         let creates_cycle = tx
             .query_row(
@@ -1383,8 +1369,28 @@ fn read_chunk(row: &rusqlite::Row<'_>) -> Result<ChunkRecord, rusqlite::Error> {
             })
         })
         .transpose()?;
-    let byte_offset = byte_offset_i64.map(|v| v as u64);
-    let byte_length = byte_length_i64.map(|v| v as u64);
+    let byte_offset = byte_offset_i64
+        .map(|v| {
+            u64::try_from(v).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    7,
+                    rusqlite::types::Type::Integer,
+                    Box::new(error),
+                )
+            })
+        })
+        .transpose()?;
+    let byte_length = byte_length_i64
+        .map(|v| {
+            u64::try_from(v).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    8,
+                    rusqlite::types::Type::Integer,
+                    Box::new(error),
+                )
+            })
+        })
+        .transpose()?;
 
     Ok(ChunkRecord {
         chunk_id,
@@ -1407,6 +1413,26 @@ fn unix_timestamp_now() -> Result<i64, StorageError> {
     i64::try_from(duration.as_secs()).map_err(|error| StorageError::Database(error.to_string()))
 }
 
+fn insert_node_tx(tx: &rusqlite::Transaction<'_>, node: &Node) -> Result<(), StorageError> {
+    ensure_parent_is_directory_for_insert(tx, node)?;
+    tx.execute(
+        "INSERT INTO nodes (node_id, parent_id, node_type, name, created_at, modified_at, size_bytes, file_key_wrapped)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            node.node_id.to_string(),
+            node.parent_id.map(|id| id.to_string()),
+            node.node_type.as_ref(),
+            node.name,
+            node.created_at,
+            node.modified_at,
+            i64::try_from(node.size_bytes).map_err(|error| StorageError::Database(error.to_string()))?,
+            node.file_key_wrapped.map(|bytes| bytes.to_vec())
+        ],
+    )
+    .map_err(StorageError::from_rusqlite)?;
+    Ok(())
+}
+
 #[async_trait]
 impl MetadataStore for SqlCipherMetadataStore {
     /// Inserts a single node row in a transaction.
@@ -1414,22 +1440,7 @@ impl MetadataStore for SqlCipherMetadataStore {
         let node = node.clone();
         self.with_connection_blocking(move |conn| {
             let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
-            ensure_parent_is_directory_for_insert(&tx, &node)?;
-            tx.execute(
-                "INSERT INTO nodes (node_id, parent_id, node_type, name, created_at, modified_at, size_bytes, file_key_wrapped)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    node.node_id.to_string(),
-                    node.parent_id.map(|id| id.to_string()),
-                    node.node_type.as_ref(),
-                    node.name,
-                    node.created_at,
-                    node.modified_at,
-                    i64::try_from(node.size_bytes).map_err(|error| StorageError::Database(error.to_string()))?,
-                    node.file_key_wrapped.map(|bytes| bytes.to_vec())
-                ],
-            )
-            .map_err(StorageError::from_rusqlite)?;
+            insert_node_tx(&tx, &node)?;
             tx.commit().map_err(StorageError::from_rusqlite)?;
             Ok(())
         })
@@ -1453,13 +1464,15 @@ impl MetadataStore for SqlCipherMetadataStore {
                     StorageError::Database("missing manifest_meta key: chunk_size_bytes".to_owned())
                 })?;
             let chunk_size_bytes = parse_chunk_size_bytes(&chunk_size_text)?;
-            for chunk in chunks {
-                validate_blob_name_uuid_v4(&chunk.blob_name)?;
-                validate_size_padded_matches_chunk_size(chunk.size_padded, chunk_size_bytes)?;
+            let unique_node_ids: std::collections::HashSet<NodeId> =
+                chunks.iter().map(|c| c.node_id).collect();
+            let mut node_type_map: std::collections::HashMap<NodeId, Option<NodeType>> =
+                std::collections::HashMap::new();
+            for node_id in unique_node_ids {
                 let node_type = tx
                     .query_row(
                         "SELECT node_type FROM nodes WHERE node_id = ?1",
-                        params![chunk.node_id.to_string()],
+                        params![node_id.to_string()],
                         |row| row.get::<_, String>(0),
                     )
                     .optional()
@@ -1470,6 +1483,12 @@ impl MetadataStore for SqlCipherMetadataStore {
                         })
                     })
                     .transpose()?;
+                node_type_map.insert(node_id, node_type);
+            }
+            for chunk in chunks {
+                validate_blob_name_uuid_v4(&chunk.blob_name)?;
+                validate_size_padded_matches_chunk_size(chunk.size_padded, chunk_size_bytes)?;
+                let node_type = node_type_map.get(&chunk.node_id).copied().flatten();
                 validate_chunk_target_node(node_type)?;
                 tx.execute(
                     "INSERT INTO chunks (chunk_id, node_id, chunk_index, blob_name, size_padded, blake3_checksum)
@@ -1854,22 +1873,7 @@ impl MetadataStore for SqlCipherMetadataStore {
         let node = node.clone();
         self.with_connection_blocking(move |conn| {
             let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
-            ensure_parent_is_directory_for_insert(&tx, &node)?;
-            tx.execute(
-                "INSERT INTO nodes (node_id, parent_id, node_type, name, created_at, modified_at, size_bytes, file_key_wrapped)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    node.node_id.to_string(),
-                    node.parent_id.map(|id| id.to_string()),
-                    node.node_type.as_ref(),
-                    node.name,
-                    node.created_at,
-                    node.modified_at,
-                    i64::try_from(node.size_bytes).map_err(|error| StorageError::Database(error.to_string()))?,
-                    node.file_key_wrapped.map(|bytes| bytes.to_vec())
-                ],
-            )
-            .map_err(StorageError::from_rusqlite)?;
+            insert_node_tx(&tx, &node)?;
             tx.commit().map_err(StorageError::from_rusqlite)?;
             Ok(())
         })
@@ -1889,30 +1893,22 @@ impl MetadataStore for SqlCipherMetadataStore {
         let node = node.clone();
         self.with_connection_blocking(move |conn| {
             let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
-            ensure_parent_is_directory_for_insert(&tx, &node)?;
-            tx.execute(
-                "INSERT INTO nodes (node_id, parent_id, node_type, name, created_at, modified_at, size_bytes, file_key_wrapped)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    node.node_id.to_string(),
-                    node.parent_id.map(|id| id.to_string()),
-                    node.node_type.as_ref(),
-                    node.name,
-                    node.created_at,
-                    node.modified_at,
-                    i64::try_from(node.size_bytes).map_err(|error| StorageError::Database(error.to_string()))?,
-                    node.file_key_wrapped.map(|bytes| bytes.to_vec())
-                ],
-            )
-            .map_err(StorageError::from_rusqlite)?;
+            insert_node_tx(&tx, &node)?;
             let entry_id = Uuid::new_v4().hyphenated().to_string();
             let node_id_text = node.node_id.to_string();
-            let size_bytes = plaintext.len() as i64;
+            let size_bytes = i64::try_from(plaintext.len())
+                .map_err(|error| StorageError::Database(error.to_string()))?;
             let queued_at = unix_timestamp_now()?;
             tx.execute(
                 "INSERT INTO epoch_buffer (entry_id, node_id, plaintext, size_bytes, queued_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![entry_id, node_id_text, plaintext.as_slice(), size_bytes, queued_at],
+                params![
+                    entry_id,
+                    node_id_text,
+                    plaintext.as_slice(),
+                    size_bytes,
+                    queued_at
+                ],
             )
             .map_err(StorageError::from_rusqlite)?;
             tx.commit().map_err(StorageError::from_rusqlite)?;
@@ -1930,7 +1926,8 @@ impl MetadataStore for SqlCipherMetadataStore {
         self.with_connection_blocking(move |conn| {
             let entry_id = Uuid::new_v4().hyphenated().to_string();
             let node_id_text = node_id.hyphenated().to_string();
-            let size_bytes = plaintext.len() as i64;
+            let size_bytes = i64::try_from(plaintext.len())
+                .map_err(|error| StorageError::Database(error.to_string()))?;
             let queued_at = unix_timestamp_now()?;
             conn.execute(
                 "INSERT INTO epoch_buffer (entry_id, node_id, plaintext, size_bytes, queued_at)
@@ -1995,7 +1992,8 @@ impl MetadataStore for SqlCipherMetadataStore {
                     entry_id,
                     node_id,
                     plaintext: Zeroizing::new(plaintext),
-                    size_bytes: size_bytes_i64 as u64,
+                    size_bytes: u64::try_from(size_bytes_i64)
+                        .map_err(|_| StorageError::Database("size_bytes out of range".to_owned()))?,
                 });
             }
             Ok(entries)
@@ -2062,13 +2060,16 @@ impl MetadataStore for SqlCipherMetadataStore {
             )
             .map_err(StorageError::from_rusqlite)?;
 
+            let size_padded_i64 = i64::try_from(record.size_padded)
+                .map_err(|error| StorageError::Database(error.to_string()))?;
+            let checksum_blob = record.blake3_checksum.to_vec();
             for (node_id, chunk_index, byte_offset, byte_length) in &extents {
                 let chunk_id = Uuid::new_v4().hyphenated().to_string();
                 let node_id_text = node_id.hyphenated().to_string();
-                let size_padded_i64 = i64::try_from(record.size_padded)
-                    .map_err(|error| StorageError::Database(error.to_string()))?;
-                let byte_offset_i64 = *byte_offset as i64;
-                let byte_length_i64 = *byte_length as i64;
+                let byte_offset_i64 = i64::try_from(*byte_offset)
+                    .map_err(|e| StorageError::Database(e.to_string()))?;
+                let byte_length_i64 = i64::try_from(*byte_length)
+                    .map_err(|e| StorageError::Database(e.to_string()))?;
                 tx.execute(
                     "INSERT INTO chunks (chunk_id, node_id, chunk_index, blob_name, size_padded, blake3_checksum, epoch_blob_id, byte_offset, byte_length)
                      VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7, ?8)",
@@ -2077,7 +2078,7 @@ impl MetadataStore for SqlCipherMetadataStore {
                         node_id_text,
                         i64::from(*chunk_index),
                         size_padded_i64,
-                        record.blake3_checksum.to_vec(),
+                        checksum_blob,
                         epoch_blob_id_text,
                         byte_offset_i64,
                         byte_length_i64
@@ -2131,7 +2132,9 @@ impl MetadataStore for SqlCipherMetadataStore {
                     let epoch_blob_id = Uuid::parse_str(&epoch_blob_id_str).map_err(|error| {
                         StorageError::Database(format!("invalid epoch_blob_id uuid: {error}"))
                     })?;
-                    let size_padded = size_padded_i64 as u64;
+                    let size_padded = u64::try_from(size_padded_i64).map_err(|_| {
+                        StorageError::Database("size_padded out of range".to_owned())
+                    })?;
                     let blake3_checksum: [u8; 32] = checksum_vec.try_into().map_err(|_| {
                         StorageError::Database(
                             "expected 32-byte checksum in epoch_blobs".to_owned(),

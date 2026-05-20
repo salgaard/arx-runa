@@ -17,6 +17,107 @@ use crate::storage::validation::{
     validate_blob_name_uuid_v4, validate_size_padded_matches_chunk_size,
 };
 
+/// Reads chunk-size metadata, validates `chunks` against `file_size`, and returns
+/// the sorted chunk list together with `chunk_size_bytes` and `expected_blob_len`.
+async fn read_and_validate_chunks<'a>(
+    file_size: u64,
+    chunks: &'a [ChunkRecord],
+    metadata_store: &dyn MetadataStore,
+) -> Result<(Vec<&'a ChunkRecord>, u64, u64), StorageError> {
+    let chunk_size_bytes = read_chunk_size_bytes(metadata_store).await?;
+    let expected_blob_len = chunk_size_bytes.checked_add(40).ok_or_else(|| {
+        StorageError::Database("chunk_size_bytes overflow while sizing blob".to_owned())
+    })?;
+    let expected_chunk_count_u64 = if file_size == 0 {
+        0
+    } else {
+        file_size.div_ceil(chunk_size_bytes)
+    };
+    let expected_chunk_count = usize::try_from(expected_chunk_count_u64)
+        .map_err(|error| StorageError::Database(error.to_string()))?;
+    if chunks.len() != expected_chunk_count {
+        return Err(StorageError::ConstraintViolation(
+            "chunk list is malformed: missing or duplicate chunk_index".to_owned(),
+        ));
+    }
+    let mut sorted_chunks: Vec<&ChunkRecord> = chunks.iter().collect();
+    sorted_chunks.sort_by_key(|chunk| chunk.chunk_index);
+    for (expected_index, chunk) in sorted_chunks.iter().enumerate() {
+        let expected_index_u32 = u32::try_from(expected_index)
+            .map_err(|_| StorageError::ConstraintViolation("chunk index overflow".to_owned()))?;
+        if chunk.chunk_index != expected_index_u32 {
+            return Err(StorageError::ConstraintViolation(
+                "chunk list is malformed: missing or duplicate chunk_index".to_owned(),
+            ));
+        }
+        validate_size_padded_matches_chunk_size(chunk.size_padded, chunk_size_bytes)?;
+    }
+    Ok((sorted_chunks, chunk_size_bytes, expected_blob_len))
+}
+
+/// Decrypts an epoch blob and returns `(decrypted_blob, start, end)` where
+/// `start` and `end` are the byte-range indices of this chunk's content.
+async fn decrypt_epoch_blob_to_slice(
+    chunk: &ChunkRecord,
+    kek: &KeyEncryptionKey,
+    blob_directory: &Path,
+    metadata_store: &dyn MetadataStore,
+) -> Result<(Zeroizing<Vec<u8>>, usize, usize), StorageError> {
+    let epoch_blob_id = chunk.epoch_blob_id.ok_or_else(|| {
+        StorageError::ConstraintViolation("chunk is not an epoch chunk".to_owned())
+    })?;
+    let byte_offset = chunk.byte_offset.ok_or_else(|| {
+        StorageError::ConstraintViolation("epoch chunk missing byte_offset".to_owned())
+    })?;
+    let byte_length = chunk.byte_length.ok_or_else(|| {
+        StorageError::ConstraintViolation("epoch chunk missing byte_length".to_owned())
+    })?;
+
+    let record = metadata_store.get_epoch_blob(epoch_blob_id).await?;
+    let blob_path = resolve_blob_path(blob_directory, &record.blob_name).await;
+    let encrypted_bytes = tokio::fs::read(&blob_path)
+        .await
+        .map_err(|error| StorageError::Io(error.to_string()))?;
+
+    let expected_hash = Blake3Hash(record.blake3_checksum);
+    let verified_blob =
+        verify_checksum(encrypted_bytes, &expected_hash).map_err(StorageError::from)?;
+
+    let wrapped_file_key =
+        WrappedFileKey::new(record.file_key_wrapped.try_into().map_err(|_| {
+            StorageError::Database("epoch blob key_wrapped has wrong length".to_owned())
+        })?);
+    let file_key = unwrap_file_key(
+        &wrapped_file_key,
+        &FileId::from_uuid(record.epoch_blob_id),
+        kek,
+    )
+    .map_err(StorageError::from)?;
+
+    let decrypted = decrypt_chunk(
+        verified_blob,
+        &file_key,
+        &FileId::from_uuid(record.epoch_blob_id),
+        ChunkIndex::new(0),
+    )
+    .map_err(StorageError::from)?;
+
+    let start = usize::try_from(byte_offset)
+        .map_err(|_| StorageError::ConstraintViolation("byte_offset overflows usize".to_owned()))?;
+    let extent = byte_offset.checked_add(byte_length).ok_or_else(|| {
+        StorageError::ConstraintViolation("byte_offset + byte_length overflow".to_owned())
+    })?;
+    let end = usize::try_from(extent)
+        .map_err(|_| StorageError::ConstraintViolation("byte extent overflows usize".to_owned()))?;
+    if end > decrypted.len() {
+        return Err(StorageError::ConstraintViolation(
+            "epoch byte range exceeds decrypted blob length".to_owned(),
+        ));
+    }
+
+    Ok((decrypted, start, end))
+}
+
 /// Resolves the path of a blob from its name by checking, in order, the
 /// `pending/` subdirectory, the `cache/` subdirectory, then falling back to
 /// flat staging for backwards-compatibility with blobs written before migration.
@@ -50,33 +151,8 @@ pub async fn decrypt_file(
     metadata_store: &dyn MetadataStore,
     progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<(), StorageError> {
-    let chunk_size_bytes = read_chunk_size_bytes(metadata_store).await?;
-    let expected_blob_len = chunk_size_bytes.checked_add(40).ok_or_else(|| {
-        StorageError::Database("chunk_size_bytes overflow while sizing blob".to_owned())
-    })?;
-    let expected_chunk_count_u64 = if file_size == 0 {
-        0
-    } else {
-        file_size.div_ceil(chunk_size_bytes)
-    };
-    let expected_chunk_count = usize::try_from(expected_chunk_count_u64)
-        .map_err(|error| StorageError::Database(error.to_string()))?;
-    if chunks.len() != expected_chunk_count {
-        return Err(StorageError::ConstraintViolation(
-            "chunk list is malformed: missing or duplicate chunk_index".to_owned(),
-        ));
-    }
-
-    let mut sorted_chunks: Vec<&ChunkRecord> = chunks.iter().collect();
-    sorted_chunks.sort_by_key(|chunk| chunk.chunk_index);
-    for (expected_index, chunk) in sorted_chunks.iter().enumerate() {
-        if chunk.chunk_index != expected_index as u32 {
-            return Err(StorageError::ConstraintViolation(
-                "chunk list is malformed: missing or duplicate chunk_index".to_owned(),
-            ));
-        }
-        validate_size_padded_matches_chunk_size(chunk.size_padded, chunk_size_bytes)?;
-    }
+    let (sorted_chunks, chunk_size_bytes, expected_blob_len) =
+        read_and_validate_chunks(file_size, chunks, metadata_store).await?;
 
     let temporary_destination = temporary_destination_path(destination);
     let destination_file = File::create(&temporary_destination)
@@ -226,33 +302,8 @@ pub async fn decrypt_file_to_memory(
     metadata_store: &dyn MetadataStore,
     progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<Zeroizing<Vec<u8>>, StorageError> {
-    let chunk_size_bytes = read_chunk_size_bytes(metadata_store).await?;
-    let expected_blob_len = chunk_size_bytes.checked_add(40).ok_or_else(|| {
-        StorageError::Database("chunk_size_bytes overflow while sizing blob".to_owned())
-    })?;
-    let expected_chunk_count_u64 = if file_size == 0 {
-        0
-    } else {
-        file_size.div_ceil(chunk_size_bytes)
-    };
-    let expected_chunk_count = usize::try_from(expected_chunk_count_u64)
-        .map_err(|error| StorageError::Database(error.to_string()))?;
-    if chunks.len() != expected_chunk_count {
-        return Err(StorageError::ConstraintViolation(
-            "chunk list is malformed: missing or duplicate chunk_index".to_owned(),
-        ));
-    }
-
-    let mut sorted_chunks: Vec<&ChunkRecord> = chunks.iter().collect();
-    sorted_chunks.sort_by_key(|chunk| chunk.chunk_index);
-    for (expected_index, chunk) in sorted_chunks.iter().enumerate() {
-        if chunk.chunk_index != expected_index as u32 {
-            return Err(StorageError::ConstraintViolation(
-                "chunk list is malformed: missing or duplicate chunk_index".to_owned(),
-            ));
-        }
-        validate_size_padded_matches_chunk_size(chunk.size_padded, chunk_size_bytes)?;
-    }
+    let (sorted_chunks, chunk_size_bytes, expected_blob_len) =
+        read_and_validate_chunks(file_size, chunks, metadata_store).await?;
 
     let file_size_usize =
         usize::try_from(file_size).map_err(|error| StorageError::Database(error.to_string()))?;
@@ -329,30 +380,8 @@ pub async fn decrypt_file_range_to_memory(
         ));
     }
 
-    let chunk_size_bytes = read_chunk_size_bytes(metadata_store).await?;
-    let expected_blob_len = chunk_size_bytes.checked_add(40).ok_or_else(|| {
-        StorageError::Database("chunk_size_bytes overflow while sizing blob".to_owned())
-    })?;
-
-    let expected_chunk_count_u64 = file_size.div_ceil(chunk_size_bytes);
-    let expected_chunk_count = usize::try_from(expected_chunk_count_u64)
-        .map_err(|error| StorageError::Database(error.to_string()))?;
-    if chunks.len() != expected_chunk_count {
-        return Err(StorageError::ConstraintViolation(
-            "chunk list is malformed: missing or duplicate chunk_index".to_owned(),
-        ));
-    }
-
-    let mut sorted_chunks: Vec<&ChunkRecord> = chunks.iter().collect();
-    sorted_chunks.sort_by_key(|chunk| chunk.chunk_index);
-    for (expected_index, chunk) in sorted_chunks.iter().enumerate() {
-        if chunk.chunk_index != expected_index as u32 {
-            return Err(StorageError::ConstraintViolation(
-                "chunk list is malformed: missing or duplicate chunk_index".to_owned(),
-            ));
-        }
-        validate_size_padded_matches_chunk_size(chunk.size_padded, chunk_size_bytes)?;
-    }
+    let (sorted_chunks, chunk_size_bytes, expected_blob_len) =
+        read_and_validate_chunks(file_size, chunks, metadata_store).await?;
 
     let first_chunk_index = (range_start / chunk_size_bytes) as usize;
     let last_chunk_index = (range_end / chunk_size_bytes) as usize;
@@ -430,53 +459,12 @@ pub async fn decrypt_epoch_file(
     metadata_store: &dyn MetadataStore,
     progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<(), StorageError> {
-    let epoch_blob_id = chunk.epoch_blob_id.ok_or_else(|| {
-        StorageError::ConstraintViolation("decrypt_epoch_file called on non-epoch chunk".to_owned())
-    })?;
-    let byte_offset = chunk.byte_offset.ok_or_else(|| {
-        StorageError::ConstraintViolation("epoch chunk missing byte_offset".to_owned())
-    })?;
     let byte_length = chunk.byte_length.ok_or_else(|| {
         StorageError::ConstraintViolation("epoch chunk missing byte_length".to_owned())
     })?;
 
-    let record = metadata_store.get_epoch_blob(epoch_blob_id).await?;
-
-    let blob_path = resolve_blob_path(blob_directory, &record.blob_name).await;
-    let encrypted_bytes = tokio::fs::read(&blob_path)
-        .await
-        .map_err(|error| StorageError::Io(error.to_string()))?;
-
-    let expected_hash = Blake3Hash(record.blake3_checksum);
-    let verified_blob =
-        verify_checksum(encrypted_bytes, &expected_hash).map_err(StorageError::from)?;
-
-    let wrapped_file_key =
-        WrappedFileKey::new(record.file_key_wrapped.try_into().map_err(|_| {
-            StorageError::Database("epoch blob key_wrapped has wrong length".to_owned())
-        })?);
-    let file_key = unwrap_file_key(
-        &wrapped_file_key,
-        &FileId::from_uuid(record.epoch_blob_id),
-        kek,
-    )
-    .map_err(StorageError::from)?;
-
-    let decrypted = decrypt_chunk(
-        verified_blob,
-        &file_key,
-        &FileId::from_uuid(record.epoch_blob_id),
-        ChunkIndex::new(0),
-    )
-    .map_err(StorageError::from)?;
-
-    let start = byte_offset as usize;
-    let end = (byte_offset + byte_length) as usize;
-    if end > decrypted.len() {
-        return Err(StorageError::ConstraintViolation(
-            "epoch byte range exceeds decrypted blob length".to_owned(),
-        ));
-    }
+    let (decrypted, start, end) =
+        decrypt_epoch_blob_to_slice(chunk, kek, blob_directory, metadata_store).await?;
     let file_bytes = &decrypted[start..end];
 
     let temporary_destination = temporary_destination_path(destination);
@@ -522,56 +510,12 @@ pub async fn decrypt_epoch_file_to_memory(
     metadata_store: &dyn MetadataStore,
     progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<Zeroizing<Vec<u8>>, StorageError> {
-    let epoch_blob_id = chunk.epoch_blob_id.ok_or_else(|| {
-        StorageError::ConstraintViolation(
-            "decrypt_epoch_file_to_memory called on non-epoch chunk".to_owned(),
-        )
-    })?;
-    let byte_offset = chunk.byte_offset.ok_or_else(|| {
-        StorageError::ConstraintViolation("epoch chunk missing byte_offset".to_owned())
-    })?;
     let byte_length = chunk.byte_length.ok_or_else(|| {
         StorageError::ConstraintViolation("epoch chunk missing byte_length".to_owned())
     })?;
 
-    let record = metadata_store.get_epoch_blob(epoch_blob_id).await?;
-
-    let blob_path = resolve_blob_path(blob_directory, &record.blob_name).await;
-    let encrypted_bytes = tokio::fs::read(&blob_path)
-        .await
-        .map_err(|error| StorageError::Io(error.to_string()))?;
-
-    let expected_hash = Blake3Hash(record.blake3_checksum);
-    let verified_blob =
-        verify_checksum(encrypted_bytes, &expected_hash).map_err(StorageError::from)?;
-
-    let wrapped_file_key =
-        WrappedFileKey::new(record.file_key_wrapped.try_into().map_err(|_| {
-            StorageError::Database("epoch blob key_wrapped has wrong length".to_owned())
-        })?);
-    let file_key = unwrap_file_key(
-        &wrapped_file_key,
-        &FileId::from_uuid(record.epoch_blob_id),
-        kek,
-    )
-    .map_err(StorageError::from)?;
-
-    let decrypted = decrypt_chunk(
-        verified_blob,
-        &file_key,
-        &FileId::from_uuid(record.epoch_blob_id),
-        ChunkIndex::new(0),
-    )
-    .map_err(StorageError::from)?;
-
-    let start = byte_offset as usize;
-    let end = (byte_offset + byte_length) as usize;
-    if end > decrypted.len() {
-        return Err(StorageError::ConstraintViolation(
-            "epoch byte range exceeds decrypted blob length".to_owned(),
-        ));
-    }
-
+    let (decrypted, start, end) =
+        decrypt_epoch_blob_to_slice(chunk, kek, blob_directory, metadata_store).await?;
     let output = Zeroizing::new(decrypted[start..end].to_vec());
 
     if let Some(cb) = progress {

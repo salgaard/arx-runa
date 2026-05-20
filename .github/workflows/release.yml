@@ -36,6 +36,10 @@ jobs:
         with:
           targets: ${{ matrix.rust_targets }}
 
+      - name: Install zstd (Windows)
+        if: runner.os == 'Windows'
+        run: choco install zstd -y
+
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
 

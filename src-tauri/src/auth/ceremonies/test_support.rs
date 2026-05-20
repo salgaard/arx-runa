@@ -330,3 +330,43 @@ pub(crate) async fn upload_manifest_backup_for_tier_two(vault: &TierTwoVault) {
     .await
     .expect("tier 2 manifest backup upload must succeed");
 }
+
+/// Derives vault keys for any Tier 1 password from a vault header.
+///
+/// Used in scenario tests that need to re-derive keys after a password change
+/// or phrase-based recovery that sets a new password.
+pub(crate) fn derive_vault_keys_from_header(
+    header: &VaultHeader,
+    password: &[u8],
+) -> DerivedVaultKeys {
+    let salt = decode_base64_32(&header.argon2_salt).unwrap();
+    let parameters = argon2_parameters_from_json(&header.argon2_params);
+    let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+    derive_master_key_into(password, None, &salt, &parameters, &mut master).unwrap();
+    let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
+    DerivedVaultKeys {
+        sqlcipher_key: *keys.sqlcipher_key.expose(),
+        manifest_key: *keys.manifest_key.expose(),
+        key_encryption_key: *keys.key_encryption_key.expose(),
+    }
+}
+
+/// Derives vault keys for a Tier 2 password + key-file pair from a vault header.
+///
+/// Used in scenario tests that need to re-derive keys after a key-file rotation.
+pub(crate) fn derive_vault_keys_from_header_tier_two(
+    header: &VaultHeader,
+    password: &[u8],
+    key_bytes: &[u8; 32],
+) -> DerivedVaultKeys {
+    let salt = decode_base64_32(&header.argon2_salt).unwrap();
+    let parameters = argon2_parameters_from_json(&header.argon2_params);
+    let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+    derive_master_key_into(password, Some(key_bytes), &salt, &parameters, &mut master).unwrap();
+    let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
+    DerivedVaultKeys {
+        sqlcipher_key: *keys.sqlcipher_key.expose(),
+        manifest_key: *keys.manifest_key.expose(),
+        key_encryption_key: *keys.key_encryption_key.expose(),
+    }
+}

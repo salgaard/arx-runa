@@ -1,5 +1,4 @@
 use rand::Rng;
-use rusqlite::{OptionalExtension, params};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -11,8 +10,8 @@ use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
 use crate::crypto::{
-    FileId, RecoveryKey, SqlcipherKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
-    unwrap_master_key_from_recovery, wrap_file_key, wrap_master_key_for_recovery,
+    RecoveryKey, SqlcipherKey, VaultId, WrappedMasterKey, unwrap_master_key_from_recovery,
+    wrap_master_key_for_recovery,
 };
 use crate::storage;
 use crate::storage::cloud::upload_vault_header;
@@ -191,89 +190,12 @@ pub async fn recover_with_phrase(
 
     let vault_id_bytes = *vault_id.as_bytes();
     let vault_db_path = request.vault_db_path.clone();
-    let rewrap_result: Result<(), AuthenticationError> =
-        tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
-            let conn = open_sqlcipher(&vault_db_path, &current_sqlcipher)?;
-            conn.execute_batch("BEGIN IMMEDIATE;")
-                .map_err(|_| AuthenticationError::InvalidCredentials)?;
-            let transaction_result = (|| -> Result<(), AuthenticationError> {
-                {
-                    let mut stmt = conn
-                        .prepare(
-                            "SELECT node_id, file_key_wrapped FROM nodes WHERE file_key_wrapped IS NOT NULL AND node_id IS NOT NULL",
-                        )
-                        .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    let rows: Vec<(String, Vec<u8>)> = stmt
-                        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-                        .map_err(|_| AuthenticationError::InvalidCredentials)?
-                        .collect::<Result<_, _>>()
-                        .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    for (node_id, wrapped_blob) in rows {
-                        let file_id = FileId::from_uuid(
-                            uuid::Uuid::parse_str(&node_id)
-                                .map_err(|_| AuthenticationError::InvalidCredentials)?,
-                        );
-                        let wrapped_array: [u8; 72] = wrapped_blob
-                            .try_into()
-                            .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                        let wrapped = WrappedFileKey::new(wrapped_array);
-                        let file_key = unwrap_file_key(&wrapped, &file_id, &current_kek)
-                            .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                        let rewrapped = wrap_file_key(&file_key, &file_id, &new_kek)
-                            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-                        conn.execute(
-                            "UPDATE nodes SET file_key_wrapped = ? WHERE node_id = ?",
-                            params![rewrapped.as_bytes().to_vec(), node_id],
-                        )
-                        .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    }
-                }
-                let identity_wrapped: Option<Vec<u8>> = conn
-                    .query_row(
-                        "SELECT wrapped_private_key FROM vault_identity WHERE id = 1",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .optional()
-                    .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                if let Some(wrapped_blob) = identity_wrapped {
-                    let identity_file_id = FileId::new(vault_id_bytes);
-                    let wrapped_array: [u8; 72] = wrapped_blob
-                        .try_into()
-                        .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    let wrapped = WrappedFileKey::new(wrapped_array);
-                    let file_key = unwrap_file_key(&wrapped, &identity_file_id, &current_kek)
-                        .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    let rewrapped = wrap_file_key(&file_key, &identity_file_id, &new_kek)
-                        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-                    conn.execute(
-                        "UPDATE vault_identity SET wrapped_private_key = ? WHERE id = 1",
-                        params![rewrapped.as_bytes().to_vec()],
-                    )
-                    .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                }
-                Ok(())
-            })();
-            match transaction_result {
-                Ok(()) => {
-                    conn.execute_batch("COMMIT;")
-                        .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    rekey_sqlcipher(&conn, &new_sqlcipher)?;
-                    drop(conn);
-                    Ok(())
-                }
-                Err(error) => {
-                    if let Err(rb) = conn.execute_batch("ROLLBACK;") {
-                        tracing::warn!(?rb, "rollback failed during vault recovery; connection will be dropped");
-                    }
-                    drop(conn);
-                    Err(error)
-                }
-            }
-        })
-        .await
-        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    rewrap_result?;
+    tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
+        let conn = open_sqlcipher(&vault_db_path, &current_sqlcipher)?;
+        rekey_vault_db(conn, &current_kek, &new_kek, new_sqlcipher, vault_id_bytes)
+    })
+    .await
+    .map_err(|_| AuthenticationError::VaultHeaderInvalid)??;
 
     // Update vault header with new credentials.
     header.argon2_salt = encode_base64(new_salt.as_slice());

@@ -128,6 +128,30 @@ pub(crate) async fn create_share(
                 )));
             }
 
+            let copy_bytes = match tokio::fs::read(&local_copy_path).await {
+                Ok(b) => b,
+                Err(e) => {
+                    cleanup_temp_files(&temp_local_paths).await;
+                    for remote in &uploaded_remote_paths {
+                        let _ = cloud.delete_blob(remote).await;
+                    }
+                    return Err(SharingError::CloudOperation(format!(
+                        "staging copy read-back failed (chunk {}): {}",
+                        chunk.chunk_index, e
+                    )));
+                }
+            };
+            if blake3::hash(&copy_bytes).as_bytes() != &chunk.blake3_checksum {
+                cleanup_temp_files(&temp_local_paths).await;
+                for remote in &uploaded_remote_paths {
+                    let _ = cloud.delete_blob(remote).await;
+                }
+                return Err(SharingError::CloudOperation(format!(
+                    "staging copy BLAKE3 mismatch (chunk {})",
+                    chunk.chunk_index
+                )));
+            }
+
             let remote_path = format!("shared/{}/{}.blob", file_share_id, chunk.blob_name);
 
             if let Err(transport_err) = cloud.upload_blob(&local_copy_path, &remote_path).await {
@@ -148,8 +172,15 @@ pub(crate) async fn create_share(
 
     let cloud_path_prefix = format!("shared/{}/", file_share_id);
 
+    let ttl_seconds: u32 = expires_at
+        .map(|exp| {
+            exp.saturating_sub(now_unix_seconds)
+                .clamp(60, 7 * 24 * 3600) as u32
+        })
+        .unwrap_or(7 * 24 * 3600);
+
     let (cloud_endpoint, download_key_id, download_folder_id) = match cloud
-        .generate_share_credentials(&cloud_path_prefix, 7 * 24 * 3600, receipt_requested)
+        .generate_share_credentials(&cloud_path_prefix, ttl_seconds, receipt_requested)
         .await
     {
         Ok(Some(mut creds)) => {
@@ -220,6 +251,81 @@ pub(crate) async fn create_share(
     })
 }
 
+/// Writes a temporary rclone conf and builds an `RcloneTransport` for a B2 shared download.
+async fn build_b2_share_transport(
+    bin: &Path,
+    endpoint: &serde_json::Value,
+    conf_path: &Path,
+) -> Result<crate::storage::cloud::RcloneTransport, SharingError> {
+    let key_id = endpoint
+        .get("key_id")
+        .and_then(|v| v.as_str())
+        .ok_or(SharingError::InvalidSharePackage)?;
+    let app_key = endpoint
+        .get("application_key")
+        .and_then(|v| v.as_str())
+        .ok_or(SharingError::InvalidSharePackage)?;
+    let bucket = endpoint
+        .get("bucket")
+        .and_then(|v| v.as_str())
+        .ok_or(SharingError::InvalidSharePackage)?;
+    let path_prefix = endpoint
+        .get("path_prefix")
+        .and_then(|v| v.as_str())
+        .ok_or(SharingError::InvalidSharePackage)?;
+
+    let conf_content = format!("[arxshare-dl]\ntype = b2\naccount = {key_id}\nkey = {app_key}\n");
+    tokio::fs::write(conf_path, conf_content.as_bytes())
+        .await
+        .map_err(|e| SharingError::CloudOperation(format!("temp conf write failed: {e}")))?;
+
+    let remote_root = format!("arxshare-dl:{bucket}/{}", path_prefix.trim_end_matches('/'));
+    Ok(
+        crate::storage::cloud::RcloneTransport::new_for_share_download(
+            bin.to_path_buf(),
+            conf_path.to_path_buf(),
+            remote_root,
+        ),
+    )
+}
+
+/// Writes a temporary rclone conf and builds an `RcloneTransport` for a Google Drive shared download.
+async fn build_gdrive_share_transport(
+    bin: &Path,
+    endpoint: &serde_json::Value,
+    conf_path: &Path,
+) -> Result<crate::storage::cloud::RcloneTransport, SharingError> {
+    let folder_id = endpoint
+        .get("folder_id")
+        .and_then(|v| v.as_str())
+        .ok_or(SharingError::InvalidSharePackage)?;
+    let sa_json_raw = endpoint
+        .get("sa_credentials_json")
+        .and_then(|v| v.as_str())
+        .ok_or(SharingError::InvalidSharePackage)?;
+    let sa_json_compact = serde_json::from_str::<serde_json::Value>(sa_json_raw)
+        .ok()
+        .and_then(|v| serde_json::to_string(&v).ok())
+        .ok_or(SharingError::InvalidSharePackage)?;
+
+    let conf_content = format!(
+        "[arxshare-gdl]\ntype = drive\nscope = drive.readonly\n\
+         service_account_credentials = {sa_json_compact}\n\
+         root_folder_id = {folder_id}\n"
+    );
+    tokio::fs::write(conf_path, conf_content.as_bytes())
+        .await
+        .map_err(|e| SharingError::CloudOperation(format!("temp conf write failed: {e}")))?;
+
+    Ok(
+        crate::storage::cloud::RcloneTransport::new_for_share_download(
+            bin.to_path_buf(),
+            conf_path.to_path_buf(),
+            "arxshare-gdl:".to_owned(),
+        ),
+    )
+}
+
 /// Fetches the encrypted chunk blobs for a received share into the local
 /// staging directory so the caller can decrypt them for preview or export.
 ///
@@ -260,45 +366,7 @@ pub(crate) async fn fetch_received_share_to_local(
     // transport so the download bypasses the vault owner's own cloud config.
     let b2_transport: Option<crate::storage::cloud::RcloneTransport> =
         if let (Some(bin), Some("b2")) = (rclone_binary_path.as_deref(), provider) {
-            let key_id = received_share
-                .cloud_endpoint
-                .get("key_id")
-                .and_then(|v| v.as_str())
-                .ok_or(SharingError::InvalidSharePackage)?;
-            let app_key = received_share
-                .cloud_endpoint
-                .get("application_key")
-                .and_then(|v| v.as_str())
-                .ok_or(SharingError::InvalidSharePackage)?;
-            let bucket = received_share
-                .cloud_endpoint
-                .get("bucket")
-                .and_then(|v| v.as_str())
-                .ok_or(SharingError::InvalidSharePackage)?;
-            let path_prefix = received_share
-                .cloud_endpoint
-                .get("path_prefix")
-                .and_then(|v| v.as_str())
-                .ok_or(SharingError::InvalidSharePackage)?;
-
-            let conf_content =
-                format!("[arxshare-dl]\ntype = b2\naccount = {key_id}\nkey = {app_key}\n");
-            tokio::fs::write(&conf_path, conf_content.as_bytes())
-                .await
-                .map_err(|e| {
-                    SharingError::CloudOperation(format!("temp conf write failed: {e}"))
-                })?;
-
-            // Trim any trailing slash from path_prefix so that remote_target's
-            // "{remote_root}/{remote_path}" join does not produce a double slash.
-            let remote_root = format!("arxshare-dl:{bucket}/{}", path_prefix.trim_end_matches('/'));
-            Some(
-                crate::storage::cloud::RcloneTransport::new_for_share_download(
-                    bin.to_path_buf(),
-                    conf_path.clone(),
-                    remote_root,
-                ),
-            )
+            Some(build_b2_share_transport(bin, &received_share.cloud_endpoint, &conf_path).await?)
         } else {
             None
         };
@@ -307,41 +375,9 @@ pub(crate) async fn fetch_received_share_to_local(
     // temporary rclone transport using the SA JSON and the pre-permissioned folder ID.
     let drive_transport: Option<crate::storage::cloud::RcloneTransport> =
         if let (Some(bin), Some("drive")) = (rclone_binary_path.as_deref(), provider) {
-            let folder_id = received_share
-                .cloud_endpoint
-                .get("folder_id")
-                .and_then(|v| v.as_str())
-                .ok_or(SharingError::InvalidSharePackage)?;
-            let sa_json_raw = received_share
-                .cloud_endpoint
-                .get("sa_credentials_json")
-                .and_then(|v| v.as_str())
-                .ok_or(SharingError::InvalidSharePackage)?;
-            // Compact to a single line so it embeds cleanly in the rclone INI conf.
-            let sa_json_compact = serde_json::from_str::<serde_json::Value>(sa_json_raw)
-                .ok()
-                .and_then(|v| serde_json::to_string(&v).ok())
-                .ok_or(SharingError::InvalidSharePackage)?;
-
-            // root_folder_id pins the transport root to the shared folder; blobs
-            // are addressed as bare UUIDs relative to that root.
-            let conf_content = format!(
-                "[arxshare-gdl]\ntype = drive\nscope = drive.readonly\n\
-                 service_account_credentials = {sa_json_compact}\n\
-                 root_folder_id = {folder_id}\n"
-            );
-            tokio::fs::write(&conf_path, conf_content.as_bytes())
-                .await
-                .map_err(|e| {
-                    SharingError::CloudOperation(format!("temp conf write failed: {e}"))
-                })?;
-
             Some(
-                crate::storage::cloud::RcloneTransport::new_for_share_download(
-                    bin.to_path_buf(),
-                    conf_path.clone(),
-                    "arxshare-gdl:".to_owned(),
-                ),
+                build_gdrive_share_transport(bin, &received_share.cloud_endpoint, &conf_path)
+                    .await?,
             )
         } else {
             None

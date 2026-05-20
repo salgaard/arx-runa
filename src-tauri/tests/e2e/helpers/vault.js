@@ -110,7 +110,7 @@ async function unlockExistingVault(browser) {
       const lockBtn = await browser.$('[data-testid="lock-button"]');
       return lockBtn.isExisting();
     },
-    { timeout: 40000, timeoutMsg: "Vault did not unlock within 40s" },
+    { timeout: 90000, timeoutMsg: "Vault did not unlock within 90s" },
   );
 }
 

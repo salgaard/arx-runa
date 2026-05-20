@@ -34,6 +34,112 @@ use crate::ui::vault_paths::vault_staging_dir;
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
+/// Resolves the rclone binary path: checks the app's `bin/` resource directory
+/// first, falling back to `rclone` / `rclone.exe` on `PATH`.
+fn resolve_rclone_bin(h: &tauri::AppHandle) -> PathBuf {
+    use tauri::Manager as _;
+    // sync probe on startup path
+    let name = if cfg!(target_os = "windows") {
+        "rclone.exe"
+    } else {
+        "rclone"
+    };
+    if let Ok(dir) = h.path().resource_dir() {
+        let c = dir.join("bin").join(name);
+        if c.exists() {
+            return c;
+        }
+    }
+    PathBuf::from(name)
+}
+
+/// Best-effort cleanup: revoke the SA reader permission on a shared GDrive folder.
+async fn cleanup_gdrive_share_permission(
+    conf_path: &std::path::Path,
+    perm_id: &str,
+    folder_id: &str,
+) {
+    let Ok(conf) = tokio::fs::read_to_string(conf_path).await else {
+        return;
+    };
+    let remote_name = conf
+        .lines()
+        .filter(|l| l.trim().starts_with('[') && l.trim().ends_with(']'))
+        .find_map(|l| {
+            let name = &l.trim()[1..l.trim().len() - 1];
+            crate::sharing::gdrive_api::parse_gdrive_oauth_from_conf(&conf, name)
+                .map(|_| name.to_owned())
+        });
+    let Some(name) = remote_name else {
+        return;
+    };
+    let Some((client_id, client_secret, refresh_token, _)) =
+        crate::sharing::gdrive_api::parse_gdrive_oauth_from_conf(&conf, &name)
+    else {
+        return;
+    };
+    let client = reqwest::Client::new();
+    let token_result = if client_id.is_empty() {
+        crate::sharing::gdrive_api::parse_gdrive_access_token_from_conf(&conf, &name)
+            .map(|access_token| crate::sharing::gdrive_api::GdriveAccessToken { access_token })
+            .ok_or_else(|| {
+                crate::sharing::gdrive_api::GdriveApiError::TokenRefresh(
+                    "access token not found in config".to_owned(),
+                )
+            })
+    } else {
+        crate::sharing::gdrive_api::gdrive_refresh_token(
+            &client,
+            &client_id,
+            &client_secret,
+            &refresh_token,
+        )
+        .await
+    };
+    match token_result {
+        Ok(token) => {
+            if let Err(error) = crate::sharing::gdrive_api::gdrive_delete_permission(
+                &client,
+                &token.access_token,
+                folder_id,
+                perm_id,
+            )
+            .await
+            {
+                tracing::warn!(%error, permission_id = %perm_id, "Drive permission deletion failed after revoke");
+            } else {
+                tracing::debug!(permission_id = %perm_id, "deleted Drive permission after revoke");
+            }
+        }
+        Err(error) => {
+            tracing::warn!(%error, "Drive token refresh failed during revoke cleanup");
+        }
+    }
+}
+
+/// Best-effort cleanup: delete the scoped B2 application key so recipients lose access.
+async fn cleanup_b2_share_key(conf_path: &std::path::Path, key_id: &str) {
+    let Ok(conf) = tokio::fs::read_to_string(conf_path).await else {
+        return;
+    };
+    let Some((master_key_id, master_app_key, _)) =
+        crate::sharing::b2_api::parse_b2_credentials_from_conf(&conf)
+    else {
+        return;
+    };
+    let Ok(auth) =
+        crate::sharing::b2_api::b2_authorize_account(&master_key_id, &master_app_key).await
+    else {
+        return;
+    };
+    let client = reqwest::Client::new();
+    if let Err(error) = crate::sharing::b2_api::b2_delete_key(&client, &auth, key_id).await {
+        tracing::warn!(%error, key_id = %key_id, "B2 key deletion failed after revoke");
+    } else {
+        tracing::debug!(key_id = %key_id, "deleted B2 scoped key after revoke");
+    }
+}
+
 /// Returns the current Unix timestamp in seconds since the epoch.
 fn now_unix_seconds() -> i64 {
     SystemTime::now()
@@ -52,45 +158,40 @@ pub(crate) async fn sweep_expired_shares(state: &AppState) {
     let now = now_unix_seconds();
     let transport = state.cloud_transport.read().await.clone();
 
-    let expired_ids: Vec<String> = {
-        let Some(db_store) = state.session_manager.get_metadata_store().await else {
-            return;
-        };
-        let db = &*db_store;
-        match db
-            .with_connection_blocking(move |conn| {
-                let mut stmt = conn
-                    .prepare(
-                        "SELECT share_id FROM shares \
-                         WHERE expires_at IS NOT NULL \
-                           AND expires_at < ?1 \
-                           AND revoked_at IS NULL",
-                    )
-                    .map_err(StorageError::from_rusqlite)?;
-                let rows = stmt
-                    .query_map(rusqlite::params![now], |row| row.get::<_, String>(0))
-                    .map_err(StorageError::from_rusqlite)?;
-                let mut ids = Vec::new();
-                for row in rows {
-                    ids.push(row.map_err(StorageError::from_rusqlite)?);
-                }
-                Ok(ids)
-            })
-            .await
-        {
-            Ok(ids) => ids,
-            Err(e) => {
-                tracing::warn!(%e, "sweep_expired_shares: failed to query expired shares");
-                return;
+    let Some(db_store) = state.session_manager.get_metadata_store().await else {
+        return;
+    };
+    let db = &*db_store;
+
+    let expired_ids: Vec<String> = match db
+        .with_connection_blocking(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT share_id FROM shares \
+                     WHERE expires_at IS NOT NULL \
+                       AND expires_at < ?1 \
+                       AND revoked_at IS NULL",
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            let rows = stmt
+                .query_map(rusqlite::params![now], |row| row.get::<_, String>(0))
+                .map_err(StorageError::from_rusqlite)?;
+            let mut ids = Vec::new();
+            for row in rows {
+                ids.push(row.map_err(StorageError::from_rusqlite)?);
             }
+            Ok(ids)
+        })
+        .await
+    {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::warn!(%e, "sweep_expired_shares: failed to query expired shares");
+            return;
         }
     };
 
     for share_id in &expired_ids {
-        let Some(db_store) = state.session_manager.get_metadata_store().await else {
-            continue;
-        };
-        let db = &*db_store;
         if let Err(e) =
             crate::sharing::revoke_share(share_id, now, db as &dyn SharingStore, &*transport).await
         {
@@ -394,21 +495,7 @@ pub async fn import_share(
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
     let staging_dir = vault_staging_dir(&vault_id);
 
-    let rclone_bin: Option<PathBuf> = state.app_handle.get().map(|h| {
-        use tauri::Manager as _;
-        let name = if cfg!(target_os = "windows") {
-            "rclone.exe"
-        } else {
-            "rclone"
-        };
-        if let Ok(dir) = h.path().resource_dir() {
-            let c = dir.join("bin").join(name);
-            if c.exists() {
-                return c;
-            }
-        }
-        PathBuf::from(name)
-    });
+    let rclone_bin: Option<PathBuf> = state.app_handle.get().map(resolve_rclone_bin);
 
     // Scope the DB lock: import, look up sender name, then release before async upload.
     let (share_id, file_name, sender_name, import_receipt_ctx) = {
@@ -572,93 +659,10 @@ pub async fn revoke_share(share_id: String, state: State<'_, AppState>) -> Resul
 
     match (download_key_id, download_folder_id) {
         (Some(perm_id), Some(folder_id)) => {
-            // Google Drive share: revoke the SA reader permission on the shared folder.
-            if let Ok(conf) = tokio::fs::read_to_string(&conf_path).await {
-                // Find the first Drive remote in the conf and use its OAuth creds.
-                let remote_name = conf
-                    .lines()
-                    .filter(|l| l.trim().starts_with('[') && l.trim().ends_with(']'))
-                    .find_map(|l| {
-                        let name = &l.trim()[1..l.trim().len() - 1];
-                        crate::sharing::gdrive_api::parse_gdrive_oauth_from_conf(&conf, name)
-                            .map(|_| name.to_owned())
-                    });
-                if let Some(name) = remote_name
-                    && let Some((client_id, client_secret, refresh_token, _)) =
-                        crate::sharing::gdrive_api::parse_gdrive_oauth_from_conf(&conf, &name)
-                {
-                    let client = reqwest::Client::new();
-                    let token_result = if client_id.is_empty() {
-                        crate::sharing::gdrive_api::parse_gdrive_access_token_from_conf(
-                            &conf, &name,
-                        )
-                        .map(
-                            |access_token| crate::sharing::gdrive_api::GdriveAccessToken {
-                                access_token,
-                            },
-                        )
-                        .ok_or_else(|| {
-                            crate::sharing::gdrive_api::GdriveApiError::TokenRefresh(
-                                "access token not found in config".to_owned(),
-                            )
-                        })
-                    } else {
-                        crate::sharing::gdrive_api::gdrive_refresh_token(
-                            &client,
-                            &client_id,
-                            &client_secret,
-                            &refresh_token,
-                        )
-                        .await
-                    };
-                    match token_result {
-                        Ok(token) => {
-                            if let Err(error) =
-                                crate::sharing::gdrive_api::gdrive_delete_permission(
-                                    &client,
-                                    &token.access_token,
-                                    &folder_id,
-                                    &perm_id,
-                                )
-                                .await
-                            {
-                                tracing::warn!(
-                                    %error,
-                                    permission_id = %perm_id,
-                                    "Drive permission deletion failed after revoke"
-                                );
-                            } else {
-                                tracing::debug!(
-                                    permission_id = %perm_id,
-                                    "deleted Drive permission after revoke"
-                                );
-                            }
-                        }
-                        Err(error) => {
-                            tracing::warn!(%error, "Drive token refresh failed during revoke cleanup");
-                        }
-                    }
-                }
-            }
+            cleanup_gdrive_share_permission(&conf_path, &perm_id, &folder_id).await;
         }
         (Some(key_id), None) => {
-            // B2 share: delete the scoped application key so recipients lose access immediately.
-            if let Ok(conf) = tokio::fs::read_to_string(&conf_path).await
-                && let Some((master_key_id, master_app_key, _)) =
-                    crate::sharing::b2_api::parse_b2_credentials_from_conf(&conf)
-                && let Ok(auth) =
-                    crate::sharing::b2_api::b2_authorize_account(&master_key_id, &master_app_key)
-                        .await
-            {
-                let client = reqwest::Client::new();
-                if let Err(error) =
-                    crate::sharing::b2_api::b2_delete_key(&client, &auth, &key_id).await
-                {
-                    tracing::warn!(%error, key_id = %key_id, "B2 key deletion failed after revoke");
-                } else {
-                    tracing::debug!(key_id = %key_id, "deleted B2 scoped key after revoke");
-                }
-            }
+            cleanup_b2_share_key(&conf_path, &key_id).await;
         }
         _ => {}
     }
@@ -849,21 +853,7 @@ pub async fn download_received_share(
     let kek = extract_kek(&state).await?;
     let transport = state.cloud_transport.read().await.clone();
 
-    let rclone_bin: Option<PathBuf> = state.app_handle.get().map(|h| {
-        use tauri::Manager as _;
-        let name = if cfg!(target_os = "windows") {
-            "rclone.exe"
-        } else {
-            "rclone"
-        };
-        if let Ok(dir) = h.path().resource_dir() {
-            let c = dir.join("bin").join(name);
-            if c.exists() {
-                return c;
-            }
-        }
-        PathBuf::from(name)
-    });
+    let rclone_bin: Option<PathBuf> = state.app_handle.get().map(resolve_rclone_bin);
 
     // Extract share metadata and fetch blobs in one DB lock scope.
     let (
@@ -1035,21 +1025,7 @@ pub async fn get_received_share_content(
     let kek = extract_kek(&state).await?;
     let transport = state.cloud_transport.read().await.clone();
 
-    let rclone_bin: Option<PathBuf> = state.app_handle.get().map(|h| {
-        use tauri::Manager as _;
-        let name = if cfg!(target_os = "windows") {
-            "rclone.exe"
-        } else {
-            "rclone"
-        };
-        if let Ok(dir) = h.path().resource_dir() {
-            let c = dir.join("bin").join(name);
-            if c.exists() {
-                return c;
-            }
-        }
-        PathBuf::from(name)
-    });
+    let rclone_bin: Option<PathBuf> = state.app_handle.get().map(resolve_rclone_bin);
 
     const FIFTY_MIB: u64 = 50 * 1024 * 1024;
 
@@ -1353,13 +1329,14 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
     let staging_dir = vault_staging_dir(&vault_id);
 
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+
     // Unwrap the vault's own private key for HPKE.Open of receipt blobs.
     let private_key_bytes: Zeroizing<[u8; 32]> = {
-        let db_store = state
-            .session_manager
-            .get_metadata_store()
-            .await
-            .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
         let db = &*db_store;
         let wrapped_blob: Vec<u8> = db
             .with_connection_blocking(|conn| {
@@ -1388,17 +1365,12 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
     };
 
     // Fetch shares that need download-receipt checking.
-    let pending_download: Vec<(String, String)> = {
-        let db_store = state
-            .session_manager
-            .get_metadata_store()
-            .await
-            .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let pending_download: Vec<(String, String, i64)> = {
         let db = &*db_store;
         db.with_connection_blocking(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT share_id, cloud_path \
+                    "SELECT share_id, cloud_path, created_at \
                      FROM shares \
                      WHERE receipt_requested = 1 \
                        AND receipt_received_at IS NULL \
@@ -1407,7 +1379,11 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
                 .map_err(StorageError::from_rusqlite)?;
             let rows = stmt
                 .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
                 })
                 .map_err(StorageError::from_rusqlite)?;
             let mut out = Vec::new();
@@ -1420,19 +1396,23 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
         .map_err(IpcError::from)?
     };
 
-    for (share_id, cloud_path) in &pending_download {
+    for (share_id, cloud_path, share_created_at) in &pending_download {
         if cloud_path.is_empty() {
             continue;
         }
         let receipt_prefix = format!("{cloud_path}receipts/");
 
         // List receipt blobs using the vault owner's transport.
-        let blob_names = match transport.list_blobs(&receipt_prefix).await {
+        let mut blob_names = match transport.list_blobs(&receipt_prefix).await {
             Ok(names) => names,
             Err(_) => continue,
         };
         if blob_names.is_empty() {
             continue;
+        }
+        if blob_names.len() > 50 {
+            tracing::warn!(%share_id, blobs = blob_names.len(), "receipt blob list exceeds cap, truncating to 50");
+            blob_names.truncate(50);
         }
 
         let mut earliest_downloaded_at: Option<i64> = None;
@@ -1460,6 +1440,11 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
                     if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&plaintext)
                         && let Some(ts) = payload.get("downloaded_at").and_then(|v| v.as_i64())
                     {
+                        let now = now_unix_seconds();
+                        if ts < *share_created_at || ts > now + 300 {
+                            tracing::warn!(%share_id, ts, "receipt timestamp out of range, skipping");
+                            continue;
+                        }
                         earliest_downloaded_at =
                             Some(earliest_downloaded_at.map_or(ts, |prev| prev.min(ts)));
                     }
@@ -1470,9 +1455,8 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
             }
         }
 
-        if let Some(ts) = earliest_downloaded_at
-            && let Some(db) = state.session_manager.get_metadata_store().await
-        {
+        if let Some(ts) = earliest_downloaded_at {
+            let db = &*db_store;
             let sid = share_id.clone();
             let _ = db
                 .with_connection_blocking(move |conn| {
@@ -1488,17 +1472,12 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
     }
 
     // Second pass: check import receipts for shares that haven't been imported yet.
-    let pending_import: Vec<(String, String)> = {
-        let db_store = state
-            .session_manager
-            .get_metadata_store()
-            .await
-            .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let pending_import: Vec<(String, String, i64)> = {
         let db = &*db_store;
         db.with_connection_blocking(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT share_id, cloud_path \
+                    "SELECT share_id, cloud_path, created_at \
                      FROM shares \
                      WHERE receipt_requested = 1 \
                        AND import_receipt_received_at IS NULL \
@@ -1507,7 +1486,11 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
                 .map_err(StorageError::from_rusqlite)?;
             let rows = stmt
                 .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
                 })
                 .map_err(StorageError::from_rusqlite)?;
             let mut out = Vec::new();
@@ -1520,18 +1503,22 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
         .map_err(IpcError::from)?
     };
 
-    for (share_id, cloud_path) in &pending_import {
+    for (share_id, cloud_path, share_created_at) in &pending_import {
         if cloud_path.is_empty() {
             continue;
         }
         let receipt_prefix = format!("{cloud_path}import-receipts/");
 
-        let blob_names = match transport.list_blobs(&receipt_prefix).await {
+        let mut blob_names = match transport.list_blobs(&receipt_prefix).await {
             Ok(names) => names,
             Err(_) => continue,
         };
         if blob_names.is_empty() {
             continue;
+        }
+        if blob_names.len() > 50 {
+            tracing::warn!(%share_id, blobs = blob_names.len(), "import receipt blob list exceeds cap, truncating to 50");
+            blob_names.truncate(50);
         }
 
         let mut earliest_imported_at: Option<i64> = None;
@@ -1559,6 +1546,11 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
                     if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&plaintext)
                         && let Some(ts) = payload.get("imported_at").and_then(|v| v.as_i64())
                     {
+                        let now = now_unix_seconds();
+                        if ts < *share_created_at || ts > now + 300 {
+                            tracing::warn!(%share_id, ts, "import receipt timestamp out of range, skipping");
+                            continue;
+                        }
                         earliest_imported_at =
                             Some(earliest_imported_at.map_or(ts, |prev| prev.min(ts)));
                     }
@@ -1569,9 +1561,8 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
             }
         }
 
-        if let Some(ts) = earliest_imported_at
-            && let Some(db) = state.session_manager.get_metadata_store().await
-        {
+        if let Some(ts) = earliest_imported_at {
+            let db = &*db_store;
             let sid = share_id.clone();
             let _ = db
                 .with_connection_blocking(move |conn| {

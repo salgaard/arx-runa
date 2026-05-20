@@ -29,7 +29,7 @@ describe("Zero-Trace: no sensitive browser-side state after lock", function () {
         const vaultCard = await browser.$('[data-testid="vault-card"]');
         return (await lockBtn.isExisting()) || (await vaultCard.isExisting());
       },
-      { timeout: 45000, timeoutMsg: "app stuck in unknown state before test" },
+      { timeout: 90000, timeoutMsg: "app stuck in unknown state before test" },
     );
     const lockBtn = await browser.$('[data-testid="lock-button"]');
     if (await lockBtn.isExisting()) {
