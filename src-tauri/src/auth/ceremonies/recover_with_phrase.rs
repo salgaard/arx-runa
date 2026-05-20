@@ -263,7 +263,9 @@ pub async fn recover_with_phrase(
                     Ok(())
                 }
                 Err(error) => {
-                    let _ = conn.execute_batch("ROLLBACK;");
+                    if let Err(rb) = conn.execute_batch("ROLLBACK;") {
+                        tracing::warn!(?rb, "rollback failed during vault recovery; connection will be dropped");
+                    }
                     drop(conn);
                     Err(error)
                 }

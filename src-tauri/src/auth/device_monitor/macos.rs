@@ -95,9 +95,9 @@ extern "C" fn disk_disappeared_callback(_disk: DADiskRef, _context: *mut c_void)
 
 /// Runs a DiskArbitration-backed run loop.
 unsafe fn run_disk_arbitration_loop(_sender: Arc<mpsc::Sender<DeviceEvent>>) {
-    if std::env::var("PANIC_ON_UNIMPLEMENTED_MACOS_MONITOR").as_deref() == Ok("1") {
-        panic!("MacOsDeviceMonitor event translation is not implemented yet");
-    }
+    tracing::warn!(
+        "macOS device monitoring is not yet implemented; USB key-file detection inactive"
+    );
 
     // SAFETY: Passing a null allocator requests the default CF allocator.
     let session = unsafe { DASessionCreate(std::ptr::null()) };

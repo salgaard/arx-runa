@@ -109,21 +109,22 @@ describe("Loading states: vault creation", function () {
       return;
     }
 
-    await syncBtn.click();
+    // Install a MutationObserver in the browser before clicking so we can
+    // capture even a transient disabled state. On CI the stub rclone backend
+    // returns almost instantly — the button may be disabled for <100 ms, well
+    // under a single WebDriver round-trip, so polling alone cannot catch it.
+    await browser.execute(() => {
+      window.__syncDisabledObserved = false;
+      const btn = document.querySelector('[data-testid="sync-button"]');
+      if (!btn) return;
+      const obs = new MutationObserver(() => {
+        if (btn.disabled) window.__syncDisabledObserved = true;
+      });
+      obs.observe(btn, { attributes: true, attributeFilter: ["disabled"] });
+      window.__syncObserver = obs;
+    });
 
-    // The button must be disabled while the sync IPC is in-flight.  In CI the
-    // backend can return almost instantly (no real destination), so the window
-    // is narrow — poll for up to 1 s rather than doing a single bare read.
-    await browser.waitUntil(
-      async () => {
-        const d = await syncBtn.getAttribute("disabled");
-        return d !== null;
-      },
-      {
-        timeout: 1000,
-        timeoutMsg: "sync button must be disabled while a sync is in-flight",
-      },
-    );
+    await syncBtn.click();
 
     // Wait for sync to complete (button re-enables).
     await browser.waitUntil(
@@ -132,6 +133,18 @@ describe("Loading states: vault creation", function () {
         return d === null;
       },
       { timeout: 30000, timeoutMsg: "Sync did not complete within 30s" },
+    );
+
+    await browser.execute(() => {
+      if (window.__syncObserver) window.__syncObserver.disconnect();
+    });
+
+    const wasDisabled = await browser.execute(
+      () => window.__syncDisabledObserved,
+    );
+    assert.ok(
+      wasDisabled,
+      "sync button must be disabled while a sync is in-flight",
     );
   });
 
