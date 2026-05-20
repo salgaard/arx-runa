@@ -353,10 +353,10 @@ fn extract_remote_blob_from_dump(
     })?;
 
     let mut lines = vec![format!("[{remote_name}]")];
-    let mut keys: Vec<&str> = settings.keys().map(String::as_str).collect();
-    keys.sort_unstable();
-    for key in keys {
-        let value = settings.get(key).expect("key should exist");
+    let mut entries: Vec<(&str, &serde_json::Value)> =
+        settings.iter().map(|(k, v)| (k.as_str(), v)).collect();
+    entries.sort_unstable_by_key(|(k, _)| *k);
+    for (key, value) in entries {
         if value.is_null() {
             return Err(CloudTransportError::Other(format!(
                 "invalid rclone value for key '{key}' in remote '{remote_name}'"

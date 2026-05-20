@@ -1,5 +1,4 @@
 use rand::Rng;
-use rusqlite::{OptionalExtension, params};
 use zeroize::Zeroizing;
 
 use super::helpers::*;
@@ -9,10 +8,7 @@ use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::derive_master_key_into;
 use crate::auth::session::{SessionKeys, SessionManager};
 use crate::auth::staging;
-use crate::crypto::{
-    FileId, RecoveryKey, SqlcipherKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_file_key,
-    unwrap_master_key_from_recovery, wrap_file_key, wrap_master_key_for_recovery,
-};
+use crate::crypto::{SqlcipherKey, VaultId, wrap_master_key_for_recovery};
 use crate::storage::cloud::vault_header::VaultHeader;
 use crate::storage::cloud::{upload_manifest_backup, upload_vault_header};
 
@@ -86,44 +82,12 @@ pub async fn rotate_key_file(
     rand::rng().fill_bytes(new_key_file.as_mut_slice());
     let new_key_file_blake3 = hex::encode(blake3::hash(new_key_file.as_slice()).as_bytes());
 
-    let mut will_remove_slots = false;
-    let mut recovery_key_for_rewrap: Option<RecoveryKey> = None;
-    if !vault_header.recovery_slots.is_empty() {
-        match request.recovery_phrase {
-            None => will_remove_slots = true,
-            Some(phrase) => {
-                let phrase_str = std::str::from_utf8(phrase)
-                    .map_err(|_| AuthenticationError::InvalidRecoveryPhrase)?;
-                let mnemonic = parse_mnemonic(phrase_str)?;
-                let canonical = canonicalize_phrase(&mnemonic);
-                let slot_index = vault_header
-                    .recovery_slots
-                    .iter()
-                    .position(|slot| slot.method == "bip39")
-                    .ok_or(AuthenticationError::NoRecoverySlot)?;
-                let slot = &vault_header.recovery_slots[slot_index];
-                let slot_salt = decode_base64_32(&slot.argon2_salt)?;
-                let slot_params = argon2_parameters_from_json(&slot.argon2_params);
-                let wrapped_bytes = decode_base64_72(&slot.wrapped_master_key)?;
-                let wrapped = WrappedMasterKey::new(wrapped_bytes);
-                let mut recovery_key_bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-                derive_recovery_key_into(
-                    canonical.as_bytes(),
-                    &slot_salt,
-                    &slot_params,
-                    &mut recovery_key_bytes,
-                )?;
-                let recovery_key = recovery_key_from_array(&recovery_key_bytes);
-                drop(recovery_key_bytes);
-                match unwrap_master_key_from_recovery(&wrapped, &recovery_key, vault_id) {
-                    Ok(_master_key) => {
-                        recovery_key_for_rewrap = Some(recovery_key);
-                    }
-                    Err(_) => return Err(AuthenticationError::InvalidCredentials),
-                }
-            }
-        }
-    }
+    let (will_remove_slots, recovery_key_for_rewrap) =
+        match resolve_recovery_slot_action(vault_header, request.recovery_phrase, vault_id)? {
+            RecoverySlotAction::KeepAndRewrap(key) => (false, Some(key)),
+            RecoverySlotAction::Remove => (true, None),
+            RecoverySlotAction::NoSlots => (false, None),
+        };
     staging::write_owner_only_new(&request.target_new_key_file_path, new_key_file.as_slice())
         .await?;
 
@@ -146,82 +110,7 @@ pub async fn rotate_key_file(
     let rewrap_result: Result<(), AuthenticationError> =
         tokio::task::spawn_blocking(move || -> Result<(), AuthenticationError> {
             let conn = open_sqlcipher(&vault_db_path, &current_sqlcipher)?;
-            conn.execute_batch("BEGIN IMMEDIATE;")
-                .map_err(|_| AuthenticationError::InvalidCredentials)?;
-            let transaction_result = (|| -> Result<(), AuthenticationError> {
-                {
-                    let mut stmt = conn
-                        .prepare(
-                            "SELECT node_id, file_key_wrapped FROM nodes WHERE file_key_wrapped IS NOT NULL AND node_id IS NOT NULL",
-                        )
-                        .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    let rows: Vec<(String, Vec<u8>)> = stmt
-                        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-                        .map_err(|_| AuthenticationError::InvalidCredentials)?
-                        .collect::<Result<_, _>>()
-                        .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    for (node_id, wrapped_blob) in rows {
-                        let file_id = FileId::from_uuid(
-                            uuid::Uuid::parse_str(&node_id)
-                                .map_err(|_| AuthenticationError::InvalidCredentials)?,
-                        );
-                        let wrapped_array: [u8; 72] = wrapped_blob
-                            .try_into()
-                            .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                        let wrapped = WrappedFileKey::new(wrapped_array);
-                        let file_key = unwrap_file_key(&wrapped, &file_id, &current_kek)
-                            .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                        let rewrapped = wrap_file_key(&file_key, &file_id, &new_kek)
-                            .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-                        conn.execute(
-                            "UPDATE nodes SET file_key_wrapped = ? WHERE node_id = ?",
-                            params![rewrapped.as_bytes().to_vec(), node_id],
-                        )
-                        .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    }
-                }
-                let identity_file_id = FileId::new(vault_id_bytes);
-                let identity_wrapped: Option<Vec<u8>> = conn
-                    .query_row(
-                        "SELECT wrapped_private_key FROM vault_identity WHERE id = 1",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .optional()
-                    .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                if let Some(wrapped_blob) = identity_wrapped {
-                    let wrapped_array: [u8; 72] = wrapped_blob
-                        .try_into()
-                        .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    let wrapped = WrappedFileKey::new(wrapped_array);
-                    let file_key = unwrap_file_key(&wrapped, &identity_file_id, &current_kek)
-                        .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    let rewrapped = wrap_file_key(&file_key, &identity_file_id, &new_kek)
-                        .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-                    conn.execute(
-                        "UPDATE vault_identity SET wrapped_private_key = ? WHERE id = 1",
-                        params![rewrapped.as_bytes().to_vec()],
-                    )
-                    .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                }
-                Ok(())
-            })();
-            match transaction_result {
-                Ok(()) => {
-                    conn.execute_batch("COMMIT;")
-                        .map_err(|_| AuthenticationError::InvalidCredentials)?;
-                    rekey_sqlcipher(&conn, &new_sqlcipher)?;
-                    drop(conn);
-                    Ok(())
-                }
-                Err(error) => {
-                    if let Err(rb) = conn.execute_batch("ROLLBACK;") {
-                        tracing::warn!(?rb, "rollback failed during key file rotation; connection will be dropped");
-                    }
-                    drop(conn);
-                    Err(error)
-                }
-            }
+            rekey_vault_db(conn, &current_kek, &new_kek, new_sqlcipher, vault_id_bytes)
         })
         .await
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
@@ -288,7 +177,7 @@ pub async fn rotate_key_file(
         let pending_path = config_dir
             .join("arx-runa")
             .join("pending-vault-header.json");
-        if pending_path.exists() {
+        if tokio::fs::try_exists(&pending_path).await.unwrap_or(false) {
             let _ = tokio::fs::remove_file(&pending_path).await;
         }
     }

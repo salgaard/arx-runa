@@ -35,6 +35,17 @@ pub(crate) struct ReissuedPackage {
     pub wire_bytes: Vec<u8>,
 }
 
+/// Deletes all blobs already uploaded to cloud on a failed multi-part operation.
+async fn cleanup_uploaded_blobs(
+    cloud: &dyn CloudTransport,
+    vault_paths: &[String],
+    shared_paths: &[String],
+) {
+    for p in vault_paths.iter().chain(shared_paths) {
+        let _ = cloud.delete_blob(p).await;
+    }
+}
+
 /// Cooperatively revokes a share by deleting the per-recipient cloud blobs
 /// and marking the share row as revoked.
 ///
@@ -164,12 +175,7 @@ pub(crate) async fn strong_revoke_share(
 
         let vault_path = format!("vault/{}.blob", chunk.blob_name);
         if cloud.upload_blob(&local_path, &vault_path).await.is_err() {
-            for uploaded in &uploaded_vault_paths {
-                let _ = cloud.delete_blob(uploaded).await;
-            }
-            for uploaded in &uploaded_shared_paths {
-                let _ = cloud.delete_blob(uploaded).await;
-            }
+            cleanup_uploaded_blobs(cloud, &uploaded_vault_paths, &uploaded_shared_paths).await;
             return Err(SharingError::CloudOperation(format!(
                 "vault upload failed (chunk {})",
                 chunk.chunk_index
@@ -179,12 +185,7 @@ pub(crate) async fn strong_revoke_share(
 
         let shared_path = format!("shared/{}/{}.blob", new_file_share_id, chunk.blob_name);
         if cloud.upload_blob(&local_path, &shared_path).await.is_err() {
-            for uploaded in &uploaded_vault_paths {
-                let _ = cloud.delete_blob(uploaded).await;
-            }
-            for uploaded in &uploaded_shared_paths {
-                let _ = cloud.delete_blob(uploaded).await;
-            }
+            cleanup_uploaded_blobs(cloud, &uploaded_vault_paths, &uploaded_shared_paths).await;
             return Err(SharingError::CloudOperation(format!(
                 "shared upload failed (chunk {})",
                 chunk.chunk_index

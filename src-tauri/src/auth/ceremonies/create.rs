@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use chacha20poly1305::aead::OsRng;
 use rand::Rng;
@@ -24,15 +24,22 @@ use crate::storage::schema::{apply_canonical_schema, seed_manifest_meta};
 #[cfg(test)]
 use super::{STAGING_FILE_NAME, VAULT_HEADER_BLOB_NAME};
 
-/// Removes the key file (if any was written) and the vault DB on ceremony failure.
-///
-/// Both removals are best-effort; errors are silently ignored. Safe to call before
-/// the DB file exists — `remove_file_if_exists` is a no-op on missing paths.
-async fn cleanup_failed_vault(key_file: Option<&Path>, db: &Path) {
-    if let Some(kfp) = key_file {
-        remove_file_if_exists(kfp).await;
+/// Removes the vault DB and optional key file on drop unless `committed` is set.
+struct VaultCleanupGuard {
+    committed: bool,
+    db_path: PathBuf,
+    key_file_path: Option<PathBuf>,
+}
+
+impl Drop for VaultCleanupGuard {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = std::fs::remove_file(&self.db_path);
+            if let Some(p) = &self.key_file_path {
+                let _ = std::fs::remove_file(p);
+            }
+        }
     }
-    remove_file_if_exists(db).await;
 }
 
 /// Creates a new vault: derives keys, creates the SQLCipher DB, builds and
@@ -72,6 +79,12 @@ pub async fn create_vault(
 
     ensure_parent_directory_exists(&request.vault_db_path).await?;
 
+    let mut guard = VaultCleanupGuard {
+        committed: false,
+        db_path: request.vault_db_path.clone(),
+        key_file_path: None,
+    };
+
     // For Tier 2, validate key-file path and record whether it resolves to a directory.
     // The result is reused below when resolving the final key-file path — no second I/O.
     let mut key_file_is_dir = false;
@@ -107,7 +120,6 @@ pub async fn create_vault(
 
     let vault_id = VaultId::from_uuid(request.suggested_vault_id.unwrap_or_else(Uuid::new_v4));
 
-    let mut written_key_file_path: Option<PathBuf> = None;
     let mut key_file_bytes: Option<Zeroizing<[u8; 32]>> = None;
     let mut key_file_blake3_hex: Option<String> = None;
     if request.tier == Tier::Two {
@@ -129,7 +141,7 @@ pub async fn create_vault(
         let digest = blake3::hash(buffer.as_slice());
         key_file_blake3_hex = Some(hex::encode(digest.as_bytes()));
         key_file_bytes = Some(buffer);
-        written_key_file_path = Some(key_file_path);
+        guard.key_file_path = Some(key_file_path);
     }
 
     let mut argon2_salt: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
@@ -145,7 +157,6 @@ pub async fn create_vault(
     );
     if let Err(error) = derive_result {
         drop(master_key);
-        cleanup_failed_vault(written_key_file_path.as_deref(), &request.vault_db_path).await;
         return Err(error);
     }
 
@@ -153,7 +164,6 @@ pub async fn create_vault(
         Ok(keys) => keys,
         Err(error) => {
             drop(master_key);
-            cleanup_failed_vault(written_key_file_path.as_deref(), &request.vault_db_path).await;
             return Err(error);
         }
     };
@@ -172,7 +182,6 @@ pub async fn create_vault(
         Ok(wrapped) => wrapped,
         Err(error) => {
             drop(session_keys);
-            cleanup_failed_vault(written_key_file_path.as_deref(), &request.vault_db_path).await;
             return Err(error);
         }
     };
@@ -200,10 +209,7 @@ pub async fn create_vault(
         })
         .await
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
-    if let Err(error) = db_result {
-        cleanup_failed_vault(written_key_file_path.as_deref(), &request.vault_db_path).await;
-        return Err(error);
-    }
+    db_result?;
 
     // Insert the primary destination into the vault DB before installing the session.
     // Doing this inside the ceremony (before finalize_session_install) ensures the
@@ -223,8 +229,6 @@ pub async fn create_vault(
                         ?error,
                         "Failed to insert primary destination during vault creation"
                     );
-                    cleanup_failed_vault(written_key_file_path.as_deref(), &request.vault_db_path)
-                        .await;
                     return Err(AuthenticationError::VaultHeaderInvalid);
                 }
             }
@@ -233,8 +237,6 @@ pub async fn create_vault(
                     ?error,
                     "Failed to open vault DB for primary destination insertion"
                 );
-                cleanup_failed_vault(written_key_file_path.as_deref(), &request.vault_db_path)
-                    .await;
                 return Err(error);
             }
         }
@@ -262,7 +264,6 @@ pub async fn create_vault(
         .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
     if let Err(error) = tokio::fs::write(&local_header_path, &header_json).await {
         tracing::error!(?local_header_path, %error, "Failed to write vault-header.json locally");
-        cleanup_failed_vault(written_key_file_path.as_deref(), &request.vault_db_path).await;
         return Err(AuthenticationError::VaultHeaderInvalid);
     }
 
@@ -290,6 +291,7 @@ pub async fn create_vault(
     drop(argon2_salt);
     drop(key_file_bytes);
 
+    guard.committed = true;
     Ok(vault_id)
 }
 

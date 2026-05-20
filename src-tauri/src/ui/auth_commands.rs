@@ -323,7 +323,10 @@ pub async fn create_vault(
     });
 
     let password_bytes = sanitise_password(&mut password);
-    validate_password(std::str::from_utf8(&password_bytes).unwrap_or(""))?;
+    validate_password(
+        std::str::from_utf8(&password_bytes)
+            .map_err(|_| IpcError::InvalidInput("password encoding error".into()))?,
+    )?;
     crate::ui::validation::validate_chunk_size(chunk_size_bytes)?;
     if vault_name.is_empty() {
         return Err(IpcError::InvalidInput(
@@ -1138,6 +1141,57 @@ pub async fn configure_cloud(
 
 /// Recover an existing vault from cloud storage onto this device.
 ///
+/// Downloads `vault-header.json` from `transport`, parses it, and returns it.
+async fn probe_and_read_vault_header(transport: &RcloneTransport) -> Result<VaultHeader, IpcError> {
+    let probe_path = std::env::temp_dir().join("arx-runa-recover-header-probe.json");
+    transport
+        .download_blob("vault-header.json", &probe_path)
+        .await
+        .map_err(|e| {
+            tracing::warn!(?e, "failed to download vault header during cloud recovery");
+            IpcError::CloudError(
+                "Could not reach the vault at the provided destination. \
+                 Check your credentials and path prefix."
+                    .into(),
+            )
+        })?;
+    let header_bytes = tokio::fs::read(&probe_path).await.map_err(IpcError::from)?;
+    let _ = tokio::fs::remove_file(&probe_path).await;
+    serde_json::from_slice(&header_bytes).map_err(|_| {
+        IpcError::CloudError("Vault header at the cloud destination is malformed".into())
+    })
+}
+
+/// Persists the recovery destination, rebuilds the rclone transport, and prepares vault storage.
+async fn post_recovery_setup(
+    state: &AppState,
+    dest_session: &DestinationSession,
+    vault_id_str: &str,
+) {
+    if let Some(db) = state.session_manager.get_metadata_store().await {
+        match get_primary_destination(&db).await {
+            Ok(None) => {
+                if let Err(e) = insert_destination_session(&db, dest_session).await {
+                    tracing::warn!(
+                        ?e,
+                        "Failed to persist recovery destination session into vault DB"
+                    );
+                }
+            }
+            Ok(Some(_)) => {}
+            Err(e) => tracing::warn!(
+                ?e,
+                "Failed to query primary destination after cloud recovery"
+            ),
+        }
+        try_build_and_swap_rclone_transport(state, &db).await;
+        let staging_dir = vault_staging_dir(vault_id_str);
+        if let Err(error) = crate::storage::prepare_vault_storage(&db, &staging_dir).await {
+            tracing::warn!(?error, "Failed to prepare vault storage after recovery");
+        }
+    }
+}
+
 /// Does not require an active session. Downloads the vault header from the
 /// provided cloud destination to determine the vault's canonical ID, then
 /// runs the full recovery ceremony to import the manifest backup into a
@@ -1167,7 +1221,10 @@ pub async fn recover_vault_from_cloud(
     });
 
     let password_bytes = sanitise_password(&mut password);
-    validate_password(std::str::from_utf8(&password_bytes).unwrap_or(""))?;
+    validate_password(
+        std::str::from_utf8(&password_bytes)
+            .map_err(|_| IpcError::InvalidInput("password encoding error".into()))?,
+    )?;
 
     let dest_session = destination_from_config(&primary_destination);
     let conf_path = rclone_conf_path();
@@ -1208,21 +1265,7 @@ pub async fn recover_vault_from_cloud(
         IpcError::CloudError("Cloud connection failed".into())
     })?;
 
-    let probe_path = std::env::temp_dir().join("arx-runa-recover-header-probe.json");
-    transport
-        .download_blob("vault-header.json", &probe_path)
-        .await
-        .map_err(|e| {
-            tracing::warn!(
-                ?e,
-                "failed to probe vault header from cloud during recovery"
-            );
-            IpcError::CloudError(
-                "Could not reach the vault at the provided destination. \
-                 Check your credentials and path prefix."
-                    .into(),
-            )
-        })?;
+    let mut vault_header = probe_and_read_vault_header(&transport).await?;
 
     let _ = progress_ch.try_send_if_open(ProgressUpdate {
         percent: 30,
@@ -1230,13 +1273,6 @@ pub async fn recover_vault_from_cloud(
         bytes_total: 0,
         status: "Downloading vault data…".into(),
     });
-
-    let header_bytes = tokio::fs::read(&probe_path).await.map_err(IpcError::from)?;
-    let _ = tokio::fs::remove_file(&probe_path).await;
-
-    let mut vault_header: VaultHeader = serde_json::from_slice(&header_bytes).map_err(|_| {
-        IpcError::CloudError("Vault header at the cloud destination is malformed".into())
-    })?;
     let cloud_vault_id = vault_header.vault_id.clone();
 
     let vault_dir = default_vault_root().join(&cloud_vault_id);
@@ -1307,31 +1343,7 @@ pub async fn recover_vault_from_cloud(
 
     let vault_id_str = vault_id.to_uuid().to_string();
 
-    if let Some(db) = state.session_manager.get_metadata_store().await {
-        // If the recovered vault DB has no primary destination (typical for
-        // a freshly recovered vault), persist the one the user supplied so
-        // build_session_rclone_conf produces a valid rclone.conf.
-        match get_primary_destination(&db).await {
-            Ok(None) => {
-                if let Err(e) = insert_destination_session(&db, &dest_session).await {
-                    tracing::warn!(
-                        ?e,
-                        "Failed to persist recovery destination session into vault DB"
-                    );
-                }
-            }
-            Ok(Some(_)) => {}
-            Err(e) => tracing::warn!(
-                ?e,
-                "Failed to query primary destination after cloud recovery"
-            ),
-        }
-        try_build_and_swap_rclone_transport(&state, &db).await;
-        let staging_dir = vault_staging_dir(&vault_id_str);
-        if let Err(error) = crate::storage::prepare_vault_storage(&db, &staging_dir).await {
-            tracing::warn!(?error, "Failed to prepare vault storage after recovery");
-        }
-    }
+    post_recovery_setup(&state, &dest_session, &vault_id_str).await;
 
     *state.active_vault_id.write().await = Some(vault_id_str.clone());
 
@@ -1374,7 +1386,10 @@ pub async fn recover_vault_from_cloud_with_phrase(
 
     let new_password_bytes = sanitise_password(&mut new_password);
     let phrase_bytes = sanitise_password(&mut phrase);
-    validate_password(std::str::from_utf8(&new_password_bytes).unwrap_or(""))?;
+    validate_password(
+        std::str::from_utf8(&new_password_bytes)
+            .map_err(|_| IpcError::InvalidInput("password encoding error".into()))?,
+    )?;
 
     let dest_session = destination_from_config(&primary_destination);
     let conf_path = rclone_conf_path();
@@ -1429,21 +1444,7 @@ pub async fn recover_vault_from_cloud_with_phrase(
         IpcError::CloudError("Cloud connection failed".into())
     })?;
 
-    let probe_path = std::env::temp_dir().join("arx-runa-phrase-recover-header-probe.json");
-    transport
-        .download_blob("vault-header.json", &probe_path)
-        .await
-        .map_err(|e| {
-            tracing::warn!(
-                ?e,
-                "failed to download vault header during phrase cloud recovery"
-            );
-            IpcError::CloudError(
-                "Could not reach the vault at the provided destination. \
-                 Check your credentials and path prefix."
-                    .into(),
-            )
-        })?;
+    let vault_header = probe_and_read_vault_header(&transport).await?;
 
     let _ = progress_ch.try_send_if_open(ProgressUpdate {
         percent: 30,
@@ -1451,13 +1452,6 @@ pub async fn recover_vault_from_cloud_with_phrase(
         bytes_total: 0,
         status: "Downloading vault data…".into(),
     });
-
-    let header_bytes = tokio::fs::read(&probe_path).await.map_err(IpcError::from)?;
-    let _ = tokio::fs::remove_file(&probe_path).await;
-
-    let vault_header: VaultHeader = serde_json::from_slice(&header_bytes).map_err(|_| {
-        IpcError::CloudError("Vault header at the cloud destination is malformed".into())
-    })?;
     let cloud_vault_id = vault_header.vault_id.clone();
 
     let vault_dir = default_vault_root().join(&cloud_vault_id);
@@ -1526,34 +1520,7 @@ pub async fn recover_vault_from_cloud_with_phrase(
             IpcError::from(e)
         })?;
 
-    if let Some(db) = state.session_manager.get_metadata_store().await {
-        // If the recovered vault DB has no primary destination (typical for
-        // a freshly recovered vault), persist the one the user supplied so
-        // build_session_rclone_conf produces a valid rclone.conf.
-        match get_primary_destination(&db).await {
-            Ok(None) => {
-                if let Err(e) = insert_destination_session(&db, &dest_session).await {
-                    tracing::warn!(
-                        ?e,
-                        "Failed to persist recovery destination session into vault DB"
-                    );
-                }
-            }
-            Ok(Some(_)) => {}
-            Err(e) => tracing::warn!(
-                ?e,
-                "Failed to query primary destination after cloud phrase recovery"
-            ),
-        }
-        try_build_and_swap_rclone_transport(&state, &db).await;
-        let staging_dir = vault_staging_dir(&vault_id_str);
-        if let Err(error) = crate::storage::prepare_vault_storage(&db, &staging_dir).await {
-            tracing::warn!(
-                ?error,
-                "Failed to prepare vault storage after cloud phrase recovery"
-            );
-        }
-    }
+    post_recovery_setup(&state, &dest_session, &vault_id_str).await;
 
     *state.active_vault_id.write().await = Some(vault_id_str.clone());
 

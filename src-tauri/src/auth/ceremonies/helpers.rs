@@ -4,9 +4,10 @@ use std::path::Path;
 
 use base64::Engine;
 use bip39::{Language, Mnemonic};
-use rusqlite::Connection;
 use rusqlite::ffi;
+use rusqlite::{Connection, OptionalExtension, params};
 use secrecy::SecretBox;
+use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use super::types::Argon2MigrationIntent;
@@ -14,11 +15,12 @@ use crate::auth::error::AuthenticationError;
 use crate::auth::kdf::{Argon2Params, derive_master_key_into};
 use crate::auth::session::SessionKeys;
 use crate::crypto::{
-    FileId, FileKey, KeyEncryptionKey, MasterKey, RecoveryKey, SqlcipherKey, WrappedFileKey,
-    unwrap_file_key, wrap_file_key,
+    FileId, FileKey, KeyEncryptionKey, MasterKey, RecoveryKey, SqlcipherKey, VaultId,
+    WrappedFileKey, WrappedMasterKey, unwrap_file_key, unwrap_master_key_from_recovery,
+    wrap_file_key,
 };
 use crate::storage::cloud::VaultHeaderSyncError;
-use crate::storage::cloud::vault_header::Argon2ParametersJson;
+use crate::storage::cloud::vault_header::{Argon2ParametersJson, VaultHeader};
 
 /// Converts runtime Argon2 parameters into vault-header JSON shape.
 pub(super) fn argon2_parameters_to_json(parameters: &Argon2Params) -> Argon2ParametersJson {
@@ -312,4 +314,148 @@ pub(super) async fn verify_credentials_via_identity_row(
     })
     .await
     .map_err(|_| AuthenticationError::VaultHeaderInvalid)?
+}
+
+/// Resolves what to do with the recovery slot during a rekey ceremony.
+pub(super) enum RecoverySlotAction {
+    /// Slot exists and the phrase was verified — rewrap it under the new master key.
+    KeepAndRewrap(RecoveryKey),
+    /// Slot exists but no phrase was supplied — the caller must clear all slots.
+    Remove,
+    /// No recovery slots exist — nothing to do.
+    NoSlots,
+}
+
+/// Inspects the vault header's recovery slots and validates any supplied phrase,
+/// returning a [`RecoverySlotAction`] that drives the caller's post-rekey header update.
+pub(super) fn resolve_recovery_slot_action(
+    vault_header: &VaultHeader,
+    recovery_phrase: Option<&[u8]>,
+    vault_id: &VaultId,
+) -> Result<RecoverySlotAction, AuthenticationError> {
+    if vault_header.recovery_slots.is_empty() {
+        return Ok(RecoverySlotAction::NoSlots);
+    }
+    match recovery_phrase {
+        None => Ok(RecoverySlotAction::Remove),
+        Some(phrase) => {
+            let phrase_str = std::str::from_utf8(phrase)
+                .map_err(|_| AuthenticationError::InvalidRecoveryPhrase)?;
+            let mnemonic = parse_mnemonic(phrase_str)?;
+            let canonical = canonicalize_phrase(&mnemonic);
+            let slot_index = vault_header
+                .recovery_slots
+                .iter()
+                .position(|slot| slot.method == "bip39")
+                .ok_or(AuthenticationError::NoRecoverySlot)?;
+            let slot = &vault_header.recovery_slots[slot_index];
+            let slot_salt = decode_base64_32(&slot.argon2_salt)?;
+            let slot_params = argon2_parameters_from_json(&slot.argon2_params);
+            let wrapped_bytes = decode_base64_72(&slot.wrapped_master_key)?;
+            let wrapped = WrappedMasterKey::new(wrapped_bytes);
+            let mut recovery_key_bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+            derive_recovery_key_into(
+                canonical.as_bytes(),
+                &slot_salt,
+                &slot_params,
+                &mut recovery_key_bytes,
+            )?;
+            let recovery_key = recovery_key_from_array(&recovery_key_bytes);
+            drop(recovery_key_bytes);
+            match unwrap_master_key_from_recovery(&wrapped, &recovery_key, vault_id) {
+                Ok(_master_key) => Ok(RecoverySlotAction::KeepAndRewrap(recovery_key)),
+                Err(_) => Err(AuthenticationError::InvalidCredentials),
+            }
+        }
+    }
+}
+
+/// Re-wraps all file keys and the identity key inside an open SQLCipher connection,
+/// then commits and rekeys the database.  Called from inside `spawn_blocking`.
+pub(super) fn rekey_vault_db(
+    conn: Connection,
+    current_kek: &KeyEncryptionKey,
+    new_kek: &KeyEncryptionKey,
+    new_sqlcipher: SqlcipherKey,
+    vault_id_bytes: [u8; 16],
+) -> Result<(), AuthenticationError> {
+    conn.execute_batch("BEGIN IMMEDIATE;")
+        .map_err(|_| AuthenticationError::InvalidCredentials)?;
+    let transaction_result = (|| -> Result<(), AuthenticationError> {
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT node_id, file_key_wrapped FROM nodes WHERE file_key_wrapped IS NOT NULL AND node_id IS NOT NULL",
+                )
+                .map_err(|_| AuthenticationError::InvalidCredentials)?;
+            let rows: Vec<(String, Vec<u8>)> = stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map_err(|_| AuthenticationError::InvalidCredentials)?
+                .collect::<Result<_, _>>()
+                .map_err(|_| AuthenticationError::InvalidCredentials)?;
+            for (node_id, wrapped_blob) in rows {
+                let file_id = FileId::from_uuid(
+                    Uuid::parse_str(&node_id)
+                        .map_err(|_| AuthenticationError::InvalidCredentials)?,
+                );
+                let wrapped_array: [u8; 72] = wrapped_blob
+                    .try_into()
+                    .map_err(|_| AuthenticationError::InvalidCredentials)?;
+                let wrapped = WrappedFileKey::new(wrapped_array);
+                let file_key = unwrap_file_key(&wrapped, &file_id, current_kek)
+                    .map_err(|_| AuthenticationError::InvalidCredentials)?;
+                let rewrapped = wrap_file_key(&file_key, &file_id, new_kek)
+                    .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+                conn.execute(
+                    "UPDATE nodes SET file_key_wrapped = ? WHERE node_id = ?",
+                    params![rewrapped.as_bytes().to_vec(), node_id],
+                )
+                .map_err(|_| AuthenticationError::InvalidCredentials)?;
+            }
+        }
+        let identity_file_id = FileId::new(vault_id_bytes);
+        let identity_wrapped: Option<Vec<u8>> = conn
+            .query_row(
+                "SELECT wrapped_private_key FROM vault_identity WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| AuthenticationError::InvalidCredentials)?;
+        if let Some(wrapped_blob) = identity_wrapped {
+            let wrapped_array: [u8; 72] = wrapped_blob
+                .try_into()
+                .map_err(|_| AuthenticationError::InvalidCredentials)?;
+            let wrapped = WrappedFileKey::new(wrapped_array);
+            let file_key = unwrap_file_key(&wrapped, &identity_file_id, current_kek)
+                .map_err(|_| AuthenticationError::InvalidCredentials)?;
+            let rewrapped = wrap_file_key(&file_key, &identity_file_id, new_kek)
+                .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+            conn.execute(
+                "UPDATE vault_identity SET wrapped_private_key = ? WHERE id = 1",
+                params![rewrapped.as_bytes().to_vec()],
+            )
+            .map_err(|_| AuthenticationError::InvalidCredentials)?;
+        }
+        Ok(())
+    })();
+    match transaction_result {
+        Ok(()) => {
+            conn.execute_batch("COMMIT;")
+                .map_err(|_| AuthenticationError::InvalidCredentials)?;
+            rekey_sqlcipher(&conn, &new_sqlcipher)?;
+            drop(conn);
+            Ok(())
+        }
+        Err(error) => {
+            if let Err(rb) = conn.execute_batch("ROLLBACK;") {
+                tracing::warn!(
+                    ?rb,
+                    "rollback failed during vault rekey; connection will be dropped"
+                );
+            }
+            drop(conn);
+            Err(error)
+        }
+    }
 }

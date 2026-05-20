@@ -1030,6 +1030,9 @@ pub async fn migrate_vault(
                 .download_blob(&remote_path, &local_path)
                 .await
             {
+                for name in &downloaded_for_migration {
+                    let _ = tokio::fs::remove_file(staging_dir.join(format!("{name}.blob"))).await;
+                }
                 return Err(IpcError::CloudError(format!("download {blob_name}: {e}")));
             }
             downloaded_for_migration.push(blob_name.clone());
