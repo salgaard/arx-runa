@@ -38,7 +38,14 @@ jobs:
 
       - name: Install zstd (Windows)
         if: runner.os == 'Windows'
-        run: choco install zstd -y
+        shell: pwsh
+        run: |
+          $version = "1.5.6"
+          $url = "https://github.com/facebook/zstd/releases/download/v${version}/zstd-v${version}-win64.zip"
+          Invoke-WebRequest -Uri $url -OutFile zstd.zip
+          Expand-Archive -Path zstd.zip -DestinationPath zstd-bin
+          $dir = (Get-ChildItem zstd-bin -Directory | Select-Object -First 1).FullName
+          echo $dir >> $env:GITHUB_PATH
 
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
