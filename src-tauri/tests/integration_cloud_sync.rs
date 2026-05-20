@@ -54,7 +54,7 @@ fn find_blob_file(dir: &std::path::Path) -> std::path::PathBuf {
         .expect("staging dir must be readable")
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .find(|p| p.extension().map_or(false, |ext| ext == "blob"))
+        .find(|p| p.extension().is_some_and(|ext| ext == "blob"))
         .expect("at least one .blob file must exist after upload")
 }
 
