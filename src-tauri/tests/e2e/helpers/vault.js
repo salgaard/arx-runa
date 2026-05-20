@@ -94,11 +94,12 @@ async function createAndUnlockVault(browser) {
  */
 async function unlockExistingVault(browser) {
   const vaultCard = await browser.$('[data-testid="vault-card"]');
-  await vaultCard.waitForExist({ timeout: 10000 });
+  // CI runners are slow (Argon2 + cold WASM) — allow more time than local.
+  await vaultCard.waitForExist({ timeout: 20000 });
   await vaultCard.click();
 
   const passwordInput = await browser.$('[data-testid="password-input"]');
-  await passwordInput.waitForExist({ timeout: 5000 });
+  await passwordInput.waitForExist({ timeout: 10000 });
   await passwordInput.setValue(TEST_VAULT_PASSWORD);
 
   const submitBtn = await browser.$('[data-testid="login-submit"]');
@@ -109,7 +110,7 @@ async function unlockExistingVault(browser) {
       const lockBtn = await browser.$('[data-testid="lock-button"]');
       return lockBtn.isExisting();
     },
-    { timeout: 20000, timeoutMsg: "Vault did not unlock within 20s" },
+    { timeout: 40000, timeoutMsg: "Vault did not unlock within 40s" },
   );
 }
 
@@ -128,7 +129,7 @@ async function lockVault(browser) {
       const createBtn = await browser.$('[data-testid="create-vault-button"]');
       return (await card.isExisting()) || (await createBtn.isExisting());
     },
-    { timeout: 15000, timeoutMsg: "Vault did not lock within 15s" },
+    { timeout: 20000, timeoutMsg: "Vault did not lock within 20s" },
   );
 }
 

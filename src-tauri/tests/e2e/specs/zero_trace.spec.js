@@ -17,7 +17,28 @@ describe("Zero-Trace: no sensitive browser-side state after lock", function () {
     await createAndUnlockVault(browser);
   });
 
+  // Ensure each test starts from the vault picker regardless of where the
+  // previous test left off. On slow CI runners a test may time out mid-unlock,
+  // leaving the app in an indeterminate state and causing all subsequent tests
+  // to fail via cascade. We wait for a known state (locked or unlocked) then
+  // lock if needed, so every test body can assume it starts at the picker.
+  beforeEach(async function () {
+    await browser.waitUntil(
+      async () => {
+        const lockBtn = await browser.$('[data-testid="lock-button"]');
+        const vaultCard = await browser.$('[data-testid="vault-card"]');
+        return (await lockBtn.isExisting()) || (await vaultCard.isExisting());
+      },
+      { timeout: 45000, timeoutMsg: "app stuck in unknown state before test" },
+    );
+    const lockBtn = await browser.$('[data-testid="lock-button"]');
+    if (await lockBtn.isExisting()) {
+      await lockVault(browser);
+    }
+  });
+
   it("localStorage is empty after lock", async function () {
+    await unlockExistingVault(browser);
     await lockVault(browser);
     const count = await browser.execute(
       () => Object.keys(localStorage).length,

@@ -123,7 +123,7 @@ impl SyncActions {
                             set_state.update(|s| s.sync_percent = Some(mapped));
                         }
                     });
-                    let _ = invoke_command_with_channel::<SyncBackupPayload, SyncResult>(
+                    if let Err(e) = invoke_command_with_channel::<SyncBackupPayload, SyncResult>(
                         "sync_backup",
                         &SyncBackupPayload {
                             destination_id: None,
@@ -131,7 +131,10 @@ impl SyncActions {
                         "progress",
                         backup_channel.inner(),
                     )
-                    .await;
+                    .await
+                    {
+                        use_toast().warning(format!("Backup failed: {e}"));
+                    }
 
                     let health =
                         invoke_command::<(), Vec<DestinationHealth>>("get_backup_health", &())

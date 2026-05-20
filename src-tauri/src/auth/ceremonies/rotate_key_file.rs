@@ -215,7 +215,9 @@ pub async fn rotate_key_file(
                     Ok(())
                 }
                 Err(error) => {
-                    let _ = conn.execute_batch("ROLLBACK;");
+                    if let Err(rb) = conn.execute_batch("ROLLBACK;") {
+                        tracing::warn!(?rb, "rollback failed during key file rotation; connection will be dropped");
+                    }
                     drop(conn);
                     Err(error)
                 }
@@ -282,12 +284,13 @@ pub async fn rotate_key_file(
     drop(new_key_file);
 
     // Clean up pending vault artifact if it exists (M2)
-    let config_dir = dirs::config_dir()
-        .expect("config_dir must be available")
-        .join("arx-runa");
-    let pending_path = config_dir.join("pending-vault-header.json");
-    if pending_path.exists() {
-        let _ = tokio::fs::remove_file(&pending_path).await;
+    if let Some(config_dir) = dirs::config_dir() {
+        let pending_path = config_dir
+            .join("arx-runa")
+            .join("pending-vault-header.json");
+        if pending_path.exists() {
+            let _ = tokio::fs::remove_file(&pending_path).await;
+        }
     }
 
     Ok(())

@@ -74,7 +74,6 @@ impl From<crate::auth::AuthenticationError> for IpcError {
     }
 }
 
-#[allow(unreachable_patterns)]
 impl From<crate::storage::StorageError> for IpcError {
     /// Maps storage errors to sanitised IPC error variants without leaking internal details.
     fn from(error: crate::storage::StorageError) -> Self {
@@ -90,13 +89,12 @@ impl From<crate::storage::StorageError> for IpcError {
             S::EpochBufferNotFlushed(_) => IpcError::PendingFlush(
                 "File is pending encryption — flush the epoch buffer first".into(),
             ),
-            S::Database(_) | S::Io(_) => IpcError::InternalError("An error occurred".into()),
-            _ => IpcError::InternalError("An error occurred".into()),
+            S::Database(_) => IpcError::InternalError("Storage engine error".into()),
+            S::Io(_) => IpcError::InternalError("File system error".into()),
         }
     }
 }
 
-#[allow(unreachable_patterns)]
 impl From<crate::sharing::SharingError> for IpcError {
     /// Maps sharing errors to sanitised IPC error variants without leaking internal details.
     fn from(error: crate::sharing::SharingError) -> Self {
@@ -131,10 +129,8 @@ impl From<crate::sharing::SharingError> for IpcError {
             Sh::ConstraintViolation(_) => {
                 IpcError::AlreadyExists("A sharing record already exists".into())
             }
-            Sh::IdentityMissing | Sh::Backend(_) => {
-                IpcError::InternalError("An error occurred".into())
-            }
-            _ => IpcError::InternalError("An error occurred".into()),
+            Sh::IdentityMissing => IpcError::InternalError("Vault identity not configured".into()),
+            Sh::Backend(_) => IpcError::InternalError("Sharing storage error".into()),
         }
     }
 }
@@ -148,9 +144,15 @@ impl From<crate::storage::SyncError> for IpcError {
                 tracing::info!("sync conflict: {:?}", c);
                 IpcError::SyncConflict("Another device has synced since your last pull".into())
             }
+            Sy::CloudManifestUnreadable { .. } => {
+                tracing::error!("sync error: {:?}", error);
+                IpcError::CloudError("Cloud manifest unreadable — vault may need recovery".into())
+            }
+            Sy::PushUploadFailed { .. } => {
+                tracing::error!("sync error: {:?}", error);
+                IpcError::CloudError("Cloud upload failed".into())
+            }
             Sy::Transport { .. }
-            | Sy::CloudManifestUnreadable { .. }
-            | Sy::PushUploadFailed { .. }
             | Sy::PushManifestBackupFailed { .. }
             | Sy::VaultHeaderUploadFailed { .. }
             | Sy::PullIncomplete { .. } => {
@@ -158,9 +160,20 @@ impl From<crate::storage::SyncError> for IpcError {
                 IpcError::CloudError("Cloud operation failed".into())
             }
             Sy::Storage { source } => IpcError::from(source),
-            Sy::Io(_) | Sy::ManifestBackup { .. } | Sy::RollbackFailed { .. } => {
+            Sy::Io(_) => {
                 tracing::error!("sync error: {:?}", error);
-                IpcError::InternalError("An error occurred".into())
+                IpcError::InternalError("Sync I/O error".into())
+            }
+            Sy::ManifestBackup { .. } => {
+                tracing::error!("sync error: {:?}", error);
+                IpcError::InternalError("Manifest backup error".into())
+            }
+            Sy::RollbackFailed { .. } => {
+                tracing::error!("sync error: {:?}", error);
+                IpcError::InternalError(
+                    "Sync rollback failed — vault may be in an inconsistent state; sync again"
+                        .into(),
+                )
             }
         }
     }
@@ -185,9 +198,14 @@ impl From<crate::storage::CloudTransportError> for IpcError {
             C::BucketNameTaken => {
                 IpcError::AlreadyExists("Cloud bucket name is already in use".into())
             }
-            C::Timeout | C::IoError(_) | C::RcloneProcessFailed { .. } | C::Other(_) => {
-                IpcError::CloudError("Cloud operation failed".into())
-            }
+            C::Timeout => IpcError::CloudError(
+                "Cloud connection timed out — check your network and retry".into(),
+            ),
+            C::IoError(_) => IpcError::CloudError("Cloud local I/O error".into()),
+            C::RcloneProcessFailed { .. } => IpcError::CloudError(
+                "Cloud sync process failed — check rclone configuration".into(),
+            ),
+            C::Other(_) => IpcError::CloudError("Cloud operation failed".into()),
             C::SharingNotSupported(msg) => IpcError::SharingNotSupported(msg),
         }
     }
