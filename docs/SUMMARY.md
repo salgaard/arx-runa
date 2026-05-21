@@ -19,6 +19,7 @@
 # How It Works
 
 - [Overview](how-it-works/README.md)
+  - [Security Model](how-it-works/security-model.md)
   - [The Vault](how-it-works/the-vault.md)
   - [Unlocking: Password and USB Key](how-it-works/unlocking.md)
   - [Recovery: If You Lose Your Key](how-it-works/recovery.md)
