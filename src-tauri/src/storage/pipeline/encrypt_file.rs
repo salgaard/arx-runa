@@ -8,10 +8,15 @@ use zeroize::Zeroizing;
 use crate::crypto::{ChunkIndex, FileId, FileKey, compute_checksum, encrypt_chunk};
 use crate::storage::MetadataStore;
 use crate::storage::error::StorageError;
+use crate::storage::pipeline::exif::{is_image_magic, strip_exif};
 use crate::storage::pipeline::read_chunk_size_bytes;
 use crate::storage::types::{ChunkRecord, NodeId};
 
 /// Encrypts a source file into fixed-size encrypted chunk blobs in staging.
+///
+/// JPEG and PNG files are detected by magic bytes and have EXIF, XMP, and
+/// IPTC metadata stripped from RAM before chunking.  The source file on disk
+/// is never modified.  All other formats follow the streaming chunk path.
 ///
 /// The optional `progress` callback is invoked after each chunk write with
 /// `(bytes_processed, file_size_total)`.  Pass `None` to suppress progress
@@ -24,6 +29,22 @@ pub async fn encrypt_file(
     staging_directory: &Path,
     progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<Vec<ChunkRecord>, StorageError> {
+    let magic = read_magic_bytes(source).await?;
+    if is_image_magic(&magic) {
+        let raw_bytes = tokio::fs::read(source)
+            .await
+            .map_err(|error| StorageError::Io(error.to_string()))?;
+        let stripped = strip_exif(raw_bytes);
+        return encrypt_bytes(
+            stripped,
+            file_id,
+            file_key,
+            metadata_store,
+            staging_directory,
+            progress,
+        )
+        .await;
+    }
     let mut staged_blob_names = Vec::new();
     let result = encrypt_file_inner(
         source,
@@ -238,6 +259,22 @@ async fn cleanup_staged_blobs(staging_directory: &Path, blob_names: &[String]) {
     }
 }
 
+/// Reads the first 8 bytes of `path` to detect image magic numbers.
+///
+/// Returns a zero-padded array if the file is shorter than 8 bytes.
+async fn read_magic_bytes(path: &Path) -> Result<[u8; 8], StorageError> {
+    let mut magic = [0u8; 8];
+    let file = File::open(path)
+        .await
+        .map_err(|error| StorageError::Io(error.to_string()))?;
+    let mut reader = BufReader::new(file);
+    reader
+        .read(&mut magic)
+        .await
+        .map_err(|error| StorageError::Io(error.to_string()))?;
+    Ok(magic)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -252,6 +289,8 @@ mod tests {
     use crate::crypto::{FileKey, compute_checksum};
     use crate::storage::MetadataStore;
     use crate::storage::error::StorageError;
+    use crate::storage::pipeline::decrypt_file_to_memory;
+    use crate::storage::pipeline::exif::strip_exif;
     use crate::storage::types::{ChunkRecord, Node};
 
     /// Test metadata store that exposes only `chunk_size_bytes`.
@@ -585,5 +624,79 @@ mod tests {
             let computed = compute_checksum(&blob_bytes);
             assert_eq!(computed.0, record.blake3_checksum);
         }
+    }
+
+    /// Builds a minimal JPEG with an APP1 (EXIF) segment for testing.
+    fn build_jpeg_with_exif() -> Vec<u8> {
+        let mut jpeg = Vec::new();
+        jpeg.extend_from_slice(&[0xFF, 0xD8]); // SOI
+
+        // APP1 (EXIF) — must be stripped
+        let app1_data = b"Exif\x00\x00fake_gps_data_here";
+        let app1_len = (app1_data.len() + 2) as u16;
+        jpeg.push(0xFF);
+        jpeg.push(0xE1);
+        jpeg.extend_from_slice(&app1_len.to_be_bytes());
+        jpeg.extend_from_slice(app1_data);
+
+        jpeg.extend_from_slice(&[0xFF, 0xD9]); // EOI
+        jpeg
+    }
+
+    /// Verifies that EXIF metadata is stripped from a JPEG before encryption
+    /// and is absent after decryption, while the SOI marker is preserved.
+    #[tokio::test]
+    async fn test_encrypt_file_jpeg_exif_stripped_after_round_trip() {
+        let temp_dir = TempDir::new().expect("temporary directory should be created");
+        let source_path = temp_dir.path().join("photo.jpg");
+        let staging_directory = temp_dir.path().join("staging");
+        fs::create_dir_all(&staging_directory)
+            .await
+            .expect("staging directory should be created");
+
+        let jpeg_bytes = build_jpeg_with_exif();
+        write_source_file(&source_path, &jpeg_bytes).await;
+
+        let stripped_preview = strip_exif(jpeg_bytes);
+        let expected_file_size = stripped_preview.len() as u64;
+
+        let file_id = Uuid::new_v4();
+        let file_key = FileKey::from_bytes([42; 32]);
+        let metadata_store = FixedMetaStore {
+            chunk_size_bytes: 131_072,
+        };
+
+        let records = encrypt_file(
+            &source_path,
+            file_id,
+            &file_key,
+            &metadata_store,
+            &staging_directory,
+            None,
+        )
+        .await
+        .expect("encrypt_file should succeed for JPEG");
+
+        let decrypted = decrypt_file_to_memory(
+            file_id,
+            &file_key,
+            expected_file_size,
+            &records,
+            &staging_directory,
+            &metadata_store,
+            None,
+        )
+        .await
+        .expect("decrypt_file_to_memory should succeed");
+
+        assert_eq!(
+            &decrypted[..2],
+            &[0xFF, 0xD8],
+            "SOI marker must be preserved"
+        );
+        assert!(
+            !decrypted.windows(2).any(|w| w == [0xFF, 0xE1]),
+            "APP1 (EXIF) marker must not appear in decrypted output"
+        );
     }
 }

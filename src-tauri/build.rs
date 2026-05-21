@@ -61,6 +61,11 @@ fn main() {
             "is_path_on_removable_drive",
             "video_scheme_base_url",
             "prefetch_video",
+            "check_cloud_configured",
+            "configure_cloud",
+            "check_pending_vault_operations",
+            "retry_pending_vault_operation",
+            "flush_epoch_buffer",
         ]),
     ))
     .expect("failed to build tauri application");

@@ -20,9 +20,9 @@ Every file in Arx Runa has its own random 256-bit encryption key — the `file_k
 
 When you share a file, Arx Runa does something precise: it takes that file's `file_key` and encrypts it *for the recipient's public key* using [HPKE](../guides/glossary.md#hpke) (RFC 9180). The ciphersuite is `DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + ChaCha20-Poly1305`. Only the recipient's private key can open this envelope. Not the cloud. Not Arx Runa's servers. Not you, once it's sent.
 
-The result is a **share package** — a small file (`.vgshare`) that contains:
+The result is a **share package** — a small file (`.arxshare`) that contains:
 
-- The HPKE-encrypted envelope (which holds the `file_key`, the file name, chunk identifiers, and the cloud location)
+- The HPKE-encrypted envelope (which holds the `file_key`, the file name, chunk identifiers, the cloud location, and scoped cloud credentials for the recipient to download the blobs)
 - Nothing else — no unencrypted key material, no file content
 
 You deliver the share package the same way you exchanged public keys: out-of-band, through a channel of your choosing.
@@ -45,12 +45,12 @@ sequenceDiagram
     Owner->>Owner: Unwrap file_key from vault manifest
     Owner->>Owner: HPKE.Seal(recipient_pub_key, plaintext=file_key + metadata)
     Owner->>Cloud: Copy encrypted blobs to shared/[share_id]/
-    Owner->>Channel: Export share package (.vgshare)
+    Owner->>Channel: Export share package (.arxshare)
     Channel->>Recipient: Deliver share package
 
     note over Recipient,Cloud: Phase 2 #45;#45; Recipient Imports and Fetches
-    Recipient->>Recipient: HPKE.Open(recipient_priv_key) #45;#62; file_key + metadata
-    Recipient->>Cloud: Fetch encrypted blobs
+    Recipient->>Recipient: HPKE.Open(recipient_priv_key) #45;#62; file_key + metadata + cloud credentials
+    Recipient->>Cloud: Fetch encrypted blobs (authenticated with scoped credentials)
     Cloud->>Recipient: Return encrypted blobs
     Recipient->>Recipient: Decrypt chunks with file_key #45;#62; reassemble file
 
@@ -60,7 +60,7 @@ sequenceDiagram
 
 ## What the cloud hosts
 
-To let the recipient download the file, Arx Runa copies the encrypted blobs into a separate folder in your cloud storage, under `shared/<share_id>/`. The cloud can see those blobs — the same opaque, fixed-size encrypted chunks that make up your normal vault. It cannot read the share package, which you deliver separately and out-of-band. It cannot read the `file_key` inside the package, because that is sealed to the recipient's public key.
+To let the recipient download the file, Arx Runa copies the encrypted blobs into a separate folder in your cloud storage, under `shared/<share_id>/`. The share package embeds scoped cloud credentials (inside the HPKE envelope) that allow the recipient to download from that folder — without accessing your main cloud account or vault. For B2 this is a scoped application key restricted to that prefix (read + write, so the recipient can also upload the receipt blob); for Google Drive it is a Service Account JSON with read permission on the shared folder.
 
 The cloud sees ciphertext. The share package is the only thing that unlocks it, and the share package is only readable by the recipient.
 
@@ -74,6 +74,68 @@ This is a deliberate choice. A "live" share — where the recipient always sees 
 
 If the recipient has not yet fetched the blobs, you can revoke the share by deleting the `shared/<share_id>/` folder from the cloud. The share package they hold becomes a pointer to nothing — access is cut without any re-encryption.
 
-If they have already downloaded and decrypted the blobs, the data is on their machine. Cryptographic revocation of content that has left your control is not possible — this is honest, not a flaw, and it is the same limitation that applies to any file you share by any method. For a stronger guarantee after-the-fact, Arx Runa supports re-encrypting the file under a new key, which invalidates any future fetches from the old blobs.
+If they have already downloaded and decrypted the blobs, the data is on their machine. Cryptographic revocation of content that has left your control is not possible — this is honest, not a flaw, and it is the same limitation that applies to any file you share by any method.
 
-Shares can also have an expiry date. When a share expires, Arx Runa automatically deletes the blobs from cloud on its next sync — no manual action required.
+Shares can also have an expiry date (default: 30 days). When a share expires, Arx Runa automatically deletes the blobs from cloud on its next sync — no manual action required.
+
+## Download receipts
+
+When you share a file, the recipient's app is asked to send a delivery receipt. The recipient's app writes a small encrypted blob to your cloud storage after they successfully download the file. You can check for receipts at any time.
+
+### What the receipt contains
+
+The receipt is a JSON object sealed with [HPKE](../guides/glossary.md#hpke) to *your* public key — the same key that anchors your sharing identity:
+
+```json
+{ "share_id": "...", "downloaded_at": <unix timestamp> }
+```
+
+Only you can open it. The cloud sees an opaque blob uploaded to a `receipts/` prefix inside the share folder. It cannot read the timestamp or link it to a specific recipient.
+
+### How receipts are written
+
+After the recipient's app successfully downloads the shared blobs, it:
+
+1. Constructs the receipt payload with the `share_id` and current timestamp.
+2. HPKE-seals the payload to your public key — retrieved from the share package you sent.
+3. Uploads the sealed blob to `shared/<share_id>/receipts/<uuid>.blob` in your cloud storage.
+
+A second receipt is written to `import-receipts/<uuid>.blob` if the recipient imports the file into their own Arx Runa vault rather than saving it to disk directly. You can therefore distinguish "file reached their device" from "file entered their vault".
+
+Receipt upload is best-effort and non-fatal: if it fails, the download still completes successfully and the recipient receives no error. The failure is logged internally and the receipt will simply be absent.
+
+### How you check for receipts
+
+Arx Runa polls `shared/<share_id>/receipts/` using your own cloud credentials. For each blob it finds, it downloads and attempts `HPKE.Open` with your private key. Any blob it cannot open — because it is malformed or was not sealed to your key — is silently skipped.
+
+A valid receipt's timestamp is range-checked: it must fall between when you created the share and five minutes into the future (to tolerate clock skew). The earliest valid timestamp across all receipt blobs is recorded as the delivery time in your manifest.
+
+```mermaid
+sequenceDiagram
+    participant Recipient as Recipient (Arx Runa)
+    participant Cloud as Cloud Storage (sender's bucket)
+    participant Owner as Owner (Arx Runa)
+
+    note over Recipient,Cloud: After successful download
+    Recipient->>Recipient: Construct #123; share_id, downloaded_at #125;
+    Recipient->>Recipient: HPKE.Seal(sender_pub_key, payload)
+    Recipient->>Cloud: Upload sealed blob #8594; shared/<share_id>/receipts/<uuid>.blob
+    note over Recipient,Cloud: (separately, if imported into vault)
+    Recipient->>Cloud: Upload sealed blob #8594; shared/<share_id>/import-receipts/<uuid>.blob
+
+    note over Cloud,Owner: Owner checks for receipts
+    Owner->>Cloud: list_blobs("shared/<share_id>/receipts/")
+    Cloud-->>Owner: [<uuid>.blob, ...]
+    loop for each blob
+        Owner->>Cloud: download blob
+        Owner->>Owner: HPKE.Open(owner_priv_key) #8594; payload
+        Owner->>Owner: validate timestamp in [share_created_at, now + 5 min]
+        Owner->>Owner: record earliest valid timestamp
+    end
+```
+
+### Privacy properties
+
+- The receipt tells you the share was fetched; it does not contain the recipient's identity beyond the fact that whoever held the share package downloaded it.
+- The cloud cannot read the receipt — it is sealed to your public key.
+- Receipts are always requested. No receipt blob is ever written if the recipient's app fails to upload one (best-effort, non-fatal).

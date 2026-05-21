@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-check-pending-vault-operations"
+description = "Enables the check_pending_vault_operations command without any pre-configured scope."
+commands.allow = ["check_pending_vault_operations"]
+
+[[permission]]
+identifier = "deny-check-pending-vault-operations"
+description = "Denies the check_pending_vault_operations command without any pre-configured scope."
+commands.deny = ["check_pending_vault_operations"]

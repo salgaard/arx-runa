@@ -13,6 +13,11 @@ const {
 } = require("../helpers/vault");
 
 describe("Zero-Trace: no sensitive browser-side state after lock", function () {
+  // Each test does: beforeEach (waitUntil 90s + lockVault 20s) + test body
+  // (unlockExistingVault 90s + lockVault 20s) = up to ~220 s worst-case on a
+  // slow CI runner with cold Argon2. Override the global 120 s default.
+  this.timeout(240000);
+
   before(async function () {
     await createAndUnlockVault(browser);
   });

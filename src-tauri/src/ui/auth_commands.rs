@@ -29,7 +29,8 @@ use crate::storage::cloud::{
     CloudEndpoint, CloudTransport as _, DestinationSessionPublic, RcloneTransport, SyncConfig,
     destination_session::{
         BackupSyncMode, DestinationSession, DestinationType, build_session_rclone_conf,
-        destroy_session_rclone_conf, get_primary_destination, insert_destination_session,
+        create_session_rclone_dir, destroy_session_rclone_conf, get_primary_destination,
+        insert_destination_session,
     },
     upload_vault_header, validate_single_remote_stanza,
     vault_header::VaultHeader,
@@ -60,14 +61,6 @@ use crate::ui::vault_paths::{
 };
 
 // ─── Private helpers ────────────────────────────────────────────────────────
-
-/// Returns the session-lived rclone configuration file path.
-pub(crate) fn rclone_conf_path() -> PathBuf {
-    dirs::config_dir()
-        .expect("config_dir must be available")
-        .join("arx-runa")
-        .join("rclone.conf")
-}
 
 /// Converts an IPC `DestinationSessionConfig` into a storage `DestinationSession`.
 fn destination_from_config(config: &DestinationSessionConfig) -> DestinationSession {
@@ -121,10 +114,10 @@ fn format_cloud_error(
             "Failed to connect to {} (rclone exit code {}): {}",
             config.label, exit_code, stderr_sanitised
         ),
-        _ => format!(
-            "Failed to validate cloud storage '{}': {}",
-            config.label, err
-        ),
+        _ => {
+            tracing::warn!(label = %config.label, error = %err, "unrecognised cloud error");
+            format!("Failed to validate cloud storage '{}'", config.label)
+        }
     }
 }
 
@@ -178,15 +171,36 @@ async fn validate_storage_destination(
 ///
 /// Failures are logged as warnings. The caller must not treat this as fatal.
 async fn try_build_and_swap_rclone_transport(state: &AppState, db: &SqlCipherMetadataStore) {
-    let conf_path = rclone_conf_path();
-    // Remove any rclone.conf left by a previous crash before writing a new one.
-    if let Err(error) = destroy_session_rclone_conf(&conf_path).await {
-        tracing::warn!(
-            ?error,
-            path = %conf_path.display(),
-            "Failed to remove pre-existing rclone.conf before session start"
-        );
+    // Crash recovery: destroy any leftover conf from a previous session that failed to clean up.
+    if let Some(stale_conf_path) = state.session_manager.rclone_conf_path().await {
+        if let Err(error) = destroy_session_rclone_conf(&stale_conf_path).await {
+            tracing::warn!(
+                ?error,
+                path = %stale_conf_path.display(),
+                "Failed to remove pre-existing rclone.conf before session start"
+            );
+        }
+        if let Some(dir) = stale_conf_path.parent() {
+            let _ = tokio::fs::remove_dir(dir).await;
+        }
+        // Stale path is overwritten by set_rclone_conf_path below.
     }
+
+    let rclone_dir = match create_session_rclone_dir().await {
+        Ok(dir) => dir,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "Failed to create process-owned temp dir for rclone.conf"
+            );
+            return;
+        }
+    };
+    let conf_path = rclone_dir.join("rclone.conf");
+    state
+        .session_manager
+        .set_rclone_conf_path(conf_path.clone())
+        .await;
     if let Err(error) = build_session_rclone_conf(db, &conf_path).await {
         tracing::warn!(?error, "Failed to write rclone.conf");
         return;
@@ -334,16 +348,17 @@ pub async fn create_vault(
         ));
     }
 
+    // Track the ceremony-scoped temp dir so it can be removed after the ceremony.
+    let mut ceremony_rclone_dir: Option<PathBuf> = None;
     let cloud_transport_arc: Arc<dyn crate::storage::cloud::CloudTransport> =
         if primary_destination.destination_type == "cloud" {
             let dest_session = destination_from_config(&primary_destination);
-            let conf_path = rclone_conf_path();
+            let rclone_dir = create_session_rclone_dir().await.map_err(|_| {
+                IpcError::InternalError("Failed to create temporary directory for rclone".into())
+            })?;
+            let conf_path = rclone_dir.join("rclone.conf");
+            ceremony_rclone_dir = Some(rclone_dir);
             let binary_path = rclone_binary_path(state.app_handle.get());
-            if let Some(parent) = conf_path.parent() {
-                tokio::fs::create_dir_all(parent).await.map_err(|_| {
-                    IpcError::InternalError("Failed to create configuration directory".into())
-                })?;
-            }
             // Normalise the blob section header to match rclone_remote_name so rclone can
             // find the remote, regardless of what section name the OAuth flow used.
             let normalised_blob = validate_single_remote_stanza(
@@ -446,6 +461,14 @@ pub async fn create_vault(
             );
         }
         return Err(IpcError::from(err));
+    }
+
+    // Ceremony complete. Drop the ceremony transport and clean up the ceremony
+    // temp dir. try_build_and_swap_rclone_transport will create a fresh session dir.
+    drop(cloud_transport_arc);
+    if let Some(dir) = ceremony_rclone_dir {
+        let _ = destroy_session_rclone_conf(&dir.join("rclone.conf")).await;
+        let _ = tokio::fs::remove_dir(&dir).await;
     }
 
     if let Some(db) = state.session_manager.get_metadata_store().await {
@@ -838,11 +861,6 @@ pub async fn delete_vault(
 
     state.reset_cloud_transport().await;
 
-    let conf_path = rclone_conf_path();
-    if let Err(error) = destroy_session_rclone_conf(&conf_path).await {
-        tracing::warn!(?error, "Failed to destroy rclone.conf during vault delete");
-    }
-
     let vault_dir = default_vault_root().join(&vault_id);
     if let Err(error) = tokio::fs::remove_dir_all(&vault_dir).await {
         tracing::warn!(?error, "Failed to remove vault directory during delete");
@@ -915,11 +933,6 @@ pub async fn lock_session(state: State<'_, AppState>) -> Result<(), IpcError> {
 
     state.session_manager.lock().await;
     state.reset_cloud_transport().await;
-
-    let conf_path = rclone_conf_path();
-    if let Err(error) = destroy_session_rclone_conf(&conf_path).await {
-        tracing::warn!(?error, "Failed to destroy rclone.conf during lock");
-    }
 
     *state.active_vault_id.write().await = None;
     state.allowed_reveal_paths.lock().await.clear();
@@ -1227,15 +1240,13 @@ pub async fn recover_vault_from_cloud(
     )?;
 
     let dest_session = destination_from_config(&primary_destination);
-    let conf_path = rclone_conf_path();
+    let rclone_dir = create_session_rclone_dir().await.map_err(|e| {
+        tracing::warn!(error = %e, "temp dir creation failed");
+        IpcError::InternalError("Internal error".into())
+    })?;
+    let conf_path = rclone_dir.join("rclone.conf");
     let binary_path = rclone_binary_path(state.app_handle.get());
 
-    if let Some(parent) = conf_path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            tracing::warn!(error = %e, "config dir creation failed");
-            IpcError::InternalError("Internal error".into())
-        })?;
-    }
     let normalised_blob = validate_single_remote_stanza(
         &dest_session.rclone_config_blob,
         &dest_session.rclone_remote_name,
@@ -1255,7 +1266,7 @@ pub async fn recover_vault_from_cloud(
     };
     let transport = RcloneTransport::new(
         binary_path,
-        conf_path,
+        conf_path.clone(),
         &endpoint,
         &dest_public,
         SyncConfig::default(),
@@ -1343,6 +1354,12 @@ pub async fn recover_vault_from_cloud(
 
     let vault_id_str = vault_id.to_uuid().to_string();
 
+    // Ceremony done: drop the transport and clean up the ceremony-scoped temp dir
+    // before post_recovery_setup rebuilds the session transport in a fresh dir.
+    drop(transport);
+    let _ = destroy_session_rclone_conf(&conf_path).await;
+    let _ = tokio::fs::remove_dir(&rclone_dir).await;
+
     post_recovery_setup(&state, &dest_session, &vault_id_str).await;
 
     *state.active_vault_id.write().await = Some(vault_id_str.clone());
@@ -1392,15 +1409,13 @@ pub async fn recover_vault_from_cloud_with_phrase(
     )?;
 
     let dest_session = destination_from_config(&primary_destination);
-    let conf_path = rclone_conf_path();
+    let rclone_dir = create_session_rclone_dir().await.map_err(|e| {
+        tracing::warn!(error = %e, "temp dir creation failed");
+        IpcError::InternalError("Internal error".into())
+    })?;
+    let conf_path = rclone_dir.join("rclone.conf");
     let binary_path = rclone_binary_path(state.app_handle.get());
 
-    if let Some(parent) = conf_path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            tracing::warn!(error = %e, "config dir creation failed");
-            IpcError::InternalError("Internal error".into())
-        })?;
-    }
     let config_blob = match dest_session.destination_type {
         DestinationType::LocalPath | DestinationType::ExternalDrive => {
             format!("[{}]\ntype = local\n", dest_session.rclone_remote_name)
@@ -1434,7 +1449,7 @@ pub async fn recover_vault_from_cloud_with_phrase(
     };
     let transport = RcloneTransport::new(
         binary_path,
-        conf_path,
+        conf_path.clone(),
         &endpoint,
         &dest_public,
         SyncConfig::default(),
@@ -1520,6 +1535,12 @@ pub async fn recover_vault_from_cloud_with_phrase(
             IpcError::from(e)
         })?;
 
+    // Ceremony done: drop the transport and clean up the ceremony-scoped temp dir
+    // before post_recovery_setup rebuilds the session transport in a fresh dir.
+    drop(transport);
+    let _ = destroy_session_rclone_conf(&conf_path).await;
+    let _ = tokio::fs::remove_dir(&rclone_dir).await;
+
     post_recovery_setup(&state, &dest_session, &vault_id_str).await;
 
     *state.active_vault_id.write().await = Some(vault_id_str.clone());
@@ -1537,7 +1558,7 @@ pub async fn recover_vault_from_cloud_with_phrase(
     })
 }
 
-/// Scans a mounted drive for a 32-byte key file whose BLAKE3 hash matches
+/// Scans a mounted drive
 /// `expected_hash_hex`.
 ///
 /// Returns the absolute path of the matching file, or `None` if not found.

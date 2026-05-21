@@ -27,14 +27,6 @@ pub(crate) fn vault_db_path(vault_id: &str) -> PathBuf {
     default_vault_root().join(vault_id).join("vault.db")
 }
 
-/// Returns the vault header JSON path for a given vault identifier.
-#[allow(dead_code)] // Phase 7: used in direct vault-ID resolution
-pub(crate) fn vault_header_path(vault_id: &str) -> PathBuf {
-    default_vault_root()
-        .join(vault_id)
-        .join("vault-header.json")
-}
-
 /// Returns the staging directory path for a given vault.
 pub(crate) fn vault_staging_dir(vault_id: &str) -> PathBuf {
     default_vault_root().join(vault_id).join("staging")

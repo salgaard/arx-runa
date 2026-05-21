@@ -36,5 +36,5 @@ pub use sqlcipher::SqlCipherMetadataStore;
 pub use types::{BlobName, ChunkRecord, Node, NodeId, NodeType};
 pub use vault_ops::{
     RouteDecision, decide, delete_file, download_file, download_file_to_memory,
-    prepare_vault_storage, reencrypt_file, upload_file,
+    prepare_vault_storage, upload_file,
 };

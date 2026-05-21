@@ -8,7 +8,7 @@ applyTo: "src-tauri/src/crypto/**"
 
 - Cipher: `XChaCha20Poly1305` only (192-bit nonce); AES-GCM rejected
 - Nonces: 24 bytes via CSPRNG per chunk — never sequential/derived
-- Chunk AAD: `file_id || chunk_index` (big-endian); singletons: `file_key_wrapped` = empty AAD, manifest backup = no AAD
+- Chunk AAD: `file_id || chunk_index` (big-endian); `file_key_wrapped` AAD = `file_id.as_bytes()` (16-byte UUID, same identity as the node); manifest backup AAD = `vault_id.as_bytes()` (16 bytes)
 - Recovery slot AAD (mandatory): `b"arx-runa recovery v1" || vault_id_bytes` — use `wrap_master_key_for_recovery`/`unwrap_master_key_from_recovery`, never `wrap_file_key`
 - Chunk AAD mismatch = silent auth failure; missing chunk AAD enables swap/reorder attacks
 - Wire format: `[24B nonce | ciphertext | 16B tag]`; BLAKE3 checksum over encrypted blob (not plaintext)

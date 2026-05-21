@@ -1,6 +1,6 @@
 //! Share-package creation and import.
 //!
-//! A share package is a `.vgshare` binary blob sealed with HPKE for a specific
+//! A share package is a `.arxshare` binary blob sealed with HPKE for a specific
 //! X25519 recipient.  The inner JSON payload (`SharePackagePayload`) carries
 //! the file key, chunk metadata, and cloud endpoint required for a recipient
 //! to reconstruct access to a shared file.
@@ -128,6 +128,9 @@ pub(crate) async fn create_share_package(
         serde_json::to_vec(&payload)
             .map_err(|error| SharingError::InvalidJsonPayload(error.to_string()))?,
     );
+    // H-001: drop payload (and its zeroizing Drop impl) immediately after serialisation,
+    // before the HPKE seal, to narrow the window during which the base64 key sits on heap.
+    drop(payload);
 
     let wire = hpke::seal(recipient_public_key, &plaintext)?;
     Ok(wire)
@@ -153,6 +156,8 @@ pub(crate) async fn import_share_package(
     validate_payload(&payload)?;
 
     let file_key_bytes: Zeroizing<[u8; 32]> = decode_file_key(&payload.file_key)?;
+    // H-002: zeroize the base64 key string before further heap allocations.
+    payload.file_key.zeroize();
     let sender_public_key_bytes = decode_sender_public_key(&payload.sender_public_key)?;
 
     let file_key = FileKey::from_secret_box(SecretBox::<[u8; 32]>::init_with_mut(|buffer| {
@@ -786,5 +791,87 @@ mod tests {
         let persisted = received_shares.lock().await;
         assert_eq!(persisted.len(), 1);
         assert_eq!(persisted[0].share_id, received.share_id);
+    }
+
+    /// H-001: Verifies that `SharePackagePayload::drop` zeroizes `file_key` via the Drop impl.
+    /// Uses `ManuallyDrop` to run `Drop` without freeing the allocation so we can inspect the
+    /// field afterwards — the standard pattern for testing `Zeroize` implementations.
+    #[test]
+    fn test_share_package_payload_drop_impl_zeroizes_file_key() {
+        use std::mem::ManuallyDrop;
+
+        let key_str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_owned();
+        let mut payload = ManuallyDrop::new(SharePackagePayload {
+            share_id: String::new(),
+            file_id: String::new(),
+            file_name: String::new(),
+            chunk_count: 0,
+            chunk_size: 0,
+            chunk_uuids: vec![],
+            file_key: key_str,
+            sender_public_key: String::new(),
+            cloud_endpoint: serde_json::Value::Null,
+            file_size: 0,
+            expires_at: None,
+        });
+        // SAFETY: we invoke Drop manually on the ManuallyDrop wrapper so the backing
+        // allocation stays live. Accessing the zeroed field afterwards is intentional
+        // and safe because ManuallyDrop prevents the compiler from inserting a second drop.
+        unsafe { ManuallyDrop::drop(&mut payload) };
+        assert!(
+            payload.file_key.as_bytes().iter().all(|&b| b == 0),
+            "file_key backing bytes should be zeroed after Drop runs"
+        );
+    }
+
+    /// H-002: Verifies that `import_share_package` decodes `file_key` correctly even
+    /// after the early `payload.file_key.zeroize()` call, by completing a full
+    /// create→import round trip and asserting the wrapped key is non-zero.
+    #[tokio::test]
+    async fn test_import_share_package_early_zeroize_does_not_corrupt_wrapped_key() {
+        let kek = make_test_kek();
+        let node_id = Uuid::new_v4();
+        let wrapped = make_wrapped_file_key(&kek, node_id);
+        let node = make_test_node(node_id, wrapped);
+        let chunks = make_test_chunks(&node.node_id);
+        let (_sender_secret, sender_public_key) = make_x25519_keypair();
+        let (recipient_secret, recipient_public_key) = make_x25519_keypair();
+
+        let metadata_store = FakeMetadataStore {
+            node: node.clone(),
+            chunks,
+            chunk_size_bytes: "4194304".to_owned(),
+        };
+        let sharing_store = FakeSharingStore {
+            owner_public_key: sender_public_key,
+            received_shares: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let wire = create_share_package(
+            *node.node_id.as_uuid(),
+            &recipient_public_key,
+            None,
+            serde_json::json!({}),
+            &metadata_store,
+            &sharing_store,
+            &kek,
+        )
+        .await
+        .expect("create should succeed");
+
+        let received = import_share_package(
+            &wire,
+            &recipient_secret,
+            &kek,
+            &sharing_store,
+            1_700_000_400,
+        )
+        .await
+        .expect("import should succeed — early zeroize must not corrupt the decoded key");
+
+        assert!(
+            !received.file_key_wrapped.iter().all(|&b| b == 0),
+            "wrapped file key must be non-zero after import"
+        );
     }
 }

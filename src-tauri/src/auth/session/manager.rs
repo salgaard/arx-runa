@@ -58,6 +58,7 @@ struct TimerContext {
     lifecycle: Arc<RwLock<LifecycleState>>,
     counter: watch::Receiver<u32>,
     gate_and_counter: Arc<AtomicU32>,
+    rclone_conf_path: Arc<RwLock<Option<PathBuf>>>,
 }
 
 /// Owns session lifecycle transitions, timeout management, and operation gating.
@@ -80,6 +81,9 @@ pub struct SessionManager {
     vault_id: Arc<RwLock<Option<String>>>,
     /// Path to the vault database file, populated on session install and cleared on lock.
     vault_db_path: Arc<RwLock<Option<PathBuf>>>,
+    /// Path to the session-lived `rclone.conf` file inside the process-owned temp directory.
+    /// Populated on session open and atomically taken (cleared) on lock or timeout.
+    rclone_conf_path: Arc<RwLock<Option<PathBuf>>>,
 }
 
 /// RAII guard that decrements the operation counter on drop.
@@ -134,6 +138,7 @@ impl SessionManager {
             timer_deadline: Arc::new(RwLock::new(None)),
             vault_id: Arc::new(RwLock::new(None)),
             vault_db_path: Arc::new(RwLock::new(None)),
+            rclone_conf_path: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -158,6 +163,7 @@ impl SessionManager {
             timer_deadline: Arc::new(RwLock::new(None)),
             vault_id: Arc::new(RwLock::new(None)),
             vault_db_path: Arc::new(RwLock::new(None)),
+            rclone_conf_path: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -264,14 +270,8 @@ impl SessionManager {
 
         // Open SQLCipher database with derived key after keys are validated.
         let db_path = vault_db_path(&vault_id);
-        let sqlcipher_key_bytes: Zeroizing<[u8; 32]> = {
-            let mut key_bytes = Zeroizing::new([0u8; 32]);
-            key_bytes.copy_from_slice(derived.sqlcipher_key.expose());
-            key_bytes
-        };
-
         let metadata_store = if db_path.exists() {
-            match SqlCipherMetadataStore::open(&db_path, &sqlcipher_key_bytes).await {
+            match SqlCipherMetadataStore::open(&db_path, derived.sqlcipher_key.expose()).await {
                 Ok(store) => {
                     tracing::info!("opened vault metadata database for vault_id={}", vault_id);
                     Some(Arc::new(store))
@@ -342,7 +342,7 @@ impl SessionManager {
         // Securely delete the temporary rclone.conf file before zeroizing session keys.
         // The file is session-lived and contains cloud provider credentials that must not
         // be left on disk. Uses overwrite-then-delete pattern to prevent recovery.
-        Self::destroy_rclone_conf().await;
+        self.destroy_rclone_conf().await;
 
         {
             let mut session_guard = self.session.write().await;
@@ -481,14 +481,8 @@ impl SessionManager {
 
         // Open SQLCipher database with derived key for ceremony-created session.
         let db_path = vault_db_path.to_path_buf();
-        let sqlcipher_key_bytes: Zeroizing<[u8; 32]> = {
-            let mut key_bytes = Zeroizing::new([0u8; 32]);
-            key_bytes.copy_from_slice(keys.sqlcipher_key.expose());
-            key_bytes
-        };
-
         let metadata_store = if db_path.exists() {
-            match SqlCipherMetadataStore::open(&db_path, &sqlcipher_key_bytes).await {
+            match SqlCipherMetadataStore::open(&db_path, keys.sqlcipher_key.expose()).await {
                 Ok(store) => {
                     tracing::info!(
                         "opened vault metadata database for vault_id={} (ceremony install)",
@@ -537,18 +531,10 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Installs pre-derived session keys and transitions `NoSession | Expired → Active`.
+    /// Convenience wrapper: acquires the install gate, then finalises the install.
     ///
-    /// Used by ceremony flows (`create_vault`, `recover_vault`,
-    /// `recover_with_phrase`) where the master-key bytes have already been
-    /// derived in ceremony-local scope and expanded into `SessionKeys` via
-    /// `SessionKeys::from_master_key_bytes`. Unlike `authenticate`, this
-    /// method does not run Argon2id.
-    ///
-    /// # Errors
-    /// Returns `AuthenticationError::SessionAlreadyActive` if a session is
-    /// already active; the ceremony must call `lock()` first.
-    #[allow(dead_code)]
+    /// Used in unit tests only.
+    #[cfg(test)]
     pub(crate) async fn install_session(
         &self,
         keys: SessionKeys,
@@ -597,14 +583,8 @@ impl SessionManager {
                 }
             }
         };
-        let sqlcipher_key_bytes: Zeroizing<[u8; 32]> = {
-            let mut key_bytes = Zeroizing::new([0u8; 32]);
-            key_bytes.copy_from_slice(new_keys.sqlcipher_key.expose());
-            key_bytes
-        };
-
         let metadata_store = if db_path.exists() {
-            match SqlCipherMetadataStore::open(&db_path, &sqlcipher_key_bytes).await {
+            match SqlCipherMetadataStore::open(&db_path, new_keys.sqlcipher_key.expose()).await {
                 Ok(store) => {
                     tracing::info!(
                         "swapped vault metadata database connection for vault_id={}",
@@ -686,11 +666,12 @@ impl SessionManager {
         Ok(callback(keys.sqlcipher_key.expose()))
     }
 
-    /// Invokes `callback` with the active manifest key under the session read lock.
+    /// Invokes `callback` with the raw manifest key bytes under the session
+    /// read lock.
     ///
     /// # Errors
-    /// Returns `AuthenticationError::SessionNotActive` if no session is currently installed.
-    #[allow(dead_code)]
+    /// Returns `AuthenticationError::SessionNotActive` if no session is
+    /// currently installed.
     pub(crate) async fn with_manifest_key<F, R>(
         &self,
         callback: F,
@@ -779,8 +760,10 @@ impl SessionManager {
     /// If the file does not exist, this is not considered an error. If overwrite or deletion
     /// fails, a warning is logged but the session closes normally — loss of secure deletion
     /// is not fatal (the session is already being torn down).
-    async fn destroy_rclone_conf() {
-        let conf_path = Self::session_rclone_conf_path();
+    async fn destroy_rclone_conf(&self) {
+        let Some(conf_path) = self.take_rclone_conf_path().await else {
+            return;
+        };
         if let Err(error) =
             crate::storage::cloud::destination_session::destroy_session_rclone_conf(&conf_path)
                 .await
@@ -791,15 +774,32 @@ impl SessionManager {
                 "Failed to securely delete rclone.conf during session lock; file may remain on disk"
             );
         }
+        if let Some(dir) = conf_path.parent()
+            && let Err(error) = tokio::fs::remove_dir(dir).await
+        {
+            tracing::warn!(
+                ?error,
+                path = %dir.display(),
+                "Failed to remove rclone temp dir after session lock"
+            );
+        }
     }
 
-    /// Returns the deterministic path to the session-lived rclone.conf file.
-    /// This file is written during session startup and must be securely deleted on session close.
-    fn session_rclone_conf_path() -> PathBuf {
-        dirs::config_dir()
-            .expect("config_dir must be available")
-            .join("arx-runa")
-            .join("rclone.conf")
+    /// Stores the path to the session-lived `rclone.conf` file.
+    /// Called after the process-owned temp directory and conf file have been created.
+    pub(crate) async fn set_rclone_conf_path(&self, path: PathBuf) {
+        let mut guard = self.rclone_conf_path.write().await;
+        *guard = Some(path);
+    }
+
+    /// Returns a clone of the current session `rclone.conf` path, if set.
+    pub(crate) async fn rclone_conf_path(&self) -> Option<PathBuf> {
+        self.rclone_conf_path.read().await.clone()
+    }
+
+    /// Takes and clears the stored `rclone.conf` path (destructive read).
+    async fn take_rclone_conf_path(&self) -> Option<PathBuf> {
+        self.rclone_conf_path.write().await.take()
     }
 
     /// Cancels the currently active timeout task, if present.
@@ -832,6 +832,7 @@ impl SessionManager {
             lifecycle: Arc::clone(&self.lifecycle),
             counter: self.operation_counter_receiver.clone(),
             gate_and_counter: Arc::clone(&self.gate_and_counter),
+            rclone_conf_path: Arc::clone(&self.rclone_conf_path),
         };
 
         let join = tokio::spawn(Self::run_timer(
@@ -888,8 +889,28 @@ impl SessionManager {
             return;
         }
 
-        // Securely delete rclone.conf on timeout (M1)
-        Self::destroy_rclone_conf().await;
+        // Securely delete rclone.conf on timeout. Take the path atomically so a concurrent
+        // lock() call (if somehow triggered) won't double-delete.
+        {
+            let maybe_path = context.rclone_conf_path.write().await.take();
+            if let Some(conf_path) = maybe_path {
+                if let Err(error) =
+                    crate::storage::cloud::destination_session::destroy_session_rclone_conf(
+                        &conf_path,
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        ?error,
+                        path = %conf_path.display(),
+                        "Failed to securely delete rclone.conf on session timeout; file may remain on disk"
+                    );
+                }
+                if let Some(dir) = conf_path.parent() {
+                    let _ = tokio::fs::remove_dir(dir).await;
+                }
+            }
+        }
 
         {
             let mut session_guard = context.session.write().await;
@@ -2057,46 +2078,43 @@ mod tests {
 
     #[tokio::test]
     async fn test_lock_securely_deletes_rclone_conf_when_file_exists() {
-        // Create a test rclone.conf file with sensitive content
-        let test_conf_path = SessionManager::session_rclone_conf_path();
-        if let Some(parent) = test_conf_path.parent() {
-            let _ = tokio::fs::create_dir_all(parent).await;
-        }
+        // Create a process-owned temp dir for this test.
+        let temp_dir = crate::storage::cloud::destination_session::create_session_rclone_dir()
+            .await
+            .expect("create_session_rclone_dir must succeed");
+        let test_conf_path = temp_dir.join("rclone.conf");
 
-        // Write a test file with recognizable content
+        // Write a test file with recognizable content.
         let test_content = b"[test-remote]\ntype = s3\naccess_key_id = SECRET_KEY_12345\nsecret_access_key = SECRET_SECRET_67890\n";
         tokio::fs::write(&test_conf_path, test_content)
             .await
             .expect("Failed to write test rclone.conf");
 
-        // Verify file exists before lock
         assert!(
             test_conf_path.exists(),
             "test rclone.conf should exist before lock"
         );
 
-        // Authenticate and lock (which should delete the file)
+        // Authenticate, register the conf path, then lock.
         let manager = SessionManager::with_timeout(Duration::from_secs(5));
         authenticate_tier1(&manager).await;
+        manager.set_rclone_conf_path(test_conf_path.clone()).await;
         manager.lock().await;
 
-        // Verify file is deleted after lock
+        // Both the conf file and the temp dir must be gone.
         assert!(
             !test_conf_path.exists(),
             "rclone.conf should be deleted after lock"
         );
-
-        // Clean up any leftover directory
-        let _ = tokio::fs::remove_dir_all(test_conf_path.parent().unwrap()).await;
+        assert!(
+            !temp_dir.exists(),
+            "rclone temp dir should be removed after lock"
+        );
     }
 
     #[tokio::test]
     async fn test_lock_handles_missing_rclone_conf_gracefully() {
-        // Ensure the test rclone.conf doesn't exist
-        let test_conf_path = SessionManager::session_rclone_conf_path();
-        let _ = tokio::fs::remove_file(&test_conf_path).await;
-
-        // Authenticate and lock (should not error even if file doesn't exist)
+        // Lock without ever setting a conf path — should complete without errors.
         let manager = SessionManager::with_timeout(Duration::from_secs(5));
         authenticate_tier1(&manager).await;
 

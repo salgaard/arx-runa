@@ -336,7 +336,6 @@ pub(crate) async fn gdrive_create_permission(
 /// Revokes a Drive permission by deleting it.
 ///
 /// Calls `DELETE /drive/v3/files/{folder_id}/permissions/{permission_id}`.
-#[allow(dead_code)] // TODO(phase-6): called from revoke_share command
 pub(crate) async fn gdrive_delete_permission(
     client: &Client,
     access_token: &str,

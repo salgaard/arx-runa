@@ -121,7 +121,7 @@ async fn flush_one_blob(
 
     // Each epoch blob is an independent ciphertext unit with its own key and UUID.
     // Its AEAD FileId is the blob's own UUID, not any constituent file's node UUID — by design.
-    let chunk = Zeroizing::new(std::mem::take(packed.as_mut()));
+    let chunk = std::mem::take(&mut packed);
     let encrypted = encrypt_chunk(
         chunk,
         &file_key,

@@ -139,7 +139,10 @@ exports.config = {
   reporters: ["spec"],
   mochaOpts: {
     ui: "bdd",
-    timeout: 60000,
+    // 120 s default — enough for a single Argon2 unlock (≤90 s on slow CI)
+    // plus a lock cycle. Tests that chain multiple unlock/lock cycles override
+    // via this.timeout() inside their describe block.
+    timeout: 120000,
   },
 
   // Build the app before running tests (unless E2E_SKIP_BUILD=1).

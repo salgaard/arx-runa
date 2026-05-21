@@ -642,7 +642,7 @@ pub fn ShareModal(
     #[prop(into)] on_success: Callback<ShareResponse>,
 ) -> impl IntoView {
     let selected_contact_id = RwSignal::new(None::<String>);
-    let expiration_days = RwSignal::new(None::<String>);
+    let expiration_days = RwSignal::new(Some("30".to_string()));
     let contacts = RwSignal::new(Vec::<ContactEntry>::new());
     let loading_contacts = RwSignal::new(true);
     let sharing = RwSignal::new(false);
@@ -687,7 +687,6 @@ pub fn ShareModal(
                     file_id: file_id_clone,
                     contact_id: contact_id.clone(),
                     expiration_days: expiry_opt,
-                    request_receipt: true,
                 },
             )
             .await
@@ -766,19 +765,20 @@ pub fn ShareModal(
                     }}
 
                     <div>
-                        <label class="block text-sm text-text-secondary mb-1">"Expiration (days, optional)"</label>
-                        <input
-                            type="number"
-                            min="1"
+                        <label class="block text-sm text-text-secondary mb-1">"Expiration"</label>
+                        <select
                             class="w-full px-3 py-2 bg-iron border border-steel text-bone rounded"
-                            placeholder="Leave blank for no expiration"
-                            value=move || expiration_days.get().unwrap_or_default()
-                            on:input=move |e| {
+                            on:change=move |e| {
                                 let value = event_target_value(&e);
                                 expiration_days.set(if value.is_empty() { None } else { Some(value) });
                             }
                             disabled=move || sharing.get()
-                        />
+                        >
+                            <option value="7" selected=move || expiration_days.get().as_deref() == Some("7")>"7 days"</option>
+                            <option value="30" selected=move || expiration_days.get().as_deref() == Some("30")>"30 days"</option>
+                            <option value="90" selected=move || expiration_days.get().as_deref() == Some("90")>"90 days"</option>
+                            <option value="" selected=move || expiration_days.get().is_none()>"No expiration"</option>
+                        </select>
                     </div>
                 </div>
 
@@ -810,74 +810,5 @@ pub fn ShareModal(
                 </div>
             </div>
         </div>
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Verifies that the `ShareModal` component disables the Share button when
-    /// no contact is selected. The Share button's `disabled` attribute depends on
-    /// `selected_contact_id.get().is_none()`, which means it starts disabled and
-    /// remains disabled until a contact is selected.
-    #[test]
-    fn test_share_modal_disables_submit_with_no_contact_selected() {
-        // Structural test: ShareModal should compile
-        // In a real Leptos test environment, we would:
-        // 1. Mount ShareModal with sample file_id and file_name
-        // 2. Verify the Share button has `disabled` attribute set to true initially
-        // 3. Select a contact from the dropdown
-        // 4. Verify the Share button becomes enabled
-        //
-        // The button element in ShareModal has:
-        // `disabled=move || sharing.get() || selected_contact_id.get().is_none()`
-        // So it is disabled when either:
-        // - sharing is true (operation in progress), or
-        // - selected_contact_id is None (no contact selected)
-        let _ = ShareModal;
-    }
-
-    /// Verifies that `ReceivedShareItem` invokes the refresh callback on successful
-    /// download. The `on_refresh` callback should be called with `run(())` after a
-    /// successful `invoke_command("download_received_share", ...)` response.
-    #[test]
-    fn test_received_share_item_download_refreshes_list() {
-        // Structural test: ReceivedShareItem should compile
-        // In an integration test environment, we would:
-        // 1. Create a mock ReceivedShareEntry
-        // 2. Mount ReceivedShareItem with a callback that tracks invocation
-        // 3. Mock invoke_command to return Ok(DownloadReceivedShareResponse { file_name: "..." })
-        // 4. Click the Download button (after selecting a save path)
-        // 5. Verify the callback was invoked (which triggers refresh_key increment)
-        let _ = ReceivedShareItem;
-    }
-
-    /// Verifies that `SentShareItem` requires a confirmation step before revoking
-    /// a share. When the Revoke button is clicked, a confirmation modal appears
-    /// with options to confirm or cancel; the revocation only proceeds if the user
-    /// clicks "Confirm Revoke".
-    #[test]
-    fn test_sent_share_item_revoke_requires_confirmation() {
-        // Structural test: SentShareItem should compile
-        // In a real Leptos test environment, we would:
-        // 1. Create a mock ShareEntry with revoked = false
-        // 2. Mount SentShareItem with an on_revoke callback
-        // 3. Click the Revoke button
-        // 4. Verify the confirmation modal appears (show_confirm becomes true)
-        // 5. Verify "Confirm Revoke" button is now visible
-        // 6. Click Cancel
-        // 7. Verify confirmation modal closes without invoking revoke
-        // 8. Click Revoke again, then click "Confirm Revoke"
-        // 9. Verify invoke_command("revoke_share", ...) is called
-        // 10. Verify on_revoke callback is invoked on success
-        //
-        // The two-stage flow in SentShareItem is:
-        // 1. Initial state: show_confirm = false, Revoke button visible
-        // 2. Click Revoke: show_confirm.set(true), confirmation modal appears
-        // 3. Confirmation modal with two buttons:
-        //    - "Confirm Revoke": invokes revoke command, then on_revoke callback
-        //    - "Cancel": show_confirm.set(false), hides modal
-        let _ = SentShareItem;
     }
 }

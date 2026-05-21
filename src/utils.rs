@@ -127,10 +127,4 @@ mod tests {
         let fingerprint = format_fingerprint(&test_key_b64);
         assert_eq!(fingerprint, "");
     }
-
-    #[test]
-    fn test_format_relative_time_recent() {
-        // This is hard to test without a real timestamp, so we skip for now
-        // Real tests would use mock time
-    }
 }

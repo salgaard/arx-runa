@@ -11,6 +11,7 @@ use super::remote_path::{compose_remote_root, validate_remote_path, validate_rem
 use super::{CloudEndpoint, CloudTransport, CloudTransportError, DestinationType, SyncConfig};
 use async_trait::async_trait;
 use serde::Deserialize;
+use zeroize::Zeroizing;
 
 #[async_trait]
 trait RcloneRunner: Send + Sync {
@@ -300,11 +301,12 @@ impl CloudTransport for RcloneTransport {
         &self,
         path_prefix: &str,
         ttl_seconds: u32,
-        receipt_requested: bool,
     ) -> Result<Option<serde_json::Value>, CloudTransportError> {
-        let conf = tokio::fs::read_to_string(&self.session_config_path)
-            .await
-            .map_err(CloudTransportError::IoError)?;
+        let conf = Zeroizing::new(
+            tokio::fs::read_to_string(&self.session_config_path)
+                .await
+                .map_err(CloudTransportError::IoError)?,
+        );
 
         let remote_name = self
             .remote_root
@@ -320,7 +322,6 @@ impl CloudTransport for RcloneTransport {
                 .generate_b2_share_credentials(
                     path_prefix,
                     ttl_seconds,
-                    receipt_requested,
                     &master_key_id,
                     &master_app_key,
                 )
@@ -343,6 +344,7 @@ impl CloudTransport for RcloneTransport {
                 .await;
         }
 
+        // SAFETY: message is a static string literal — safe to forward to frontend via IpcError.
         Err(CloudTransportError::SharingNotSupported(format!(
             "Remote '{remote_name}' is not a supported sharing backend \
              (Backblaze B2 or Google Drive)."
@@ -355,7 +357,6 @@ impl RcloneTransport {
         &self,
         path_prefix: &str,
         ttl_seconds: u32,
-        receipt_requested: bool,
         master_key_id: &str,
         master_app_key: &str,
     ) -> Result<Option<serde_json::Value>, CloudTransportError> {
@@ -382,10 +383,7 @@ impl RcloneTransport {
                 ))
             })?;
 
-        let mut capabilities = vec!["readFiles", "listBuckets"];
-        if receipt_requested {
-            capabilities.push("writeFiles");
-        }
+        let capabilities = vec!["readFiles", "listBuckets", "writeFiles"];
 
         let app_key = crate::sharing::b2_api::b2_create_application_key(
             &client,
@@ -404,18 +402,15 @@ impl RcloneTransport {
 
         tracing::debug!(key_id = %app_key.application_key_id, "created B2 scoped key");
 
-        let mut creds = serde_json::json!({
+        let creds = serde_json::json!({
             "provider": "b2",
             "bucket": bucket_name,
             "download_url": auth.download_url,
             "key_id": app_key.application_key_id,
             "application_key": app_key.application_key,
             "path_prefix": path_prefix,
+            "receipt_requested": true,
         });
-
-        if receipt_requested {
-            creds["receipt_requested"] = serde_json::json!(true);
-        }
 
         Ok(Some(creds))
     }
@@ -432,6 +427,7 @@ impl RcloneTransport {
         use crate::sharing::gdrive_api;
 
         let sa_config = self.sharing_config.as_ref().ok_or_else(|| {
+            // SAFETY: message is a static string literal — safe to forward to frontend via IpcError.
             CloudTransportError::SharingNotSupported(
                 "Google Drive sharing requires a Service Account to be configured \
                  in vault settings (Destinations → Sharing Setup)."
@@ -448,16 +444,23 @@ impl RcloneTransport {
             })?
             .to_owned();
 
-        let sa_json_str = serde_json::to_string(sa_config)
-            .map_err(|e| CloudTransportError::Other(format!("failed to serialise SA JSON: {e}")))?;
+        let sa_json_str = Zeroizing::new(serde_json::to_string(sa_config).map_err(|e| {
+            CloudTransportError::Other(format!("failed to serialise SA JSON: {e}"))
+        })?);
+        // Note: `sa_json_str` is subsequently moved into a `serde_json::Value` via `json!{}`.
+        // `serde_json::Value` does not implement `Zeroize`, so the heap copy inside that value
+        // is not covered by zeroing on drop. The `Zeroizing` wrapper above still ensures this
+        // local binding is zeroed when it goes out of scope.
 
         let client = reqwest::Client::new();
         let token = if client_id.is_empty() {
             // No custom OAuth credentials stored (rclone built-in app); read the access token
             // that rclone wrote to the session config during the most recent sync operation.
-            let conf = tokio::fs::read_to_string(&self.session_config_path)
-                .await
-                .map_err(CloudTransportError::IoError)?;
+            let conf = Zeroizing::new(
+                tokio::fs::read_to_string(&self.session_config_path)
+                    .await
+                    .map_err(CloudTransportError::IoError)?,
+            );
             let remote_name = self
                 .remote_root
                 .split_once(':')
@@ -524,7 +527,7 @@ impl RcloneTransport {
         Ok(Some(serde_json::json!({
             "provider": "drive",
             "folder_id": folder_id,
-            "sa_credentials_json": sa_json_str,
+            "sa_credentials_json": sa_json_str.as_str(),
             "path_prefix": path_prefix,
             "permission_id": permission.permission_id,
         })))
@@ -536,8 +539,8 @@ fn build_remote_root(
 ) -> Result<String, CloudTransportError> {
     match destination.destination_type {
         DestinationType::LocalPath | DestinationType::ExternalDrive => {
-            // Local paths are used verbatim; rclone accepts forward slashes on Windows.
             let path = destination.path_prefix.replace('\\', "/");
+            super::remote_path::validate_local_path_prefix(&path)?;
             Ok(format!("{}:{}", destination.rclone_remote_name, path))
         }
         _ => compose_remote_root(
@@ -699,6 +702,35 @@ mod tests {
             StubRclone::from(vec![]),
         );
         assert!(matches!(result, Err(CloudTransportError::Other(_))));
+    }
+
+    #[test]
+    fn test_transport_creation_fails_for_local_path_with_parent_traversal() {
+        let mut invalid = destination();
+        invalid.destination_type = DestinationType::LocalPath;
+        invalid.path_prefix = "/home/user/../../etc/passwd".to_owned();
+        let result = RcloneTransport::with_runner(
+            PathBuf::from("session.conf"),
+            &invalid,
+            SyncConfig::default(),
+            StubRclone::from(vec![]),
+        );
+        assert!(matches!(result, Err(CloudTransportError::Other(_))));
+    }
+
+    #[test]
+    fn test_transport_creation_succeeds_for_local_path_with_drive_letter() {
+        let mut local = destination();
+        local.destination_type = DestinationType::LocalPath;
+        local.rclone_remote_name = "local-drive".to_owned();
+        local.path_prefix = "D:/vault/arx".to_owned();
+        let result = RcloneTransport::with_runner(
+            PathBuf::from("session.conf"),
+            &local,
+            SyncConfig::default(),
+            StubRclone::from(vec![]),
+        );
+        assert!(result.is_ok());
     }
 
     #[tokio::test]

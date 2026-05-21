@@ -158,10 +158,63 @@ pub(crate) fn validate_remote_root_component<'a>(
     Ok(value)
 }
 
+/// Validates a local `path_prefix` before embedding it in an rclone local-remote root.
+///
+/// Accepts absolute paths used for `LocalPath` and `ExternalDrive` destinations, including
+/// Windows paths with a drive-letter prefix (`D:/vault`).  Backslashes must already be
+/// normalized to forward slashes by the caller before this function is invoked.
+///
+/// Rejects:
+/// - Empty string
+/// - Control characters
+/// - `..` path traversal segments
+/// - Consecutive slashes (`//`)
+/// - Colons anywhere other than position 1 of a Windows drive prefix (`X:`)
+pub(crate) fn validate_local_path_prefix(path: &str) -> Result<(), CloudTransportError> {
+    if path.is_empty() {
+        return Err(CloudTransportError::Other(
+            "local path_prefix rejected: path is empty".to_owned(),
+        ));
+    }
+    if path.chars().any(char::is_control) {
+        return Err(CloudTransportError::Other(
+            "local path_prefix rejected: path contains control characters".to_owned(),
+        ));
+    }
+    if path.contains("..") {
+        return Err(CloudTransportError::Other(
+            "local path_prefix rejected: path must not contain parent traversal (..)".to_owned(),
+        ));
+    }
+    if path.contains("//") {
+        return Err(CloudTransportError::Other(
+            "local path_prefix rejected: path must not contain empty path segments (//)".to_owned(),
+        ));
+    }
+    // Allow exactly one colon at position 1 (Windows drive letter, e.g. "C:/vault").
+    // Any colon at other positions is a shell-injection / rclone remote confusion risk.
+    let path_after_drive = if path.len() >= 2
+        && path.as_bytes()[1] == b':'
+        && path.as_bytes()[0].is_ascii_alphabetic()
+    {
+        &path[2..]
+    } else {
+        path
+    };
+    if path_after_drive.contains(':') {
+        return Err(CloudTransportError::Other(
+            "local path_prefix rejected: path must not contain ':' except for a leading drive letter"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        compose_remote_root, validate_remote_name, validate_remote_path, validate_remote_prefix,
+        compose_remote_root, validate_local_path_prefix, validate_remote_name,
+        validate_remote_path, validate_remote_prefix,
     };
     use crate::storage::cloud::CloudTransportError;
 
@@ -251,5 +304,62 @@ mod tests {
     #[test]
     fn test_validate_remote_name_accepts_arx_uuid_prefix_format() {
         assert!(validate_remote_name("arx_550e8400").is_ok());
+    }
+
+    #[test]
+    fn test_validate_local_path_prefix_accepts_unix_absolute_path() {
+        assert!(validate_local_path_prefix("/home/user/vault").is_ok());
+    }
+
+    #[test]
+    fn test_validate_local_path_prefix_accepts_windows_drive_path() {
+        assert!(validate_local_path_prefix("D:/vault/arx").is_ok());
+    }
+
+    #[test]
+    fn test_validate_local_path_prefix_accepts_relative_path() {
+        assert!(validate_local_path_prefix("vault/data").is_ok());
+    }
+
+    #[test]
+    fn test_validate_local_path_prefix_rejects_empty() {
+        let result = validate_local_path_prefix("");
+        assert!(matches!(result, Err(CloudTransportError::Other(_))));
+    }
+
+    #[test]
+    fn test_validate_local_path_prefix_rejects_parent_traversal() {
+        let result = validate_local_path_prefix("../../home/other");
+        assert!(matches!(result, Err(CloudTransportError::Other(_))));
+    }
+
+    #[test]
+    fn test_validate_local_path_prefix_rejects_parent_traversal_in_middle() {
+        let result = validate_local_path_prefix("/home/user/../other");
+        assert!(matches!(result, Err(CloudTransportError::Other(_))));
+    }
+
+    #[test]
+    fn test_validate_local_path_prefix_rejects_control_character() {
+        let result = validate_local_path_prefix("/home/user/\x00vault");
+        assert!(matches!(result, Err(CloudTransportError::Other(_))));
+    }
+
+    #[test]
+    fn test_validate_local_path_prefix_rejects_double_slash() {
+        let result = validate_local_path_prefix("/home//vault");
+        assert!(matches!(result, Err(CloudTransportError::Other(_))));
+    }
+
+    #[test]
+    fn test_validate_local_path_prefix_rejects_colon_in_path_body() {
+        let result = validate_local_path_prefix("/home/user/va:ult");
+        assert!(matches!(result, Err(CloudTransportError::Other(_))));
+    }
+
+    #[test]
+    fn test_validate_local_path_prefix_rejects_drive_letter_with_extra_colon() {
+        let result = validate_local_path_prefix("D:/vault:bad");
+        assert!(matches!(result, Err(CloudTransportError::Other(_))));
     }
 }

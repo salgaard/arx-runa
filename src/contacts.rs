@@ -385,37 +385,3 @@ fn ContactListPanel(refresh_trigger: RwSignal<u32>) -> impl IntoView {
         </div>
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Verifies that the `ContactList` component compiles and renders without errors.
-    /// This is a structural test that ensures all Leptos reactive signals compile
-    /// correctly and the component definition is valid.
-    #[test]
-    fn test_contact_list_renders_empty() {
-        // Structural test: ContactList component should compile
-        // In a real Leptos test environment, we would mount the component and verify
-        // that it renders the empty state message when no contacts are loaded.
-        // This test passes if the component compiles without errors.
-        let _ = ContactList;
-    }
-
-    /// Verifies that `AddContactForm` validates empty display names.
-    /// The form should set an error message when the user attempts to submit with
-    /// an empty or whitespace-only display name.
-    #[test]
-    fn test_add_contact_form_validates_non_empty_name() {
-        // Structural test: AddContactForm should compile and validate
-        // In an integration test environment, we would:
-        // 1. Mount AddContactForm
-        // 2. Leave display_name empty
-        // 3. Click submit
-        // 4. Verify error_message contains "Display name is required"
-        //
-        // The validation logic exists in the on_submit closure which checks:
-        // `if name.is_empty() { error_message.set(Some("Display name is required"...)) }`
-        let _ = AddContactForm;
-    }
-}

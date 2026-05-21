@@ -373,7 +373,6 @@ pub async fn share_file(
     file_id: String,
     contact_id: String,
     expiration_days: Option<u32>,
-    request_receipt: bool,
     state: State<'_, AppState>,
 ) -> Result<ShareResponse, IpcError> {
     state.session_manager.reset_timer().await;
@@ -426,7 +425,6 @@ pub async fn share_file(
                 contact_id: contact_domain_id,
                 expires_at,
                 now_unix_seconds: now_unix_seconds(),
-                receipt_requested: request_receipt,
             },
             db as &dyn MetadataStore,
             db as &dyn SharingStore,
@@ -655,7 +653,10 @@ pub async fn revoke_share(share_id: String, state: State<'_, AppState>) -> Resul
         .await
         .map_err(IpcError::from)?;
 
-    let conf_path = crate::ui::auth_commands::rclone_conf_path();
+    let Some(conf_path) = state.session_manager.rclone_conf_path().await else {
+        tracing::warn!("revoke_share: no session rclone conf; skipping cloud share cleanup");
+        return Ok(());
+    };
 
     match (download_key_id, download_folder_id) {
         (Some(perm_id), Some(folder_id)) => {
@@ -880,6 +881,12 @@ pub async fn download_received_share(
             .await
             .map_err(IpcError::from)?;
 
+        if share.expires_at.is_some_and(|t| t < now_unix_seconds()) {
+            return Err(IpcError::InvalidInput(
+                "Share has expired — contact sender for renewed access".into(),
+            ));
+        }
+
         let file_id_uuid = Uuid::parse_str(&share.file_id)
             .map_err(|_| IpcError::InternalError("Invalid file ID in received share".into()))?;
         let file_key = unwrap_file_key(
@@ -1042,6 +1049,12 @@ pub async fn get_received_share_content(
             .get_received_share(&share_id)
             .await
             .map_err(IpcError::from)?;
+
+        if share.expires_at.is_some_and(|t| t < now_unix_seconds()) {
+            return Err(IpcError::InvalidInput(
+                "Share has expired — contact sender for renewed access".into(),
+            ));
+        }
 
         let file_size = share
             .cloud_endpoint

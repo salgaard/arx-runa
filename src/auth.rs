@@ -396,6 +396,7 @@ pub fn VaultCreationPage(
     // ── Destination signal (updated by DestinationSelector via callback) ──────
     let (primary_destination, set_primary_destination) = signal(default_local_destination());
     let (selected_kind, set_selected_kind) = signal(DestinationKind::Local);
+    let (is_oauth_pending, set_is_oauth_pending) = signal(false);
     let is_gdrive_selected = move || selected_kind.get() == DestinationKind::GoogleDrive;
     let is_b2_selected = move || selected_kind.get() == DestinationKind::BackblazeB2;
     let is_sharing_supported = move || is_gdrive_selected() || is_b2_selected();
@@ -626,6 +627,7 @@ pub fn VaultCreationPage(
                         <DestinationSelector
                             on_change=move |config| set_primary_destination.set(config)
                             on_kind_change=Box::new(move |k| set_selected_kind.set(k))
+                            on_oauth_pending_change=Box::new(move |pending| set_is_oauth_pending.set(pending))
                         />
                         <Show when=is_gdrive_selected>
                             <div class="mt-3 p-3 border border-green-800/40 rounded bg-green-900/20 text-sm">
@@ -726,7 +728,12 @@ pub fn VaultCreationPage(
                         >
                             "← Back"
                         </button>
-                        <Button loading=loading on_click=on_submit testid="create-vault-submit">
+                        <Button
+                            loading=loading
+                            disabled=Signal::derive(move || is_oauth_pending.get())
+                            on_click=on_submit
+                            testid="create-vault-submit"
+                        >
                             "Create Vault"
                         </Button>
                     </div>

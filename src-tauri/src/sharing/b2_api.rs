@@ -189,7 +189,6 @@ pub(crate) async fn b2_create_application_key(
 }
 
 /// Deletes a B2 application key by key ID. Best-effort — errors are logged, not returned.
-#[allow(dead_code)] // used in revocation (Step 12)
 pub(crate) async fn b2_delete_key(
     client: &Client,
     auth: &B2Auth,

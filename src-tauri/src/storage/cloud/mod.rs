@@ -62,6 +62,12 @@ pub enum CloudTransportError {
         exit_code: i32,
         stderr_sanitised: String,
     },
+    /// This cloud provider does not support the sharing protocol.
+    ///
+    /// # Safety invariant
+    /// The message string MUST be a user-safe static string literal containing no runtime
+    /// values from cloud provider responses, file paths, or API credentials.
+    /// It is forwarded directly to the frontend as `IpcError::SharingNotSupported`.
     #[error("sharing is not supported by this cloud provider: {0}")]
     SharingNotSupported(String),
     #[error("cloud transport error: {0}")]
@@ -140,9 +146,8 @@ pub trait CloudTransport: Send + Sync {
         &self,
         path_prefix: &str,
         ttl_seconds: u32,
-        receipt_requested: bool,
     ) -> Result<Option<serde_json::Value>, CloudTransportError> {
-        let _ = (path_prefix, ttl_seconds, receipt_requested);
+        let _ = (path_prefix, ttl_seconds);
         Ok(None)
     }
 }

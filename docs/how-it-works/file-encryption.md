@@ -138,6 +138,35 @@ The zero-padding added at encryption time is silently discarded. The output file
 
 Arx Runa writes each chunk to a temporary file named `<destination>.arx-runa-decrypt-<uuid>.tmp`. Only after all chunks have been written and verified does it atomically rename the temporary file to the final destination. A crash at any point before the rename leaves no partial output at the destination path — the next attempt starts from the beginning.
 
+## Viewing a file without writing it to disk
+
+Exporting is only one reason to decrypt. When Arx Runa renders a preview or passes content to a viewer, the plaintext never needs to reach disk at all. In these cases the decryption path is different: chunks are assembled directly into a `Zeroizing<Vec<u8>>` — a memory buffer that zeroes itself the moment it is dropped.
+
+The same integrity guarantees apply: BLAKE3 checksum verified before decryption, AEAD authentication enforced per chunk, padding stripped from the last chunk. The only difference is the output destination.
+
+For large files, this path also supports range requests: only the chunks that contain the requested byte range are decrypted. A video player seeking to a specific position decrypts two or three chunks, not the whole file.
+
+The practical consequence is that you can inspect a file — view a photo, read a document — and leave no plaintext trace on disk. There is no temp file for forensic tools to recover and no write to the filesystem. The plaintext exists in memory for the duration of the view, then is zeroed.
+
+```mermaid
+sequenceDiagram
+    participant Caller as Caller (preview / viewer)
+    participant Memory as decrypt_file_to_memory
+    participant Buf as Zeroizing<Vec<u8>>
+
+    Caller->>Memory: file_id, file_key, chunks, [optional: range_start, range_end]
+    Memory->>Memory: validate chunk list (count, indices)
+    loop for each required chunk
+        Memory->>Memory: verify BLAKE3 checksum #8594; VerifiedBlob
+        Memory->>Memory: decrypt_chunk(file_key, AAD = file_id #124;#124; chunk_index)
+        Memory->>Buf: append plaintext bytes (strip padding if last chunk)
+    end
+    Memory-->>Caller: Zeroizing<Vec<u8>>
+    note over Buf: zeroed on drop — no disk write ever occurs
+```
+
+A compile-time security audit test (`test_no_tempfile_crate_in_decrypt_pipeline`) enforces that the temp-file crate is absent from the entire decryption pipeline, making the no-disk-write guarantee structural rather than just conventional.
+
 ## The full pipeline
 
 ```mermaid

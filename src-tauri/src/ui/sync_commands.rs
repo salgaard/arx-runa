@@ -786,7 +786,6 @@ pub async fn pull_and_reconcile(
     // UUID and complete file hierarchy) rather than attempting a partial merge
     // that fails when devices have divergent root UUIDs.
     let sqlcipher_key_bytes = sqlcipher_key.with_exposed(|b| *b);
-
     // Drop the existing store — signals WAL checkpoint intent; outstanding Arc
     // clones release naturally as handlers complete their in-flight ops.
     state
@@ -1097,7 +1096,10 @@ pub async fn migrate_vault(
         .map_err(IpcError::from)?;
 
     // Rebuild the session-lived rclone.conf and swap the persistent transport.
-    let conf_path = crate::ui::auth_commands::rclone_conf_path();
+    let Some(conf_path) = state.session_manager.rclone_conf_path().await else {
+        tracing::warn!("migrate_vault: no session rclone conf path; skipping transport rebuild");
+        return Ok(());
+    };
     if let Err(e) = build_session_rclone_conf(db, &conf_path).await {
         tracing::warn!(
             ?e,
@@ -1606,24 +1608,4 @@ pub async fn get_backup_health(
             },
         )
         .collect())
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_destination_type_cloud_parsing() {
-        let destination_type_str = "cloud";
-        let destination_type = match destination_type_str {
-            "cloud" => Some(()),
-            _ => None,
-        };
-        assert!(destination_type.is_some());
-    }
-
-    #[test]
-    fn test_extract_sqlcipher_key_requires_manifest_key() {
-        // This helper ensures manifest_key is extracted safely; actual extraction
-        // is tested in auth/session tests. We just verify it's available for async use.
-        // Integration test in phase_6_5_end_to_end.rs covers full flow.
-    }
 }

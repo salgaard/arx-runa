@@ -77,9 +77,9 @@ impl From<crate::auth::AuthenticationError> for IpcError {
 impl From<crate::storage::StorageError> for IpcError {
     /// Maps storage errors to sanitised IPC error variants without leaking internal details.
     fn from(error: crate::storage::StorageError) -> Self {
-        tracing::error!("storage error: {:?}", error);
+        tracing::debug!("storage error detail: {:?}", error);
         use crate::storage::StorageError as S;
-        match error {
+        let ipc_error = match error {
             S::NotFound => IpcError::NotFound("File or directory not found".into()),
             S::ChecksumMismatch => IpcError::InternalError("Data integrity error".into()),
             S::WrongKey => IpcError::AuthenticationFailed("Vault database key mismatch".into()),
@@ -91,23 +91,25 @@ impl From<crate::storage::StorageError> for IpcError {
             ),
             S::Database(_) => IpcError::InternalError("Storage engine error".into()),
             S::Io(_) => IpcError::InternalError("File system error".into()),
-        }
+        };
+        tracing::error!("storage error: {}", ipc_error);
+        ipc_error
     }
 }
 
 impl From<crate::sharing::SharingError> for IpcError {
     /// Maps sharing errors to sanitised IPC error variants without leaking internal details.
     fn from(error: crate::sharing::SharingError) -> Self {
-        tracing::error!("sharing error: {:?}", error);
+        tracing::debug!("sharing error detail: {:?}", error);
         use crate::sharing::SharingError as Sh;
-        match error {
+        let ipc_error = match error {
             Sh::AuthenticationFailed => {
                 IpcError::AuthenticationFailed("Share authentication failed".into())
             }
             Sh::ContactNotFound | Sh::ShareNotFound | Sh::ReceivedShareNotFound => {
                 IpcError::NotFound("Share record not found".into())
             }
-            Sh::ShareAlreadyRevoked | Sh::NoActiveSharesForRotation => {
+            Sh::ShareAlreadyRevoked => {
                 IpcError::InvalidInput("Share cannot be revoked in its current state".into())
             }
             Sh::CloudOperation(_) | Sh::RevocationPartial { .. } => {
@@ -131,7 +133,9 @@ impl From<crate::sharing::SharingError> for IpcError {
             }
             Sh::IdentityMissing => IpcError::InternalError("Vault identity not configured".into()),
             Sh::Backend(_) => IpcError::InternalError("Sharing storage error".into()),
-        }
+        };
+        tracing::error!("sharing error: {}", ipc_error);
+        ipc_error
     }
 }
 
@@ -139,60 +143,50 @@ impl From<crate::storage::SyncError> for IpcError {
     /// Maps sync errors to sanitised IPC error variants without leaking internal details.
     fn from(error: crate::storage::SyncError) -> Self {
         use crate::storage::SyncError as Sy;
-        match error {
-            Sy::Conflict(ref c) => {
-                tracing::info!("sync conflict: {:?}", c);
-                IpcError::SyncConflict("Another device has synced since your last pull".into())
+        tracing::debug!("sync error detail: {:?}", error);
+        let ipc_error = match error {
+            Sy::Conflict(_) => {
+                tracing::info!("sync conflict detected");
+                return IpcError::SyncConflict(
+                    "Another device has synced since your last pull".into(),
+                );
             }
+            Sy::Storage { source } => return IpcError::from(source),
             Sy::CloudManifestUnreadable { .. } => {
-                tracing::error!("sync error: {:?}", error);
                 IpcError::CloudError("Cloud manifest unreadable — vault may need recovery".into())
             }
-            Sy::PushUploadFailed { .. } => {
-                tracing::error!("sync error: {:?}", error);
-                IpcError::CloudError("Cloud upload failed".into())
-            }
+            Sy::PushUploadFailed { .. } => IpcError::CloudError("Cloud upload failed".into()),
             Sy::Transport { .. }
             | Sy::PushManifestBackupFailed { .. }
             | Sy::VaultHeaderUploadFailed { .. }
-            | Sy::PullIncomplete { .. } => {
-                tracing::error!("sync error: {:?}", error);
-                IpcError::CloudError("Cloud operation failed".into())
-            }
-            Sy::Storage { source } => IpcError::from(source),
-            Sy::Io(_) => {
-                tracing::error!("sync error: {:?}", error);
-                IpcError::InternalError("Sync I/O error".into())
-            }
-            Sy::ManifestBackup { .. } => {
-                tracing::error!("sync error: {:?}", error);
-                IpcError::InternalError("Manifest backup error".into())
-            }
-            Sy::RollbackFailed { .. } => {
-                tracing::error!("sync error: {:?}", error);
-                IpcError::InternalError(
-                    "Sync rollback failed — vault may be in an inconsistent state; sync again"
-                        .into(),
-                )
-            }
-        }
+            | Sy::PullIncomplete { .. } => IpcError::CloudError("Cloud operation failed".into()),
+            Sy::Io(_) => IpcError::InternalError("Sync I/O error".into()),
+            Sy::ManifestBackup { .. } => IpcError::InternalError("Manifest backup error".into()),
+            Sy::RollbackFailed { .. } => IpcError::InternalError(
+                "Sync rollback failed — vault may be in an inconsistent state; sync again".into(),
+            ),
+        };
+        tracing::error!("sync error: {}", ipc_error);
+        ipc_error
     }
 }
 
 impl From<std::io::Error> for IpcError {
     /// Maps IO errors to a sanitised IpcError without leaking filesystem paths or OS detail.
     fn from(error: std::io::Error) -> Self {
-        tracing::error!("io error: {:?}", error);
-        IpcError::InternalError("File system error".into())
+        tracing::debug!("io error detail: {:?}", error);
+        let ipc_error = IpcError::InternalError("File system error".into());
+        tracing::error!("io error: {}", ipc_error);
+        ipc_error
     }
 }
 
 impl From<crate::storage::CloudTransportError> for IpcError {
     /// Maps cloud transport errors to sanitised IPC error variants without leaking internal details.
     fn from(error: crate::storage::CloudTransportError) -> Self {
-        tracing::error!("cloud transport error: {:?}", error);
+        tracing::debug!("cloud transport error detail: {:?}", error);
         use crate::storage::CloudTransportError as C;
-        match error {
+        let ipc_error = match error {
             C::NotFound => IpcError::NotFound("Cloud blob not found".into()),
             C::AuthenticationFailed => IpcError::CloudError("Cloud authentication failed".into()),
             C::BucketNameTaken => {
@@ -207,7 +201,9 @@ impl From<crate::storage::CloudTransportError> for IpcError {
             ),
             C::Other(_) => IpcError::CloudError("Cloud operation failed".into()),
             C::SharingNotSupported(msg) => IpcError::SharingNotSupported(msg),
-        }
+        };
+        tracing::error!("cloud transport error: {}", ipc_error);
+        ipc_error
     }
 }
 

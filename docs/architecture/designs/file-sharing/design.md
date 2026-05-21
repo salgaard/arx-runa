@@ -1,6 +1,6 @@
 # Arx Runa — File Sharing Architecture Design
 
-> Status: Design complete. Implementation target: Phase 5.
+> Status: Implemented.
 > Last updated: 2026-04-20
 
 ---
@@ -161,13 +161,40 @@ When the owner shares a file, Arx Runa produces a share package — a small file
   "file_size": 12345678,
   "file_key": "<32-byte file_key, base64>",
   "sender_public_key": "<32-byte X25519 public key, base64>",
-  "cloud_endpoint": {
-    "provider": "s3",
-    "bucket": "alice-arx-runa",
-    "region": "eu-west-1",
-    "endpoint": "https://s3.eu-west-1.amazonaws.com",
-    "path_prefix": "shared/<file_share_id>/"
-  }
+  "cloud_endpoint": { ... provider-specific credential object, see below ... }
+}
+```
+
+The `cloud_endpoint` field is provider-specific and carries scoped credentials so the recipient can download the shared blobs without accessing the sender's main cloud account. It is sealed inside the HPKE envelope — only the recipient can read it.
+
+**Backblaze B2:**
+```json
+{
+  "provider": "b2",
+  "key_id": "<scoped_application_key_id>",
+  "application_key": "<scoped_application_key>",
+  "bucket": "<bucket_name>",
+  "path_prefix": "shared/<file_share_id>/"
+}
+```
+The B2 application key is scoped to `shared/<file_share_id>/` only, read-only, with a TTL up to 7 days. Revocation deletes the key via the B2 Keys API.
+
+**Google Drive:**
+```json
+{
+  "provider": "drive",
+  "folder_id": "<drive_folder_id>",
+  "sa_credentials_json": "<compact_service_account_json>",
+  "path_prefix": "shared/<file_share_id>/",
+  "permission_id": "<drive_permission_id>"
+}
+```
+The SA JSON is the owner's GCP Service Account credentials, embedded in the HPKE envelope (never written to disk unencrypted). Revocation deletes the SA's Drive permission via `DELETE /drive/v3/files/{folder_id}/permissions/{permission_id}`.
+
+**No supported provider (fallback):**
+```json
+{
+  "path_prefix": "shared/<file_share_id>/"
 }
 ```
 
@@ -199,7 +226,7 @@ The owner exports the share package as a `.arxshare` file and delivers it via th
     <uuid>.blob          ← owner's private chunks (not accessible to recipients)
   shared/
     <file_share_id>/
-      <uuid>.blob        ← copies of chunks for this file, publicly readable
+      <uuid>.blob        ← copies of chunks for this file (access-controlled via scoped credentials)
       ...
 ```
 
@@ -212,9 +239,16 @@ When the owner shares a file:
 
 ### Cloud authentication for recipients
 
-Blobs in `shared/<file_share_id>/` are publicly readable (Option A). The `cloud_endpoint` object in the share package provides the Rclone connection descriptor. No credentials travel in the share package.
+Scoped cloud credentials are embedded inside the HPKE envelope's `cloud_endpoint` field. The recipient's Arx Runa app uses these credentials to download the blobs from `shared/<file_share_id>/` without needing access to the sender's main cloud account. The credentials are provider-specific:
 
-Justification: blobs are opaque AEAD ciphertext. Without `file_key`, the blobs are permanently inaccessible. UUID v4 blob names (122 bits of entropy) are not guessable. The cloud provider already has read access to all blobs by design. Ciphertext exposure to a third party who discovers the folder is not a security failure — it is an accepted property of the architecture stated in the threat model.
+- **B2**: a scoped application key restricted to `shared/<file_share_id>/`, read-only, TTL up to 7 days.
+- **GDrive**: the sender's GCP Service Account JSON is embedded. The SA is granted `reader` permission on the shared folder. Because Google Drive rejects `expirationTime` on personal My Drive items, no TTL is set; revocation instead deletes the permission explicitly.
+
+Security properties:
+- Credentials are inside the HPKE ciphertext — only the recipient can read them.
+- Scoped credentials cannot access anything outside `shared/<file_share_id>/`.
+- The sender's master cloud credentials and vault key material never leave the sender's device.
+- Blobs are opaque AEAD ciphertext; without `file_key`, they are permanently inaccessible regardless of credential possession.
 
 ---
 
@@ -226,25 +260,15 @@ Delete `shared/<file_share_id>/` from the cloud. The share package the recipient
 
 ### Case: recipient has already fetched and decrypted the blobs
 
-Cryptographic revocation of already-fetched plaintext is impossible. The owner can:
-1. Accept the limitation (honest model)
-2. For a stronger guarantee: re-encrypt the file under a new `file_key`, upload new blobs under a new `file_share_id`, issue new share packages to all remaining recipients, and delete the old `file_share_id` folder
+Cryptographic revocation of already-fetched plaintext is impossible. The system accepts this limitation by design — re-encryption revocation is not implemented, as a determined recipient can retain plaintext during the download window, making re-encryption insufficient to enforce revocation.
 
-**Explicit report statement**: revocation prevents future fetches via blob deletion. It cannot revoke access from a party who has already downloaded and decrypted the content. Re-encryption provides a stronger guarantee but requires coordination with remaining active recipients.
+**Explicit report statement**: revocation prevents future fetches via blob deletion and credential revocation. It cannot revoke access from a party who has already downloaded and decrypted the content.
 
 ### Single recipient vs. multiple recipients
 
 If a file is shared with multiple recipients and the owner revokes access for one:
 - Deleting the shared folder would revoke all recipients
-- The correct action for single-recipient revocation when others remain is a two-path flow:
-
-1. **Default (cooperative)**: set `shares.revoked_at` for the revoked recipient and stop issuing new share packages to that contact. This does not prevent access for a recipient that already has package + blobs.
-2. **Strong revocation (enforced)**:
-   - Generate a new random `file_key`
-   - Re-encrypt the file and upload chunks under a new `file_share_id`
-   - Create fresh share packages for remaining recipients only
-   - Delete the old `shared/<old_file_share_id>/` folder
-   - Mark all old rows tied to the old `file_share_id` as revoked (`revoked_at`)
+- The correct action for single-recipient revocation when others remain is: set `shares.revoked_at` for the revoked recipient and revoke that recipient's cloud-level download credential (GDrive permission or B2 key). Blobs are not deleted when other active shares for the same file exist — remaining recipients still need them.
 
 ---
 
@@ -354,7 +378,7 @@ Expiration is enforced at two levels:
 
 ### UX
 
-When sharing a file, the sender can optionally configure an expiration period (e.g., "7 days", "30 days", "90 days", or "No expiration"). Arx Runa computes `expires_at` as the current Unix timestamp plus the selected duration.
+When sharing a file, the sender selects an expiration period from a dropdown with four options: "7 days", "30 days", "90 days", or "No expiration". The default pre-selected option is **30 days**. Arx Runa computes `expires_at` as the current Unix timestamp plus the selected duration.
 
 ### Scope
 
@@ -518,11 +542,11 @@ Blobs in `shared/<file_share_id>/` are publicly readable. A party who discovers 
 | Share package delivery | Owner-exported file, out-of-band | Cloud never holds sharing metadata |
 | Cloud layout | Shared blobs in `shared/<file_share_id>/` (one copy per file) | Scalable; O(1) storage regardless of recipient count |
 | Cloud auth | Public readable blobs | No credentials in share package; AEAD guarantees protect content |
-| Revocation | Blob deletion + optional re-encryption | Honest model; stronger guarantee available at cost of re-encryption |
+| Revocation | Blob deletion + cloud credential revocation | Honest model; re-encryption revocation not implemented |
 | Share semantics | Snapshot at time of sharing | Simple, correct, deliberate |
 | Share package sender key | Include `sender_public_key` in every package | Enables receipt encryption without coupling to local contact DB state |
 | Received-share key storage | Persist `received_shares.file_key_wrapped` (not raw `file_key`) | Keeps at-rest treatment consistent with node file keys and zeroization model |
-| Single-recipient revocation | Cooperative `revoked_at` default; strong path rotates `file_key` and `file_share_id` | Makes revocation behavior explicit and implementable for both low-cost and enforced cases |
+| Single-recipient revocation | Soft `revoked_at`; cloud download credential always revoked | Blobs deleted only when no other active shares exist for the file |
 | Share expiration query performance | Partial indexes on active rows (`file_id`, `expires_at`) | Avoids full scans during sync/push enforcement loops as share volume grows |
 
 ---

@@ -64,6 +64,8 @@ pub enum ManifestBackupSyncError {
 /// Encrypts caller-owned `plaintext` under `manifest_key` with XChaCha20-Poly1305.
 ///
 /// AAD is `vault_id.as_bytes()` (16 bytes), binding the ciphertext to vault identity.
+/// The manifest is a single non-chunked blob; `chunk_index` has no meaning here and
+/// the `file_id || chunk_index` format used for chunk AEAD does not apply.
 /// Returns the wire-format blob `[nonce || ciphertext || tag]`.
 pub(crate) fn encrypt_manifest_backup(
     mut plaintext: Zeroizing<Vec<u8>>,

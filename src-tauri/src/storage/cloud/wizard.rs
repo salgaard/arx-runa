@@ -14,7 +14,8 @@ use zeroize::Zeroize;
 use super::cloud_config::save_primary_cloud_endpoint;
 use super::destination_session::{
     BackupSyncMode, DestinationSession, DestinationSessionPublic, DestinationType,
-    delete_destination_session, destroy_session_rclone_conf, insert_destination_session,
+    create_session_rclone_dir, delete_destination_session, destroy_session_rclone_conf,
+    insert_destination_session,
 };
 use super::rclone_subprocess::run_rclone;
 use super::remote_path::compose_remote_root;
@@ -431,7 +432,8 @@ pub async fn begin_oauth_setup(
 
     let setup_id = Uuid::new_v4().hyphenated().to_string();
     let remote_name = format!("arx-runa-{}", Uuid::new_v4());
-    let temp_config_path = std::env::temp_dir().join(format!("arx-runa-oauth-{setup_id}.conf"));
+    let temp_config_dir = create_session_rclone_dir().await?;
+    let temp_config_path = temp_config_dir.join("rclone.conf");
 
     let rclone_type = match provider {
         OAuthProvider::GoogleDrive => "drive",
@@ -459,7 +461,11 @@ pub async fn begin_oauth_setup(
             OsStr::new(rclone_type),
         ])
         .args(&extra_args)
-        .args([OsStr::new("--config"), temp_config_path.as_os_str()])
+        .args([
+            OsStr::new("--config"),
+            temp_config_path.as_os_str(),
+            OsStr::new("--non-interactive"),
+        ])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -561,6 +567,11 @@ pub async fn complete_oauth_setup(
     if let Err(error) = destroy_session_rclone_conf(temp_config_path).await {
         tracing::warn!(error = %error, "failed to remove oauth temp config");
     }
+    if let Some(dir) = temp_config_path.parent()
+        && let Err(error) = tokio::fs::remove_dir(dir).await
+    {
+        tracing::warn!(error = %error, "failed to remove oauth temp config dir");
+    }
 
     Ok(blob)
 }
@@ -580,6 +591,11 @@ pub async fn cancel_oauth_setup(
     }
     if let Err(error) = destroy_session_rclone_conf(temp_config_path).await {
         tracing::warn!(error = %error, "cancel_oauth_setup: failed to remove temp config");
+    }
+    if let Some(dir) = temp_config_path.parent()
+        && let Err(error) = tokio::fs::remove_dir(dir).await
+    {
+        tracing::warn!(error = %error, "cancel_oauth_setup: failed to remove temp config dir");
     }
 }
 
@@ -944,5 +960,57 @@ mod tests {
         assert!(matches!(result, Err(CloudTransportError::Other(_))));
         let sessions = list_destination_sessions(&store).await.unwrap();
         assert!(sessions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_cancel_oauth_setup_removes_temp_config_and_dir() {
+        use crate::storage::cloud::destination_session::create_session_rclone_dir;
+        use tokio::process::Command;
+
+        use super::cancel_oauth_setup;
+
+        let dir = create_session_rclone_dir()
+            .await
+            .expect("create_session_rclone_dir should succeed");
+        let conf_path = dir.join("rclone.conf");
+        tokio::fs::write(&conf_path, b"[remote]\ntype = drive\n")
+            .await
+            .expect("write should succeed");
+
+        #[cfg(windows)]
+        let mut child = Command::new("cmd").args(["/C", "exit 0"]).spawn().unwrap();
+        #[cfg(not(windows))]
+        let mut child = Command::new("true").spawn().unwrap();
+
+        cancel_oauth_setup(&mut child, &conf_path).await;
+
+        assert!(!conf_path.exists(), "conf file must be removed");
+        assert!(!dir.exists(), "temp config dir must be removed");
+    }
+
+    #[tokio::test]
+    async fn test_complete_oauth_setup_removes_temp_dir() {
+        use crate::storage::cloud::destination_session::{
+            create_session_rclone_dir, destroy_session_rclone_conf,
+        };
+
+        let dir = create_session_rclone_dir()
+            .await
+            .expect("create_session_rclone_dir should succeed");
+        let conf_path = dir.join("rclone.conf");
+        tokio::fs::write(&conf_path, b"[remote]\ntype = drive\n")
+            .await
+            .expect("write should succeed");
+
+        // Mirror the cleanup sequence in complete_oauth_setup.
+        if let Err(error) = destroy_session_rclone_conf(&conf_path).await {
+            tracing::warn!(error = %error, "test: failed to remove conf");
+        }
+        if let Some(parent) = conf_path.parent() {
+            let _ = tokio::fs::remove_dir(parent).await;
+        }
+
+        assert!(!conf_path.exists(), "conf file must be removed");
+        assert!(!dir.exists(), "temp config dir must be removed");
     }
 }

@@ -50,19 +50,6 @@ impl<T: Send + 'static + serde::Serialize> ProgressChannel<T> {
     }
 }
 
-/// Calls `reset_timer` on the session manager before invoking `f`.
-///
-/// Every IPC command must refresh the inactivity timer on entry.
-#[allow(dead_code)] // Phase 7: with_session_refresh for long-running command restart
-pub(crate) async fn with_session_refresh<F, Fut, T>(state: &AppState, f: F) -> Result<T, IpcError>
-where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<T, IpcError>>,
-{
-    state.session_manager.reset_timer().await;
-    f().await
-}
-
 /// Returns `Ok(())` if the session is `Active`, or `IpcError::VaultLocked` otherwise.
 pub(crate) async fn require_active_session(state: &AppState) -> Result<(), IpcError> {
     if state.session_manager.state().await == LifecycleState::Active {

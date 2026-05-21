@@ -14,11 +14,6 @@ fn default_cloud_config_path() -> Result<PathBuf, CloudTransportError> {
     Ok(data_dir.join("arx-runa").join("cloud-config.json"))
 }
 
-#[allow(dead_code)]
-fn legacy_cloud_config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|path| path.join("arx-runa").join("cloud-config.json"))
-}
-
 #[cfg_attr(not(test), allow(dead_code))]
 async fn load_primary_cloud_endpoint_from(
     path: &Path,
@@ -106,8 +101,12 @@ fn unique_sibling_path(target_path: &Path, suffix: &str) -> PathBuf {
     target_path.with_file_name(format!("{file_name}.{suffix}.{unique}"))
 }
 
-/// Loads the primary endpoint from `cloud-config.json`.
-#[allow(dead_code)]
+fn legacy_cloud_config_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|path| path.join("arx-runa").join("cloud-config.json"))
+}
+
+/// Loads the primary cloud endpoint from `cloud-config.json`, migrating from
+/// the legacy config location if needed.
 pub async fn load_primary_cloud_endpoint() -> Result<Option<CloudEndpoint>, CloudTransportError> {
     let canonical_path = default_cloud_config_path()?;
     if let Some(endpoint) = load_primary_cloud_endpoint_from(&canonical_path).await? {

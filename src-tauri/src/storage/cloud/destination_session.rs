@@ -248,6 +248,47 @@ pub async fn build_session_rclone_conf(
     Ok(())
 }
 
+/// Creates a process-owned restricted temporary directory for the session-lived `rclone.conf`.
+///
+/// The directory is named `arx-runa-<16 random hex chars>` inside the OS temp dir and is
+/// created with permissions that allow access only to the current process owner:
+/// - Unix: mode `0700`
+/// - Windows: owner-only DACL (including SYSTEM and Built-in Administrators for compatibility)
+///
+/// Returns the path to the created directory. The caller is responsible for placing
+/// `rclone.conf` inside it and for removing the directory (via [`tokio::fs::remove_dir`])
+/// after the session ends.
+pub(crate) async fn create_session_rclone_dir() -> Result<std::path::PathBuf, CloudTransportError> {
+    let raw: [u8; 8] = rand::random();
+    let suffix = hex::encode(raw);
+    let dir = std::env::temp_dir().join(format!("arx-runa-{suffix}"));
+
+    tokio::fs::create_dir(&dir).await?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let dir_clone = dir.clone();
+        tokio::task::spawn_blocking(move || {
+            std::fs::set_permissions(&dir_clone, std::fs::Permissions::from_mode(0o700))
+        })
+        .await
+        .map_err(|e| CloudTransportError::IoError(std::io::Error::other(e)))??;
+    }
+
+    #[cfg(windows)]
+    {
+        let dir_clone = dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::platform::permissions::apply_owner_only_acl_windows(&dir_clone)
+        })
+        .await
+        .map_err(|e| CloudTransportError::IoError(std::io::Error::other(e)))??;
+    }
+
+    Ok(dir)
+}
+
 /// Overwrites and removes a session-lived `rclone.conf`.
 pub async fn destroy_session_rclone_conf(path: &Path) -> Result<(), CloudTransportError> {
     let path_buf = path.to_path_buf();
