@@ -109,12 +109,28 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $driverDir = (Get-ChildItem "C:\Program Files (x86)\Microsoft\Edge\Application" -Directory |
-            Where-Object { $_.Name -match '^\d' } |
-            Sort-Object Name -Descending |
-            Select-Object -First 1).FullName
-          if (-not $driverDir) { Write-Error "msedgedriver not found"; exit 1 }
-          echo "$driverDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          # Tauri uses the WebView2 runtime, not the Edge browser binary.
+          # Detect the WebView2 version from the registry so we download an
+          # msedgedriver that exactly matches the runtime version.
+          $wv2Keys = @(
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+            "HKCU:\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+          )
+          $wv2Version = $null
+          foreach ($key in $wv2Keys) {
+            $wv2Version = (Get-ItemProperty $key -ErrorAction SilentlyContinue).pv
+            if ($wv2Version) { break }
+          }
+          if (-not $wv2Version) { Write-Error "Cannot detect WebView2 runtime version"; exit 1 }
+          Write-Host "Detected WebView2 runtime version: $wv2Version"
+
+          $zipUrl = "https://msedgedriver.azureedge.net/$wv2Version/edgedriver_win64.zip"
+          $zipPath = "$env:RUNNER_TEMP\edgedriver_win64.zip"
+          $extractPath = "$env:RUNNER_TEMP\edgedriver"
+          Write-Host "Downloading msedgedriver from $zipUrl"
+          Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+          echo "$extractPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Configure Strawberry Perl for OpenSSL build (Windows)
         if: runner.os == 'Windows'
