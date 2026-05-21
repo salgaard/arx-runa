@@ -30,7 +30,7 @@ async fn validate_reveal_path(
     let allowed = state.allowed_reveal_paths.lock().await;
     let permitted = canonical.starts_with(&app_data) || allowed.contains(&canonical);
     if !permitted {
-        tracing::warn!(path = %path, "reveal path outside allowed set");
+        tracing::warn!(path = %canonical.display(), "reveal path outside allowed set");
         return Err(IpcError::InvalidInput(
             "Path is outside the allowed directory".into(),
         ));
@@ -118,6 +118,10 @@ pub async fn compose_email_with_attachment(
     validate_email_address(&recipient_email)?;
     validate_reveal_path(&package_path, &app, &state).await?;
 
+    // Percent-encode `%` in the email address to prevent parameter injection via
+    // pre-encoded sequences such as `%3F` (→ `?`) or `%26` (→ `&`) in the mailto URL.
+    let safe_email = recipient_email.replace('%', "%25");
+
     const SUBJECT: &str = "Shared%20file%20via%20Arx%20Runa";
 
     #[cfg(target_os = "linux")]
@@ -127,9 +131,8 @@ pub async fn compose_email_with_attachment(
                     %0A2.%20Go%20to%20Shares%20%E2%86%92%20Received%20%E2%86%92%20Import%20from%20file\
                     %0A3.%20Select%20the%20attached%20.arxshare%20file\
                     %0A%0AThe%20file%20is%20encrypted%20%E2%80%94%20only%20you%20can%20open%20it.";
-        let mailto = format!("mailto:{recipient_email}?subject={SUBJECT}&body={body}");
+        let mailto = format!("mailto:{safe_email}?subject={SUBJECT}&body={body}");
         let spawned = std::process::Command::new("xdg-email")
-            .arg("--attach")
             .arg(&package_path)
             .arg(&mailto)
             .spawn();
@@ -146,9 +149,7 @@ pub async fn compose_email_with_attachment(
                 %0A2.%20Go%20to%20Shares%20%E2%86%92%20Received%20%E2%86%92%20Import%20from%20file\
                 %0A3.%20Select%20the%20.arxshare%20file\
                 %0A%0AThe%20file%20is%20encrypted%20%E2%80%94%20only%20you%20can%20open%20it.";
-    let mailto = format!("mailto:{recipient_email}?subject={SUBJECT}&body={body}");
-
-    let _ = app.opener().reveal_item_in_dir(&package_path);
+    let mailto = format!("mailto:{safe_email}?subject={SUBJECT}&body={body}");
 
     app.opener().open_url(&mailto, None::<&str>).map_err(|e| {
         tracing::warn!(error = %e, "compose_email open_url failed");
@@ -225,5 +226,17 @@ mod tests {
     fn test_validate_email_address_path_chars_rejected() {
         assert!(validate_email_address("user@x.com/../../etc/passwd").is_err());
         assert!(validate_email_address("user@x.com\\path").is_err());
+    }
+
+    #[test]
+    fn test_percent_encoding_prevents_mailto_injection() {
+        // `%` is in the email allowlist (valid in local-part per RFC 5321), but a raw `%`
+        // in the mailto string lets pre-encoded sequences like `%3F` decode to `?`, injecting
+        // extra parameters. Replacing `%` with `%25` neutralises this.
+        let email = "user%3Fbcc%3Devil@x.com";
+        assert!(validate_email_address(email).is_ok()); // % passes the allowlist
+        let safe = email.replace('%', "%25");
+        assert_eq!(safe, "user%253Fbcc%253Devil@x.com"); // encoded form is safe in mailto
+        assert!(!safe.contains("%3F")); // decoded `?` injection no longer reachable
     }
 }

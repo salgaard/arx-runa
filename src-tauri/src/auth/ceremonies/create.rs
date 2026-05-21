@@ -215,11 +215,12 @@ pub async fn create_vault(
     // Doing this inside the ceremony (before finalize_session_install) ensures the
     // session only becomes Active if the destination row is already committed.
     if let Some(ref dest) = request.primary_destination {
-        let dest_key = Zeroizing::new(*session_keys.sqlcipher_key.expose());
-        let dest_db = SqlCipherMetadataStore::open(&request.vault_db_path, &dest_key)
-            .await
-            .map_err(|_| AuthenticationError::VaultHeaderInvalid);
-        drop(dest_key);
+        let dest_db = SqlCipherMetadataStore::open(
+            &request.vault_db_path,
+            session_keys.sqlcipher_key.expose(),
+        )
+        .await
+        .map_err(|_| AuthenticationError::VaultHeaderInvalid);
         match dest_db {
             Ok(db) => {
                 let insert_result = insert_destination_session(&db, dest).await;

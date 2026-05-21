@@ -655,7 +655,10 @@ pub async fn revoke_share(share_id: String, state: State<'_, AppState>) -> Resul
         .await
         .map_err(IpcError::from)?;
 
-    let conf_path = crate::ui::auth_commands::rclone_conf_path();
+    let Some(conf_path) = state.session_manager.rclone_conf_path().await else {
+        tracing::warn!("revoke_share: no session rclone conf; skipping cloud share cleanup");
+        return Ok(());
+    };
 
     match (download_key_id, download_folder_id) {
         (Some(perm_id), Some(folder_id)) => {

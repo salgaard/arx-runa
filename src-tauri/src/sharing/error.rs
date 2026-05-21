@@ -49,6 +49,11 @@ pub enum SharingError {
     #[error("sharing cloud operation failed: {0}")]
     CloudOperation(String),
     /// The active cloud destination does not support sharing.
+    ///
+    /// # Safety invariant
+    /// The message string MUST be a user-safe static string literal containing no runtime
+    /// values from cloud provider responses, file paths, or API credentials.
+    /// It is forwarded directly to the frontend as `IpcError::SharingNotSupported`.
     #[error("sharing not supported by this destination: {0}")]
     NotSupported(String),
     /// Revocation blob deletion stopped mid-loop; caller retries by re-invoking `revoke_share`.

@@ -7,16 +7,16 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::storage::cloud::destination_session::{
-    BackupSyncMode, DestinationSession, DestinationType, delete_destination_session,
-    get_primary_destination, insert_destination_session, list_destination_sessions,
-    set_primary_destination as set_primary_destination_in_db,
+    BackupSyncMode, DestinationSession, DestinationType, create_session_rclone_dir,
+    delete_destination_session, get_primary_destination, insert_destination_session,
+    list_destination_sessions, set_primary_destination as set_primary_destination_in_db,
 };
 use crate::storage::cloud::{
     OAuthProvider, begin_oauth_setup, cancel_oauth_setup as cancel_oauth_setup_process,
     complete_oauth_setup,
 };
 use crate::storage::device_id::get_or_create_device_id;
-use crate::ui::auth_commands::rclone_conf_path;
+
 use crate::ui::commands_common::{rclone_binary_path, require_active_session};
 use crate::ui::error::IpcError;
 use crate::ui::state::{AppState, OAuthSetupHandle};
@@ -397,7 +397,17 @@ pub async fn set_primary_destination(
         .ok_or_else(|| IpcError::InternalError("App handle not initialised".into()))?;
     let binary_path = rclone_binary_path(Some(app_handle));
 
-    let conf_path = rclone_conf_path();
+    let conf_path = if let Some(p) = state.session_manager.rclone_conf_path().await {
+        p
+    } else {
+        let dir = create_session_rclone_dir().await.map_err(|e| {
+            tracing::warn!(error = %e, "temp dir creation failed in set_primary_destination");
+            IpcError::InternalError("Internal error".into())
+        })?;
+        let p = dir.join("rclone.conf");
+        state.session_manager.set_rclone_conf_path(p.clone()).await;
+        p
+    };
 
     let transport = build_destination_transport(binary_path, &conf_path, &new_primary).await?;
 

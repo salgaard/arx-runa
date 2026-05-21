@@ -68,6 +68,10 @@
     "allow-is-path-on-removable-drive",
     "allow-video-scheme-base-url",
     "allow-prefetch-video",
+    "allow-check-cloud-configured",
+    "allow-configure-cloud",
+    "allow-check-pending-vault-operations",
+    "allow-retry-pending-vault-operation",
     {
       "identifier": "shell:allow-execute",
       "allow": [

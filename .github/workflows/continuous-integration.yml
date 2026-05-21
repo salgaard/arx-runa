@@ -68,8 +68,12 @@ jobs:
         run: cargo build -p arx-runa-tauri --release
 
   e2e:
-    name: e2e (Zero-Trace frontend)
-    runs-on: ubuntu-latest
+    name: e2e (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-24.04, macos-latest, windows-latest]
 
     steps:
       - name: Checkout repository
@@ -83,7 +87,8 @@ jobs:
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Install Tauri system dependencies
+      - name: Install Tauri system dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
@@ -95,11 +100,34 @@ jobs:
             xvfb \
             webkit2gtk-driver
 
+      - name: Enable Safari WebDriver (macOS)
+        if: runner.os == 'macOS'
+        run: sudo safaridriver --enable
+
+      - name: Add msedgedriver to PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $driverDir = (Get-ChildItem "C:\Program Files (x86)\Microsoft\Edge\Application" -Directory |
+            Where-Object { $_.Name -match '^\d' } |
+            Sort-Object Name -Descending |
+            Select-Object -First 1).FullName
+          if (-not $driverDir) { Write-Error "msedgedriver not found"; exit 1 }
+          echo "$driverDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Prepare CI rclone sidecar stub
+        shell: bash
         run: |
           mkdir -p src-tauri/bin
-          touch src-tauri/bin/rclone-x86_64-unknown-linux-gnu
-          chmod +x src-tauri/bin/rclone-x86_64-unknown-linux-gnu
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            touch src-tauri/bin/rclone-x86_64-unknown-linux-gnu
+            chmod +x src-tauri/bin/rclone-x86_64-unknown-linux-gnu
+          elif [[ "$RUNNER_OS" == "Windows" ]]; then
+            touch src-tauri/bin/rclone-x86_64-pc-windows-msvc.exe
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            touch src-tauri/bin/rclone-aarch64-apple-darwin
+            chmod +x src-tauri/bin/rclone-aarch64-apple-darwin
+          fi
 
       - name: Install Trunk (WASM bundler)
         run: cargo install trunk --locked
@@ -120,7 +148,14 @@ jobs:
       - name: Run e2e tests
         # npm test builds the app via `cargo tauri build --no-bundle` (onPrepare hook)
         # before launching tauri-driver. E2E_RELEASE=1 selects the release profile.
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" npm test
+        # Linux needs a virtual framebuffer; macOS and Windows have a native display.
+        shell: bash
         working-directory: src-tauri/tests/e2e
         env:
           E2E_RELEASE: "1"
+        run: |
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" npm test
+          else
+            npm test
+          fi
