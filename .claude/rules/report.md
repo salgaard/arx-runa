@@ -1,5 +1,5 @@
 ---
 paths:
-  - "docs/report/**"
+  - "docs/report/arx-runa-bachelorrapport.md"
 ---
 
