@@ -78,37 +78,51 @@ If they have already downloaded and decrypted the blobs, the data is on their ma
 
 Shares can also have an expiry date (default: 30 days). When a share expires, Arx Runa automatically deletes the blobs from cloud on its next sync — no manual action required.
 
-## Download receipts
+## Receipts
 
-When you share a file, the recipient's app is asked to send a delivery receipt. The recipient's app writes a small encrypted blob to your cloud storage after they successfully download the file. You can check for receipts at any time.
+When you share a file, the recipient's app is asked to write two encrypted receipt blobs back to your cloud storage. You can check for receipts at any time to track delivery progress.
 
-### What the receipt contains
+### Two receipt types
 
-The receipt is a JSON object sealed with [HPKE](../guides/glossary.md#hpke) to *your* public key — the same key that anchors your sharing identity:
+| Type | Written when | Cloud prefix | Payload key |
+|------|-------------|--------------|-------------|
+| **Download receipt** | Recipient's app successfully decrypts and saves the file | `receipts/` | `downloaded_at` |
+| **Import receipt** | Recipient imports the file into their own Arx Runa vault | `import-receipts/` | `imported_at` |
+
+This lets you distinguish "file reached their device" from "file entered their vault".
+
+### What receipts contain
+
+Each receipt is a JSON object sealed with [HPKE](../guides/glossary.md#hpke) to *your* public key — the same key that anchors your sharing identity:
 
 ```json
 { "share_id": "...", "downloaded_at": <unix timestamp> }
+{ "share_id": "...", "imported_at": <unix timestamp> }
 ```
 
-Only you can open it. The cloud sees an opaque blob uploaded to a `receipts/` prefix inside the share folder. It cannot read the timestamp or link it to a specific recipient.
+Only you can open them. The cloud sees opaque blobs and cannot read the timestamps or link them to a specific recipient.
 
 ### How receipts are written
 
-After the recipient's app successfully downloads the shared blobs, it:
+After the recipient's app successfully decrypts the shared blobs, it:
 
-1. Constructs the receipt payload with the `share_id` and current timestamp.
+1. Constructs the download receipt payload with the `share_id` and current timestamp.
 2. HPKE-seals the payload to your public key — retrieved from the share package you sent.
 3. Uploads the sealed blob to `shared/<share_id>/receipts/<uuid>.blob` in your cloud storage.
 
-A second receipt is written to `import-receipts/<uuid>.blob` if the recipient imports the file into their own Arx Runa vault rather than saving it to disk directly. You can therefore distinguish "file reached their device" from "file entered their vault".
+Separately, if the recipient imports the file into their vault:
 
-Receipt upload is best-effort and non-fatal: if it fails, the download still completes successfully and the recipient receives no error. The failure is logged internally and the receipt will simply be absent.
+1. Constructs the import receipt payload with the `share_id` and current timestamp.
+2. HPKE-seals the payload to your public key.
+3. Uploads the sealed blob to `shared/<share_id>/import-receipts/<uuid>.blob`.
+
+Both uploads are best-effort and non-fatal: if they fail, the download still completes successfully and the recipient receives no error. The failure is logged internally and the receipt will simply be absent.
 
 ### How you check for receipts
 
-Arx Runa polls `shared/<share_id>/receipts/` using your own cloud credentials. For each blob it finds, it downloads and attempts `HPKE.Open` with your private key. Any blob it cannot open — because it is malformed or was not sealed to your key — is silently skipped.
+Arx Runa polls both prefixes using your own cloud credentials. For each blob found, it downloads and attempts `HPKE.Open` with your private key. Any blob it cannot open — because it is malformed or was not sealed to your key — is silently skipped.
 
-A valid receipt's timestamp is range-checked: it must fall between when you created the share and five minutes into the future (to tolerate clock skew). The earliest valid timestamp across all receipt blobs is recorded as the delivery time in your manifest.
+A valid receipt's timestamp is range-checked: it must fall between when you created the share and five minutes into the future (to tolerate clock skew). The earliest valid timestamp across all blobs in each prefix is recorded separately as the download time and import time in your manifest.
 
 ```mermaid
 sequenceDiagram
@@ -119,23 +133,32 @@ sequenceDiagram
     note over Recipient,Cloud: After successful download
     Recipient->>Recipient: Construct #123; share_id, downloaded_at #125;
     Recipient->>Recipient: HPKE.Seal(sender_pub_key, payload)
-    Recipient->>Cloud: Upload sealed blob #8594; shared/<share_id>/receipts/<uuid>.blob
-    note over Recipient,Cloud: (separately, if imported into vault)
-    Recipient->>Cloud: Upload sealed blob #8594; shared/<share_id>/import-receipts/<uuid>.blob
+    Recipient->>Cloud: Upload #8594; shared/<share_id>/receipts/<uuid>.blob
+
+    note over Recipient,Cloud: (separately, when imported into vault)
+    Recipient->>Recipient: Construct #123; share_id, imported_at #125;
+    Recipient->>Recipient: HPKE.Seal(sender_pub_key, payload)
+    Recipient->>Cloud: Upload #8594; shared/<share_id>/import-receipts/<uuid>.blob
 
     note over Cloud,Owner: Owner checks for receipts
     Owner->>Cloud: list_blobs("shared/<share_id>/receipts/")
     Cloud-->>Owner: [<uuid>.blob, ...]
-    loop for each blob
+    loop for each download receipt blob
         Owner->>Cloud: download blob
         Owner->>Owner: HPKE.Open(owner_priv_key) #8594; payload
-        Owner->>Owner: validate timestamp in [share_created_at, now + 5 min]
-        Owner->>Owner: record earliest valid timestamp
+        Owner->>Owner: validate timestamp #8594; record earliest downloaded_at
+    end
+    Owner->>Cloud: list_blobs("shared/<share_id>/import-receipts/")
+    Cloud-->>Owner: [<uuid>.blob, ...]
+    loop for each import receipt blob
+        Owner->>Cloud: download blob
+        Owner->>Owner: HPKE.Open(owner_priv_key) #8594; payload
+        Owner->>Owner: validate timestamp #8594; record earliest imported_at
     end
 ```
 
 ### Privacy properties
 
-- The receipt tells you the share was fetched; it does not contain the recipient's identity beyond the fact that whoever held the share package downloaded it.
-- The cloud cannot read the receipt — it is sealed to your public key.
-- Receipts are always requested. No receipt blob is ever written if the recipient's app fails to upload one (best-effort, non-fatal).
+- Receipts do not contain the recipient's identity — only the fact that whoever held the share package downloaded or imported it.
+- The cloud cannot read receipts — they are sealed to your public key.
+- Receipts are always requested. If the recipient's app fails to upload one, the download still completes; the receipt will simply be absent (best-effort, non-fatal).

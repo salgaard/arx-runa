@@ -93,10 +93,28 @@ async function createAndUnlockVault(browser) {
  * Unlocks an existing vault. Expects a vault card to be visible in the picker.
  */
 async function unlockExistingVault(browser) {
-  const vaultCard = await browser.$('[data-testid="vault-card"]');
-  // CI runners are slow (Argon2 + cold WASM) — allow more time than local.
-  await vaultCard.waitForExist({ timeout: 20000 });
-  await vaultCard.click();
+  // CI runners may have multiple vault cards from previous suites. Select by
+  // known test vault name so we don't submit this password to the wrong vault.
+  await browser.waitUntil(
+    async () => {
+      const cards = await browser.$$('[data-testid="vault-card"]');
+      return cards.length > 0;
+    },
+    { timeout: 20000, timeoutMsg: "No vault cards found in picker" },
+  );
+  const vaultCards = await browser.$$('[data-testid="vault-card"]');
+  let targetCard = null;
+  for (const card of vaultCards) {
+    const text = await card.getText();
+    if (text.includes(TEST_VAULT_NAME)) {
+      targetCard = card;
+      break;
+    }
+  }
+  if (!targetCard) {
+    throw new Error(`Test vault card not found: ${TEST_VAULT_NAME}`);
+  }
+  await targetCard.click();
 
   const passwordInput = await browser.$('[data-testid="password-input"]');
   await passwordInput.waitForExist({ timeout: 10000 });
@@ -110,7 +128,7 @@ async function unlockExistingVault(browser) {
       const lockBtn = await browser.$('[data-testid="lock-button"]');
       return lockBtn.isExisting();
     },
-    { timeout: 90000, timeoutMsg: "Vault did not unlock within 90s" },
+    { timeout: 180000, timeoutMsg: "Vault did not unlock within 180s" },
   );
 }
 

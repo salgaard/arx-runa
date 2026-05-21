@@ -14,9 +14,9 @@ const {
 
 describe("Zero-Trace: no sensitive browser-side state after lock", function () {
   // Each test does: beforeEach (waitUntil 90s + lockVault 20s) + test body
-  // (unlockExistingVault 90s + lockVault 20s) = up to ~220 s worst-case on a
+  // (unlockExistingVault 180s + lockVault 20s) = up to ~310 s worst-case on a
   // slow CI runner with cold Argon2. Override the global 120 s default.
-  this.timeout(240000);
+  this.timeout(360000);
 
   before(async function () {
     await createAndUnlockVault(browser);
@@ -25,20 +25,39 @@ describe("Zero-Trace: no sensitive browser-side state after lock", function () {
   // Ensure each test starts from the vault picker regardless of where the
   // previous test left off. On slow CI runners a test may time out mid-unlock,
   // leaving the app in an indeterminate state and causing all subsequent tests
-  // to fail via cascade. We wait for a known state (locked or unlocked) then
-  // lock if needed, so every test body can assume it starts at the picker.
+  // to fail via cascade. We wait for a known state (locked/unlocked/login), then
+  // normalize to the vault picker so every test body starts from the same place.
   beforeEach(async function () {
     await browser.waitUntil(
       async () => {
         const lockBtn = await browser.$('[data-testid="lock-button"]');
         const vaultCard = await browser.$('[data-testid="vault-card"]');
-        return (await lockBtn.isExisting()) || (await vaultCard.isExisting());
+        const passwordInput = await browser.$('[data-testid="password-input"]');
+        return (
+          (await lockBtn.isExisting()) ||
+          (await vaultCard.isExisting()) ||
+          (await passwordInput.isExisting())
+        );
       },
       { timeout: 90000, timeoutMsg: "app stuck in unknown state before test" },
     );
+
     const lockBtn = await browser.$('[data-testid="lock-button"]');
     if (await lockBtn.isExisting()) {
       await lockVault(browser);
+      return;
+    }
+
+    const passwordInput = await browser.$('[data-testid="password-input"]');
+    if (await passwordInput.isExisting()) {
+      const backBtn = await browser.$('//button[normalize-space()="← Back"]');
+      await backBtn.waitForExist({ timeout: 10000 });
+      await backBtn.click();
+      const vaultCard = await browser.$('[data-testid="vault-card"]');
+      await vaultCard.waitForExist({
+        timeout: 20000,
+        timeoutMsg: "vault picker did not appear after returning from unlock form",
+      });
     }
   });
 
