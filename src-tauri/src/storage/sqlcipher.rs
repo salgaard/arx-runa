@@ -652,7 +652,9 @@ impl SqlCipherMetadataStore {
         new_file_key_wrapped: [u8; 72],
         new_chunks: Vec<ChunkRecord>,
         queued_at: i64,
+        extra_pending_deletions: &[String],
     ) -> Result<(), StorageError> {
+        let extra_pending_deletions = extra_pending_deletions.to_owned();
         self.with_connection_blocking(move |conn| {
             let tx = conn.transaction().map_err(StorageError::from_rusqlite)?;
             let file_id_text = file_id.hyphenated().to_string();
@@ -668,6 +670,17 @@ impl SqlCipherMetadataStore {
             drop(stmt);
 
             for blob_name in &old_blob_names {
+                tx.execute(
+                    "INSERT OR IGNORE INTO pending_deletions (blob_name, queued_at) VALUES (?1, ?2)",
+                    params![blob_name, queued_at],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            }
+
+            // Atomically enqueue additional shared-blob paths (e.g. old cloud
+            // shared paths from a strong revocation) so they are durably queued
+            // even if the caller crashes after this transaction commits.
+            for blob_name in &extra_pending_deletions {
                 tx.execute(
                     "INSERT OR IGNORE INTO pending_deletions (blob_name, queued_at) VALUES (?1, ?2)",
                     params![blob_name, queued_at],
@@ -719,6 +732,7 @@ impl SqlCipherMetadataStore {
     /// Enqueues a batch of blob names for pending deletion.
     ///
     /// Intentionally SQLCipher-specific; this method is not exposed on [`MetadataStore`].
+    #[cfg(test)]
     pub(crate) async fn enqueue_pending_deletions(
         &self,
         blob_names: &[String],
@@ -3606,7 +3620,7 @@ mod tests {
         let new_key: [u8; 72] = [0x55; 72];
 
         store
-            .replace_file_key_and_chunks(file_id, new_key, vec![new_chunk], 9999)
+            .replace_file_key_and_chunks(file_id, new_key, vec![new_chunk], 9999, &[])
             .await
             .expect("replace_file_key_and_chunks should succeed");
 
@@ -3637,7 +3651,7 @@ mod tests {
                 .expect("store should be created");
 
         let result = store
-            .replace_file_key_and_chunks(Uuid::new_v4(), [0x11; 72], vec![], 1234)
+            .replace_file_key_and_chunks(Uuid::new_v4(), [0x11; 72], vec![], 1234, &[])
             .await;
 
         assert!(matches!(result, Err(StorageError::NotFound)));

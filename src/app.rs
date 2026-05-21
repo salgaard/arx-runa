@@ -11,7 +11,8 @@ use crate::layout::AppShell;
 use crate::settings::SettingsPage;
 use crate::shares::SharesPage;
 use crate::state::{
-    SessionProvider, SyncProvider, VaultProvider, use_session, use_sync_actions, use_vault_actions,
+    SessionProvider, SyncProvider, VaultProvider, use_session, use_session_actions,
+    use_sync_actions, use_vault_actions,
 };
 use crate::vault::VaultBrowser;
 use crate::vault_picker::VaultPicker;
@@ -43,12 +44,14 @@ pub fn App() -> impl IntoView {
 /// `VaultCreationPage` (create flow). Unlocked state: `AppShell` with inner Router.
 ///
 /// An `Effect` observes `session.is_unlocked` and fans out `vault_actions.clear()` /
-/// `sync_actions.clear()` on the `true → false` transition — Zero-Trace compliance hook.
+/// `sync_actions.clear()` / `session_actions.clear()` on the `true → false` transition —
+/// Zero-Trace compliance hook.
 #[component]
 fn AppRouter() -> impl IntoView {
     let session = use_session();
     let vault_actions = use_vault_actions();
     let sync_actions = use_sync_actions();
+    let session_actions = use_session_actions();
 
     // Which vault the user has selected but not yet unlocked.
     let selected_vault: RwSignal<Option<VaultSummary>> = RwSignal::new(None);
@@ -59,12 +62,13 @@ fn AppRouter() -> impl IntoView {
     // Which vault the user wants to recover using their recovery phrase.
     let recover_with_phrase_intent: RwSignal<Option<VaultSummary>> = RwSignal::new(None);
 
-    // Lock transition: clear vault and sync state when session becomes inactive.
+    // Lock transition: clear vault, sync, and session state when session becomes inactive.
     Effect::new(move |prev: Option<bool>| {
         let now = session.read().is_unlocked;
         if prev == Some(true) && !now {
             vault_actions.clear();
             sync_actions.clear();
+            session_actions.clear();
             // Return to VaultPicker after lock.
             selected_vault.set(None);
             create_vault_intent.set(false);

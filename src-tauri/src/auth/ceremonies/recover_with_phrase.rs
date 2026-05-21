@@ -220,6 +220,7 @@ pub async fn recover_with_phrase(
         slot.wrapped_master_key = encode_base64(rewrapped.as_bytes());
     }
     drop(recovered_recovery_key);
+    drop(new_master_key);
 
     // Best-effort cloud upload: when transport is unavailable (e.g. NoOp during
     // local recovery), warn and continue. The caller must persist the returned
@@ -264,7 +265,6 @@ pub async fn recover_with_phrase(
         )
         .await?;
 
-    drop(new_master_key);
     drop(new_salt);
     drop(new_key_file_bytes);
 

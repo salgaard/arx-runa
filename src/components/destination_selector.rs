@@ -191,6 +191,9 @@ pub fn DestinationSelector(
     /// Called immediately when the user selects a different destination kind.
     #[prop(optional)]
     on_kind_change: Option<Box<dyn Fn(DestinationKind) + Send + Sync>>,
+    /// Called with `true` when an OAuth flow is in progress, `false` when it ends.
+    #[prop(optional)]
+    on_oauth_pending_change: Option<Box<dyn Fn(bool) + Send + Sync>>,
 ) -> impl IntoView {
     let (kind, set_kind) = signal(DestinationKind::Local);
     let (local_path, set_local_path) = signal(String::new());
@@ -205,6 +208,20 @@ pub fn DestinationSelector(
 
     let on_change_notify = on_change.clone();
     let on_kind_change_sv = StoredValue::new(on_kind_change);
+    let on_oauth_pending_sv = StoredValue::new(on_oauth_pending_change);
+
+    // Notify caller whenever OAuth pending state changes.
+    Effect::new(move |_| {
+        let pending = matches!(
+            oauth_state.get(),
+            OAuthFlowState::Starting | OAuthFlowState::WaitingForBrowser { .. }
+        );
+        on_oauth_pending_sv.with_value(|cb| {
+            if let Some(cb) = cb {
+                cb(pending);
+            }
+        });
+    });
 
     // Fire `on_change` reactively for all non-OAuth providers.
     Effect::new(move |_| {
@@ -298,6 +315,8 @@ pub fn DestinationSelector(
                     auth_url,
                 });
 
+                // 150 polls × 2 s = 5 minutes frontend timeout.
+                let mut polls_remaining: u32 = 150;
                 loop {
                     sleep(Duration::from_secs(2)).await;
 
@@ -307,6 +326,15 @@ pub fn DestinationSelector(
                     ) {
                         break;
                     }
+
+                    if polls_remaining == 0 {
+                        set_oauth_state.set(OAuthFlowState::Failed {
+                            message: "Cloud provider authorization timed out. Please try again."
+                                .into(),
+                        });
+                        break;
+                    }
+                    polls_remaining -= 1;
 
                     let poll_result = invoke_command::<_, OauthPollResponse>(
                         "poll_oauth_setup",

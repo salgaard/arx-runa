@@ -1609,23 +1609,3 @@ pub async fn get_backup_health(
         )
         .collect())
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_destination_type_cloud_parsing() {
-        let destination_type_str = "cloud";
-        let destination_type = match destination_type_str {
-            "cloud" => Some(()),
-            _ => None,
-        };
-        assert!(destination_type.is_some());
-    }
-
-    #[test]
-    fn test_extract_sqlcipher_key_requires_manifest_key() {
-        // This helper ensures manifest_key is extracted safely; actual extraction
-        // is tested in auth/session tests. We just verify it's available for async use.
-        // Integration test in phase_6_5_end_to_end.rs covers full flow.
-    }
-}

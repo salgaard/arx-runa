@@ -125,13 +125,7 @@ pub(crate) fn normalise_vault_path(path: &str) -> &str {
 mod tests {
     use super::*;
 
-    // --- vault_path_regex ---
-
-    #[test]
-    fn test_vault_path_regex_compiles_successfully() {
-        // Asserts that the LazyLock static initialisation does not panic.
-        let _ = vault_path_regex();
-    }
+    // --- validate_vault_path ---
 
     // --- validate_vault_path ---
 

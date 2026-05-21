@@ -54,6 +54,8 @@ This reference captures cross-phase contracts that must stay consistent across a
 
 **Invariant**: Decrypted plaintext may exist transiently in active memory, but plaintext, keys, and passwords must never be persisted or emitted to disk, logs, telemetry, or developer-tooling outputs. Frontend sensitive state must be cleared when the vault/session locks.
 
+**Accepted limitation — video buffer handoff**: The video streaming handler (`video_stream.rs`) copies decrypted frame bytes into a plain `Vec<u8>` via `.to_vec()` before passing them to Tauri's URI-scheme `ResponseBuilder::body()`. Once Tauri takes ownership the bytes cannot be zeroized; no `Zeroizing` wrapper or explicit wipe is possible within the current Tauri URI-scheme responder API. This is a known, scoped exception to the in-memory transient-plaintext rule. The inline source comment marks the site for future review if the Tauri API gains a zeroize-after-send callback.
+
 **Source designs**:
 - [Tauri IPC & Frontend](designs/tauri-ipc-and-frontend/design.md)
 - [Authentication & Session Management](designs/authentication-and-session-management/design.md)

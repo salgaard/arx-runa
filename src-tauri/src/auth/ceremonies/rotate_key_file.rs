@@ -67,6 +67,7 @@ pub async fn rotate_key_file(
         key_encryption_key_from_array(current_session_keys.key_encryption_key.expose());
     let current_sqlcipher = SqlcipherKey::from_slice(current_session_keys.sqlcipher_key.expose());
     drop(current_session_keys);
+    drop(current_master_key);
 
     let parent = request
         .target_new_key_file_path
@@ -138,6 +139,7 @@ pub async fn rotate_key_file(
         }
     }
     drop(recovery_key_for_rewrap);
+    drop(new_master_key);
 
     let new_manifest_key_bytes = Zeroizing::new(*new_session_keys.manifest_key.expose());
     let new_sqlcipher_for_upload =
@@ -166,8 +168,6 @@ pub async fn rotate_key_file(
         );
     }
 
-    drop(current_master_key);
-    drop(new_master_key);
     drop(new_salt);
     drop(current_key_file);
     drop(new_key_file);

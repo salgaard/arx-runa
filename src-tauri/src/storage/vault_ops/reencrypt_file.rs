@@ -28,6 +28,8 @@ use crate::storage::types::{ChunkRecord, NodeId};
 /// - Staging blobs are named `<uuid>.blob` (UUID v4).
 /// - Old blobs are queued for deletion via `pending_deletions` atomically with
 ///   the manifest update.
+/// - `extra_pending_deletions` (e.g. old shared-path cloud blobs from a strong
+///   revocation) are also enqueued inside the same atomic transaction.
 /// - Does not import anything from `sharing::`.
 pub async fn reencrypt_file(
     file_id: Uuid,
@@ -35,6 +37,7 @@ pub async fn reencrypt_file(
     sqlcipher_store: &SqlCipherMetadataStore,
     key_encryption_key: &KeyEncryptionKey,
     staging_directory: &Path,
+    extra_pending_deletions: &[String],
 ) -> Result<Vec<ChunkRecord>, StorageError> {
     let node = sqlcipher_store.get_node(file_id).await?;
     let mut old_chunks = sqlcipher_store.get_chunks(file_id).await?;
@@ -86,6 +89,7 @@ pub async fn reencrypt_file(
             *new_file_key_wrapped.as_bytes(),
             new_chunks.clone(),
             now_unix_seconds,
+            extra_pending_deletions,
         )
         .await
     {
@@ -293,7 +297,7 @@ mod tests {
             .await
             .expect("file with chunks should insert");
 
-        let new_chunks = reencrypt_file(file_id, 99_999, &store, &kek, &staging_dir)
+        let new_chunks = reencrypt_file(file_id, 99_999, &store, &kek, &staging_dir, &[])
             .await
             .expect("reencrypt_file should succeed");
 
@@ -342,7 +346,7 @@ mod tests {
 
         let kek = KeyEncryptionKey::from_bytes([42u8; 32]);
 
-        let result = reencrypt_file(Uuid::new_v4(), 99_999, &store, &kek, &staging_dir).await;
+        let result = reencrypt_file(Uuid::new_v4(), 99_999, &store, &kek, &staging_dir, &[]).await;
 
         assert!(matches!(result, Err(StorageError::NotFound)));
     }

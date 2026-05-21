@@ -11,3 +11,4 @@ Platform-specific mlock/VirtualLock. Isolate unsafe in minimal submodules; expos
 - Safe wrapper: lock on construction, unlock on drop; `ZeroizeOnDrop` — clear before unlock; no raw pointer exposure in public API
 - mlock failure for session keys = hard error (no silent degradation); return `Result::Err` with actionable guidance, not panic
 - mlock/VirtualLock wrapper exposes `Result<(), MemoryLockError>`; callers map into their own error enum (e.g., `AuthenticationError::MemoryLockFailed`)
+- Zero-Trace: decrypted plaintext is RAM-only — never write decrypted file content to temp files, OS caches, thumbnails, or any disk path; transient in-memory existence is the only permitted form

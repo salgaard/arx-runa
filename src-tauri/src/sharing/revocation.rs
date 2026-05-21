@@ -162,6 +162,7 @@ pub(crate) async fn strong_revoke_share(
         sqlcipher_store,
         key_encryption_key,
         staging_directory,
+        &old_shared_blob_paths,
     )
     .await
     .map_err(|error| SharingError::Backend(error.to_string()))?;
@@ -238,21 +239,8 @@ pub(crate) async fn strong_revoke_share(
         });
     }
 
-    sqlcipher_store
-        .enqueue_pending_deletions(&old_shared_blob_paths, now_unix_seconds)
-        .await
-        .map_err(|error| SharingError::Backend(error.to_string()))?;
-
-    // Attempt immediate deletion; failures are already durably queued above.
-    if let Ok(old_blob_list) = cloud
-        .list_blobs(&format!("shared/{}/", old_file_share_id))
-        .await
-    {
-        for blob_path in old_blob_list {
-            let _ = cloud.delete_blob(&blob_path).await;
-        }
-    }
-
+    // Mark old shares revoked before attempting any cloud deletions (H-005):
+    // the share record must reflect revocation even if the immediate delete fails.
     let mut first_revocation_error: Option<SharingError> = None;
     for old_share in &all_active {
         if let Err(error) = sharing_store
@@ -268,6 +256,17 @@ pub(crate) async fn strong_revoke_share(
             "strong revocation: failed to mark old shares revoked: {}",
             error
         )));
+    }
+
+    // Attempt immediate deletion; failures are already durably queued inside
+    // the replace_file_key_and_chunks transaction (H-004).
+    if let Ok(old_blob_list) = cloud
+        .list_blobs(&format!("shared/{}/", old_file_share_id))
+        .await
+    {
+        for blob_path in old_blob_list {
+            let _ = cloud.delete_blob(&blob_path).await;
+        }
     }
 
     Ok(StrongRevocationOutput {

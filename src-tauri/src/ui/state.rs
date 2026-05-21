@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::Instant;
 
 #[cfg(not(any(test, feature = "test-utils")))]
 use async_trait::async_trait;
@@ -27,6 +28,8 @@ pub struct OAuthSetupHandle {
     pub temp_config_path: PathBuf,
     /// Rclone remote name used for this setup (e.g. `arx-runa-<uuid>`).
     pub remote_name: String,
+    /// When this handle was created; used to enforce a setup timeout.
+    pub started_at: Instant,
 }
 
 /// Shared application state injected into every Tauri command via `tauri::State`.

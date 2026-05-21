@@ -282,6 +282,22 @@ mod security_audit {
                 connect_src.contains("http://ipc.localhost"),
                 "CSP violation: connect-src must contain 'http://ipc.localhost'; found: {connect_src}",
             );
+            // FLOW-G-004: connect-src must not widen beyond the three allowed origins.
+            assert!(
+                !connect_src.contains('*'),
+                "CSP violation: connect-src must not contain a wildcard; found: {connect_src}",
+            );
+            let allowed: std::collections::HashSet<&str> =
+                ["'self'", "ipc:", "http://ipc.localhost"].into();
+            let actual: std::collections::HashSet<&str> = connect_src.split_whitespace().collect();
+            let unknown: Vec<&&str> = actual.difference(&allowed).collect();
+            assert!(
+                unknown.is_empty(),
+                "CSP violation: connect-src contains unexpected token(s) {:?}; \
+                 only {:?} are permitted",
+                unknown,
+                allowed,
+            );
         }
     }
 
@@ -391,15 +407,15 @@ mod security_audit {
     }
 
     /// Verifies that no key material, passwords, or derived keys are logged
-    /// anywhere in the `src/storage/` module.
+    /// anywhere in the Tauri backend source tree (`src/`).
     ///
-    /// Storage operations should never emit raw key bytes to tracing sinks.
-    /// This catches accidental `tracing::debug!(key = ...)` patterns that would
-    /// write key material to log files, violating Zero-Trace.
+    /// Storage, sharing, auth, UI, and crypto modules must never emit raw key
+    /// bytes to tracing sinks. This catches accidental `tracing::debug!(key = …)`
+    /// patterns that would write key material to log files, violating Zero-Trace.
     #[test]
-    fn test_no_key_material_logged_in_storage_module() {
+    fn test_no_key_material_logged_in_backend_modules() {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let storage_src = Path::new(manifest_dir).join("src/storage");
+        let backend_src = Path::new(manifest_dir).join("src");
         let tracing_call = concat!("tracing", "::");
         let key_words = [
             "master_key",
@@ -409,7 +425,13 @@ mod security_audit {
             "manifest_key",
         ];
 
-        let files = collect_rs_source(&storage_src);
+        let files: Vec<(std::path::PathBuf, String)> = collect_rs_source(&backend_src)
+            .into_iter()
+            .filter(|(p, _)| {
+                // Skip unit/integration test files — they use key material intentionally.
+                !p.components().any(|c| c.as_os_str() == "tests")
+            })
+            .collect();
         let mut violations: Vec<String> = Vec::new();
         for (path, content) in &files {
             for (line_no, line) in content.lines().enumerate() {
@@ -429,7 +451,7 @@ mod security_audit {
 
         assert!(
             violations.is_empty(),
-            "Zero-Trace violation: key material name found in tracing macro in storage module:\n  {}",
+            "Zero-Trace violation: key material name found in tracing macro in backend source:\n  {}",
             violations.join("\n  "),
         );
     }
@@ -437,22 +459,23 @@ mod security_audit {
     /// Verifies that the Zero-Trace state-clearing hook is wired in `src/app.rs`.
     ///
     /// On the `is_unlocked: true → false` transition the router's `Effect::new`
-    /// block must call both `vault_actions.clear()` and `sync_actions.clear()`.
-    /// Omitting either call would leave decrypted vault or sync state alive in
-    /// memory after the session locks, violating Zero-Trace.
+    /// block must call `vault_actions.clear()`, `sync_actions.clear()`, and
+    /// `session_actions.clear()`. Omitting any call would leave decrypted state
+    /// alive in memory after the session locks, violating Zero-Trace.
     #[test]
     fn test_state_clearing_wired_on_lock_transition_in_router() {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         let app_rs_path = Path::new(manifest_dir).join("../src/app.rs");
         let vault_clear = concat!("vault_actions", ".clear()");
         let sync_clear = concat!("sync_actions", ".clear()");
+        let session_clear = concat!("session_actions", ".clear()");
         let effect_new = "Effect::new";
 
         let content = fs::read_to_string(&app_rs_path)
             .unwrap_or_else(|e| panic!("Failed to read {}: {e}", app_rs_path.display()));
 
-        // Verify all three tokens appear within a 30-line window so that a
-        // refactor moving either clear() call out of the Effect::new block is
+        // Verify all four tokens appear within a 30-line window so that a
+        // refactor moving any clear() call out of the Effect::new block is
         // caught, not just their individual presence anywhere in the file.
         let lines: Vec<&str> = content.lines().collect();
         let window = 30_usize;
@@ -461,13 +484,14 @@ mod security_audit {
             joined.contains(effect_new)
                 && joined.contains(vault_clear)
                 && joined.contains(sync_clear)
+                && joined.contains(session_clear)
         });
 
         assert!(
             found,
-            "Zero-Trace violation: `{vault_clear}`, `{sync_clear}`, and `{effect_new}` \
-             must all appear within {window} lines of each other in src/app.rs. \
-             Both clear() calls must be inside the Effect::new lock-transition block.",
+            "Zero-Trace violation: `{vault_clear}`, `{sync_clear}`, `{session_clear}`, \
+             and `{effect_new}` must all appear within {window} lines of each other in \
+             src/app.rs. All clear() calls must be inside the Effect::new lock-transition block.",
         );
     }
 

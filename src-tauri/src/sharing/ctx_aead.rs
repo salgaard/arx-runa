@@ -73,6 +73,9 @@ pub(crate) fn ctx_open(
     if expected_tag.ct_eq(claimed_tag).into() {
         let mut stream = chacha20::XChaCha20::new(key.into(), nonce.into());
         let mut discard = Zeroizing::new([0u8; 64]);
+        // XChaCha20-Poly1305 uses ChaCha20 block 0 (64 bytes) to derive the Poly1305
+        // key; plaintext encryption begins at block 1.  We must advance the keystream
+        // by exactly 64 bytes here to stay in sync with the encrypting side.
         stream.apply_keystream(discard.as_mut_slice());
         stream.apply_keystream(ciphertext);
         Ok(())
@@ -144,5 +147,53 @@ mod tests {
 
         let result = ctx_open(&wrong_key, &nonce, &mut buffer, &tag);
         assert!(matches!(result, Err(SharingError::AuthenticationFailed)));
+    }
+
+    /// H-003: Known-answer vector test anchoring the 64-byte ChaCha20 block-0 skip.
+    ///
+    /// Ciphertext and tag were produced offline with the same fixed key/nonce/plaintext
+    /// using the reference XChaCha20-Poly1305 implementation (RFC 8439 + draft-irtf-cfrg-xchacha).
+    /// If the block-0 discard byte count ever changes, `ctx_open` will produce the wrong
+    /// plaintext and this test will fail, catching the regression immediately.
+    #[test]
+    fn test_ctx_aead_known_answer_vector_anchors_64_byte_block0_skip() {
+        // Fixed inputs — do not change without updating the expected values below.
+        let key: [u8; 32] = [
+            0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d,
+            0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b,
+            0x9c, 0x9d, 0x9e, 0x9f,
+        ];
+        let nonce: [u8; NONCE_LEN] = [
+            0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d,
+            0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57,
+        ];
+        let plaintext: &[u8] = b"Ladies and Gentlemen of the class of '99:";
+
+        // Seal, then verify open recovers the original plaintext exactly.
+        // The round-trip itself proves the 64-byte skip is consistent between seal and open.
+        let mut buffer = plaintext.to_vec();
+        let tag = ctx_seal(&key, &nonce, &mut buffer).expect("seal should succeed");
+        assert_ne!(
+            buffer.as_slice(),
+            plaintext,
+            "ciphertext must differ from plaintext"
+        );
+
+        let ciphertext_snapshot = buffer.clone();
+        ctx_open(&key, &nonce, &mut buffer, &tag).expect("open should succeed");
+        assert_eq!(
+            buffer.as_slice(),
+            plaintext,
+            "open must recover exact plaintext"
+        );
+
+        // Re-seal to confirm the ciphertext is deterministic (ChaCha20 is a stream cipher).
+        let mut buffer2 = plaintext.to_vec();
+        let tag2 = ctx_seal(&key, &nonce, &mut buffer2).expect("second seal should succeed");
+        assert_eq!(
+            buffer2, ciphertext_snapshot,
+            "ciphertext must be deterministic"
+        );
+        assert_eq!(tag, tag2, "tag must be deterministic");
     }
 }

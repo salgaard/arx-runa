@@ -460,6 +460,7 @@ pub async fn begin_google_drive_setup(
         child: begun.child,
         temp_config_path: begun.temp_config_path,
         remote_name: begun.remote_name,
+        started_at: std::time::Instant::now(),
     };
     state
         .oauth_setups
@@ -501,6 +502,7 @@ pub async fn begin_onedrive_setup(
         child: begun.child,
         temp_config_path: begun.temp_config_path,
         remote_name: begun.remote_name,
+        started_at: std::time::Instant::now(),
     };
     state
         .oauth_setups
@@ -530,14 +532,30 @@ pub async fn poll_oauth_setup(
 
     let mut setups = state.oauth_setups.lock().await;
 
-    let wait_result = {
+    let (wait_result, timed_out) = {
         let handle = setups
             .get_mut(&setup_id)
             .ok_or_else(|| IpcError::NotFound(format!("OAuth setup '{setup_id}' not found")))?;
-        handle.child.try_wait().map_err(|error| {
+        let timed_out = handle.started_at.elapsed() > std::time::Duration::from_secs(180);
+        let wait = handle.child.try_wait().map_err(|error| {
             IpcError::InternalError(format!("failed to poll OAuth child: {error}"))
-        })?
+        })?;
+        (wait, timed_out)
     };
+
+    if timed_out && wait_result.is_none() {
+        let mut handle = setups.remove(&setup_id).ok_or_else(|| {
+            IpcError::InternalError("OAuth setup disappeared between poll and remove".into())
+        })?;
+        drop(setups);
+        let _ = handle.child.kill().await;
+        if let Err(error) = tokio::fs::remove_file(&handle.temp_config_path).await {
+            tracing::warn!(error = %error, "failed to remove timed-out OAuth temp config");
+        }
+        return Ok(OauthPollResponse::Failed {
+            message: "Cloud provider authorization timed out. Please try again.".into(),
+        });
+    }
 
     let exit_status = match wait_result {
         None => return Ok(OauthPollResponse::Pending),

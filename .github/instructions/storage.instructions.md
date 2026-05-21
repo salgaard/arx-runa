@@ -18,11 +18,12 @@ applyTo: "src-tauri/src/storage/**"
 ## Pipeline
 - `storage::pipeline::{encrypt_file,decrypt_file}` owns streaming chunk transforms; `storage::vault_ops::{upload_file,download_file}` owns orchestration
 - Plaintext buffers must be `Zeroizing<Vec<u8>>`; decrypt flow: `verify_checksum` before `decrypt_chunk` (`VerifiedBlob` enforces this — skipping is compile error)
+- Decrypted content must never be written to temp files, OS caches, or thumbnails — RAM only; no exceptions for previews or intermediate processing steps
 - Hybrid routing decision: `storage::vault_ops::routing::decide`
 - `upload_file`/`download_file`: `progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>` (bytes_processed, bytes_total); `push_vault`/`pull_vault`: `progress: Option<&(dyn Fn(u32, u32, Option<&str>) + Send + Sync)>` (files_processed, files_total, current_file_name); storage must never depend on `tauri::` — `Channel<T>` is wrapped into `dyn Fn` at IPC layer
 
 ## Cloud backup
-- Manifest encrypted with `manifest_key`; singleton blob (no AAD); vault header stays plaintext JSON at cloud root
+- Manifest encrypted with `manifest_key`; singleton blob; AAD = `vault_id.as_bytes()` (16 bytes); vault header stays plaintext JSON at cloud root
 - Backup blob path: `manifest/manifest-backup.blob` (constant `storage::cloud::manifest_backup::MANIFEST_BACKUP_BLOB_NAME`)
 - Push: upload manifest backup, then vault header idempotently; `snapshot_counter` increments each push
 - `rollback_snapshot_counter`: SQLCipher-specific on `SqlCipherMetadataStore` (not `MetadataStore`); push-only after manifest-upload failure; enforce current counter = previous+1 before rollback
@@ -31,7 +32,7 @@ applyTo: "src-tauri/src/storage/**"
 - `RcloneTransport`: bundled sidecar via `tokio::process::Command`; remote paths pass `^[a-zA-Z0-9._/-]+$` (reject `..` and leading `/`); stderr strips lines matching `token|key|secret|password|credential|auth`
 
 ## EXIF stripping
-- Optional pre-encrypt; enabled by default for `image/jpeg`, `image/png`, `image/tiff` (magic bytes, not extension); strips EXIF/XMP/IPTC in RAM — disk file never modified; MP4/QuickTime excluded; unsupported containers pass through
+- Optional pre-encrypt; enabled by default for `image/jpeg`, `image/png` (magic bytes, not extension); strips EXIF/XMP/IPTC in RAM — disk file never modified; MP4/QuickTime and TIFF excluded; unsupported containers pass through
 
 ## Deletion & Staging
 - Transaction order: read blob names → enqueue `pending_deletions` → delete node (CASCADE removes chunks) → commit → delete local staging blobs
