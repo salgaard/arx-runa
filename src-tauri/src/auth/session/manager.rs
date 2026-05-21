@@ -531,18 +531,10 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Installs pre-derived session keys and transitions `NoSession | Expired → Active`.
+    /// Convenience wrapper: acquires the install gate, then finalises the install.
     ///
-    /// Used by ceremony flows (`create_vault`, `recover_vault`,
-    /// `recover_with_phrase`) where the master-key bytes have already been
-    /// derived in ceremony-local scope and expanded into `SessionKeys` via
-    /// `SessionKeys::from_master_key_bytes`. Unlike `authenticate`, this
-    /// method does not run Argon2id.
-    ///
-    /// # Errors
-    /// Returns `AuthenticationError::SessionAlreadyActive` if a session is
-    /// already active; the ceremony must call `lock()` first.
-    #[allow(dead_code)]
+    /// Used in unit tests only.
+    #[cfg(test)]
     pub(crate) async fn install_session(
         &self,
         keys: SessionKeys,
@@ -674,11 +666,12 @@ impl SessionManager {
         Ok(callback(keys.sqlcipher_key.expose()))
     }
 
-    /// Invokes `callback` with the active manifest key under the session read lock.
+    /// Invokes `callback` with the raw manifest key bytes under the session
+    /// read lock.
     ///
     /// # Errors
-    /// Returns `AuthenticationError::SessionNotActive` if no session is currently installed.
-    #[allow(dead_code)]
+    /// Returns `AuthenticationError::SessionNotActive` if no session is
+    /// currently installed.
     pub(crate) async fn with_manifest_key<F, R>(
         &self,
         callback: F,

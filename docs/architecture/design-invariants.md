@@ -91,9 +91,9 @@ This reference captures cross-phase contracts that must stay consistent across a
 **Source designs**:
 - [File Sharing](designs/file-sharing/design.md)
 
-### 12) Share revocation semantics (default vs strong)
+### 12) Share revocation semantics
 
-**Invariant**: Revocation defaults to future-fetch blocking and does not claim recall of plaintext already fetched/decrypted. For stronger revocation, the owner rotates `file_key`, re-encrypts and republishes under a new `file_share_id`, and retires the old shared path.
+**Invariant**: Revocation defaults to future-fetch blocking and does not claim recall of plaintext already fetched/decrypted. Soft revocation sets `revoked_at` in the DB and deletes the shared cloud blobs (when this is the last active share for the file), and always revokes the cloud-level download credential (GDrive permission or B2 key). Re-encryption revocation is not implemented — the threat model does not justify the complexity given that a determined recipient can retain plaintext during the download window.
 
 **Source designs**:
 - [File Sharing](designs/file-sharing/design.md)
@@ -165,7 +165,7 @@ This reference captures cross-phase contracts that must stay consistent across a
 | File-level conflict detection | Detect-and-block only | Phase 7 research: three-way merge, timestamp comparison |
 | EXIF stripping | JPEG/PNG only; TIFF, HEIC, MP4/QuickTime/MOV pass through unmodified — users should strip metadata before adding these files | Phase 7 candidate: `kamadak-exif` + `mp4parse` coverage |
 | `VaultHeader.tier` cloud visibility | Tier (1 = password-only, 2 = password + key file) is present in the plaintext cloud header — intentional; required for recovery bootstrapping to present the correct authentication prompt; it is a 1-bit classifier, not a user identifier | No change planned |
-| Revocation semantics | Default (future-fetch block) | Phase 7 option: strong revocation with key rotation |
+| Revocation semantics | Default (future-fetch block) | Re-encryption revocation was removed — not implemented |
 | Fingerprint verification | Display-only | Phase 7 candidate: verification history, contact trust model |
 
 ### Forward Declarations (All Fulfilled)

@@ -249,8 +249,6 @@ pub struct ShareFileRequest {
     pub contact_id: String,
     /// Optional expiration period in days from now.
     pub expiration_days: Option<u32>,
-    /// Whether to request a delivery receipt from the recipient.
-    pub request_receipt: bool,
 }
 
 /// Argument payload for the `revoke_share` Tauri command.

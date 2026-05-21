@@ -23,14 +23,8 @@ use crate::storage::metadata_store::MetadataStore;
 pub(crate) struct CreateShareOutput {
     /// The share identifier assigned to the new share row.
     pub share_id: String,
-    /// The file-level grouping identifier shared by all recipients of this file version.
-    pub file_share_id: String,
     /// HPKE-sealed share package wire bytes to deliver to the recipient.
     pub wire_bytes: Vec<u8>,
-    /// Provider credential identifier stored for later revocation (B2 key ID or Drive permission ID).
-    pub download_key_id: Option<String>,
-    /// Google Drive folder ID for the shared prefix, stored alongside `download_key_id` for Drive revocation.
-    pub download_folder_id: Option<String>,
 }
 
 /// Data parameters for a [`create_share`] call.
@@ -43,10 +37,7 @@ pub(crate) struct CreateShareRequest {
     pub expires_at: Option<i64>,
     /// Current time as Unix seconds (used for `created_at`).
     pub now_unix_seconds: i64,
-    /// Whether the recipient should be asked to send a receipt after downloading.
-    pub receipt_requested: bool,
 }
-
 /// Creates an outgoing file share for a single recipient.
 ///
 /// If an active share already exists for this file, the existing `file_share_id`
@@ -70,7 +61,6 @@ pub(crate) async fn create_share(
         contact_id,
         expires_at,
         now_unix_seconds,
-        receipt_requested,
     } = request;
     let file_id_str = file_id.hyphenated().to_string();
 
@@ -180,13 +170,11 @@ pub(crate) async fn create_share(
         .unwrap_or(7 * 24 * 3600);
 
     let (cloud_endpoint, download_key_id, download_folder_id) = match cloud
-        .generate_share_credentials(&cloud_path_prefix, ttl_seconds, receipt_requested)
+        .generate_share_credentials(&cloud_path_prefix, ttl_seconds)
         .await
     {
         Ok(Some(mut creds)) => {
-            if receipt_requested {
-                creds["receipt_requested"] = serde_json::json!(true);
-            }
+            creds["receipt_requested"] = serde_json::json!(true);
             let key_id = creds["key_id"]
                 .as_str()
                 .or_else(|| creds["permission_id"].as_str())
@@ -236,7 +224,7 @@ pub(crate) async fn create_share(
         revoked_at: None,
         download_key_id: download_key_id.clone(),
         download_folder_id: download_folder_id.clone(),
-        receipt_requested,
+        receipt_requested: true,
         receipt_received_at: None,
     };
 
@@ -244,10 +232,7 @@ pub(crate) async fn create_share(
 
     Ok(CreateShareOutput {
         share_id,
-        file_share_id,
         wire_bytes: wire,
-        download_key_id,
-        download_folder_id,
     })
 }
 

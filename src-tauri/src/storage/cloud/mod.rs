@@ -146,9 +146,8 @@ pub trait CloudTransport: Send + Sync {
         &self,
         path_prefix: &str,
         ttl_seconds: u32,
-        receipt_requested: bool,
     ) -> Result<Option<serde_json::Value>, CloudTransportError> {
-        let _ = (path_prefix, ttl_seconds, receipt_requested);
+        let _ = (path_prefix, ttl_seconds);
         Ok(None)
     }
 }

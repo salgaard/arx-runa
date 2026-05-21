@@ -1,6 +1,6 @@
 //! Share-package creation and import.
 //!
-//! A share package is a `.vgshare` binary blob sealed with HPKE for a specific
+//! A share package is a `.arxshare` binary blob sealed with HPKE for a specific
 //! X25519 recipient.  The inner JSON payload (`SharePackagePayload`) carries
 //! the file key, chunk metadata, and cloud endpoint required for a recipient
 //! to reconstruct access to a shared file.

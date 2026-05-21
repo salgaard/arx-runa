@@ -120,30 +120,17 @@ pub async fn setup_recovery(
 
 #[cfg(test)]
 mod tests {
-    #![allow(unused_imports)]
     use super::super::helpers::*;
     use super::super::test_support::*;
     use super::*;
     use base64::Engine;
     use bip39::{Language, Mnemonic};
-    use rusqlite::params;
-    use uuid::Uuid;
-    use zeroize::Zeroizing;
 
     use crate::auth::error::AuthenticationError;
-    use crate::auth::kdf::derive_master_key_into;
-    use crate::auth::key_source::MockKeySource;
-    use crate::auth::session::{SessionKeys, SessionManager};
     use crate::auth::{
-        ChangePasswordRequest, CreateVaultRequest, SetupRecoveryRequest, Tier, change_password,
-        create_vault, setup_recovery,
-    };
-    use crate::crypto::{
-        RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey, unwrap_master_key_from_recovery,
+        ChangePasswordRequest, SetupRecoveryRequest, change_password, setup_recovery,
     };
     use crate::storage::cloud::CloudTransport;
-    use crate::storage::cloud::mock::MockCloudTransport;
-    use crate::storage::cloud::vault_header::VaultHeader;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_setup_recovery_adds_bip39_slot_to_vault_header() {

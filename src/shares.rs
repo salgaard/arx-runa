@@ -642,7 +642,7 @@ pub fn ShareModal(
     #[prop(into)] on_success: Callback<ShareResponse>,
 ) -> impl IntoView {
     let selected_contact_id = RwSignal::new(None::<String>);
-    let expiration_days = RwSignal::new(None::<String>);
+    let expiration_days = RwSignal::new(Some("30".to_string()));
     let contacts = RwSignal::new(Vec::<ContactEntry>::new());
     let loading_contacts = RwSignal::new(true);
     let sharing = RwSignal::new(false);
@@ -687,7 +687,6 @@ pub fn ShareModal(
                     file_id: file_id_clone,
                     contact_id: contact_id.clone(),
                     expiration_days: expiry_opt,
-                    request_receipt: true,
                 },
             )
             .await
@@ -766,19 +765,20 @@ pub fn ShareModal(
                     }}
 
                     <div>
-                        <label class="block text-sm text-text-secondary mb-1">"Expiration (days, optional)"</label>
-                        <input
-                            type="number"
-                            min="1"
+                        <label class="block text-sm text-text-secondary mb-1">"Expiration"</label>
+                        <select
                             class="w-full px-3 py-2 bg-iron border border-steel text-bone rounded"
-                            placeholder="Leave blank for no expiration"
-                            value=move || expiration_days.get().unwrap_or_default()
-                            on:input=move |e| {
+                            on:change=move |e| {
                                 let value = event_target_value(&e);
                                 expiration_days.set(if value.is_empty() { None } else { Some(value) });
                             }
                             disabled=move || sharing.get()
-                        />
+                        >
+                            <option value="7" selected=move || expiration_days.get().as_deref() == Some("7")>"7 days"</option>
+                            <option value="30" selected=move || expiration_days.get().as_deref() == Some("30")>"30 days"</option>
+                            <option value="90" selected=move || expiration_days.get().as_deref() == Some("90")>"90 days"</option>
+                            <option value="" selected=move || expiration_days.get().is_none()>"No expiration"</option>
+                        </select>
                     </div>
                 </div>
 

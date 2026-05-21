@@ -301,7 +301,6 @@ impl CloudTransport for RcloneTransport {
         &self,
         path_prefix: &str,
         ttl_seconds: u32,
-        receipt_requested: bool,
     ) -> Result<Option<serde_json::Value>, CloudTransportError> {
         let conf = Zeroizing::new(
             tokio::fs::read_to_string(&self.session_config_path)
@@ -323,7 +322,6 @@ impl CloudTransport for RcloneTransport {
                 .generate_b2_share_credentials(
                     path_prefix,
                     ttl_seconds,
-                    receipt_requested,
                     &master_key_id,
                     &master_app_key,
                 )
@@ -359,7 +357,6 @@ impl RcloneTransport {
         &self,
         path_prefix: &str,
         ttl_seconds: u32,
-        receipt_requested: bool,
         master_key_id: &str,
         master_app_key: &str,
     ) -> Result<Option<serde_json::Value>, CloudTransportError> {
@@ -386,10 +383,7 @@ impl RcloneTransport {
                 ))
             })?;
 
-        let mut capabilities = vec!["readFiles", "listBuckets"];
-        if receipt_requested {
-            capabilities.push("writeFiles");
-        }
+        let capabilities = vec!["readFiles", "listBuckets", "writeFiles"];
 
         let app_key = crate::sharing::b2_api::b2_create_application_key(
             &client,
@@ -408,18 +402,15 @@ impl RcloneTransport {
 
         tracing::debug!(key_id = %app_key.application_key_id, "created B2 scoped key");
 
-        let mut creds = serde_json::json!({
+        let creds = serde_json::json!({
             "provider": "b2",
             "bucket": bucket_name,
             "download_url": auth.download_url,
             "key_id": app_key.application_key_id,
             "application_key": app_key.application_key,
             "path_prefix": path_prefix,
+            "receipt_requested": true,
         });
-
-        if receipt_requested {
-            creds["receipt_requested"] = serde_json::json!(true);
-        }
 
         Ok(Some(creds))
     }

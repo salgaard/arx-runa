@@ -65,9 +65,6 @@ pub enum SharingError {
     /// A share cannot be revoked because it is already revoked.
     #[error("share already revoked")]
     ShareAlreadyRevoked,
-    /// Strong revocation attempted on a file with no re-encryption candidates.
-    #[error("no active shares to rotate for file_share_id")]
-    NoActiveSharesForRotation,
     /// A received share package contains an invalid or untrusted field value.
     #[error("invalid share package")]
     InvalidSharePackage,
@@ -228,15 +225,6 @@ mod tests {
         assert_eq!(
             SharingError::ShareAlreadyRevoked.to_string(),
             "share already revoked"
-        );
-    }
-
-    /// Verifies `NoActiveSharesForRotation` has the expected display text.
-    #[test]
-    fn test_sharing_error_no_active_shares_for_rotation_formats_expected_message() {
-        assert_eq!(
-            SharingError::NoActiveSharesForRotation.to_string(),
-            "no active shares to rotate for file_share_id"
         );
     }
 }

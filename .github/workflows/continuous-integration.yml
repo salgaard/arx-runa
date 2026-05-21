@@ -116,10 +116,12 @@ jobs:
           if (-not $driverDir) { Write-Error "msedgedriver not found"; exit 1 }
           echo "$driverDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Prepend Strawberry Perl to PATH (Windows)
+      - name: Configure Strawberry Perl for OpenSSL build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: echo "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        run: |
+          echo "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "PERL=C:\Strawberry\perl\bin\perl.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Prepare CI rclone sidecar stub
         shell: bash

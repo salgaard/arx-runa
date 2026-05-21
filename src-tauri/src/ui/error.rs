@@ -109,7 +109,7 @@ impl From<crate::sharing::SharingError> for IpcError {
             Sh::ContactNotFound | Sh::ShareNotFound | Sh::ReceivedShareNotFound => {
                 IpcError::NotFound("Share record not found".into())
             }
-            Sh::ShareAlreadyRevoked | Sh::NoActiveSharesForRotation => {
+            Sh::ShareAlreadyRevoked => {
                 IpcError::InvalidInput("Share cannot be revoked in its current state".into())
             }
             Sh::CloudOperation(_) | Sh::RevocationPartial { .. } => {

@@ -187,33 +187,23 @@ pub async fn rotate_key_file(
 
 #[cfg(test)]
 mod tests {
-    #![allow(unused_imports)]
     use super::super::helpers::*;
     use super::super::test_support::*;
     use super::*;
     use async_trait::async_trait;
-    use base64::Engine;
     use bip39::{Language, Mnemonic};
     use rusqlite::params;
-    use uuid::Uuid;
     use zeroize::Zeroizing;
 
     use crate::auth::error::AuthenticationError;
     use crate::auth::kdf::derive_master_key_into;
     use crate::auth::key_source::MockKeySource;
-    use crate::auth::session::{SessionKeys, SessionManager};
+    use crate::auth::session::SessionKeys;
     use crate::auth::staging;
-    use crate::auth::{
-        CreateVaultRequest, SetupRecoveryRequest, Tier, create_vault, setup_recovery,
-    };
-    use crate::crypto::{
-        FileId, RecoveryKey, VaultId, WrappedFileKey, WrappedMasterKey,
-        unwrap_master_key_from_recovery,
-    };
+    use crate::auth::{SetupRecoveryRequest, setup_recovery};
+    use crate::crypto::{FileId, RecoveryKey, WrappedMasterKey, unwrap_master_key_from_recovery};
     use crate::storage::cloud::CloudTransport;
     use crate::storage::cloud::CloudTransportError;
-    use crate::storage::cloud::mock::MockCloudTransport;
-    use crate::storage::cloud::vault_header::VaultHeader;
 
     #[derive(Debug, Default)]
     struct UploadFailCloudTransport;
