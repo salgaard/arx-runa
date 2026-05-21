@@ -273,9 +273,7 @@ pub(crate) async fn create_session_rclone_dir() -> Result<std::path::PathBuf, Cl
             std::fs::set_permissions(&dir_clone, std::fs::Permissions::from_mode(0o700))
         })
         .await
-        .map_err(|e| {
-            CloudTransportError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e))
-        })??;
+        .map_err(|e| CloudTransportError::IoError(std::io::Error::other(e)))??;
     }
 
     #[cfg(windows)]
