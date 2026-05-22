@@ -52,8 +52,8 @@ Rapporten følger denne kæde konsekvent — rød tråd:
 
 ## Struktur-regler
 
-- **Rød tråd:** Hvert kapitel åbner med en sætning der forankrer det i problemformuleringen — fx "Dette kapitel undersøger UQ1:..."
-- **Delkonklusioner:** Hvert UQ-kapitel (§5–9) afsluttes med en delkonklusion (max 150 ord) der direkte besvarer underspørgsmålet og refererer tilbage til §2.
+- **Rød tråd:** Hvert kapitel åbner med en sætning der forankrer det i problemformuleringen — fx "Dette kapitel undersøger underspørgsmål 1:..."
+- **Delkonklusioner:** Hvert analysekapitel (§5–9) afsluttes med en delkonklusion (max 150 ord) der direkte besvarer det pågældende underspørgsmål og refererer tilbage til §2. Label: "Delkonklusion — Underspørgsmål N".
 - **Figurer og tabeller:** Altid ledsaget af billedtekst + analyse i brødteksten. Ikke bare "se figur X".
 - **Anbefalinger i §10:** Skal være teoriforankrede — citér kilde eller design-princip, ikke personlig vurdering.
 - **Use cases i §4.X:** Alle 5 UC'er præsenteres som tabel (UC-ID, scenarie, primær sikkerhedsegenskab, krav-domæner). UC-1 og UC-4 nævnes kort i §1 som konkrete eksempler.
