@@ -103,7 +103,8 @@ jobs:
                      src-tauri/bin/rclone-universal-apple-darwin
           fi
 
-      - name: Build and publish release
+      - name: Build release artifacts
+        id: tauri-build
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -113,3 +114,24 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Publish artifacts to public releases repo
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          REPO="salgaard/arx-runa-releases"
+
+          gh release create "$TAG" \
+            --repo "$REPO" \
+            --title "Arx Runa $TAG" \
+            --notes "See [changelog](https://github.com/salgaard/arx-runa) for details." \
+            2>/dev/null || true
+
+          echo '${{ steps.tauri-build.outputs.artifactPaths }}' \
+            | jq -r '.[]' \
+            | while read -r artifact; do
+                [ -f "$artifact" ] && gh release upload "$TAG" "$artifact" \
+                  --repo "$REPO" --clobber
+              done

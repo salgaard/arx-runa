@@ -399,7 +399,7 @@ C4Context
     title System Context for Arx Runa
 
     Person(user, "User", "Individual with sensitive files")
-    System(arx_runa, "Arx Runa", "Zero-knowledge cloud backup")
+    System(arx_runa, "Arx Runa", "Zero-knowledge client encryption")
     System_Ext(cloud, "Cloud Provider", "S3/GCS/Azure")
 
     Rel(user, arx_runa, "Backs up files")
