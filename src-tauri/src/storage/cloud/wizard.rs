@@ -461,11 +461,7 @@ pub async fn begin_oauth_setup(
             OsStr::new(rclone_type),
         ])
         .args(&extra_args)
-        .args([
-            OsStr::new("--config"),
-            temp_config_path.as_os_str(),
-            OsStr::new("--non-interactive"),
-        ])
+        .args([OsStr::new("--config"), temp_config_path.as_os_str()])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
