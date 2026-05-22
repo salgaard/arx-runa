@@ -5,7 +5,7 @@
 
 All releases are available on GitHub.
 
-**[→ View all releases on GitHub](https://github.com/salgaard/arx-runa/releases)**
+**[→ View all releases on GitHub](https://github.com/salgaard/arx-runa-releases/releases)**
 
 ---
 
