@@ -750,6 +750,10 @@ pub fn FileItem(
                     .to_owned();
                 let contact_email = result.contact_email.clone();
                 let file_name_hint = file_name.clone();
+                // Use the contact's email if available; empty string opens the
+                // mail client with a blank To field so the user can fill it in.
+                let email_for_button = contact_email.clone().unwrap_or_default();
+                let path_for_email = package_path.clone();
 
                 view! {
                     <div class="p-4 bg-stone border border-steel rounded mb-4">
@@ -773,29 +777,23 @@ pub fn FileItem(
                             >
                                 "Reveal in Explorer"
                             </button>
-                            {contact_email.clone().map(|email| {
-                                let email_clone = email.clone();
-                                let path_clone = package_path.clone();
-                                view! {
-                                    <button
-                                        class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors"
-                                        on:click=move |_| {
-                                            let req = ComposeEmailWithAttachmentRequest {
-                                                package_path: path_clone.clone(),
-                                                recipient_email: email_clone.clone(),
-                                            };
-                                            spawn_local(async move {
-                                                let _ = invoke_command::<ComposeEmailWithAttachmentRequest, ()>(
-                                                    "compose_email_with_attachment",
-                                                    &req,
-                                                ).await;
-                                            });
-                                        }
-                                    >
-                                        "Compose email"
-                                    </button>
+                            <button
+                                class="px-3 py-1 text-sm text-bone bg-rune rounded cursor-pointer hover:bg-rune/80 transition-colors"
+                                on:click=move |_| {
+                                    let req = ComposeEmailWithAttachmentRequest {
+                                        package_path: path_for_email.clone(),
+                                        recipient_email: email_for_button.clone(),
+                                    };
+                                    spawn_local(async move {
+                                        let _ = invoke_command::<ComposeEmailWithAttachmentRequest, ()>(
+                                            "compose_email_with_attachment",
+                                            &req,
+                                        ).await;
+                                    });
                                 }
-                            })}
+                            >
+                                "Compose email"
+                            </button>
                             <button
                                 class="px-3 py-1 text-sm text-text-secondary cursor-pointer hover:text-bone transition-colors"
                                 on:click=move |_| share_result.set(None)

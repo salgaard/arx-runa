@@ -24,6 +24,7 @@ use crate::ui::commands_common::{
 };
 use crate::ui::error::IpcError;
 use crate::ui::file_commands::detect_mime_type;
+use crate::ui::shell_commands::strip_unc_prefix;
 use crate::ui::state::AppState;
 use crate::ui::types::{
     ContactEntry, DownloadReceivedShareResponse, FileContent, ImportShareResponse, ProgressUpdate,
@@ -451,6 +452,23 @@ pub async fn share_file(
     tokio::fs::write(&package_path, &output.wire_bytes)
         .await
         .map_err(|_| IpcError::InternalError("Cannot write share package".into()))?;
+
+    // Register the package path so reveal_in_explorer and compose_email_with_attachment
+    // can access it this session. The shares directory uses `dirs::data_dir()` which
+    // differs from Tauri's `app_data_dir()` (productName vs "arx-runa"), so the path
+    // won't pass the `starts_with(app_data)` check and must be explicitly allowed.
+    match package_path.canonicalize() {
+        Ok(canonical) => {
+            state
+                .allowed_reveal_paths
+                .lock()
+                .await
+                .insert(strip_unc_prefix(canonical));
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to register share package path for reveal");
+        }
+    }
 
     Ok(ShareResponse {
         share_id: output.share_id,
@@ -980,7 +998,11 @@ pub async fn download_received_share(
     // Register the destination so reveal_in_explorer can open it this session.
     match std::path::Path::new(&destination_path).canonicalize() {
         Ok(canonical) => {
-            state.allowed_reveal_paths.lock().await.insert(canonical);
+            state
+                .allowed_reveal_paths
+                .lock()
+                .await
+                .insert(strip_unc_prefix(canonical));
         }
         Err(e) => {
             tracing::warn!(error = %e, "failed to register download path for reveal");

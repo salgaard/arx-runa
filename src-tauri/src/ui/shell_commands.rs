@@ -8,6 +8,23 @@ use tauri_plugin_opener::OpenerExt;
 use crate::ui::error::IpcError;
 use crate::ui::state::AppState;
 
+/// Strips the Windows extended-length UNC prefix (`\\?\`) from a canonical path.
+///
+/// `std::fs::canonicalize` on Windows always returns `\\?\`-prefixed paths.
+/// Callers that compare canonical paths (e.g. `starts_with`, `HashSet::contains`)
+/// must normalise both sides with this function so the prefix does not cause
+/// silent mismatches. On non-Windows platforms this is a no-op identity.
+pub(crate) fn strip_unc_prefix(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let s = path.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            return PathBuf::from(stripped);
+        }
+    }
+    path
+}
+
 /// Validates that `path` is within an app-owned or session-registered root.
 ///
 /// Allowed: any path under `app_data_dir`, or any path registered by
@@ -26,6 +43,8 @@ async fn validate_reveal_path(
     let canonical = std::path::Path::new(path)
         .canonicalize()
         .map_err(|_| IpcError::InvalidInput("Path does not exist".into()))?;
+
+    let canonical = strip_unc_prefix(canonical);
 
     let allowed = state.allowed_reveal_paths.lock().await;
     let permitted = canonical.starts_with(&app_data) || allowed.contains(&canonical);
@@ -115,7 +134,11 @@ pub async fn compose_email_with_attachment(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), IpcError> {
-    validate_email_address(&recipient_email)?;
+    // An empty recipient is valid: the mailto URL will omit the address and
+    // the user's mail client will open with an empty To field.
+    if !recipient_email.is_empty() {
+        validate_email_address(&recipient_email)?;
+    }
     validate_reveal_path(&package_path, &app, &state).await?;
 
     // Percent-encode `%` in the email address to prevent parameter injection via
@@ -131,7 +154,11 @@ pub async fn compose_email_with_attachment(
                     %0A2.%20Go%20to%20Shares%20%E2%86%92%20Received%20%E2%86%92%20Import%20from%20file\
                     %0A3.%20Select%20the%20attached%20.arxshare%20file\
                     %0A%0AThe%20file%20is%20encrypted%20%E2%80%94%20only%20you%20can%20open%20it.";
-        let mailto = format!("mailto:{safe_email}?subject={SUBJECT}&body={body}");
+        let mailto = if safe_email.is_empty() {
+            format!("mailto:?subject={SUBJECT}&body={body}")
+        } else {
+            format!("mailto:{safe_email}?subject={SUBJECT}&body={body}")
+        };
         let spawned = std::process::Command::new("xdg-email")
             .arg(&package_path)
             .arg(&mailto)
@@ -149,7 +176,11 @@ pub async fn compose_email_with_attachment(
                 %0A2.%20Go%20to%20Shares%20%E2%86%92%20Received%20%E2%86%92%20Import%20from%20file\
                 %0A3.%20Select%20the%20.arxshare%20file\
                 %0A%0AThe%20file%20is%20encrypted%20%E2%80%94%20only%20you%20can%20open%20it.";
-    let mailto = format!("mailto:{safe_email}?subject={SUBJECT}&body={body}");
+    let mailto = if safe_email.is_empty() {
+        format!("mailto:?subject={SUBJECT}&body={body}")
+    } else {
+        format!("mailto:{safe_email}?subject={SUBJECT}&body={body}")
+    };
 
     app.opener().open_url(&mailto, None::<&str>).map_err(|e| {
         tracing::warn!(error = %e, "compose_email open_url failed");

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-primary-destination"
+description = "Enables the set_primary_destination command without any pre-configured scope."
+commands.allow = ["set_primary_destination"]
+
+[[permission]]
+identifier = "deny-set-primary-destination"
+description = "Denies the set_primary_destination command without any pre-configured scope."
+commands.deny = ["set_primary_destination"]
