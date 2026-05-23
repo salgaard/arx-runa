@@ -384,10 +384,56 @@ doesn't rely on potentially stale training data for API signatures.
 
 ---
 
+## Building release installers locally
+
+Use this when you need to test the packaged installer without going through GitHub Actions.
+
+### Prerequisites
+
+Ensure you have completed the [First-time setup](#first-time-setup-after-cloning) and have the rclone sidecar in place (see [Rclone sidecar binaries](#rclone-sidecar-binaries)).
+
+If you haven't installed the Tauri CLI yet:
+
+```powershell
+cargo install tauri-cli --locked
+```
+
+### Windows — one-liner rclone sidecar download
+
+If you haven't downloaded the sidecar yet, this fetches and places it automatically:
+
+```powershell
+$ver = "v1.68.2"
+Invoke-WebRequest "https://github.com/rclone/rclone/releases/download/$ver/rclone-$ver-windows-amd64.zip" -OutFile rclone.zip
+Expand-Archive rclone.zip -DestinationPath rclone-tmp
+Copy-Item (Get-ChildItem rclone-tmp -Recurse -Filter rclone.exe | Select-Object -First 1).FullName src-tauri\bin\rclone-x86_64-pc-windows-msvc.exe
+Remove-Item rclone.zip, rclone-tmp -Recurse
+```
+
+### Build
+
+```powershell
+cargo tauri build
+```
+
+This compiles the Leptos frontend via Trunk, embeds the WASM bundle, and produces signed installers.
+
+**Output locations:**
+
+| Format | Path |
+|---|---|
+| NSIS installer (`.exe`) | `src-tauri\target\release\bundle\nsis\` |
+| MSI installer (`.msi`) | `src-tauri\target\release\bundle\msi\` |
+| macOS disk image (`.dmg`) | `target/universal-apple-darwin/release/bundle/dmg/` |
+| Linux AppImage | `src-tauri/target/release/bundle/appimage/` |
+| Linux `.deb` | `src-tauri/target/release/bundle/deb/` |
+
+---
+
 ## Pushing releases
 
 ### Delete a tag
-git tag -d v0.1.0                                                                                                                          
+git tag -d v0.1.0
 git push origin --delete v0.1.0
 
 ### Push new tag
