@@ -10,6 +10,7 @@ No abbreviations: `chunk_index` not `chunk_idx`. Rust keywords and acronyms (AEA
 ## Hard rules
 - Never write unencrypted sensitive data to disk
 - User handles git — don't commit
+- [!IMPORTANT!] Everything should be implemented now. All Deffered items should be implemented or discarded. No deferred tags are allowed anymore and should be handled immediately. We are in final stage of fixing errors and hardening/improving only.
 
 ## Platform
 Targets Win/macOS/Linux; preserve behavior across all three; platform-specific code requires equivalent or documented limitation.

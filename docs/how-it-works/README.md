@@ -11,5 +11,6 @@ The one guarantee that runs through every page: **everything is encrypted before
 - [Unlocking: Password and USB Key](unlocking.md) — What happens when you unlock, what Argon2id does, and what the USB key adds.
 - [Recovery: If You Lose Your Key](recovery.md) — Recovery phrases, new-device bootstrap, and the honest limits of recovery.
 - [How Files Are Encrypted and Decrypted](file-encryption.md) — The full round-trip: EXIF stripping, chunking, padding, per-file keys, authenticated encryption, integrity verification, reassembly, and in-memory viewing with no disk trace.
+- [Chunking Strategy and Epoch Buffering](chunking.md) — Why fixed-size chunks, the padding trade-off, and how the optional epoch buffer packs small files into a single blob to reduce storage overhead and API calls.
 - [What the Cloud Sees](cloud-sync.md) — The cloud layout, what an attacker with storage access can and cannot learn, and how multi-destination backup works.
 - [Sharing Files Privately](file-sharing.md) — Public-key sharing with HPKE, snapshot semantics, revocation, expiration, and optional encrypted delivery receipts.

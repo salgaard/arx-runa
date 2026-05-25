@@ -1,0 +1,34 @@
+[package]
+name = "arx-runa-fuzz"
+version = "0.0.1"
+edition = "2024"
+publish = false
+
+# Isolate the fuzz crate from the root workspace so `cargo fuzz` can manage it.
+[workspace]
+
+[[bin]]
+name = "fuzz_vault_header"
+path = "fuzz_targets/fuzz_vault_header.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_manifest_backup"
+path = "fuzz_targets/fuzz_manifest_backup.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_parse_chunk_size"
+path = "fuzz_targets/fuzz_parse_chunk_size.rs"
+test = false
+doc = false
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+arx-runa-tauri = { path = "..", features = ["fuzzing"] }
+
+[profile.release]
+debug = true

@@ -330,6 +330,89 @@ steel, rune, bone) is declared in `input.css` inside an `@theme` block. Source:
 `docs/arx-runa-brand.css`. The Trunk pre-build hook (`Trunk.toml`) compiles
 `input.css` → `output.css` on every build.
 
+### cargo bench — performance benchmarks
+
+Benchmarks live in `src-tauri/benches/crypto_benchmarks.rs` and are driven by [Criterion.rs](https://bheisler.github.io/criterion.rs/book/).
+
+```bash
+cd src-tauri
+cargo bench
+```
+
+Two benchmark groups are defined:
+
+| Benchmark | What it measures |
+|---|---|
+| `argon2id_kdf` | Vault-unlock latency at production parameters (`m=65536 KiB, t=3, p=4`) |
+| `xchacha20_poly1305` | Chunk encrypt/decrypt throughput at 512 KiB and 4 MiB |
+
+Criterion writes HTML reports to `src-tauri/target/criterion/`. Open `target/criterion/report/index.html` to browse them. To compare two runs (e.g. before/after a change), install `critcmp`:
+
+```bash
+cargo install critcmp
+cargo bench -- --save-baseline before
+# make your change
+cargo bench -- --save-baseline after
+critcmp before after
+```
+
+The measured results are documented in Bilag C of the bachelor report. The key finding: XChaCha20-Poly1305 throughput is ~989 MiB/s for encryption and ~825 MiB/s for decryption on a modern desktop; the CPU is not the bottleneck for cloud backup workloads.
+
+---
+
+### cargo fuzz — coverage-guided fuzzing
+
+Fuzz targets live in `src-tauri/fuzz/fuzz_targets/`. They exercise the three parsing entry points that process untrusted cloud data.
+
+| Target | What it fuzzes |
+|---|---|
+| `fuzz_vault_header` | JSON deserialization + structural validation of `VaultHeader` |
+| `fuzz_manifest_backup` | Wire-format parsing of manifest backup blob (`[nonce\|ct\|tag]`) |
+| `fuzz_parse_chunk_size` | String-to-u64 validation of `chunk_size_bytes` |
+
+**Prerequisites:** cargo-fuzz uses libFuzzer, which is only available on **Linux and macOS**. On Windows, use WSL or run via CI.
+
+```bash
+# Install cargo-fuzz (requires nightly — one-time)
+cargo install cargo-fuzz
+
+# Run a target until interrupted (fuzzes indefinitely)
+cd src-tauri
+cargo +nightly fuzz run fuzz_vault_header
+
+# Smoke test: run for 60 seconds then exit
+cargo +nightly fuzz run fuzz_vault_header -- -max_total_time=60
+
+# List all targets
+cargo +nightly fuzz list
+```
+
+Corpus inputs accumulate in `src-tauri/fuzz/corpus/<target>/` and are checked into git so future runs start from known-interesting inputs. Crash artefacts land in `src-tauri/fuzz/artifacts/<target>/` (git-ignored).
+
+The `fuzzing` Cargo feature exposes `pub(crate)` functions to the external fuzz crate. It must never be enabled in production builds.
+
+---
+
+### cargo geiger — unsafe block audit
+
+`cargo geiger` maps every `unsafe` block in the compiled dependency tree, distinguishing between used and unused unsafe code per crate.
+
+```bash
+# Install (one-time)
+cargo install cargo-geiger
+
+# Run against the backend crate
+cd src-tauri
+cargo geiger
+```
+
+Expected output for Arx Runa:
+
+- `arx-runa-tauri` is marked `!` (unsafe used) — all unsafe is concentrated in `src-tauri/src/memory/` where `mlock` (Unix) and `VirtualLock` (Windows) lock key material in RAM. Every `unsafe` block carries a `// SAFETY:` comment.
+- **No unsafe** in `crypto/`, `auth/kdf.rs`, or `sharing/` — the cryptographic core is safe Rust throughout.
+
+Run `cargo geiger` after adding any dependency to verify no new unsafe surfaces have been introduced without review.
+
 ---
 
 ## 2. Debugging
@@ -372,6 +455,25 @@ Two MCP servers bundled together:
 
 Both are configured in `CLAUDE.md` as the preferred navigation tools. They significantly reduce
 token usage by returning targeted excerpts rather than full file reads.
+
+#### Indexing
+
+Both servers maintain a local index that must be kept in sync with the repository. Use the
+following phrases when talking to Claude to trigger re-indexing:
+
+| What you say | What Claude calls | When to use |
+|---|---|---|
+| `index jcodemunch` | `resolve_repo` → `index_folder` on the repo root | After adding/removing source files or pulling large changes |
+| `index jdocmunch` | `index_local` on `docs/` (incremental by default) | After adding or editing markdown docs |
+| `force re-index jcodemunch` | `index_folder` with `incremental: false` | When incremental misses changes (e.g. stale mtime cache) |
+| `force re-index jdocmunch` | `index_local` with `incremental: false` | Same — forces all files to be re-parsed |
+
+**Incremental vs full:**
+- **Incremental** (default) — only re-indexes files whose mtime changed. Fast, but can miss files if the cache is stale.
+- **Full** — re-parses every file. Use after `git pull` with many changes or if search results feel wrong.
+
+The jdocmunch index covers `docs/` only (162 `.md` files, ~3 800 sections). jcodemunch covers the full
+repository source tree.
 
 ### context7 MCP
 
