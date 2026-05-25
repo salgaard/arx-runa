@@ -7,7 +7,7 @@
 flowchart TD
     subgraph ENCRYPT ["Encrypt Path"]
         E0["Route decision<br/>(epoch_buffer_enabled, file_size)"]:::proc
-        E0B["Epoch buffer branch<br/>(deferred to Phase 4)"]:::proc
+        E0B["Stage plaintext in DB<br/>(epoch_buffer table)"]:::proc
         EXIF["Check magic bytes<br/>(is_image_magic?)<br/>strip_exif() if image"]:::proc
         E1["Source file<br/>(BufReader, streaming)"]:::io
         E2["Read chunk_size bytes<br/>(zero-pad if last chunk)"]:::proc

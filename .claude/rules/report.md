@@ -1,6 +1,6 @@
 ---
 paths:
-  - "docs/report/arx-runa-bachelorrapport.md"
+  - "docs/report/**"
 ---
 
 # Rapport-regler: Arx Runa Bachelorrapport
@@ -15,6 +15,41 @@ Disse regler gælder i alle sessioner der arbejder på rapporten i `docs/report/
 - Claude trækker altid fra eksisterende docs i `docs/` — aldrig fra hukommelse alene.
 - Alle tekniske påstande knyttes til en kilde (RFC, paper, design-doc). Manglende kilde markeres `[KILDE: ...]`.
 - Fakta der kræver bekræftelse fra brugeren markeres `[BEKRÆFT: ...]`.
+
+---
+
+## Dansk typografi
+
+**Forbudt:**
+- Em-streg `—` (ASCII 0x2014): et engelsk tegn, overbrugt af AI. Bruges ikke i dansk prosa.
+
+**Erstatninger:**
+| Situation | Brug i stedet |
+|-----------|--------------|
+| Indskudt forklaring | Parentes: `artefaktet (det udviklede system) er...` |
+| Introduktion af definition | Kolon: `contract surfaces: de bindende grænseflader` |
+| Ledsætning/tilføjelse | Komma: `justeringer, uden at binde processen` |
+| Talområde / årstal-interval | En-streg uden mellemrum: `10–20`, `2024–2025` |
+
+**Øvrige regler:**
+- Anførselstegn: `»tekst«` eller `„tekst"` — ikke `"tekst"` (engelske anførselstegn)
+- Decimalseparator: komma (`3,14`), ikke punktum
+- Ingen Oxford-komma: "rødt, grønt og blåt" (ikke "rødt, grønt, og blåt")
+
+---
+
+## AI-mønstre der ikke passer i dansk
+
+**Forbudt:**
+- Semikolon som sætningssamler: `"Systemet krypterer filer; cloud-udbyderen ser kun blobs"` — to separate sætninger med punktum. Semikolon er gyldigt på dansk men bruges sparsomt; kun når to sætninger er tæt forbundne og begge er korte.
+- Overdrevne formelle konnektorer: "Ydermere", "Endvidere", "Således", "Hermed", "I forlængelse heraf". Disse lugter af AI. Brug almindelige overgange ("Desuden", "Derudover") sparsomt eller skriv en ny sætning uden overgang.
+- Substantiv-kapitalisering midt i sætning: `"Vault-Nøglen"`, `"Design-Dokumentet"` — forkert på dansk. Kun første bogstav i sætning og egennavne kapitaliseres.
+- Inkonsistent listepunktsegnsætning: vælg enten fuld sætning med punktum på hvert punkt, eller fragment uden punktum — aldrig blandet i samme liste.
+- `"Dette"` som fyldpronomen: `"Dette betyder at..."`, `"Dette viser at..."` — erstat med `"Det betyder..."` eller skriv sætningen om så pronomenet undgås helt.
+- Pilenotation i prosa (`→`, `->`, `=>`) til at beskrive dataflow eller rækkefølger. Brug i stedet et mermaid-diagram (`flowchart TD` eller `sequenceDiagram`) jf. `.claude/rules/mermaid.md`. Pile er tilladte *inde i* mermaid-kodeblokke som diagramsyntaks, men aldrig i løbende tekst eller som erstatning for et diagram.
+- Em-streg (`—`, U+2014) i prosa. Brug bindestreg (`-`) i sammensatte ord, kolon til definitioner og komma til indskudte sætninger.
+- Skjult punktlisteform: gentagen brug af mønsteret `**Term** verb forklaring: yderligere forklaring.` én gang pr. egenskab i samme afsnit. Det er reelt en punktliste med kolon som separator. Brug i stedet enten (a) en eksplicit tabel med billedtekst der *analyseres* i den omgivende prosa, eller (b) løbende prosa med varierede sætningskonstruktioner hvor koblingerne mellem egenskaberne er eksplicitte. Tabellen foretrækkes når sammenligningen er central for analysen.
+- Kolon som sætningssmelter i prosa: mønsteret `[påstand]: [uddybning af samme påstand]` er overbrugt AI-stil på linje med em-stregen. Eksempel: `"Princippet er begrænset eksponering: kompromittering af én DEK eksponerer..."`. Brug i stedet to sætninger med punktum eller en ledsætning med `fordi`, `hvilket betyder at` eller `så`. Kolon er kun tilladt i tre situationer: (1) teknisk term defineres ved første forekomst (`AAD (Additional Authenticated Data): ...`), (2) introduktion af en eksplicit nummereret eller punktformet liste, (3) introduktion af en opgørelse på formen `Nøgler der aldrig forlader enheden: master_key, key_encryption_key, ...`.
 
 ---
 
@@ -74,6 +109,61 @@ Prioriterede kildetyper (høj til lav): RFC'er → NIST-dokumenter → peer-revi
 
 ---
 
+## Citationspraksis — kritisk for alle afsnit
+
+**Grundregel: Ethvert faktapåstand om en tredjepart, et produkt, en standard eller et juridisk instrument kræver en inline-citation direkte ved den pågældende påstand.** En kilde i litteraturlisten uden inline-reference er usynlig for censor.
+
+### Placering
+
+Citationen placeres *umiddelbart efter* den konkrete påstand, før punktum:
+
+```
+Tresorit anvender RSA-4096 med OAEP til nøgledeling (Tresorit, u.å.).
+```
+
+Ikke samlet i slutningen af et langt afsnit medmindre *alle* påstande i afsnittet stammer fra præcis én kilde.
+
+### Hvad der kræver citation
+
+| Påstandstype | Kræver citation? |
+|-------------|-----------------|
+| Teknisk egenskab ved konkurrent ("Cryptomator bruger scrypt") | Ja — konkurrentens egen dokumentation |
+| Fraværet af en egenskab ("Cryptomator mangler hardware MFA") | Ja — dokumenteret fravær i arkitekturdokumentation |
+| Juridisk instrument ("CLOUD Act forpligter...") | Ja — primærkilde (lovtekst) |
+| RFC-specifikation ("HPKE er defineret i RFC 9180") | Ja — den pågældende RFC |
+| Egne arkitekturbeslutninger ("Arx Runa anvender XChaCha20") | Nej — intern kilde, dokumenteres via kravs-reference (REQ-CRYPTO-001) |
+| Analytisk konklusion afledt af citerede påstande | Nej — men præmisserne skal være citeret |
+
+### Tabeller med sammenligninger
+
+Tabeller der sammenligner produkter eller egenskaber skal have en caption der eksplicit nævner kildegrundlaget for hvert produkt:
+
+```
+*Tabel X.Y: ... Kildegrundlag: Cryptomator (u.å.); Tresorit (u.å.); Proton AG (u.å.).*
+```
+
+✗ i en sammenligningstabel betyder "ikke dokumenteret i den pågældende kilde" — ikke "vi antager det ikke eksisterer". Formulér altid tabelnoten præcist.
+
+### Manglende kilder — løs dem på stedet
+
+Når et claim skrives om en tredjepart, et produkt eller et juridisk instrument: **find kilden med det samme via `WebFetch`** — skriv ikke claimet og gå videre.
+
+Fremgangsmåde:
+1. Identificér det specifikke claim (teknisk egenskab, fravær, juridisk instrument).
+2. Brug `WebFetch` mod den mest sandsynlige kilde (officiel produktside, RFC-editor, lovtekst).
+3. Verificér at siden rent faktisk indeholder det claim. En kilde der ikke understøtter det konkrete claim er ikke valid — selv om den er relevant generelt.
+4. Tilføj kilden til litteraturlisten med `*(verificeret ÅÅÅÅ-MM-DD)*` og skriv inline-citationen ved claimet.
+
+`[KILDE: ...]` som placeholder er kun tilladt hvis kilden **ikke kan lokaliseres i den aktuelle session** (fx bag login, ikke-offentlig). Sæt i så fald markøren ved claimet og notér præcis hvad der mangler. Samling af manglende kilder et andet sted i dokumentet er ikke tilstrækkeligt.
+
+Fraværs-claims ("X er ikke dokumenteret") citeres mod den officielle arkitekturdokumentation for produktet — ikke mod en produktside der heller ikke nævner det. Formulér som "X er ikke dokumenteret i [kilde]", ikke "X har ikke denne egenskab".
+
+### Verificering
+
+Brug `WebFetch` til at verificere at URL'er i litteraturlisten faktisk indeholder de claims de bruges til at bevise. En kilde der ikke understøtter det specifikke claim er ikke en valid citation for det claim — selv om den er relevant generelt.
+
+---
+
 ## Samarbejdsproces
 
 - Claude leverer **sektionsudkast** á 300–600 ord pr. underafsnit baseret på `docs/`.
@@ -92,7 +182,7 @@ Prioriterede kildetyper (høj til lav): RFC'er → NIST-dokumenter → peer-revi
 
 Brug `jdocmunch-mcp` til at finde sektioner i docs. Primære kildefiler (prioriteret):
 
-1. `docs/how-it-works/security-model.md` — trust boundaries, threat model
+1. `docs/how-it-works/security-model.md` + `docs/guides/security-model.md` (måske de ikke indeholder det samme, er ikke sikker) — trust boundaries, threat model
 2. `docs/architecture/design-invariants.md` — tværgående kontrakter
 3. `docs/architecture/designs/*/design.md` — fase 1–5 design-docs
 4. `docs/research/` — kryptografisk rationale, file sharing, recovery
@@ -100,6 +190,64 @@ Brug `jdocmunch-mcp` til at finde sektioner i docs. Primære kildefiler (priorit
 6. `docs/architecture/requirements.md` — 106 krav med traceabilitet (UC → krav → design)
 7. `docs/report-log/` — designbeslutninger og problemformulering-session
 8. `docs/how-it-works/` — brugervenlige forklaringer der kan parafraseres
+9. `docs/notes/` — noter af forskellige ting gemt løbende igennem processen
+10. `docs/guides/glossary.md` — liste med begreber
+11. `docs/README.md` — introduktion til projektet - bruges som forside på github pages
+
+---
+
+## Kodenavigation
+
+Brug `jcodemunch-mcp` til al kodenavigation (`search_symbols`, `get_symbol_source`, `get_file_outline`, `find_references`). Læs kun filer du er ved at redigere.
+
+Kodebasen er opdelt i to crates:
+
+### `src/` — Leptos-frontend (Rust/WASM)
+
+| Sti | Indhold |
+|-----|---------|
+| `src/app.rs` | Rod-komponent; router og globale providers |
+| `src/auth.rs` | Login/opret-vault-skærme |
+| `src/vault.rs` | Vault-browser (fil- og mappevisning) |
+| `src/vault_picker.rs` | Vælg/opret vault ved opstart |
+| `src/shares.rs`, `src/contacts.rs` | Delings- og kontaktskærme |
+| `src/destinations.rs` | Cloud-destinations-skærme |
+| `src/settings.rs` | Indstillinger |
+| `src/state/` | Global frontend-tilstand: `session_context`, `sync_context`, `vault_context` |
+| `src/components/` | Delte UI-komponenter (knapper, modaler, toast, spinner m.m.) |
+| `src/ipc_types/` | Typer der spejler backend-IPC; `requests.rs` indeholder alle kommando-signaturer |
+| `src/invoke.rs`, `src/ipc_channel.rs` | Tauri IPC-bro til backend |
+
+### `src-tauri/src/` — Tauri-backend (Rust)
+
+| Sti | Indhold |
+|-----|---------|
+| `auth/` | Vault-oprettelse, unlock, nøgleafledning (Argon2id), sessionsstyring og ceremonier (create, unlock, recover, rotate, change_password) |
+| `auth/ceremonies/` | Én fil pr. ceremony — startpunkt for autentificeringsflows |
+| `auth/session/` | `manager.rs` (sessionstilstand og timeout) · `keys.rs` (sessionsnøgler afledt fra master key) |
+| `crypto/` | Kryptografiske primitiver: `encrypt_chunk`, `decrypt_chunk`, `hkdf`, `nonce`, `wrap_key`, `recovery_wrap` |
+| `crypto/types/` | Newtype-wrappers for nøgler og krypterede buffere |
+| `memory/` | `secure_buffer.rs` (mlock-beskyttet buffer) · `platform/` (OS-specifik lås: Windows/Unix) |
+| `sharing/` | `hpke.rs` (HPKE-nøgleindkapsling) · `packages.rs` (opret/importer share-pakker) · `identity.rs` · `revocation.rs` · `b2_api.rs` + `gdrive_api.rs` |
+| `storage/` | Hoved-lag for persistens |
+| `storage/sqlcipher.rs` | SQLCipher-database — centrale CRUD-operationer for alle entiteter |
+| `storage/schema.rs` | Skema-migrationer |
+| `storage/pipeline/` | `encrypt_file`, `decrypt_file`, `exif` (EXIF-stripping), `chunk_size` |
+| `storage/cloud/` | Cloud-transport (`CloudTransport`-trait) · `rclone.rs` · `sync.rs` (push/pull-logik) · `vault_header.rs` · `wizard.rs` |
+| `storage/vault_ops/` | Højniveau-operationer: `upload_file`, `download_file`, `delete_file`, `epoch_flush`, `routing` |
+| `ui/` | Tauri IPC-kommandohandlere: `auth_commands`, `file_commands`, `sync_commands`, `sharing_commands`, `destination_commands` |
+| `ui/state.rs` | Delt Tauri-applikationstilstand (session, transport, kanaler) |
+| `ui/types/` | Svar-typer serialiseret til frontend |
+| `platform/permissions.rs` | Filrettighedsoperationer (owner-only ACL, Win/Unix) |
+| `tests/scenarios_*.rs` | Integrationsscenarier: auth, sync, backup, destinations, sharing, real cloud |
+
+**Typisk søgestrategi:**
+- Kryptografisk primitiv → `src-tauri/src/crypto/`
+- IPC-kommando → `src-tauri/src/ui/*_commands.rs`
+- Database-operation → `src-tauri/src/storage/sqlcipher.rs`
+- Sync-logik → `src-tauri/src/storage/cloud/sync.rs`
+- Frontend-skærm → `src/` (samme navn som domæne, fx `vault.rs`, `auth.rs`)
+- Ceremony-flow → `src-tauri/src/auth/ceremonies/`
 
 ---
 

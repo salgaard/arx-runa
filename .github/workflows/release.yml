@@ -132,5 +132,6 @@ jobs:
           echo '${{ steps.tauri-build.outputs.artifactPaths }}' \
             | jq -r '.[]' \
             | while read -r artifact; do
-                gh release upload "$TAG" "${artifact//\\//}" --repo "$REPO" --clobber
+                [ -d "${artifact//\\//}" ] && continue
+                gh release upload "$TAG" "$artifact" --repo "$REPO" --clobber
               done

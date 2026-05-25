@@ -11,6 +11,9 @@ pub mod ui;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "fuzzing")]
+pub mod fuzz_api;
+
 use tauri::Manager as _;
 use tokio_stream::StreamExt as _;
 
