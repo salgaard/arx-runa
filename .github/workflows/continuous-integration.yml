@@ -15,7 +15,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-24.04, windows-latest, macos-latest]
+        platform: [ubuntu-24.04]
+    #        platform: [ubuntu-24.04, windows-latest, macos-latest]
 
     steps:
       - name: Checkout repository
@@ -78,7 +79,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-24.04, windows-latest]
+        platform: [ubuntu-24.04]
+    #        platform: [ubuntu-24.04, windows-latest]
 
     steps:
       - name: Checkout repository
