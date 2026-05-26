@@ -23,13 +23,45 @@
 ### Step 1 — Forberedelse
 
 1. Åbn Windows Sysinternals **Process Monitor** (procmon.exe) fra https://learn.microsoft.com/en-us/sysinternals/downloads/procmon
-   - Filter: Process name = `arx-runa.exe` OR path contains `AppData`
-   - Aktivér filtre: File System Activity + Registry Activity
-   - Start optagelse (Ctrl+E)
 
-2. Åbn **Arx Runa** og unlock en vault med en testfil.
+2. Sæt filtre op under **Filter → Filter…** inden optagelse startes:
 
-3. Vis testfilen in-app (billede + video) for at trigge begge visningsstier.
+   **Inkluder kun relevante processer/stier:**
+
+   | Column | Relation | Value | Action |
+   |---|---|---|---|
+   | Process Name | is | `arx-runa.exe` | Include |
+   | Path | contains | `AppData` | Include |
+
+   **Ekskludér kendte ufarlige støjoperationer** (ingen af disse skriver data til disk):
+
+   | Column | Relation | Value | Action |
+   |---|---|---|---|
+   | Operation | is | `CloseFile` | Exclude |
+   | Operation | is | `ReadFile` | Exclude |
+   | Operation | is | `LockFile` | Exclude |
+   | Operation | is | `UnlockFileSingle` | Exclude |
+   | Operation | is | `QueryStandardInformationFile` | Exclude |
+   | Operation | is | `QueryInformationVolume` | Exclude |
+   | Operation | is | `QueryAllInformationFile` | Exclude |
+   | Operation | is | `QueryDirectory` | Exclude |
+   | Operation | is | `QueryBasicInformationFile` | Exclude |
+   | Operation | is | `QueryNetworkOpenInformationFile` | Exclude |
+   | Operation | is | `QueryRemoteProtocolInformation` | Exclude |
+   | Operation | is | `QuerySecurityFile` | Exclude |
+   | Operation | is | `FileSystemControl` | Exclude |
+   | Detail | contains | `Read Attributes` | Exclude |
+   | Path | ends with | `vault.db-journal` | Exclude |
+   | Path | ends with | `vault.db-wal` | Exclude |
+   | Path | ends with | `.blob` | Exclude |
+
+   > **Bemærk:** `Detail contains "Read Attributes"` fjerner vault-polling `CreateFile`-kald (som alle bruger `Desired Access: Read Attributes`) men bevarer reelle CreateFile-events med `Generic Write`, `Generic Read/Write`, eller `Disposition: Create`. `CloseFile` alene udgør typisk ~80% af optagelsens rækker og har nul forensisk relevans.
+
+3. Aktivér: **File System Activity** + **Registry Activity**. Start optagelse (Ctrl+E).
+
+4. Åbn **Arx Runa** og unlock en vault med en testfil.
+
+5. Vis testfilen in-app (billede + video) for at trigge begge visningsstier.
 
 ### Step 2 — Gennemfør en vault-lock og scan
 
@@ -50,7 +82,7 @@ Kør i PowerShell efter vault-lock:
 ```powershell
 # Temp-filer oprettet inden for den seneste time
 Get-ChildItem -Path $env:TEMP -Recurse -File |
-    Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-1) } |
+    Where-Object { $_.LastWriteTime -gt (Get-Date).AddMinutes(-10) } |
     Select-Object FullName, Length, LastWriteTime
 
 # App-data — tjek om rclone.conf stadig eksisterer
@@ -65,9 +97,19 @@ Forventet resultat: ingen `rclone*.conf`, ingen Arx Runa-relaterede temp-filer.
 
 ### Step 4 — Process Monitor-analyse
 
-Stop optagelse i Process Monitor (Ctrl+E) og filtrer på:
-- `Path contains .tmp` — tjek ingen skriv-operationer til temp-filer under filvisning
-- `Path contains rclone.conf` — bekræft overskriv+slet-sekvens (WriteFile → SetEndOfFile → DeleteFile)
+Stop optagelse i Process Monitor (Ctrl+E). Filtrene fra Step 1 er allerede aktive.
+
+Hvad der skal bekræftes i det der er tilbage:
+
+- **`Path contains rclone.conf`** — bekræft den fulde livscyklus:
+  `CreateFile (Disposition: Create)` → `WriteFile` → `SetEndOfFile` → `DeleteFile`
+  Mangler `DeleteFile`-linjen = rclone.conf ikke slettet = zero-trace-fejl.
+
+- **`Operation = WriteFile`** — ingen sensitiv data skrevet til disk udenfor forventede stier (`vault.db`, krypterede `.blob`-filer i staging).
+
+- **`Operation = RegSetValue`** — ingen nøgler eller passwords i registry.
+
+- **`Path contains Temp` + `Operation = CreateFile` med `Disposition: Create`** — bekræft ingen uventede temp-filer oprettet under filvisning.
 
 Gem resultatet som **PML-fil** til Bilag B.
 

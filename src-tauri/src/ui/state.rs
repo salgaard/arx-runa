@@ -87,6 +87,20 @@ pub struct AppState {
     /// Populated by `download_received_share` on successful decryption; cleared on
     /// vault lock. Also allows any path under `app_data_dir`.
     pub(crate) allowed_reveal_paths: Arc<tokio::sync::Mutex<HashSet<PathBuf>>>,
+    /// Vault header fields that are immutable for the duration of a session.
+    ///
+    /// Set by `authenticate`/`create_vault`; cleared on lock. Avoids re-reading
+    /// `vault-header.json` on every `get_session_status` poll (every 5 s).
+    pub(crate) session_vault_info: Arc<RwLock<Option<SessionVaultInfo>>>,
+}
+
+/// Immutable vault metadata cached at session-open time.
+#[derive(Debug, Clone)]
+pub(crate) struct SessionVaultInfo {
+    /// Authentication tier (1 = password only, 2 = password + USB key file).
+    pub vault_tier: u8,
+    /// Whether a BIP-39 recovery slot is configured for this vault.
+    pub has_recovery_slot: bool,
 }
 
 /// No-op cloud transport used until Phase 6.5 wires a real `RcloneTransport`.
@@ -176,6 +190,7 @@ impl AppState {
             sync_mutex: Arc::new(tokio::sync::Mutex::new(())),
             oauth_setups: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             allowed_reveal_paths: Arc::new(tokio::sync::Mutex::new(HashSet::new())),
+            session_vault_info: Arc::new(RwLock::new(None)),
         }
     }
 

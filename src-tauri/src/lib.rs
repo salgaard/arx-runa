@@ -126,6 +126,27 @@ pub fn run() {
             // Store the AppHandle for event emission.
             let _ = state.app_handle.set(app_handle.clone());
 
+            // Sweep any orphaned rclone temp dirs left by previous crashes / forced
+            // kills.  Directories are named `arx-runa-<16 hex>` in the OS temp dir.
+            // This is best-effort — errors are silently ignored.
+            tauri::async_runtime::spawn(async move {
+                let temp = std::env::temp_dir();
+                if let Ok(mut entries) = tokio::fs::read_dir(&temp).await {
+                    while let Ok(Some(entry)) = entries.next_entry().await {
+                        let name = entry.file_name();
+                        let name_str = name.to_string_lossy();
+                        if name_str.starts_with("arx-runa-")
+                            && name_str.len() == "arx-runa-".len() + 16
+                            && name_str["arx-runa-".len()..]
+                                .chars()
+                                .all(|c| c.is_ascii_hexdigit())
+                        {
+                            let _ = tokio::fs::remove_dir_all(entry.path()).await;
+                        }
+                    }
+                }
+            });
+
             // Spawn the device-event subscriber task on the Tauri async runtime.
             // `Arc<dyn DeviceMonitor>` is cloned here so the task owns it
             // independently of the setup closure lifetime.
@@ -157,18 +178,38 @@ pub fn run() {
                 let _ = window.set_icon(icon.clone());
             }
 
-            // Wipe staging/cache when the user closes the window so cached preview
-            // blobs don't accumulate across sessions.  Uses a synchronous remove —
-            // it's fast (directory entries only) and the process exits immediately after.
+            // On window close: lock the session (zeroizes keys + deletes rclone.conf),
+            // wipe staging/cache, then programmatically destroy the window.
+            // `prevent_close()` + async spawn is required because `lock()` is async
+            // and `on_window_event` is synchronous.
             if let Some(window) = app.get_webview_window("main") {
+                let session_manager = state.session_manager.clone();
                 window.on_window_event(move |event| {
-                    if matches!(event, tauri::WindowEvent::CloseRequested { .. })
-                        && let Ok(guard) = active_vault_id.try_read()
-                        && let Some(ref vault_id) = *guard
-                    {
-                        let cache_dir =
-                            crate::ui::vault_paths::vault_staging_dir(vault_id).join("cache");
-                        let _ = std::fs::remove_dir_all(&cache_dir);
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+
+                        // Snapshot active vault for cache wipe (non-blocking try_read).
+                        let cache_dir = active_vault_id
+                            .try_read()
+                            .ok()
+                            .and_then(|g| g.clone())
+                            .map(|vault_id| {
+                                crate::ui::vault_paths::vault_staging_dir(&vault_id).join("cache")
+                            });
+
+                        let sm = session_manager.clone();
+                        tauri::async_runtime::spawn(async move {
+                            // lock() zeroizes all keys and calls destroy_rclone_conf().
+                            let _ = sm.lock().await;
+
+                            // Wipe preview cache blobs (fast, directory-entries only).
+                            if let Some(dir) = cache_dir {
+                                let _ = std::fs::remove_dir_all(&dir);
+                            }
+
+                            // Exit the process — window is already prevented from closing.
+                            std::process::exit(0);
+                        });
                     }
                 });
             }

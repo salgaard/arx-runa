@@ -1,6 +1,5 @@
 ---
-paths:
-  - "docs/report/**"
+applyTo: "docs/report/**"
 ---
 
 # Rapport-regler: Arx Runa Bachelorrapport
@@ -50,7 +49,6 @@ Disse regler gælder i alle sessioner der arbejder på rapporten i `docs/report/
 - Em-streg (`—`, U+2014) i prosa. Brug bindestreg (`-`) i sammensatte ord, kolon til definitioner og komma til indskudte sætninger.
 - Skjult punktlisteform: gentagen brug af mønsteret `**Term** verb forklaring: yderligere forklaring.` én gang pr. egenskab i samme afsnit. Det er reelt en punktliste med kolon som separator. Brug i stedet enten (a) en eksplicit tabel med billedtekst der *analyseres* i den omgivende prosa, eller (b) løbende prosa med varierede sætningskonstruktioner hvor koblingerne mellem egenskaberne er eksplicitte. Tabellen foretrækkes når sammenligningen er central for analysen.
 - Kolon som sætningssmelter i prosa: mønsteret `[påstand]: [uddybning af samme påstand]` er overbrugt AI-stil på linje med em-stregen. Eksempel: `"Princippet er begrænset eksponering: kompromittering af én DEK eksponerer..."`. Brug i stedet to sætninger med punktum eller en ledsætning med `fordi`, `hvilket betyder at` eller `så`. Kolon er kun tilladt i tre situationer: (1) teknisk term defineres ved første forekomst (`AAD (Additional Authenticated Data): ...`), (2) introduktion af en eksplicit nummereret eller punktformet liste, (3) introduktion af en opgørelse på formen `Nøgler der aldrig forlader enheden: master_key, key_encryption_key, ...`.
-- Emoji og statusikoner i løbende tekst og tabeller: ✅, ⚠️, ❌, 🔒, og lignende Unicode-symboler er AI-mønstre der ikke hører hjemme i en akademisk rapport. Erstat med dansk tekst: "Bekræftet", "Ikke bekræftet", "Dokumenteret begrænsning", "Se §X.Y". I tabeller bruges kolonnen til at bære resultatet i ord — ikke et ikon der erstatter vurderingen.
 
 ---
 
