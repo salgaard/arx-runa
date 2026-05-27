@@ -49,6 +49,7 @@ Disse regler gælder i alle sessioner der arbejder på rapporten i `docs/report/
 - Pilenotation i prosa (`→`, `->`, `=>`) til at beskrive dataflow eller rækkefølger. Brug i stedet et mermaid-diagram (`flowchart TD` eller `sequenceDiagram`) jf. `.claude/rules/mermaid.md`. Pile er tilladte *inde i* mermaid-kodeblokke som diagramsyntaks, men aldrig i løbende tekst eller som erstatning for et diagram.
 - Em-streg (`—`, U+2014) i prosa. Brug bindestreg (`-`) i sammensatte ord, kolon til definitioner og komma til indskudte sætninger.
 - Skjult punktlisteform: gentagen brug af mønsteret `**Term** verb forklaring: yderligere forklaring.` én gang pr. egenskab i samme afsnit. Det er reelt en punktliste med kolon som separator. Brug i stedet enten (a) en eksplicit tabel med billedtekst der *analyseres* i den omgivende prosa, eller (b) løbende prosa med varierede sætningskonstruktioner hvor koblingerne mellem egenskaberne er eksplicitte. Tabellen foretrækkes når sammenligningen er central for analysen.
+- Skjult tre-liste i prosa: mønsteret `"For det første... For det andet... For det tredje..."` eller tre parallelle sætninger der begynder identisk (fx "Nøglerotation pr. fil er mulig... Eksponeringsradius er begrænset... Fildeling understøttes..."). Det er en skjult punktliste. Tre parallelle elementer skrives enten som (a) eksplicit punktliste eller (b) prosa med varierede sætningskonstruktioner der knytter elementerne til hinanden. To parallelle elementer er acceptable.
 - Kolon som sætningssmelter i prosa: mønsteret `[påstand]: [uddybning af samme påstand]` er overbrugt AI-stil på linje med em-stregen. Eksempel: `"Princippet er begrænset eksponering: kompromittering af én DEK eksponerer..."`. Brug i stedet to sætninger med punktum eller en ledsætning med `fordi`, `hvilket betyder at` eller `så`. Kolon er kun tilladt i tre situationer: (1) teknisk term defineres ved første forekomst (`AAD (Additional Authenticated Data): ...`), (2) introduktion af en eksplicit nummereret eller punktformet liste, (3) introduktion af en opgørelse på formen `Nøgler der aldrig forlader enheden: master_key, key_encryption_key, ...`.
 - Emoji og statusikoner i løbende tekst og tabeller: ✅, ⚠️, ❌, 🔒, og lignende Unicode-symboler er AI-mønstre der ikke hører hjemme i en akademisk rapport. Erstat med dansk tekst: "Bekræftet", "Ikke bekræftet", "Dokumenteret begrænsning", "Se §X.Y". I tabeller bruges kolonnen til at bære resultatet i ord, ikke et ikon der erstatter vurderingen.
 
@@ -279,20 +280,43 @@ UCL har eksplicitte regler for brug af AI i bachelorprojektet. Det er den studer
 
 ## Sidebudget (30 normalsider = ~72.000 tegn)
 
-| Sektion | Sider |
-|---------|-------|
-| §1 Indledning | 2 |
-| §2 Problemformulering | 1 |
-| §3 Metode | 2,5 |
-| §4 Teknisk kontekst (inkl. §4.X Systemkrav + §4.6 Arkitektur + §4.7 Trusselsmodel) | 4,5 |
-| §5 UQ1 - Kryptering (inkl. Realisering) | 4 |
-| §6 UQ2 - Autentifikation (inkl. Realisering) | 4 |
-| §7 UQ3 - Chunking & Sync (inkl. Realisering) | 3 |
-| §8 UQ4 - Zero-Trace (inkl. Realisering) | 3 |
-| §9 UQ5 - Fildeling (inkl. Realisering) | 3,5 |
-| §10 Test og evaluering | 2,5 |
-| §11 Diskussion | 1 |
-| §12 Konklusion | 1 |
-| **Total (tæller mod 30 sider)** | **~30 sider** |
-| §13 Litteraturliste | ikke talt med |
-| Bilag A–F | ikke talt med |
+Tegnbudget: §1–§12 inklusiv, ekskl. kodeblokke, mermaid-diagrammer, forside/TOC, §13 Litteraturliste og Bilag. Mål: ≤72.000 tegn (max). Aktuelt niveau: ~71.800 tegn (2026-05-27).
+
+| Sektion | Sider | Tegnbudget |
+|---------|-------|-----------|
+| §1 Indledning | 2 | 3.700 |
+| §2 Problemformulering | 1 | 2.100 |
+| §3 Metode | 2,5 | 4.800 |
+| §4 Teknisk kontekst (inkl. §4.X Systemkrav + §4.6 Arkitektur + §4.7 Trusselsmodel) | 4,5 | 7.700 |
+| §5 UQ1 - Kryptering (inkl. Realisering) | 4 | 9.000 |
+| §6 UQ2 - Autentifikation (inkl. Realisering) | 4 | 9.600 |
+| §7 UQ3 - Chunking & Sync (inkl. Realisering) | 3 | 9.600 |
+| §8 UQ4 - Zero-Trace (inkl. Realisering) | 3 | 7.300 |
+| §9 UQ5 - Fildeling (inkl. Realisering) | 3,5 | 9.000 |
+| §10 Test og evaluering | 2,5 | 4.800 |
+| §11 Diskussion | 1 | 3.400 |
+| §12 Konklusion | 1 | 2.800 |
+| **Total (tæller mod 30 sider)** | **~30 sider** | **≤72.000** |
+| §13 Litteraturliste | ikke talt med | — |
+| Bilag A–F | ikke talt med | — |
+
+### Tegntælling (verificér inden aflevering)
+
+Kør i projektets rodmappe — giver samlet prosa-tegnantal for §1–§12 ekskl. kodeblokke og bilag:
+
+```python
+python3 -c "
+import re
+c = open('docs/report/arx-runa-bachelorrapport.md', encoding='utf-8').read()
+c = re.sub(r'\x60\x60\x60[\s\S]*?\x60\x60\x60', '', c)
+s = re.search(r'^## 1\.', c, re.M)
+e = min((m.start() for p in [r'^## 13\.', r'^## Bilag', r'^## Litteratur'] if (m := re.search(p, c, re.M))), default=len(c))
+print(len(c[s.start():e]))
+"
+```
+
+Eller som PowerShell-oneliner:
+
+```powershell
+python3 -c "import re; c=open('docs/report/arx-runa-bachelorrapport.md',encoding='utf-8').read(); c=re.sub(r'\x60\x60\x60[\s\S]*?\x60\x60\x60','',c); s=re.search(r'^## 1\.',c,re.M); e=min((m.start() for p in [r'^## 13\.',r'^## Bilag',r'^## Litteratur'] if (m:=re.search(p,c,re.M))),default=len(c)); print(len(c[s.start():e]))"
+```
