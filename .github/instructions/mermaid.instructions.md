@@ -1,5 +1,5 @@
 ﻿---
-applyTo: "docs/architecture/designs/**/diagrams/**,docs/architecture/diagrams/**"
+applyTo: "docs/architecture/designs/**/diagrams/**,docs/architecture/diagrams/**,docs/report/**"
 ---
 
 # Mermaid Diagrams
@@ -16,6 +16,8 @@ applyTo: "docs/architecture/designs/**/diagrams/**,docs/architecture/diagrams/**
 | `graph TD` | Information flows, SSOT diagrams |
 
 Stick to these six types only. Experimental types (`architecture-beta`, `C4`, `timeline`) not used for core docs.
+
+see https://mermaid.js.org/syntax/examples.html for multiple types and how to use. there are many subpages in https://mermaid.js.org/syntax/ like https://mermaid.js.org/syntax/architecture.html.
 
 ## Critical Syntax Constraints
 

@@ -80,41 +80,21 @@ pub(crate) fn resolve_singleton_vault() -> Result<Option<(String, PathBuf, PathB
 
 /// Resolves a vault directory by its exact vault identifier.
 ///
-/// Scans `default_vault_root()` for a sub-directory whose `vault-header.json`
-/// contains a matching `vault_id`. Returns `Ok((vault_id, db_path, header_path))`
-/// on success, or `IpcError::NotFound` if no match is found.
+/// Uses the vault UUID directly as the directory name — no directory scan
+/// required. Returns `Ok((vault_id, db_path, header_path))` on success, or
+/// `IpcError::NotFound` if the directory or its expected files are absent.
 pub(crate) fn resolve_vault_by_id(
     target_vault_id: &str,
 ) -> Result<(String, PathBuf, PathBuf), IpcError> {
-    let root = default_vault_root();
-    if !root.exists() {
-        return Err(IpcError::NotFound("Vault not found".into()));
+    let vault_dir = default_vault_root().join(target_vault_id);
+    let db = vault_dir.join("vault.db");
+    let header_path = vault_dir.join("vault-header.json");
+
+    if vault_dir.is_dir() && db.exists() && header_path.exists() {
+        Ok((target_vault_id.to_owned(), db, header_path))
+    } else {
+        Err(IpcError::NotFound("Vault not found".into()))
     }
-
-    let entries =
-        std::fs::read_dir(&root).map_err(|_| IpcError::NotFound("Vault not found".into()))?;
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let db = path.join("vault.db");
-        let header_path = path.join("vault-header.json");
-        if !db.exists() || !header_path.exists() {
-            continue;
-        }
-        // Use the directory name as a fast pre-filter before reading the file.
-        let dir_name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(name) => name.to_owned(),
-            None => continue,
-        };
-        if dir_name == target_vault_id {
-            return Ok((dir_name, db, header_path));
-        }
-    }
-
-    Err(IpcError::NotFound("Vault not found".into()))
 }
 
 /// Scans the vault root and returns summaries for all discoverable vaults.

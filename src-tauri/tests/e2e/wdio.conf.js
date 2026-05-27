@@ -36,7 +36,7 @@ const profile = process.env.E2E_RELEASE ? "release" : "debug";
 
 const application = path.resolve(
   __dirname,
-  `../../../target/${profile}/arx-runa-tauri${isWin ? ".exe" : ""}`,
+  `../../../target/${profile}/arx-runa${isWin ? ".exe" : ""}`,
 );
 
 const tauriDriverBin = path.resolve(

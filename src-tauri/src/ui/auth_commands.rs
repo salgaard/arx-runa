@@ -50,7 +50,7 @@ use crate::ui::commands_common::{
     ProgressChannel, rclone_binary_path, require_active_session, sanitise_password,
 };
 use crate::ui::error::IpcError;
-use crate::ui::state::AppState;
+use crate::ui::state::{AppState, SessionVaultInfo};
 use crate::ui::types::{
     AuthResponse, DestinationSessionConfig, ProgressUpdate, SessionStatus, VaultSummary,
 };
@@ -302,6 +302,7 @@ pub async fn authenticate(
     }
 
     *state.active_vault_id.write().await = Some(vault_id.clone());
+    cache_session_vault_info(&state, &header_path).await;
 
     Ok(AuthResponse {
         vault_id: vault_id.clone(),
@@ -480,6 +481,9 @@ pub async fn create_vault(
     }
 
     *state.active_vault_id.write().await = Some(vault_id_str.clone());
+    if let Ok((_, _, header_path)) = resolve_vault_by_id(&vault_id_str) {
+        cache_session_vault_info(&state, &header_path).await;
+    }
 
     let _ = progress_ch.try_send_if_open(ProgressUpdate {
         percent: 100,
@@ -721,6 +725,9 @@ pub async fn setup_recovery(
         );
     }
 
+    // has_recovery_slot changed — invalidate and repopulate the session cache.
+    cache_session_vault_info(&state, &header_path).await;
+
     Ok(phrase.to_string())
 }
 
@@ -820,6 +827,9 @@ pub async fn recover_vault_with_phrase(
     }
 
     *state.active_vault_id.write().await = Some(vault_id_str.clone());
+    if let Ok((_, _, header_path)) = resolve_vault_by_id(&vault_id_str) {
+        cache_session_vault_info(&state, &header_path).await;
+    }
 
     let _ = progress_ch.try_send_if_open(ProgressUpdate {
         percent: 100,
@@ -867,6 +877,7 @@ pub async fn delete_vault(
     }
 
     *state.active_vault_id.write().await = None;
+    *state.session_vault_info.write().await = None;
 
     Ok(())
 }
@@ -935,6 +946,7 @@ pub async fn lock_session(state: State<'_, AppState>) -> Result<(), IpcError> {
     state.reset_cloud_transport().await;
 
     *state.active_vault_id.write().await = None;
+    *state.session_vault_info.write().await = None;
     state.allowed_reveal_paths.lock().await.clear();
 
     if let Some(ref id) = vault_id {
@@ -949,6 +961,20 @@ pub async fn lock_session(state: State<'_, AppState>) -> Result<(), IpcError> {
     Ok(())
 }
 
+/// Reads `vault-header.json` at `header_path` and caches the immutable session
+/// fields in `AppState`.  Called once at session-open (authenticate, create_vault,
+/// recover) so `get_session_status` never needs to touch disk.
+async fn cache_session_vault_info(state: &AppState, header_path: &std::path::Path) {
+    if let Ok(json) = tokio::fs::read_to_string(header_path).await
+        && let Ok(header) = serde_json::from_str::<VaultHeader>(&json)
+    {
+        *state.session_vault_info.write().await = Some(SessionVaultInfo {
+            vault_tier: header.tier,
+            has_recovery_slot: !header.recovery_slots.is_empty(),
+        });
+    }
+}
+
 /// Check if the vault is unlocked.
 ///
 /// Returns status only — no key material is included.
@@ -960,26 +986,17 @@ pub async fn get_session_status(state: State<'_, AppState>) -> Result<SessionSta
     let vault_id = state.session_manager.active_vault_id().await;
     let timeout_seconds = state.session_manager.remaining_seconds().await;
 
+    // vault_tier and has_recovery_slot are immutable for the lifetime of a
+    // session — read from the cache set at authenticate/create_vault time so
+    // no disk I/O is needed on every 5-second poll.
     let (vault_tier, has_recovery_slot) = if is_unlocked {
-        match &vault_id {
-            Some(id) => match resolve_vault_by_id(id) {
-                Ok((_, _db_path, header_path)) => {
-                    match tokio::fs::read_to_string(&header_path).await {
-                        Ok(header_json) => {
-                            match serde_json::from_str::<VaultHeader>(&header_json) {
-                                Ok(header) => {
-                                    (Some(header.tier), Some(!header.recovery_slots.is_empty()))
-                                }
-                                Err(_) => (None, None),
-                            }
-                        }
-                        Err(_) => (None, None),
-                    }
-                }
-                _ => (None, None),
-            },
-            None => (None, None),
-        }
+        state
+            .session_vault_info
+            .read()
+            .await
+            .as_ref()
+            .map(|info| (Some(info.vault_tier), Some(info.has_recovery_slot)))
+            .unwrap_or((None, None))
     } else {
         (None, None)
     };
@@ -1363,6 +1380,9 @@ pub async fn recover_vault_from_cloud(
     post_recovery_setup(&state, &dest_session, &vault_id_str).await;
 
     *state.active_vault_id.write().await = Some(vault_id_str.clone());
+    if let Ok((_, _, header_path)) = resolve_vault_by_id(&vault_id_str) {
+        cache_session_vault_info(&state, &header_path).await;
+    }
 
     let _ = progress_ch.try_send_if_open(ProgressUpdate {
         percent: 100,
@@ -1544,6 +1564,9 @@ pub async fn recover_vault_from_cloud_with_phrase(
     post_recovery_setup(&state, &dest_session, &vault_id_str).await;
 
     *state.active_vault_id.write().await = Some(vault_id_str.clone());
+    if let Ok((_, _, header_path)) = resolve_vault_by_id(&vault_id_str) {
+        cache_session_vault_info(&state, &header_path).await;
+    }
 
     let _ = progress_ch.try_send_if_open(ProgressUpdate {
         percent: 100,
