@@ -42,7 +42,7 @@
     - 10.2 Scenarietest som use case-traceabilitet
     - 10.3 CI-pipeline og platformsdækning
     - 10.4 Teststrategi-refleksion: Agile Testing Quadrants
-11. [Diskussion og anbefalinger](#11-diskussion-og-anbefalinger)
+11. [Diskussion](#11-diskussion)
 12. [Konklusion](#12-konklusion)
     - 12.1 Svar på den overordnede problemformulering
     - 12.2 Begrænsninger og åbne spørgsmål
@@ -57,11 +57,11 @@
 
 ## 1. Indledning
 
-Når en fil uploades til Google Drive, OneDrive eller Dropbox, krypteres forbindelsen. Transport Layer Security sikrer at data ikke kan aflæses undervejs. Men krypteringen stopper ved serveren. Cloud-udbyderen modtager klarteksten, lagrer den og besidder selv de nøgler der beskytter den. Brugerens privatlivs-garanti er dermed ikke kryptografisk, men kontraktlig: man stoler på at udbyderen ikke misbruger adgangen.
+Når en fil uploades til Google Drive, OneDrive eller Dropbox, krypteres forbindelsen. Transport Layer Security sikrer at data ikke kan aflæses undervejs. Men krypteringen stopper ved serveren. Cloud-udbyderen modtager klarteksten, lagrer den og besidder selv de nøgler der beskytter den. Brugerens privatlivs-garanti er dermed ikke kryptografisk, men kontraktlig, fordi man stoler på at udbyderen ikke misbruger adgangen.
 
 Denne tillidsmodel er sårbar af to grunde. For det første kan juridisk tvang overskride kontrakten. CLOUD Act (Clarifying Lawful Overseas Use of Data Act) forpligter amerikanske cloudvirksomheder til at udlevere data lagret hvor som helst i verden, når en amerikansk domstol udsteder kendelse (U.S. Congress, 2018). Europæiske jurisdiktioner har tilsvarende mekanismer. Brugerens data er dermed tilgængeligt for en bred kreds af statslige aktører uden brugerens viden eller samtykke. For det andet er koncentrationen af data hos en enkelt udbyder et attraktivt mål for angribere. Et kompromitteret cloud-system eksponerer ikke blot ét offers filer, men potentielt millioner.
 
-Kryptografisk zero-knowledge storage løser begge problemer ved at flytte krypteringskontrol til klienten: data krypteres på brugerens enhed, og cloud-udbyderen modtager udelukkende krypterede blobs uden adgang til de nøgler der ville kunne afkode dem. Udbyderen kan dermed hverken opfylde en retskendelse om dataindhold eller lækkes til at eksponere klartekst.
+Kryptografisk zero-knowledge storage løser begge problemer ved at flytte krypteringskontrol til klienten. Data krypteres på brugerens enhed, og cloud-udbyderen modtager udelukkende krypterede blobs uden adgang til de nøgler der ville kunne afkode dem. Udbyderen kan dermed hverken opfylde en retskendelse om dataindhold eller lækkes til at eksponere klartekst.
 
 Eksisterende løsninger med klient-side kryptering adresserer dele af dette problem, men hver med afgrænsede begrænsninger. Cryptomator krypterer lokalt inden synkronisering, men er konstrueret som et virtuelt drev der kan skrive dekrypterede filer til disk. Tresorit tilbyder stærk end-to-end kryptering, men er en managed tjeneste, hvor brugeren er bundet til Tresorts infrastruktur. Proton Drive markedsføres som zero-knowledge, men understøtter heller ikke en brugerkontrolleret storage-backend. Ingen af dem kombinerer hardware-baseret multifaktorautentifikation, offline recovery uden tredjepart og provider-agnostisk transport i ét system (jf. Tabel 4.2 for en detaljeret sammenligning).
 
@@ -102,9 +102,9 @@ Kapitlet begrunder de metodiske valg der ligger til grund for rapporten: udvikli
 
 ### 3.1 Udviklingsmetodik: konstruktiv tilgang
 
-Det videnskabsteoretiske fundament er en konstruktiv, artefaktorienteret tilgang. I denne tilgang frembringes viden ved at designe, bygge og evaluere et fungerende system: artefaktet er selve svaret på problemformuleringen. Tilgangen er pragmatisk epistemologisk: viden valideres ved at demonstrere at artefaktet løser det identificerede problem, ikke ved at falsificere en hypotese. Den overordnede problemformulering stiller præcis et designspørgsmål: *hvordan kan en løsning designes og implementeres?* Denne forskningstilgang betegnes i IS-forskning *Design Science Research* (DSR) og er veldokumenteret som metode til systemer der besvarer designspørgsmål frem for forklarende spørgsmål (Hevner et al., 2004).
+Det videnskabsteoretiske fundament er en konstruktiv, artefaktorienteret tilgang. I denne tilgang frembringes viden ved at designe, bygge og evaluere et fungerende system, så artefaktet bliver selve svaret på problemformuleringen. Tilgangen er pragmatisk epistemologisk, hvilket betyder at viden valideres ved at demonstrere at artefaktet løser det identificerede problem, ikke ved at falsificere en hypotese. Den overordnede problemformulering stiller præcis et designspørgsmål, *hvordan kan en løsning designes og implementeres?* Denne forskningstilgang betegnes i IS-forskning *Design Science Research* (DSR) og er veldokumenteret som metode til systemer der besvarer designspørgsmål frem for forklarende spørgsmål (Hevner et al., 2004).
 
-Processen fulgte en hybrid model: en upfront systemdesign-fase (Phase 0–6 samlet) sikrede at kryptografiske invarianter var gennemtænkt som et hele, da et fejlbehæftet nøglehierarki i Phase 1 propagerer strukturelt til autentificering (Phase 2), chunking (Phase 3) og fildeling (Phase 5). Stephens betegner dette *Big Design Up Front* (BDUF, 2022, s. 432). Parallel implementering og afsluttende valideringscykler var omvendt inspireret af agile principper om iterativ tilpasning (Stephens, 2022, s. 472). Hybridformen er valgt fordi sikkerhedskritisk software stiller modstridende krav: invarianterne kræver samlet design, mens implementeringens kompleksitet ikke lader sig forudsige fuldt ud.
+Processen fulgte en hybrid model. En upfront systemdesign-fase (Phase 0–6 samlet) sikrede at kryptografiske invarianter var gennemtænkt som et hele, da et fejlbehæftet nøglehierarki i Phase 1 propagerer strukturelt til autentificering (Phase 2), chunking (Phase 3) og fildeling (Phase 5). Stephens betegner dette *Big Design Up Front* (BDUF, 2022, s. 432). Parallel implementering og afsluttende valideringscykler var omvendt inspireret af agile principper om iterativ tilpasning (Stephens, 2022, s. 472). Hybridformen er valgt fordi sikkerhedskritisk software stiller modstridende krav, hvor invarianterne kræver samlet design, mens implementeringens kompleksitet ikke lader sig forudsige fuldt ud.
 
 Arx Runa er struktureret i syv domæneafgrænsede faser (Phase 0–6):
 
@@ -128,7 +128,7 @@ Analysen er struktureret i tre niveauer: *use cases* (UC-1–5) afgrænser scope
 
 ### 3.3 Dataindsamling og validering
 
-Det empiriske grundlag for primitive-valg og protokoldesign er et systematisk litteraturstudie: RFC'er, NIST-standarder og kryptografiske papers udgør de primære kilder. Denne kildeprioritet er bevidst. RFC'er og NIST-dokumenter er peer-reviewed, vedligeholdte og udgør branchens normative referencer for kryptografisk praksis. Konkurrenters sikkerhedsarkitektur (Cryptomator, Tresorit, Proton Drive) analyseres udelukkende via officielle whitepapers og tilgængelige security audits, ikke via white-box analyse af kildekode.
+Det empiriske grundlag for primitive-valg og protokoldesign er et systematisk litteraturstudie, hvor RFC'er, NIST-standarder og kryptografiske papers udgør de primære kilder. Denne kildeprioritet er bevidst. RFC'er og NIST-dokumenter er peer-reviewed, vedligeholdte og udgør branchens normative referencer for kryptografisk praksis. Konkurrenters sikkerhedsarkitektur (Cryptomator, Tresorit, Proton Drive) analyseres udelukkende via officielle whitepapers og tilgængelige security audits, ikke via white-box analyse af kildekode.
 
 Designbeslutningernes korrekthed verificeres gennem fire testlag med adskilte ansvarsområder: unit-tests (enkelt funktion i isolation), scenariotests (tværgående flows med reel kryptografi og reel SQLCipher), integrationstests (fuld encrypt-upload-download-decrypt round-trip) og E2E-tests (brugergrænseflade og browser-storage-oprydning). Testlagene beskrives i detalje i §10.
 
@@ -140,7 +140,7 @@ Kildekritik er relevant på to områder. For det første kan kryptografiske stan
 
 ## 4. Teknologisk kontekst og relaterede systemer
 
-Dette kapitel etablerer det problemrum Arx Runa opererer i. Analysen følger kæden: den dominerende tillidsmodel i eksisterende cloud-løsninger afslører et designgab, eksisterende privacy-orienterede alternativer dækker delvist dette gab men med konkrete mangler, use cases præciserer hvad brugerne konkret behøver, systemkrav operationaliserer disse behov, og positioneringen viser hvad Arx Runa bidrager med.
+Dette kapitel etablerer det problemrum Arx Runa opererer i. Analysen følger en kæde fra den dominerende tillidsmodel i eksisterende cloud-løsninger, gennem de privacy-orienterede alternativer der dækker dele af det afslørede designgab, videre til use cases der præciserer brugerbehovene, systemkravene der operationaliserer disse, og positioneringen der viser hvad Arx Runa bidrager med.
 
 ### 4.1 Mainstream cloud storage: trust-modellen
 
@@ -150,7 +150,7 @@ Tillidsmodellen eksponerer brugeren tre steder: insider-truslen hos udbyderen, s
 
 ### 4.2 Eksisterende privacy-orienterede løsninger
 
-Tre repræsentanter er særlig relevante. **Cryptomator** krypterer lokalt via virtuelt drev, men mangler hardware-faktor og nøgle-zeroization ved dekryptering til disk (Cryptomator, u.å.). **Tresorit** er end-to-end krypteret med RSA-4096 OAEP-baseret nøgledeling (Tresorit, u.å.), men er en managed cloud-tjeneste — ingen selvvalgt backend. **Proton Drive** er klient-side krypteret med zero-knowledge-krav (Proton AG, u.å.), men ligeledes managed; hardware-faktor og offline recovery uden tredjepart er ikke dokumenteret.
+Tre repræsentanter er særlig relevante. **Cryptomator** krypterer lokalt via virtuelt drev, men mangler hardware-faktor og nøgle-zeroization ved dekryptering til disk (Cryptomator, u.å.). **Tresorit** er end-to-end krypteret med RSA-4096 OAEP-baseret nøgledeling (Tresorit, u.å.), men er en managed cloud-tjeneste uden mulighed for selvvalgt backend. **Proton Drive** er klient-side krypteret med zero-knowledge-krav (Proton AG, u.å.), men ligeledes managed; hardware-faktor og offline recovery uden tredjepart er ikke dokumenteret.
 
 Fælles for alle tre er, at de eliminerer tillid til cloud-udbyderen men introducerer tillid til SaaS-leverandøren. Ingen kombinerer hardware MFA, offline recovery, provider-agnostisk lagring og zero-trace i ét system.
 
@@ -158,7 +158,7 @@ Fælles for alle tre er, at de eliminerer tillid til cloud-udbyderen men introdu
 
 > *Kilde: `docs/use-cases/` (UC-1 til UC-5)*
 
-Analysen af eksisterende løsningers mangler omsættes til fem konkrete brugscenarier. Scenarierne fungerer som scope-afgrænsning: de definerer præcis hvilken adfærd systemet skal understøtte og danner grundlag for kravdomænerne i §4.4. Fem primære brugscenarier er identificeret ud fra problemformuleringen:
+Analysen af eksisterende løsningers mangler omsættes til fem konkrete brugscenarier. Scenarierne fungerer som scope-afgrænsning, fordi de definerer præcis hvilken adfærd systemet skal understøtte og danner grundlag for kravdomænerne i §4.4. Fem primære brugscenarier er identificeret ud fra problemformuleringen:
 
 | UC | Scenarie | Primær sikkerhedsegenskab |
 |----|----------|--------------------------|
@@ -168,7 +168,7 @@ Analysen af eksisterende løsningers mangler omsættes til fem konkrete brugscen
 | UC-4 | Personlig fildeling | HPKE-kryptering, udløb, revocation |
 | UC-5 | Multi-destination backup | Mirror/accumulating-tilstande, per-destination fejlhåndtering |
 
-UC-1 og UC-4 illustrerer det grundlæggende problem: en bruger der ønsker at lagre og dele filer uden at cloud-udbyderen kan læse dem. UC-3 tilføjer den anden dimension: hvad sker der når adgangskoden kompromitteres eller hardware-faktoren mistes?
+UC-1 og UC-4 illustrerer det grundlæggende problem, hvor en bruger ønsker at lagre og dele filer uden at cloud-udbyderen kan læse dem. UC-3 tilføjer den anden dimension om hvad der sker når adgangskoden kompromitteres eller hardware-faktoren mistes.
 
 ### 4.4 Systemkrav
 
@@ -220,7 +220,7 @@ Arx Runa er implementeret som en Tauri-applikation med en Rust-backend og en Lep
 | `sharing/` | `src-tauri/src/sharing/` | HPKE share-pakker, X25519-identiteter, kontakthåndtering |
 | Frontend | Leptos/WASM i Tauri-shell | RAM-baseret UI: dekrypteret indhold forlader aldrig WASM-hukommelsesrum |
 
-Al kryptering sker på klienten; cloud-udbyderen modtager kun opaque ciphertext-blobs. SQLCipher-manifestet forbliver lokalt og krypteret. Pipeline-realisering beskrives i §5 og §7.
+Al kryptering sker på klienten, og cloud-udbyderen modtager kun opaque ciphertext-blobs. SQLCipher-manifestet forbliver lokalt og krypteret. Pipeline-realisering beskrives i §5 og §7.
 
 ---
 
@@ -236,15 +236,15 @@ Designbeslutningerne i §5–9 er forankret i en konkret adversary-model med tre
 | Juridisk tvang (CLOUD Act m.fl.) | Kan pålægge udbyder at udlevere data | Samme som ovenfor, udbyder har intet meningsfuldt at udlevere |
 | Fysisk angriber (ulåst maskine) | Adgang til filsystem og RAM under session | Zero-Trace: nøgler zeroizes ved vault-lås; intet dekrypteret indhold på disk |
 
-Tillidsgrænser er defineret som følger: klienten (brugerens maskine og Arx Runa-processen) er betroet, cloud-udbyderen er fuldt ubetroet og behandles som aktiv modstander, og netværkslaget er ubetroet men uden for scope da TLS håndteres af rclone og cloud-SDK'erne.
+Tillidsgrænser er defineret som følger: klienten (brugerens maskine og Arx Runa-processen) er betroet, cloud-udbyderen er fuldt ubetroet og behandles som aktiv modstander, og netværkslaget er ubetroet men uden for scope da TLS håndteres af rclone.
 
-Tre angrebsscenarier er eksplicit uden for scope: OS-kompromittering, bruger der saboterer sin vault og side-channel-angreb. Trusselsmodellen er det analytiske fundament for §5–9; en STRIDE-kategoriseret threat matrix er i Bilag A.
+Tre angrebsscenarier er eksplicit uden for scope: OS-kompromittering, bruger der saboterer sin vault og side-channel-angreb. Trusselsmodellen er det analytiske fundament for §5–9. En STRIDE-kategoriseret threat matrix er i Bilag A.
 
 ---
 
 ## 5. Analyse og Realisering: Krypteringsstandarder og nøglehåndtering
 
-Dette kapitel besvarer underspørgsmål 1. Cloud-udbyderen er fuldt ubetroet modstander med adgang til alle lagrede data; krypteringslaget skal sikre at ingen data eller nøgler fremstår meningsfulde for udbyderen. Analysen gennemgår AEAD-primitiv, nøgleafledningspipeline, nøglehierarki og realisering.
+Dette kapitel besvarer underspørgsmål 1. Cloud-udbyderen er fuldt ubetroet modstander med adgang til alle lagrede data, og krypteringslaget skal sikre at ingen data eller nøgler fremstår meningsfulde for udbyderen. Analysen gennemgår AEAD-primitiv, nøgleafledningspipeline, nøglehierarki og realisering.
 
 ### 5.1 Valg af AEAD-primitiv: XChaCha20-Poly1305
 
@@ -265,7 +265,7 @@ XChaCha20-Poly1305 udvider nonce-størrelsen til 192 bit via HChaCha20-underfunk
 
 *Tabel 5.1: AEAD-kandidater og begrundelse for afvisning. Kildegrundlag: Arciszewski (2020); Böck m.fl. (2016); McLean (2016); IETF (u.å.).*
 
-Non-commitment (to nøgler kan verificere samme ciphertext) er en Poly1305-egenskab (Chan & Rogaway, 2022); i enkelt-vault-modellen er konsekvenserne begrænsede.
+Non-commitment (to nøgler kan verificere samme ciphertext) er en Poly1305-egenskab (Chan & Rogaway, 2022). I enkelt-vault-modellen er konsekvenserne begrænsede.
 
 ### 5.2 Nøgleafledning: Argon2id og HKDF-SHA256
 
@@ -273,7 +273,7 @@ Nøgleafledningspipelinen er to-trins. Adgangskoden (kombineret med den optionel
 
 #### Argon2id (RFC 9106)
 
-Argon2id er den aktuelle anbefaling fra OWASP, NIST SP 800-63B og RFC 9106 (Biryukov m.fl., 2021; OWASP, 2024). "id"-varianten kombinerer data-independent hukommelsesadgang (side-channel-resistens) med data-dependent adgang (GPU/ASIC-modstandsdygtighed). Arx Runa anvender RFC 9106 §4-parametrene m=65.536 (64 MiB), t=3, p=4; en vault-oplåsning tager 61,0 ms (Windows 11, Criterion, 95 % CI: 60,1–62,0 ms, jf. Bilag C).
+Argon2id er den aktuelle anbefaling fra OWASP, NIST SP 800-63B og RFC 9106 (Biryukov m.fl., 2021; OWASP, 2024). "id"-varianten kombinerer data-independent hukommelsesadgang (side-channel-resistens) med data-dependent adgang (GPU/ASIC-modstandsdygtighed). Arx Runa anvender RFC 9106 §4-parametrene m=65.536 (64 MiB), t=3, p=4. En vault-oplåsning tager 61,0 ms (Windows 11, Criterion, 95 % CI: 60,1–62,0 ms, jf. Bilag C).
 
 | Alternativ | Afvisningsbegrundelse |
 |---|---|
@@ -293,13 +293,13 @@ flowchart TD
     KF["USB Key File<br/>(32 bytes random)"]:::user
     SALT["Argon2 Salt<br/>(from vault header)"]:::storage
 
-    subgraph KDF ["Key Derivation — Argon2id"]
+    subgraph KDF ["Key Derivation - Argon2id"]
         ARGON["Argon2id<br/>m=65536, t=3, p=4"]:::crypto
     end
 
     MK_NODE(["master_key<br/>(mlocked memory)"]):::secret
 
-    subgraph HKDF_LAYER ["Key Expansion — HKDF-SHA256 (RFC 5869)"]
+    subgraph HKDF_LAYER ["Key Expansion - HKDF-SHA256 (RFC 5869)"]
         HKDF1["HKDF<br/>info: arx-runa-key-encryption"]:::crypto
         HKDF2["HKDF<br/>info: arx-runa-sqlcipher"]:::crypto
         HKDF3["HKDF<br/>info: arx-runa-manifest-backup"]:::crypto
@@ -350,7 +350,7 @@ Vault-arkitekturen implementerer et KEK/DEK-hierarki (Key Encryption Key / Data 
 
 Hver fil tildeles en unik file_key genereret af en kryptografisk stærk tilfældighedsgenerator (CSPRNG). file_key bruges til XChaCha20-Poly1305-kryptering af filens chunks og lagres aldrig i klartekst. Den er krypteret (wrapped) med key_encryption_key og gemmes i SQLCipher-manifestet. Adgang til en fil kræver at vault'en er oplåst, og file_key er unwrapped just-in-time for kryptering eller dekryptering.
 
-KEK/DEK-arkitekturen begrænser eksponeringsradius til den individuelle fil, muliggør per-fil nøglerotation og understøtter fildeling (kapitel 9) ved at sende én file_key i en HPKE-pakke — vault-nøglen forlader aldrig enheden. LUKS2 og Linux fscrypt anvender samme mønster (Fruhwirth m.fl., u.å.; kernel.org, u.å.).
+KEK/DEK-arkitekturen begrænser eksponeringsradius til den individuelle fil, muliggør per-fil nøglerotation og understøtter fildeling (kapitel 9) ved at sende én file_key i en HPKE-pakke, så vault-nøglen aldrig forlader enheden. LUKS2 og Linux fscrypt anvender samme mønster (Fruhwirth m.fl., u.å.; kernel.org, u.å.).
 
 #### Krypteret manifest
 
@@ -388,7 +388,7 @@ pub fn derive_vault_keys(master_key_bytes: &[u8; 32]) -> Result<VaultKeys, Crypt
 
 *Listing 5.1: `derive_vault_keys()` i `hkdf.rs`. Én HKDF-expand pr. nøgle med unik info-streng; alle nøgler returneres som `SecretBox<[u8; 32]>`.*
 
-Listing 5.2 viser `encrypt_chunk()`: AAD konstrueres fra `file_id || chunk_index` og binder chunk til position; wire-format er `[nonce | ciphertext | tag]`.
+Listing 5.2 viser `encrypt_chunk()`. AAD konstrueres fra `file_id || chunk_index` og binder chunk til position, og wire-format er `[nonce | ciphertext | tag]`.
 
 ```rust
 // src-tauri/src/crypto/encrypt_chunk.rs
@@ -417,7 +417,7 @@ pub fn encrypt_chunk(
 }
 ```
 
-*Listing 5.2: `encrypt_chunk()` — CSPRNG-nonce, AAD-binding, `[nonce | ciphertext | tag]`.*
+*Listing 5.2: `encrypt_chunk()` med CSPRNG-nonce, AAD-binding og wire-format `[nonce | ciphertext | tag]`.*
 
 `wrap_key.rs` anvender identisk mønster med `key_encryption_key` og `file_id` som AAD til at wrap/unwrap `file_keys` (72-byte blob). `types/mod.rs` definerer nøgletyperne (Listing 5.3) med `ZeroizeOnDrop` og `SecretBox<T>` for Debug-redaction.
 
@@ -449,9 +449,9 @@ sequenceDiagram
     encrypt_chunk-->>Caller: Result#60;Vec#60;u8#62;, CryptoError#62;
 ```
 
-*Figur 5.2: Krypteringsflow for ét chunk — CSPRNG-nonce, AAD-binding, `[nonce | ciphertext | tag]`.*
+*Figur 5.2: Krypteringsflow for ét chunk med CSPRNG-nonce, AAD-binding og wire-format `[nonce | ciphertext | tag]`.*
 
-Unit-tests dækker AEAD round-trip, nonce-uniqueness og forkert-nøgle-fejl; property-based tests via `proptest`; integrationstests i `scenarios_auth.rs` kører real SQLCipher.
+Unit-tests dækker AEAD round-trip, nonce-uniqueness og forkert-nøgle-fejl, mens property-based tests via `proptest` udvider inputrummet på AAD og nøgler. Integrationsdækningen ligger i `scenarios_auth.rs`, der kører real SQLCipher.
 
 > **Delkonklusion - Underspørgsmål 1:** XChaCha20-Poly1305 eliminerer nonce-kollisionsrisikoen ved enhver praktisk vault-størrelse og er hardware-uafhængig. Argon2id med RFC 9106-parametrene gør brute-force hukommelsesintensivt og GPU-resistent. HKDF-SHA256 separerer vault-nøglerne kryptografisk, så kompromittering af én nøgle ikke propagerer til de øvrige. Per-fil tilfældig nøgle med KEK/DEK-hierarki begrænser eksponeringsradius til den individuelle fil. Samlet modsvarer arkitekturen trusselsmodellens krav (§4.7): cloud-udbyderen modtager udelukkende opaque ciphertext-blobs, og ingen del af nøglehierarkiet forlader klientens RAM under en aktiv session.
 
@@ -459,7 +459,7 @@ Unit-tests dækker AEAD round-trip, nonce-uniqueness og forkert-nøgle-fejl; pro
 
 ## 6. Analyse og Realisering: Hardware-faktor og offline recovery
 
-Dette kapitel undersøger Underspørgsmål 2: Hvordan kan en fysisk USB-nøglefil integreres som obligatorisk anden faktor, og hvordan kan offline BIP-39 recovery muliggøre brugerstyret gendannelse af credentials uden at delegere tillid?
+Dette kapitel undersøger Underspørgsmål 2. Hvordan kan en fysisk USB-nøglefil integreres som obligatorisk anden faktor, og hvordan kan offline BIP-39 recovery muliggøre brugerstyret gendannelse af credentials uden at delegere tillid?
 
 ### 6.1 Tier-model for autentificering
 
@@ -475,7 +475,7 @@ Tier 2-afledningen er:
 
 Konkatenering er entydigt fordi key_file_bytes altid er præcis 32 bytes (REQ-AUTH-008). Et forkert password producerer en anden master_key. Et forkert key_file producerer ligeledes en anden master_key. Ingen faktor er tilstrækkelig alene (REQ-AUTH-003, REQ-AUTH-004, REQ-AUTH-005).
 
-FIDO2/WebAuthn og TOTP er begge forkastet fordi de er non-deterministiske. Argon2id kræver et reproducerbart KDF-input for at producere samme `master_key` på tværs af sessioner. FIDO2's challenge-response-output varierer pr. session; TOTP varierer pr. 30-sekunders vindue (FIDO Alliance, 2019; IETF, 2011). Determinisme er ikke valgfrit — KDF-output er nøglen.
+FIDO2/WebAuthn og TOTP er begge forkastet fordi de er non-deterministiske. Argon2id kræver et reproducerbart KDF-input for at producere samme `master_key` på tværs af sessioner. FIDO2's challenge-response-output varierer pr. session; TOTP varierer pr. 30-sekunders vindue (FIDO Alliance, 2019; IETF, 2011). Determinisme er ikke valgfrit, fordi KDF-output er nøglen.
 
 ### 6.2 USB-nøglefil: design og angrebsovervejelser
 
@@ -493,7 +493,7 @@ key_file_bytes = Some(buffer);
 
 *Listing 6.1: Generering af USB-nøglefil i `create.rs`. 32 bytes CSPRNG-entropi skrives til drevet med owner-only rettigheder. En BLAKE3-hash gemmes i vault-headeren som fingeraftryk til auto-detektion.*
 
-BLAKE3-hashen er et offentligt verificeringstegn (O'Connor et al., 2019). Den er preimage-resistent: kendskab til hashen giver ingen information om de 32 bytes, der producerede den. Hashen lagres i klartext i vault-headeren fordi bootstrapping af autentificering kræver den, og den afslører intet om nøglefilens indhold.
+BLAKE3-hashen er et offentligt verificeringstegn (O'Connor et al., 2019). Den er preimage-resistent, så kendskab til hashen ikke giver information om de 32 bytes, der producerede den. Hashen lagres i klartext i vault-headeren fordi bootstrapping af autentificering kræver den, og den afslører intet om nøglefilens indhold.
 
 Brugeren behøver ikke navigere manuelt til nøglefilen. Arx Runa overvåger OS-native mount-events og scanner det tilsluttede drev automatisk ved indsætning (REQ-AUTH-010, REQ-AUTH-012). Figur 6.1 illustrerer forløbet fra USB-tilslutning til åben session.
 
@@ -509,7 +509,7 @@ sequenceDiagram
     App->>USB: Watch for drive mount event
     USB-->>App: Drive connected
     App->>App: Scan for 32-byte files<br/>verify BLAKE3 fingerprint against vault header
-    App-->>You: Key file detected — enter password
+    App-->>You: Key file detected - enter password
     You->>App: Type password, confirm
     App->>KDF: Argon2id(password #124;#124; key_file, salt) 64 MiB, 3 iterations, 4 threads
     KDF-->>App: master_key (~1 second)
@@ -521,10 +521,10 @@ sequenceDiagram
 
     note over App,Mem: 15 min inactivity or USB removal
     App->>Mem: zeroize(session keys)
-    App-->>You: Vault locked — re-enter password to continue
+    App-->>You: Vault locked - re-enter password to continue
 ```
 
-*Figur 6.1: Unlock-flow for Tier 2-vault. USB-tilslutning udløser BLAKE3-scanning; et match starter Argon2id-derivation, hvorefter session keys mlockes. Timeout eller USB-fjernelse zeroizer alle nøgler.*
+*Figur 6.1: Unlock-flow for Tier 2-vault. USB-tilslutning udløser BLAKE3-scanning, og et match starter Argon2id-derivation, hvorefter session keys mlockes. Timeout eller USB-fjernelse zeroizer alle nøgler.*
 
 Scanningsalgoritmen filtrerer på 32-byte filstørrelse (Listing 6.2):
 
@@ -551,9 +551,9 @@ Tabel 6.1 opsummerer angrebsscenarier mod hardware-faktoren.
 | USB kopieret digitalt | Angriber har key_file-bytes | Samme risiko som stjålet USB; kræver stadig password |
 | Key file roteret | Ny nøglefil genereres; gammel kasseres | Rotationsceremoni kræver gammel USB til at afvikle eksisterende filnøgleindpakninger |
 
-*Tabel 6.1: Angrebsscenarier for USB-nøglefil og tilhørende modforanstaltninger. Fysisk besiddelse er en sikkerhedspræmis: systemet kræver to separate kompromiser for at en angriber får adgang.*
+*Tabel 6.1: Angrebsscenarier for USB-nøglefil og tilhørende modforanstaltninger. Fysisk besiddelse er en sikkerhedspræmis, så systemet kræver to separate kompromiser for at en angriber får adgang.*
 
-Sikkerhedsargumentet er, at de to faktorer er uafhængige: en angriber skal kompromittere adgangskoden og besidde den fysiske USB-nøglefil.
+Sikkerhedsargumentet er at de to faktorer er uafhængige, så en angriber både skal kompromittere adgangskoden og besidde den fysiske USB-nøglefil.
 
 ### 6.3 BIP-39 offline recovery
 
@@ -578,7 +578,7 @@ flowchart TD
     PHRASE["BIP-39 Phrase<br/>(24 words, 256-bit entropy)"]:::user
     REC_SALT["Recovery Salt<br/>(from vault header)"]:::storage
 
-    subgraph REC_KDF ["Recovery Key Derivation — Argon2id"]
+    subgraph REC_KDF ["Recovery Key Derivation - Argon2id"]
         REC_ARGON["Argon2id<br/>same params as primary slot"]:::crypto
     end
 
@@ -586,7 +586,7 @@ flowchart TD
 
     MK_INPUT(["master_key<br/>(from primary derivation;<br/>held in mlocked memory)"]):::secret
 
-    subgraph WRAP_BLOCK ["Key Wrapping — XChaCha20-Poly1305"]
+    subgraph WRAP_BLOCK ["Key Wrapping - XChaCha20-Poly1305"]
         WRAP["XChaCha20-Poly1305 encrypt<br/>AAD: #34;arx-runa recovery v1#34; #124;#124; vault_id_bytes<br/>Nonce: 24B CSPRNG"]:::crypto
     end
 
@@ -661,7 +661,7 @@ for slot in header.recovery_slots.iter() {
 
 *Listing 6.4: Slot-iteration i `recover_with_phrase.rs`. En forkert phrase producerer `Err(_)` fra AEAD-laget med non-orakulær fejlsemantik.*
 
-Recovery-slot bruger identiske Argon2id-parametre som primær-slot (m=65536 KiB, t=3, p=4) for slot-indistinguishability: en angriber kan ikke skelne recovery-salt fra primær-salt i vault-headeren. Phrasen forbliver gyldig på tværs af password-rotationer.
+Recovery-slot bruger identiske Argon2id-parametre som primær-slot (m=65536 KiB, t=3, p=4) for slot-indistinguishability, så en angriber ikke kan skelne recovery-salt fra primær-salt i vault-headeren. Phrasen forbliver gyldig på tværs af password-rotationer.
 
 ### 6.4 Realisering i Arx Runa
 
@@ -736,7 +736,13 @@ pub enum DeviceEvent {
 
 *Listing 6.6: `DeviceMonitor`-trait. `MockDeviceMonitor` muliggør test af auto-detektion uden fysisk USB-hardware.*
 
-Tre invarianter gennemføres: fejlsemantik er non-orakulær (REQ-AUTH-006); mlock-fejl er hård fejl (REQ-AUTH-014); Argon2id-parametre er skrivebeskyttede under aktiv vault (REQ-AUTH-009). Testdækning i `scenarios_auth.rs` kører real Argon2id (m=1.024 KiB, t=1) og real SQLCipher for begge tiers og recovery end-to-end.
+Tre invarianter gennemføres i koden:
+
+- Fejlsemantik er non-orakulær, så forkert password og forkert key file returnerer identisk fejl (REQ-AUTH-006).
+- `mlock`-fejl er hård fejl, så ingen nøgle ender på swap (REQ-AUTH-014).
+- Argon2id-parametre er skrivebeskyttede under aktiv vault (REQ-AUTH-009).
+
+Testdækning i `scenarios_auth.rs` kører real Argon2id (m=1.024 KiB, t=1) og real SQLCipher for begge tiers og recovery end-to-end.
 
 > **Delkonklusion - Underspørgsmål 2:** USB-nøglefilen integreres som obligatorisk anden faktor ved at indgå som direkte KDF-input konkateneret med adgangskoden; ingen faktor er tilstrækkelig alene. Alternativerne FIDO2 og TOTP fravælges fordi non-deterministisk output er uforeneligt med reproducibel nøgleafledning via Argon2id (RFC 9106, 2021). BIP-39 offline recovery eliminerer tillidsproblemet ved server-side escrow og social recovery: master_key indpakkes under en Argon2id-afledt recovery_key, og den 24-ords phrase vises én gang og gemmes aldrig af systemet (Palatinus et al., 2013). Jf. trusselsmodellen (§4.7) kræver kompromittering af en Tier 2-vault to uafhængige angrebsvektorer (adgangskode og fysisk USB-besiddelse), og recovery er fuldt brugerstyret og offline uden tredjepart.
 
@@ -744,7 +750,7 @@ Tre invarianter gennemføres: fejlsemantik er non-orakulær (REQ-AUTH-006); mloc
 
 ## 7. Analyse og Realisering: Chunking, synkronisering og provider-agnostisk storage
 
-Dette kapitel besvarer underspørgsmål 3. Cloud-udbyderen modtager samtlige lagrede blobs og observerer størrelser og adgangsmønstre — kryptering af indhold er ikke tilstrækkeligt alene. Analysen gennemgår fem delproblemer: blobnavngivning og vault-struktur, chunk-formatering og padding, manifest-kryptering, provider-agnostisk transport og synkroniseringsprotokol.
+Underspørgsmål 3 om chunking, synkronisering og provider-agnostisk storage behandles her. Cloud-udbyderen modtager samtlige lagrede blobs og observerer størrelser og adgangsmønstre, så kryptering af indhold ikke er tilstrækkeligt alene. Analysen gennemgår fem delproblemer: blobnavngivning og vault-struktur, chunk-formatering og padding, manifest-kryptering, provider-agnostisk transport og synkroniseringsprotokol.
 
 ### 7.1 Metadata-obfuskering: blobnavngivning og vault-struktur
 
@@ -752,7 +758,7 @@ Cloud-udbyderen modtager samtlige uploadede objekter og kan observere navne, ant
 
 Arx Runa anvender tilfældigt genererede UUID-strenge som blobnavne. Alle krypterede chunks og manifest-backuppen lagres under UUID-identifikatorer uden relation til det originale filnavn, mappeplacering eller indholdstype (REQ-VAULT-007). Cloud-udbyderen observerer N navngivne ciphertext-objekter og har ingen mulighed for at korrelere navne med filnavne eller mappestruktur.
 
-Den eneste klartekstfil i vault'en er `vault-header.json`. Headeren indeholder udelukkende offentlige parametre: Argon2id-salt, algoritmeidentifikatorer og et BLAKE3-fingeraftryk af USB-nøglefilen ved Tier-2-autentificering. Intet nøglemateriale, intet filnavn og ingen strukturinformation indgår. Headeren er nødvendig for at en ny enhed kan starte autentificeringen uden forudgående kontakt med vault'en.
+Den eneste klartekstfil i den uploadede vault er `vault-header.json` (lokalt på klienten findes derudover `device_id` og evt. `.arxshare`-pakker i klartekst, jf. Bilag B). Headeren indeholder udelukkende offentlige parametre: Argon2id-salt, algoritmeidentifikatorer og et BLAKE3-fingeraftryk af USB-nøglefilen ved Tier-2-autentificering. Intet nøglemateriale, intet filnavn og ingen strukturinformation indgår. Headeren er nødvendig for at en ny enhed kan starte autentificeringen uden forudgående kontakt med vault'en.
 
 | Navngivningsstrategi | Eksempel | Metadatalæk | Valgt |
 |---|---|---|---|
@@ -775,7 +781,7 @@ Selv med UUID-blobnavne lækker blob-størrelse filstørrelsesinformation. En fi
 
 *Tabel 7.2: Chunking-paradigmer i E2EE-kontekst. CDC er forkastet fordi rolling hash-beregning over klartekst udgør et metadatalæk mod trusselsmodellens adversary (§4.7). Fast størrelse er valgt (REQ-VAULT-002).*
 
-Arx Runa anvender fast chunk-størrelse default 4 MiB (128 KiB–64 MiB, immutabel efter vault-oprettelse — ændring kræver fuld genkryptering, REQ-VAULT-002). Throughput: kryptering 4,04 ms (~989 MiB/s), dekryptering 4,85 ms (~825 MiB/s, Bilag C). Padding zero-padder det sidste chunk; filstørrelse gemmes krypteret i manifest'et. AAD er `file_id || chunk_index` (big-endian u32, REQ-CRYPTO-009), der binder chunk til position og forhindrer omplacering. Krypteringssekvensen pr. chunk er vist i Figur 5.2.
+Arx Runa anvender fast chunk-størrelse default 4 MiB (128 KiB–64 MiB, immutabel efter vault-oprettelse, da ændring kræver fuld genkryptering, REQ-VAULT-002). Throughput: kryptering 4,04 ms (~989 MiB/s), dekryptering 4,85 ms (~825 MiB/s, Bilag C). Padding zero-padder det sidste chunk; filstørrelse gemmes krypteret i manifest'et. AAD er `file_id || chunk_index` (big-endian u32, REQ-CRYPTO-009), der binder chunk til position og forhindrer omplacering. Krypteringssekvensen pr. chunk er vist i Figur 5.2.
 
 ```mermaid
 flowchart TD
@@ -835,7 +841,7 @@ flowchart TD
 
 **Epoch buffering: padding-overhead-reduktion for mange korte filer**
 
-Fast chunk-størrelse medfører padding-overhead på op til 400:1 for korte filer. Epoch buffering (opt-in) staged filer under `chunk_size_bytes` i SQLCipher-tabellen `epoch_buffer` — klartekst skrives aldrig til disk. Ved flush concateneres staged filer og krypteres som ét blob; extents gemmes i manifest'et til slice-baseret dekryptering.
+Fast chunk-størrelse medfører padding-overhead på op til 400:1 for korte filer. Epoch buffering (opt-in) staged filer under `chunk_size_bytes` i SQLCipher-tabellen `epoch_buffer`, så klartekst aldrig skrives til disk. Ved flush concateneres staged filer og krypteres som ét blob; extents gemmes i manifest'et til slice-baseret dekryptering.
 
 | Egenskab | Selvstændig sti | Epoch buffer-sti |
 |---|---|---|
@@ -885,11 +891,11 @@ pub trait CloudTransport: Send + Sync {
 
 *Listing 7.1: `CloudTransport`-trait. `RcloneTransport` i produktion; in-memory mock i tests.*
 
-Rclone-processerne modtager aldrig klartekst — kun krypterede staging-blobs. Credentials krypteres i SQLCipher og eksponeres ikke i klartekst til disk.
+Rclone-processerne modtager aldrig klartekst, kun krypterede staging-blobs. Credentials krypteres i SQLCipher og eksponeres ikke i klartekst til disk.
 
 ### 7.5 Synkroniseringsprotokol og konsistensgaranti
 
-Synkronisering introducerer et distribueret konsistensproblem: to enheder kan foretage lokale ændringer offline og forsøge at uploade concurrently.
+Synkronisering introducerer et distribueret konsistensproblem, hvor to enheder kan foretage lokale ændringer offline og forsøge at uploade concurrently.
 
 | Mekanisme | Kompleksitet | Forudsætning | Egnet til E2EE vault? |
 |---|---|---|---|
@@ -920,10 +926,10 @@ sequenceDiagram
     RT-->>Sync: temp file
     Sync->>Sync: decrypt manifest backup #45;#62; cloud_counter
     break cloud_counter #62; local_counter
-        Sync-->>User: CONFLICT — pull first
+        Sync-->>User: CONFLICT - pull first
     end
     break cloud_counter #60; local_counter
-        Sync-->>User: CONFLICT — cloud manifest older than local
+        Sync-->>User: CONFLICT - cloud manifest older than local
     end
 
     Sync->>Meta: get all staged blob_names
@@ -1004,18 +1010,24 @@ Chunking-pipelinen er realiseret i `src-tauri/src/storage/pipeline/` (`encrypt_f
 
 ---
 
-**Delkonklusion - Underspørgsmål 3:** UUID-blobnavne eliminerer filnavn- og mappestrukturlækage. Fast chunk-størrelse med zero-padding begrænser størrelsesinfrence til ét interval. Manifest krypteres i SQLCipher med separat HKDF-nøgle. Rclone sidecar sikrer provider-agnosticitet via `Vec<OsString>`. Monoton snapshot-tæller er tilstrækkelig i en enkelt-primær-vault-model.
+> **Delkonklusion - Underspørgsmål 3:** UUID-blobnavne eliminerer filnavn- og mappestrukturlækage. Fast chunk-størrelse med zero-padding begrænser størrelsesinfrence til ét interval. Manifest krypteres i SQLCipher med separat HKDF-nøgle. Rclone sidecar sikrer provider-agnosticitet via `Vec<OsString>`. Monoton snapshot-tæller er tilstrækkelig i en enkelt-primær-vault-model. Jf. trusselsmodellen (§4.7) modtager cloud-udbyderen alene navnløse, fast-størrelse ciphertext-blobs uden filsystem-semantik.
 
 
 ## 8. Analyse og Realisering: Zero-Trace operation og RAM-baseret UI
 
-Dette kapitel undersøger underspørgsmål 4: hvordan kan en RAM-baseret UI opnå Zero-Trace operation, og hvilke forensiske spor forbliver efter vault-låsning? Analysen er opdelt i trusselsbillede og scope (§8.1), nøglemateriale i hukommelse (§8.2), session-livscyklus (§8.3) og RAM-baseret filvisning (§8.4), efterfulgt af en tværgående realiseringstabel (§8.5).
+Underspørgsmål 4 handler om Zero-Trace-drift. Hvordan kan en RAM-baseret UI sikre at dekrypteret indhold aldrig skrives til disk, og hvilke forensiske spor forbliver efter vault-låsning? Analysen er opdelt i trusselsbillede og scope (§8.1), nøglemateriale i hukommelse (§8.2), session-livscyklus (§8.3) og RAM-baseret filvisning (§8.4), efterfulgt af en tværgående realiseringstabel (§8.5).
 
 ### 8.1 Zero-Trace: trusselsbillede og scope
 
 Trusselsmodellen i §4.7 identificerer en fysisk angriber med adgang til en låst maskine som en primær trussel. Angriberen har adgang til disk-artefakter efterladt af applikationen, men ingen aktiv session. Zero-Trace er det overordnede designprincip der minimerer disse artefakter til det forensisk insignifikante.
 
-Tre kategorier af utilsigtet persistens udgør truslen: OS-swap kan persistere heap-allokerede nøgler til `pagefile.sys`/`swap`; filvisning via temp-filer efterlader disk-artefakter; WebView kan persistere session-IDs i `localStorage`. Design-invariant 17 og 7 specificerer kontrakten: nøgler memory-låses, zeroizes ved vault-lock og plaintext persisteres aldrig til disk.
+Tre kategorier af utilsigtet persistens udgør truslen:
+
+- OS-swap kan persistere heap-allokerede nøgler til `pagefile.sys` eller `swap`.
+- Filvisning via temp-filer efterlader disk-artefakter.
+- WebView kan persistere session-IDs i `localStorage`.
+
+Design-invariant 17 og 7 specificerer kontrakten. Nøgler memory-låses, zeroizes ved vault-lock, og plaintext persisteres aldrig til disk.
 
 ### 8.2 Kryptografisk nøglemateriale og hukommelseslåsning
 
@@ -1055,7 +1067,7 @@ impl<const N: usize> Drop for SecureBytes<N> {
 }
 ```
 
-mlock-fejl er en hård fejl: autentificeringen afbrydes med `AuthenticationError::MemoryLockFailed` — ingen stille degradering. Alle nøgletyper anvender `#[derive(ZeroizeOnDrop)]` via `secrecy`-cratens `SecretBox<[u8; 32]>`:
+mlock-fejl behandles som hård fejl. Autentificeringen afbrydes med `AuthenticationError::MemoryLockFailed`, og der sker ingen stille degradering. Alle nøgletyper anvender `#[derive(ZeroizeOnDrop)]` via `secrecy`-cratens `SecretBox<[u8; 32]>`:
 
 ```rust
 #[derive(ZeroizeOnDrop)]
@@ -1101,7 +1113,7 @@ const COUNTER_MASK: u32 = 0x7FFF_FFFF;
 
 Nye IPC-operationer blokeres. `waiter.wait_for(|count| *count == 0)` venter til løbende operationer er færdige. SQLCipher-forbindelsen droppes (`keys.metadata_store = None`), `rclone.conf` overskrives og slettes, og `SessionKeys` droppes med `ZeroizeOnDrop` inden munlock.
 
-Operations-gaten løser et race: et concurrent `begin_operation()`-kald der lykkes med CAS umiddelbart inden gate-lukning blokkeres af double-check-loopet og kan ikke fortsætte med nøglereferencer under zeroization.
+Operations-gaten løser et race, hvor et concurrent `begin_operation()`-kald der lykkes med CAS umiddelbart inden gate-lukning blokkeres af double-check-loopet og dermed ikke kan fortsætte med nøglereferencer under zeroization.
 
 ### 8.4 RAM-baseret UI og in-app filvisning
 
@@ -1118,7 +1130,7 @@ Dekrypteret filindhold er en selvstændig Zero-Trace-risiko. To tilgange impleme
 
 *Tabel 8.2: Alternativer til in-app filvisning uden disk-touch.*
 
-`get_file_content(file_id)` afviser filer over 50 MiB. Gyldige filer dekrypteres til `Zeroizing<Vec<u8>>`, base64-kodes og returneres; frontend opretter `blob:` URL og tilbagekalder ved luk. Ingen plaintext berører disk.
+`get_file_content(file_id)` afviser filer over 50 MiB uanset MIME-type (`FIFTY_MIB` i `file_commands.rs`). Gyldige filer dekrypteres til `Zeroizing<Vec<u8>>`, base64-kodes og returneres, og frontend opretter `blob:` URL der tilbagekaldes ved luk. Ingen plaintext berører disk. Store ikke-video-filer over grænsen kan kun ses ved at downloade til en bruger-valgt destination via `download_file`, hvilket forlader Zero-Trace-scopet og er brugerens informerede valg.
 
 #### Sti B: `arxvault://` URI-scheme, video-streaming (ingen størrelsesgrænse)
 
@@ -1129,7 +1141,7 @@ arxvault://localhost/view/{file_id}       (macOS/Linux)
 http://arxvault.localhost/view/{file_id}  (Windows)
 ```
 
-Handleren i `video_stream.rs` dekrypterer kun de chunks der overlapper `Range: bytes=N-M`. Åbne range-anmodninger begrænses til 8 MiB (`MAX_RANGE_BYTES`); højst ét chunks plaintext er i RAM ad gangen. Design-invariant 7 dokumenterer én undtagelse: dekrypterede bytes kopieres til en plain `Vec<u8>` ved overdragelse til Tauris `ResponseBuilder::body()`, hvor zeroize ikke er mulig.
+Handleren i `video_stream.rs` dekrypterer kun de chunks der overlapper `Range: bytes=N-M`. Åbne range-anmodninger begrænses til 8 MiB (`MAX_RANGE_BYTES`); højst ét chunks plaintext er i RAM ad gangen. Design-invariant 7 dokumenterer én undtagelse, hvor dekrypterede bytes kopieres til en plain `Vec<u8>` ved overdragelse til Tauris `ResponseBuilder::body()`, og zeroize derfor ikke er mulig.
 
 #### Frontend-tilstand og Zero-Trace-compliance
 
@@ -1162,23 +1174,23 @@ Password-feltet i login-formularen zeroizes straks efter IPC-kaldet, uanset succ
 
 *Tabel 8.3: Zero-Trace-implementering fordelt på lag i Arx Runa.*
 
-`zero_trace.spec.js` (E2E) bekræfter at `localStorage`, `sessionStorage` og fil-liste er rene efter vault-lock. To residue-kategorier er udenfor Arx Runas kontrol: OS crash dumps og Windows fast startup (`hiberfil.sys`) — begge kræver brugerniveau-handling og er dokumenteret i §4.7 og Bilag B.
+`zero_trace.spec.js` (E2E) bekræfter at `localStorage`, `sessionStorage` og fil-liste er rene efter vault-lock. To residue-kategorier er udenfor Arx Runas kontrol: OS crash dumps og Windows fast startup (`hiberfil.sys`), som begge kræver brugerniveau-handling og er dokumenteret i §4.7 og Bilag B.
 
 ---
 
-**Delkonklusion - Underspørgsmål 4:** Zero-Trace opnås via tre lag: `mlock`/`VirtualLock` eliminerer swap-leakage; atomisk session-gate med rclone-sletning minimerer credentials på disk; RAM-only filvisning eliminerer temp-filer og disk-caches. E2E-test bekræfter ren browser-state efter vault-lock. To undtagelser — video-frames i HTTP-handoff og OS crash dumps — er eksplicitte arkitektoniske begrænsninger med veldefineret eksponering.
+**Delkonklusion - Underspørgsmål 4:** Zero-Trace opnås via tre adskilte lag. `mlock`/`VirtualLock` forhindrer at session-nøgler ender i swap eller hibernation. En atomisk session-gate med eksplicit `rclone.conf`-sletning minimerer credentials-vinduet på disk. RAM-only filvisning via `blob:` URL og `arxvault://` Range-stream eliminerer temp-filer og browser-caches. E2E-test bekræfter ren browser-state efter vault-lock. To undtagelser (video-frames i HTTP-handoff og OS crash dumps) er eksplicitte arkitektoniske begrænsninger.
 
 ## 9. Analyse og Realisering: Fildeling i et zero-trust system
 
-Dette kapitel undersøger underspørgsmål 5: hvad er de kryptografiske og protokolmæssige udfordringer ved at muliggøre fildeling med filgranularitet mellem uafhængige brugere i et zero-trust klientkrypteret system, og hvordan sammenligner den foreslåede delingsarkitektur sig med eksisterende tilgange?
+Dette kapitel undersøger underspørgsmål 5. Hvad er de kryptografiske og protokolmæssige udfordringer ved at muliggøre fildeling med filgranularitet mellem uafhængige brugere i et zero-trust klientkrypteret system, og hvordan sammenligner den foreslåede delingsarkitektur sig med eksisterende tilgange?
 
-Trusselsmodellen (§4.7) placerer cloud-udbyderen som en fuldt utroværdig modstander med adgang til alle lagrede data. Fildeling introducerer et yderligere krav: en separat part skal kunne dekryptere en specifik fil uden at vault-nøglen eksponeres. Afsnit 9.5 beskriver, hvordan arkitekturen er realiseret i Arx Runa.
+Trusselsmodellen (§4.7) placerer cloud-udbyderen som en fuldt utroværdig modstander med adgang til alle lagrede data. Fildeling introducerer det yderligere krav at en separat part skal kunne dekryptere en specifik fil uden at vault-nøglen eksponeres. Afsnit 9.5 beskriver, hvordan arkitekturen er realiseret i Arx Runa.
 
 ### 9.1 Udfordringen ved fildeling i zero-trust-systemer
 
 Fildeling i et zero-trust klientkrypteret system medfører to sammenvævede problemer, der begge kræver løsning.
 
-Det første er deleparadokset. Vault-nøglen (`master_key` videreudledt til `key_encryption_key`) giver adgang til samtlige filers nøgler. At dele vault-nøglen med en modtager svarer til at give vedkommende adgang til alt vault-indholdet, et alle-eller-intet-design der bryder den per-fil-isolation, som KEK/DEK-hierarkiet fra §5.3 er designet til at håndhæve. Per-fil-nøglerne er løsningens forudsætning: kun `file_key` for præcis den delte fil behøver at nå modtageren.
+Det første er deleparadokset. Vault-nøglen (`master_key` videreudledt til `key_encryption_key`) giver adgang til samtlige filers nøgler. At dele vault-nøglen med en modtager svarer til at give vedkommende adgang til alt vault-indholdet, et alle-eller-intet-design der bryder den per-fil-isolation, som KEK/DEK-hierarkiet fra §5.3 er designet til at håndhæve. Per-fil-nøglerne er løsningens forudsætning, fordi kun `file_key` for præcis den delte fil behøver at nå modtageren.
 
 Det andet problem er nøgle-distributionen. I et serverløst system er der ingen betroet kanal til at levere `file_key` sikkert til modtageren. En symmetrisk løsning, fx at sende `file_key` direkte i en krypteret besked, kræver en separat hemmelig kanal, som ikke er tilgængelig i en provider-agnostisk arkitektur. Begge problemer peger mod hybridkryptografi: asymmetrisk kryptografi til nøgledistribution og symmetrisk kryptografi til selve datakrypteringen. Den konkrete løsning er Hybrid Public Key Encryption (HPKE), defineret i RFC 9180 (Barnes m.fl., 2022).
 
@@ -1190,7 +1202,7 @@ Arx Runa genererer et X25519-nøglepar ved første opstart. Den private nøgle e
 
 Modellen deler grundprincipper med age-krypteringsformatet, der anvender X25519-nøglepar til at adressere specifikke modtagere og uddelegerer kanalvalget til brugeren (C2SP, u.å.).
 
-En potentiel angrebsvektor er MITM-substitution under nøgleudvekslingen: en angriber på kanalen erstatter modtagerens offentlige nøgle med sin egen og kan dermed åbne share-pakker beregnet til modtageren. Arx Runa mindsker risikoen ved at vise et fingeraftryk for hver kontakt, beregnet som de første 8 bytes af SHA-256(public_key) og vist som 16 hexadecimale tegn. En kort verifikation ud-af-bånd, fx et telefonopkald, er tilstrækkelig til at afvise et sådant angreb. Verifikationen er ikke obligatorisk og kræver koordination.
+En potentiel angrebsvektor er MITM-substitution under nøgleudvekslingen, hvor en angriber på kanalen erstatter modtagerens offentlige nøgle med sin egen og dermed kan åbne share-pakker beregnet til modtageren. Arx Runa mindsker risikoen ved at vise et fingeraftryk for hver kontakt, beregnet som de første 8 bytes af SHA-256(public_key) og vist som 16 hexadecimale tegn. En kort verifikation ud-af-bånd, fx et telefonopkald, er tilstrækkelig til at afvise et sådant angreb. Verifikationen er ikke obligatorisk og kræver koordination.
 
 #### HPKE (RFC 9180) som nøgle-enkapsleringsmekanisme
 
@@ -1205,7 +1217,7 @@ Sender-operationen:
 ```
 (enc, ct) = HPKE.Seal(
     recipient_public_key,          // modtagerens X25519 public key, 32 bytes
-    info = b"arx-runa-share",      // HPKE applikationskontekst — domæneadskillelse
+    info = b"arx-runa-share",      // HPKE applikationskontekst - domæneadskillelse
     plaintext = share_package_json // file_key + chunk_uuids + cloud_endpoint + ...
 )
 wire = [enc (32 B) | ciphertext | CTX_tag (32 B)]
@@ -1228,7 +1240,7 @@ Hele share-pakken, inklusiv `file_key`, `chunk_uuids`, `cloud_endpoint` og event
 
 #### CTX-ChaCha20-Poly1305 og nøgle-commitment
 
-Standard ChaCha20-Poly1305 er ikke key-committing: en angriber kan konstruere et ciphertext, der verificerer gyldigt under to separate nøgler (Chan & Rogaway, 2022). For `file_key`-deling er konsekvensen et potentielt partition oracle-angreb, hvor en angriber skelner den korrekte nøgle ved at observere, om dekrypteringen lykkes.
+Standard ChaCha20-Poly1305 er ikke key-committing, og en angriber kan derfor konstruere et ciphertext, der verificerer gyldigt under to separate nøgler (Chan & Rogaway, 2022). For `file_key`-deling er konsekvensen et potentielt partition oracle-angreb, hvor en angriber skelner den korrekte nøgle ved at observere, om dekrypteringen lykkes.
 
 Arx Runa erstatter Poly1305-tagget (16 bytes) med en BLAKE3-commitment-tag (32 bytes):
 
@@ -1277,7 +1289,7 @@ sequenceDiagram
 
 ### 9.3 Sammenligning med eksisterende delingsmodeller
 
-Tabel 9.1 sammenligner tre eksisterende løsninger. OneDrive er ikke zero-knowledge; filindhold kan udleveres ved juridisk pålæg (U.S. Congress, 2018). Cryptomator (desktop) kræver delt vault-adgangskode — alle-eller-intet (Cryptomator, u.å.); Hub tilføjer nøgle-broking, men kræver dedikeret server. age løser nøgle-distribution via X25519 + HKDF + ChaCha20-Poly1305 men er designet til engangs-filkryptering uden revokering (C2SP, u.å.).
+Tabel 9.1 sammenligner tre eksisterende løsninger. OneDrive er ikke zero-knowledge, og filindhold kan udleveres ved juridisk pålæg (U.S. Congress, 2018). Cryptomator (desktop) kræver delt vault-adgangskode (alle-eller-intet) (Cryptomator, u.å.). Hub tilføjer nøgle-broking, men kræver dedikeret server. age løser nøgle-distribution via X25519 + HKDF + ChaCha20-Poly1305 men er designet til engangs-filkryptering uden revokering (C2SP, u.å.).
 
 | Løsning | Tillidsniveau | Filgranularitet | Modtager-discovery | Revokering |
 |---------|--------------|-----------------|---------------------|-----------|
@@ -1290,9 +1302,9 @@ Tabel 9.1 sammenligner tre eksisterende løsninger. OneDrive er ikke zero-knowle
 
 ### 9.4 Snapshot-semantik, revokering og designgrænser
 
-Share-pakken er et snapshot af filens tilstand på delingstidspunktet; ændringer kræver ny deling. Payloaden indeholder ud over `file_key` også filens oprindelige navn og chunk-struktur (antal, størrelse, samlet filstørrelse), så modtageren kan samle og dekryptere filen korrekt. Cloud-udbyderen ser dem aldrig, fordi hele payloaden ligger inden i HPKE-envelopen. Revokering er asymmetrisk: sletning af `shared/<file_share_id>/` blokerer fremtidig adgang, men kan ikke tilbagekalde data modtageren allerede har hentet. `revoke_share()` returnerer `RevocationPartial { failed_index }` ved delfejl og kan genoptages.
+Share-pakken er et snapshot af filens tilstand på delingstidspunktet, så ændringer kræver ny deling. Payloaden indeholder ud over `file_key` også filens oprindelige navn og chunk-struktur (antal, størrelse, samlet filstørrelse), så modtageren kan samle og dekryptere filen korrekt. Cloud-udbyderen ser dem aldrig, fordi hele payloaden ligger inden i HPKE-envelopen. Revokering er asymmetrisk, hvilket betyder at sletning af `shared/<file_share_id>/` blokerer fremtidig adgang, men ikke kan tilbagekalde data modtageren allerede har hentet. `revoke_share()` returnerer `RevocationPartial { failed_index }` ved delfejl og kan genoptages.
 
-Nøgle-autenticitet er ikke løst — fingeraftryksverifikation (§9.2) er opt-in mitigering mod MITM. Kvitteringssystemet HPKE-forsegles til afsenderens nøgle ved download og import og er best-effort; mislykkes det, fuldføres download stadig.
+Nøgle-autenticitet er ikke løst, og fingeraftryksverifikation (§9.2) er opt-in mitigering mod MITM. Kvitteringssystemet HPKE-forsegles til afsenderens nøgle ved download og import og er best-effort. Mislykkes det, fuldføres download stadig.
 
 ### 9.5 Realisering i Arx Runa
 
@@ -1318,7 +1330,7 @@ impl Drop for SharePackagePayload {
 }
 ```
 
-Alle HPKE-fejlformer returnerer `SharingError::AuthenticationFailed` uden kontekst. HPKE Base-mode er implementeret manuelt i `sharing/hpke.rs` ovenpå `x25519-dalek` (DHKEM-encapsulering), `hkdf` og `sha2` (key schedule per RFC 9180 §4) og `sharing/ctx_aead.rs` (CTX-ChaCha20-Poly1305). Det publicerede `hpke`-crate er fravalgt af to grunde: dets sealed `Aead`-trait understøtter ikke CTX-konstruktionens 32-byte BLAKE3-tag og 24-byte XChaCha20-nonce, og dets `rand_core 0.9` kolliderer med projektets `rand 0.10` (`rand_core 0.10`).
+Alle HPKE-fejlformer returnerer `SharingError::AuthenticationFailed` uden kontekst. HPKE Base-mode er implementeret manuelt i `sharing/hpke.rs` ovenpå `x25519-dalek` (DHKEM-encapsulering), `hkdf` og `sha2` (key schedule per RFC 9180 §4) og `sharing/ctx_aead.rs` (CTX-ChaCha20-Poly1305). Det publicerede `hpke`-crate er fravalgt fordi dets sealed `Aead`-trait ikke understøtter CTX-konstruktionens 32-byte BLAKE3-tag og 24-byte XChaCha20-nonce. En sekundær teknisk konflikt forstærker valget: crate'ets `rand_core 0.9` lader sig ikke umiddelbart sameksistere med projektets `rand 0.10` (`rand_core 0.10`).
 
 `scenarios_sharing.rs` verificerer UC-4 end-to-end med `FakeSharingStore`; unit-tests dækker round-trip, forkert modtager, korrupt `enc` og bit-flip-fejl i ciphertext og CTX-tag.
 
@@ -1394,7 +1406,7 @@ E2E-testene (Q2) er scriptede og dækker alle automatiserbare Tier 1-flows. Q3-g
 
 ### 11.1 Hvad Arx Runa løser, og hvad det ikke løser
 
-Arx Runa demonstrerer at zero-knowledge kryptering med hardware-MFA og provider-agnostisk transport er realiserbart som integreret desktop-applikation. Klient-side kryptering med XChaCha20-Poly1305 og per-fil CSPRNG-nøgler, wrappet med en HKDF-afledt key-encryption-key fra `master_key`, sikrer at cloud-udbyderen aldrig modtager klartekst (jf. §5, §7). Tier 2 opfylder NIST SP 800-63B AAL2 uden serverkontakt, og Zero-Trace holder nøglemateriale i `mlock`-beskyttet RAM med automatisk sletning ved sessionslås (jf. §6, §8). Krypteringspipelinen opnår ~989 MiB/s; CPU er ikke flaskehalsen ved upload (Bilag C).
+Arx Runa demonstrerer at zero-knowledge kryptering med hardware-MFA og provider-agnostisk transport er realiserbart som integreret desktop-applikation. Klient-side kryptering med XChaCha20-Poly1305 og per-fil CSPRNG-nøgler, wrappet med en HKDF-afledt key-encryption-key fra `master_key`, sikrer at cloud-udbyderen aldrig modtager klartekst (jf. §5, §7). Tier 2 opfylder NIST SP 800-63B AAL2 uden serverkontakt, og Zero-Trace holder nøglemateriale i `mlock`-beskyttet RAM med automatisk sletning ved sessionslås (jf. §6, §8). Krypteringspipelinen opnår ~989 MiB/s, så CPU ikke er flaskehalsen ved upload (Bilag C).
 
 Garantien er begrænset til det kryptografiske lag. Keylogging, hardware-kompromittering og OS-angreb under aktiv session er uden for trusselsmodellen (§4.7). Arx Runa eliminerer behovet for tillid til cloud-udbyderen. Det løser ikke det bredere problem med at beskytte data mod en adversary med lokal adgang under en aktiv session.
 
@@ -1402,11 +1414,11 @@ Garantien er begrænset til det kryptografiske lag. Keylogging, hardware-komprom
 
 #### 11.2.1 Tier-modellen: sikkerhed kontra adgangsvenlighed
 
-KDF-input er `password_bytes || key_file_bytes`; begge faktorer er nødvendige for vault-adgang. FIDO2 fravalgt fordi det er ikke-deterministisk; TOTP fordi det kræver klokkesynchronisering og servervalidering (FIDO Alliance, 2019; IETF, 2011). Prisen er reel: en bruger der mister USB-nøgle og BIP-39-frase er permanent låst ude. Tier 2 er stærkere mod server-kompromitteringsscenarier end cloud-baseret MFA men svagere på tilgængelighed. Valget afspejler målgruppen: brugere der prioriterer selvforvaltet sikkerhed.
+KDF-input er `password_bytes || key_file_bytes`, og begge faktorer er nødvendige for vault-adgang. FIDO2 er fravalgt fordi det er ikke-deterministisk, og TOTP fordi det kræver klokkesynchronisering og servervalidering (FIDO Alliance, 2019; IETF, 2011). Prisen er reel, fordi en bruger der mister USB-nøgle og BIP-39-frase er permanent låst ude. Tier 2 er stærkere mod server-kompromitteringsscenarier end cloud-baseret MFA men svagere på tilgængelighed. Valget afspejler målgruppen af brugere der prioriterer selvforvaltet sikkerhed.
 
 #### 11.2.2 BIP-39 og selvforvaltet nøgleansvar
 
-BIP-39-frasen eliminerer server-escrow og CLOUD Act-tvang som angrebsveje (jf. §6.3). Recovery er single-factor og bypasser USB-nøglen, fordi recovery typisk er at nøglen er tabt. Shamir social recovery ville fordele ansvaret men introducere N-parts-tillid — afvejningen er ikke berettiget for målgruppen.
+BIP-39-frasen eliminerer server-escrow og CLOUD Act-tvang som angrebsveje (jf. §6.3). Recovery er single-factor og bypasser USB-nøglen, fordi recovery typisk er at nøglen er tabt. Shamir social recovery ville fordele ansvaret men introducere N-parts-tillid, og afvejningen er ikke berettiget for målgruppen.
 
 #### 11.2.3 Rclone sidecar: provider-frihed og ekstern afhængighed
 
@@ -1414,11 +1426,11 @@ Rclone som subprocess giver adgang til 70+ cloud-backends og afskærmer kodebase
 
 #### 11.2.4 Fildeling: snapshot-semantik og revokeringens grænser
 
-Revokering er kryptografisk effektiv, hvis modtageren endnu ikke har hentet blobsene; post-download befinder klartekstet sig på dennes maskine, og kryptografisk tilbagekaldelse er umulig. Automatisk nøgle-rotation kræver koordination uforeneligt med det serverløse design. Begrænsningen er en logisk konsekvens af arkitekturen.
+Revokering er kryptografisk effektiv, hvis modtageren endnu ikke har hentet blobsene. Post-download befinder klartekstet sig på dennes maskine, og kryptografisk tilbagekaldelse er umulig. Automatisk nøgle-rotation kræver koordination uforeneligt med det serverløse design. Begrænsningen er en logisk konsekvens af arkitekturen.
 
 ### 11.3 Videre udvikling
 
-HPKE understøtter multiple recipient keys, så group sharing kan realiseres serverløst. Blob-tidsstempler lækker aktivitetsmønstre trods UUID-navngivning; epoch-baseret batching er en mulig mitigering. Reproducerbare builds udgør en fremtidig tillids-egenskab for produktionsudrulning.
+`master_key`-rotation kræver en ceremoni der unwrap'er alle filnøgler med gammel KEK og re-wrap'er under ny (adresserer manglen i §12.2). Group sharing kan realiseres serverløst via HPKE multi-recipient (Barnes m.fl., 2022). Blob-tidsstempler lækker aktivitet trods UUID-navngivning, og epoch-baseret batching er en mulig mitigering. Reproducerbare builds udgør en fremtidig tillids-egenskab for produktionsudrulning.
 
 ---
 
@@ -1428,15 +1440,15 @@ Kapitel 5 til 9 har analyseret og realiseret de fem underspørgsmål fra kapitel
 
 ### 12.1 Svar på den overordnede problemformulering
 
-Den overordnede problemformulering besvares bekræftende: det er muligt at designe og implementere et zero-knowledge klient-krypteret filsystem, der eliminerer tillid til cloud-udbyderen, realiserer hardware MFA uden serverkontakt, og understøtter filgranulær deling — i ét integreret og fungerende desktop-system.
+Den overordnede problemformulering besvares bekræftende. Det er muligt at designe og implementere et zero-knowledge klient-krypteret filsystem, der eliminerer tillid til cloud-udbyderen, realiserer hardware MFA uden serverkontakt og understøtter filgranulær deling, samlet i ét integreret og fungerende desktop-system.
 
-Underspørgsmål 1 besvares i §5: XChaCha20-Poly1305 med per-fil CSPRNG-nøgler wrappet via HKDF-SHA256-afledt key-encryption-key sikrer datakonfidentialitet og -integritet uden at nøglemateriale forlader klienten. Krypteringspipelinen opnår ~989 MiB/s throughput (Bilag C); CPU er ikke flaskehalsen. Underspørgsmål 2 besvares i §6: USB-nøglefilen indgår som direkte KDF-konkatenering, der opfylder NIST SP 800-63B AAL2, og BIP-39 recovery eliminerer escrow-tillidsproblemet. Underspørgsmål 3 besvares i §7: UUID-blobnavne, fast chunk-størrelse og Rclone-sidecar giver provider-agnostisk transport uden filnavnlækage. Underspørgsmål 4 besvares i §8: `mlock`-beskyttet RAM, atomisk session-gate og RAM-only filvisning sikrer Zero-Trace; crash-dumps og Windows fast startup er eksplicitte, dokumenterede undtagelser. Underspørgsmål 5 besvares i §9: HPKE (RFC 9180) med X25519-identiteter muliggør filgranulær deling uden central server.
+Underspørgsmål 1 besvares i §5. XChaCha20-Poly1305 med per-fil CSPRNG-nøgler wrappet via HKDF-SHA256-afledt key-encryption-key sikrer datakonfidentialitet og -integritet uden at nøglemateriale forlader klienten. Krypteringspipelinen opnår ~989 MiB/s throughput (Bilag C), så CPU ikke er flaskehalsen. Underspørgsmål 2 besvares i §6. USB-nøglefilen indgår som direkte KDF-konkatenering, der opfylder NIST SP 800-63B AAL2, og BIP-39 recovery eliminerer escrow-tillidsproblemet. Underspørgsmål 3 besvares i §7. UUID-blobnavne, fast chunk-størrelse og Rclone-sidecar giver provider-agnostisk transport uden filnavnlækage. Underspørgsmål 4 besvares i §8. `mlock`-beskyttet RAM, atomisk session-gate og RAM-only filvisning sikrer Zero-Trace, og crash-dumps og Windows fast startup er eksplicitte, dokumenterede undtagelser. Underspørgsmål 5 besvares i §9. HPKE (RFC 9180) med X25519-identiteter muliggør filgranulær deling uden central server.
 
 Det konkrete bidrag er ikke nye kryptografiske primitiver, men kombinationen: hardware MFA, BIP-39 offline recovery, provider-agnostisk transport og Zero-Trace i ét dokumenteret, fuldt implementeret system. Ingen af de analyserede alternativer (Cryptomator, Tresorit, Proton Drive) realiserer alle fem egenskaber samtidig.
 
 ### 12.2 Begrænsninger og åbne spørgsmål
 
-Fire begrænsninger er kendte og eksplicitte. `master_key`-rotation er ikke implementeret, så kompromittering af én nøgle eksponerer vault-historikken i sin helhed — dette er den alvorligste arkitektoniske mangel og kræver re-kryptering af alle wrappede filnøgler. X25519-nøgle-distribution sker out-of-band uden PKI, så nøgle-autenticitet afhænger fuldt af den kanal brugeren vælger; fingeraftryksverifikation (§9.2) er opt-in. Mobile platforme er ikke understøttet, og UC-1 (mobilbackup) forbliver dermed uadresseret. Formaliseret usability-test er ikke gennemført, så det er uvist om Tier 2-modellen er operationelt tilgængelig for ikke-tekniske brugere.
+Fire begrænsninger er kendte og eksplicitte. `master_key`-rotation er ikke implementeret, så kompromittering af én nøgle eksponerer hele vault-historikken. Det er den alvorligste arkitektoniske mangel og kræver re-kryptering af alle wrappede filnøgler. X25519-nøgle-distribution sker out-of-band uden PKI, så nøgle-autenticitet afhænger fuldt af den kanal brugeren vælger, og fingeraftryksverifikation (§9.2) er opt-in. Mobile platforme er ikke understøttet, og UC-1 (mobilbackup) forbliver dermed uadresseret. Formaliseret usability-test er ikke gennemført, så det er uvist om Tier 2-modellen er operationelt tilgængelig for ikke-tekniske brugere.
 
 ---
 
@@ -1532,6 +1544,8 @@ Shamir, A. (1979). How to share a secret. *Communications of the ACM*, *22*(11),
 
 Shapiro, M., Preguiça, N., Baquero, C., & Zawirski, M. (2011). Conflict-free replicated data types. I *Stabilization, Safety, and Security of Distributed Systems (SSS 2011)*, LNCS 6976 (s. 386–400). Springer. https://doi.org/10.1007/978-3-642-24550-3_29
 
+Shostack, A. (2014). *Threat Modeling: Designing for Security*. Wiley.
+
 Stephens, R. (2022). *Beginning Software Engineering* (2nd ed.). John Wiley & Sons.
 
 Tresorit. (u.å.). *Security Features*. Hentet fra https://tresorit.com/security *(verificeret 2026-05-24)*
@@ -1544,8 +1558,35 @@ U.S. Congress. (2018). *Clarifying Lawful Overseas Use of Data Act (CLOUD Act)*.
 
 ### Bilag
 
-- **Bilag A:** Trusselsmodel / threat matrix
-- **Bilag B:** Forensisk verifikation: empirisk verifikation af Zero-Trace-garantier via Process Monitor, filsystem-scan og browser storage-inspektion.
+- **Bilag A:** Trusselsmodel. STRIDE-kategoriseret threat matrix afledt af adversary-modellen i §4.7. STRIDE (Shostack, 2014) opdeler trusler i seks kategorier: Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service og Elevation of Privilege. Hver række kortlægger én konkret trussel mod én af de tre primære adversaries (cloud-udbyder, juridisk tvang, fysisk angriber) og angiver den eksplicitte mitigering med reference til en analysesektion eller en dokumenteret out-of-scope-note.
+
+  Emfasen ligger på Information Disclosure mod cloud-udbyderen, da det er den primære trussel zero-knowledge-arkitekturen adresserer. Tampering dækkes af AEAD-konstruktionen og snapshot_counter-mekanismen. Elevation of Privilege og dele af Denial of Service er eksplicit uden for scope (§4.7).
+
+  | ID | Kategori | Adversary | Trussel | Mitigering | Reference |
+  |----|----------|-----------|---------|-----------|-----------|
+  | S-1 | Spoofing | Kanalangriber | MITM-substitution af modtagers offentlige nøgle ved out-of-band-udveksling | BLAKE3-fingeraftryksverifikation ud-af-bånd; opt-in og afhænger af brugerdisciplin | §9.2, §12.2 |
+  | T-1 | Tampering | Cloud-udbyder | Modifikation af krypteret chunk-blob | Poly1305 AEAD-tag detekterer bit-flip; BLAKE3-checksum i manifest fail-fast inden dekryptering | §5.1, §7.2 |
+  | T-2 | Tampering | Cloud-udbyder | Chunk-swap: splicing af én fils chunk ind i en anden fils sekvens | AAD-binding `file_id #124;#124; chunk_index` får dekryptering til at fejle ved ompositionering | §5.4, §7.2 |
+  | T-3 | Tampering | Cloud-udbyder | Rollback af manifest til ældre snapshot eller modifikation af manifest-backup | Monoton snapshot_counter; cloud-snapshot < lokal afvises. Manifest-backup AEAD-krypteret med `manifest_key`; tampering producerer auth-failure | §7.3, §7.5 |
+  | T-4 | Tampering | Kanalangriber | Modifikation af share-pakke under out-of-band transit | HPKE Base mode + CTX-BLAKE3-commitment; modificeret `enc` eller ciphertext producerer auth-failure | §9.2 |
+  | R-1 | Repudiation | Modtager | Modtager benægter at have downloadet en delt fil | HPKE-forseglet kvittering retur til afsender, best-effort; revokering muligt indtil download | §9.4, §9.5 |
+  | I-1 | Information Disclosure | Cloud-udbyder | Læsning af filindhold | XChaCha20-Poly1305 med per-fil CSPRNG-nøgler; nøgler forlader aldrig klientens RAM | §5.1, §5.3 |
+  | I-2 | Information Disclosure | Cloud-udbyder | Læsning af filnavne, mappestruktur og chunk-relationer | UUID-blobnavngivning; manifest separat krypteret med `manifest_key` før upload | §7.1, §7.3 |
+  | I-3 | Information Disclosure | Juridisk tvang via cloud | Statslig kendelse pålægger cloud-udbyder at udlevere data | Cloud har intet meningsfuldt at udlevere; ingen escrow eller server-baseret recovery | §4.1, §6.3 |
+  | I-4 | Information Disclosure | Cloud-udbyder | Identifikation af modtager af share-pakke | Hele routing-payload ligger i HPKE-envelopen; cloud ser kun uigennemsigtige blobs i `shared/<file_share_id>/` | §9.2, §9.5 |
+  | I-5 | Information Disclosure | Cloud-udbyder | Inference af filstørrelse fra blob-antal og -størrelse | Fast 4 MiB chunk-størrelse + zero-padding begrænser size-inference til ét interval | §7.2 |
+  | I-6 | Information Disclosure | Fysisk angriber | Læsning af nøglemateriale fra OS-swap eller hibernation-fil | `mlock`/`VirtualLock` på alle session-nøgler; hård fejl ved fejlet lås (REQ-AUTH-014) | §8.2 |
+  | I-7 | Information Disclosure | Fysisk angriber | Læsning af dekrypteret filindhold fra `%TEMP%` eller browser-storage efter vault-lås | `blob:` URL og `arxvault://` Range-stream uden disk-touch; `VaultActions::clear()` ved lock-event | §8.4, §8.5, Bilag B |
+  | I-8 | Information Disclosure | Fysisk angriber | Læsning af `rclone.conf` med cloud-credentials på disk under aktiv session | Owner-only ACL; `SetDispositionInformationEx` delete-on-close ved vault-lås; crash-vindue er dokumenteret begrænsning med startup-sweep | §11.2.3, Bilag B |
+  | D-1 | Denial of Service | Cloud-udbyder | Cloud nægter at servere blobs eller sletter dem vilkårligt | Multi-destination push (REQ-SYNC-010); brugeren kan rotere til anden provider eller anvende mirror-destination som backup | §7.4, §11.2.3 |
+  | D-2 | Denial of Service | Selvforvaltet (designet trade-off) | Bruger mister både USB-nøglefil og BIP-39-frase | Ingen mitigering; eksplicit konsekvens af selvforvaltet ansvar uden tredjeparts-escrow | §11.2.2, §12.2 |
+  | E-1 | Elevation of Privilege | Lokal OS/malware | OS-kompromittering giver angriber mid-session read-access til processens RAM | Uden for scope. Arx Runa-processen er betroet (§4.7); OS-niveau-beskyttelse er udenfor produktets ansvar | §4.7 |
+  | E-2 | Elevation of Privilege | Digital angriber | Omgåelse af Tier 2 ved kun at få fat i adgangskoden | Argon2id-input er `password_bytes #124;#124; key_file_bytes`; uden 32-byte key file produceres en anden master_key (REQ-AUTH-005) | §6.1 |
+
+  **Out-of-scope-trusler** uden eksplicit række i matrixen, men dokumenteret i §4.7: side-channel-angreb (timing/cache) mod aktiv session, keylogging på værtsmaskinen, hardware-implant i USB-drevet, og bruger der bevidst saboterer egen vault. Disse forudsætter angreb under et tillidsniveau der ligger uden for klient-side-zero-knowledge-arkitekturens designformål.
+
+  Kildegrundlag for STRIDE-anvendelsen: Shostack, A. (2014). *Threat Modeling: Designing for Security*. Wiley.
+- **Bilag B:** Forensisk verifikation. Empirisk verifikation af Zero-Trace-garantier via Process Monitor, filsystem-scan og browser storage-inspektion.
 
   **Testmiljø**
 
@@ -1588,7 +1629,7 @@ U.S. Congress. (2018). *Clarifying Lawful Overseas Use of Data Act (CLOUD Act)*.
   | 03:05:23 | WriteFile + FlushBuffersFile | samme | Sikker overskrivning ved vault-lås |
   | 03:05:23 | SetDispositionInformationEx | samme | Fil markeret til sletning (delete-on-close) |
 
-  Tidsvindue med credentials på disk: **53 sekunder** (aktiv session). `SetDispositionInformationEx` er Windows' moderne delete-API (Rust/tokio i stedet for den ældre `DeleteFile`); sletningen er funktionelt ækvivalent: filen fjernes ved lukning af det sidste filhandle.
+  Tidsvindue med credentials på disk: **53 sekunder** (aktiv session). `SetDispositionInformationEx` er Windows' moderne delete-API (Rust/tokio i stedet for den ældre `DeleteFile`). Sletningen er funktionelt ækvivalent, fordi filen fjernes ved lukning af det sidste filhandle.
 
   *Blob-cache-livscyklus (dekrypteret filvisning):*
 
@@ -1611,7 +1652,7 @@ U.S. Congress. (2018). *Clarifying Lawful Overseas Use of Data Act (CLOUD Act)*.
   | Crash/kill-scenarie | `rclone.conf` overlever til næste opstart, startup-sweep rydder | Dokumenteret begrænsning (jf. §4.7 og §12.2) |
 
   De verificerbare Zero-Trace-garantier er bekræftet empirisk under normale driftsbetingelser via tre uafhængige metoder (browser storage-inspektion, filsystem-scan og Process Monitor). Crash-scenariet er en eksplicit arkitektonisk begrænsning beskrevet i §4.7.
-- **Bilag C:** Performance-benchmarks: målt med Criterion v0.5 (`cargo bench --bench crypto_benchmarks`) på Windows 11 (AMD/Intel, release-profil). Kilde: `src-tauri/benches/crypto_benchmarks.rs`.
+- **Bilag C:** Performance-benchmarks. Målt med Criterion v0.5 (`cargo bench --bench crypto_benchmarks`) på Windows 11 (release-profil, `[BEKRÆFT: konkret CPU-model fra hardware]`). Kilde: `src-tauri/benches/crypto_benchmarks.rs`.
 
   | Primitiv | Parametre | Median-tid | 95 % CI |
   |----------|-----------|-----------|---------|
@@ -1628,5 +1669,172 @@ U.S. Congress. (2018). *Clarifying Lawful Overseas Use of Data Act (CLOUD Act)*.
   **`cargo geiger`: unsafe-blok-sporing** (`cargo geiger`, kørsel i `src-tauri/`):
 
   `arx-runa-tauri 0.1.0` er markeret `!` (unsafe bruges). Unsafe-koden er koncentreret i `src-tauri/src/memory/`-modulet, som bruger `mlock` (Unix) og `VirtualLock` (Windows) til at forhindre, at kryptografiske nøgler pages til disk. Alle `unsafe`-blokke er ledsaget af `// SAFETY:`-kommentarer jf. `CLAUDE.md`. Ingen unsafe i kryptografiske kerne-primitiver (`crypto/`, `auth/kdf.rs`, `sharing/`).
-- **Bilag D:** Ordliste: tekniske begreber brugt i rapporten (dansk, baseret på `docs/guides/glossary.md`)
-- **Bilag E:** Fuldt kravkatalog: alle 101 krav fra `docs/architecture/requirements.md` fordelt på REQ-AUTH (23), REQ-CRYPTO (17), REQ-VAULT (15), REQ-SYNC (15), REQ-SHARE (14), REQ-UI (17). §4.4 og §5–9 refererer til krav-ID'er herfra.
+- **Bilag D:** Ordliste. Kurateret liste over tekniske begreber der forekommer i rapportens prosa. Akronymer og engelske produkt- og standardnavne bevares; korte forklaringer på dansk. Fuld definition for hvert begreb findes i `docs/guides/glossary.md` og `docs/notes/rapport-forklaringer.md`.
+
+  | Term | Beskrivelse |
+  |------|-------------|
+  | AAD (Additional Authenticated Data) | Klartekst-data der bindes ind i AEAD-tagget uden at krypteres. I Arx Runa er AAD `file_id #124;#124; chunk_index`, hvilket binder en chunk til position og forhindrer omplacering. |
+  | AEAD (Authenticated Encryption with Associated Data) | Kryptografisk konstruktion der både krypterer data og verificerer integritet inklusive ikke-krypteret tilknyttet data. XChaCha20-Poly1305 er Arx Runas AEAD-primitiv. |
+  | Argon2id | Memory-hard nøgleafledningsfunktion (RFC 9106). Bruges til at omsætte adgangskode (og evt. USB-nøglefil) til `master_key`. 64 MiB hukommelse pr. iteration begrænser brute-force på GPU/ASIC. |
+  | BIP-39 | Bitcoin Improvement Proposal 39: kodning af binær entropi som ordliste-fraser. Arx Runa koder 256 bits recovery-entropi som 24 engelske ord med indbygget checksum. |
+  | BLAKE3 | Hurtig kryptografisk hashfunktion. I Arx Runa bruges den til blob-integritetscheck (fail-fast inden dekryptering) og som fingeraftryk af USB-nøglefilen i vault-headeren. |
+  | Blob | Et krypteret chunk lagret hos cloud-udbyderen. Navnet er en tilfældig UUID med `.blob`-endelse uden relation til filnavn eller indhold. |
+  | BYOC (Bring Your Own Cloud) | Princippet om at brugeren selv vælger og konfigurerer cloud-backend. Arx Runa er BYOC-baseret via Rclone-sidecar. |
+  | Chunk | Fast 4 MiB (default) blok som en fil splittes i før kryptering. Sidste chunk zero-paddes til chunk-størrelsen. |
+  | CSPRNG | Cryptographically Secure Pseudo-Random Number Generator. OS-leveret tilfældighedskilde til nonces, salts, file_keys og USB-nøglefil-bytes (`getrandom`, `BCryptGenRandom`). |
+  | CTX-ChaCha20-Poly1305 | Arx Runas key-committing variant af ChaCha20-Poly1305: Poly1305-tagget erstattes af en BLAKE3-commitment over nøgle, nonce og ciphertext. Forhindrer partition oracle-angreb mod delte file_keys. |
+  | EXIF | Metadata indlejret i mediefiler (GPS, kameramodel, tidsstempel). Strippes i hukommelsen før kryptering for at undgå metadata-lækage. |
+  | file_key | Per-fil 32-byte CSPRNG-genereret nøgle. Krypterer filens chunks og lagres kun wrapped (med `key_encryption_key`) i manifestet. |
+  | HKDF | HMAC-based Key Derivation Function (RFC 5869). Ekspanderer `master_key` til tre domæneadskilte vault-nøgler via unikke `info`-strenge. |
+  | HPKE | Hybrid Public Key Encryption (RFC 9180). Kombinerer asymmetrisk KEM med symmetrisk AEAD til at forsegle indhold for én modtagers offentlige nøgle. Bruges i fildeling. |
+  | KEK / DEK | Key Encryption Key / Data Encryption Key. Klassisk to-lags nøglehierarki (NIST SP 800-57) hvor en KEK indpakker mange DEK'er. I Arx Runa er `key_encryption_key` KEK'en og `file_key` DEK'en. |
+  | Manifest | Krypteret SQLCipher-database med vault'ens sandhed: filnavne, mappestruktur, chunk-referencer, BLAKE3-checksums og wrapped file_keys. Backes op til skyen som `manifest-backup.blob` separat krypteret med `manifest_key`. |
+  | master_key | Roden i nøglehierarkiet. Afledes af Argon2id fra adgangskode (og USB-nøglefil ved Tier 2) og zeroizes umiddelbart efter at HKDF har udledt vault-nøglerne. |
+  | mlock / VirtualLock | OS-kald (POSIX hhv. Windows) der låser hukommelsessider mod pagning til disk. Påkræves for at session-nøgler ikke ender i swap eller dvalefil. `mlock`-fejl er hård fejl i Arx Runa. |
+  | Nonce | Number used once. Et engangstal der sikrer at samme nøgle aldrig krypterer to forskellige plaintexts identisk. XChaCha20 anvender 192-bit nonce, så kollisioner er negligible. |
+  | Rclone | Open source-kommandolinjeværktøj der abstraherer 70+ cloud-backends bag ét interface. Arx Runa anvender det som sidecar-proces for provider-agnostisk transport. |
+  | recovery_slot / recovery_key | Vault-header-feltet hvor `master_key` ligger wrapped under en Argon2id-afledt `recovery_key` udledt af BIP-39-frasen. Muliggør gendannelse uden adgangskode eller USB-nøglefil. |
+  | SecretBox<T> | Rust-wrapper fra `secrecy`-cratet der redacter `Debug`-output og eksponerer indhold via callback. Bruges til at undgå utilsigtet logning af nøglemateriale. |
+  | snapshot_counter | Monoton tæller i manifestet der øges ved hver push. Bruges til konfliktdetektion: lokal tæller mindre end cloud-tæller udløser pull-first. |
+  | SQLCipher | SQLite-udvidelse der krypterer hele databasefilen med AES-256. Arx Runa anvender den til den lokale manifest-database, keyed med `sqlcipher_key`. |
+  | Staging | Midlertidigt lokalt katalog hvor krypterede blobs venter på upload. Indeholder kun ciphertext og slettes når upload bekræftes. |
+  | Tier 1 / Tier 2 | Autentificeringsniveauer ved vault-oprettelse. Tier 1: kun adgangskode (NIST AAL1). Tier 2: adgangskode konkateneret med 32-byte USB-nøglefil-bytes som Argon2id-input (NIST AAL2). |
+  | USB-nøglefil | 32-byte CSPRNG-genereret fil placeret på et fysisk USB-drev. Hardware-faktor i Tier 2. Identificeres ved BLAKE3-fingeraftryk i vault-headeren. |
+  | Vault / Vault Header | Vault: hele det krypterede storage-namespace for én bruger. Vault header: klartekst JSON med offentlige parametre (salt, Argon2-parametre, BLAKE3-fingeraftryk, recovery slot) — nødvendig for bootstrap på en ny enhed. |
+  | wrapped_master_key | `master_key` krypteret med `recovery_key` under XChaCha20-Poly1305 og lagret i recovery slot. 72 bytes: 24-byte nonce, 32-byte ciphertext, 16-byte tag. AAD inkluderer `vault_id` for transplantationsbeskyttelse. |
+  | X25519 | Diffie-Hellman-funktion over Curve25519. Hver Arx Runa-bruger genererer et X25519-nøglepar som delingsidentitet; offentlig nøgle udveksles ud-af-bånd, privat nøgle wrappes i vault'en. |
+  | XChaCha20-Poly1305 | AEAD-primitiv (draft-irtf-cfrg-xchacha-03) med 192-bit nonce og Poly1305-autentifikation. Anvendes til alle chunk-krypteringer og til at wrappe `master_key` i recovery slot. |
+  | Zero-Trace | Designprincip: ingen dekrypteret plaintext eller credentials forlader RAM. Eksplicitte arkitektoniske undtagelser (Tauri HTTP-handoff, OS crash dumps, Windows fast startup) er dokumenteret i §4.7 og §8.5. |
+  | Zeroizing<T> / ZeroizeOnDrop | Rust-typer fra `zeroize`-cratet der overskriver bufferen med nul ved drop. Anvendes på alle session-nøgler og midlertidige plaintext-buffere. |
+- **Bilag E:** Fuldt kravkatalog. Alle 101 krav fra `docs/architecture/requirements.md` fordelt på seks domæner: REQ-AUTH (23), REQ-CRYPTO (17), REQ-VAULT (15), REQ-SYNC (15), REQ-SHARE (14), REQ-UI (17). Krav-ID'er anvendes som inline-belæg i §5–§9. Kilde-kolonnen viser hvilke use cases (UC-1 til UC-5) og/eller design-dokumenter (D-auth, D-crypto, D-manifest, D-sync, D-share, D-ipc) kravet er udledt fra.
+
+  **REQ-AUTH: Authentication & Session Management (23 krav)**
+
+  | Krav-ID | Titel | Kilde |
+  |---------|-------|-------|
+  | REQ-AUTH-001 | Vault creation tier selection | UC-1, UC-3 |
+  | REQ-AUTH-002 | Tier 1 unlock | UC-1, UC-2, UC-3 |
+  | REQ-AUTH-003 | Tier 2 dual-factor requirement | UC-1, UC-2, UC-3 |
+  | REQ-AUTH-004 | Tier 2 password-alone rejection | UC-3 |
+  | REQ-AUTH-005 | Tier 2 USB-alone rejection | UC-3 |
+  | REQ-AUTH-006 | Non-oracular authentication failure | D-auth |
+  | REQ-AUTH-007 | Tier 2 Argon2id input construction | D-auth |
+  | REQ-AUTH-008 | USB key file byte format | D-auth |
+  | REQ-AUTH-009 | Argon2id parameter immutability | D-auth |
+  | REQ-AUTH-010 | USB key auto-detection | UC-3, D-auth |
+  | REQ-AUTH-011 | Key file path hint caching | D-auth |
+  | REQ-AUTH-012 | OS-native USB device monitoring | D-auth |
+  | REQ-AUTH-013 | Offline authentication | UC-3 |
+  | REQ-AUTH-014 | Memory-locked session keys | UC-1, UC-2, UC-3, D-auth |
+  | REQ-AUTH-015 | Plaintext vault header in cloud | D-auth, D-sync |
+  | REQ-AUTH-016 | Pre-authentication bootstrap files | D-sync |
+  | REQ-AUTH-017 | Recovery phrase unlocks any tier | UC-3 |
+  | REQ-AUTH-018 | Recovery phrase display policy | UC-3 |
+  | REQ-AUTH-019 | Credential reset after recovery | UC-3 |
+  | REQ-AUTH-020 | Recovery slot survives credential rotation | UC-3 |
+  | REQ-AUTH-021 | No external recovery mechanism | UC-3 |
+  | REQ-AUTH-022 | Password change without blob re-encryption | UC-3 |
+  | REQ-AUTH-023 | USB key rotation without blob re-encryption | UC-3 |
+
+  **REQ-CRYPTO: Cryptographic Primitives (17 krav)**
+
+  | Krav-ID | Titel | Kilde |
+  |---------|-------|-------|
+  | REQ-CRYPTO-001 | Cipher selection | D-crypto |
+  | REQ-CRYPTO-002 | Nonce size | D-crypto |
+  | REQ-CRYPTO-003 | master_key zeroization | D-crypto, D-auth |
+  | REQ-CRYPTO-004 | HKDF-derived vault keys | D-crypto |
+  | REQ-CRYPTO-005 | Per-file key uniqueness | UC-1, UC-2, D-crypto |
+  | REQ-CRYPTO-006 | Per-file key isolation | UC-4, D-share |
+  | REQ-CRYPTO-007 | Chunk wire format | D-crypto |
+  | REQ-CRYPTO-008 | Wrapped key wire format | D-crypto |
+  | REQ-CRYPTO-009 | Chunk AAD binding | UC-1, D-crypto |
+  | REQ-CRYPTO-010 | Verify before decrypt | D-crypto |
+  | REQ-CRYPTO-011 | AEAD tamper detection | UC-1 |
+  | REQ-CRYPTO-012 | EXIF stripping | UC-1 |
+  | REQ-CRYPTO-013 | Recovery key derivation | UC-3 |
+  | REQ-CRYPTO-014 | Wrapped master_key for recovery | UC-3 |
+  | REQ-CRYPTO-015 | USB key file BLAKE3 fingerprint | UC-3, D-auth |
+  | REQ-CRYPTO-016 | HPKE ciphersuite for sharing | UC-4, D-share |
+  | REQ-CRYPTO-017 | Receipt encryption | D-share |
+
+  **REQ-VAULT: Vault Storage & Manifest (15 krav)**
+
+  | Krav-ID | Titel | Kilde |
+  |---------|-------|-------|
+  | REQ-VAULT-001 | Opaque cloud blobs | UC-1, UC-2, UC-4, UC-5 |
+  | REQ-VAULT-002 | Immutable chunk size | UC-1, D-manifest |
+  | REQ-VAULT-003 | Chunk zero-padding | D-manifest |
+  | REQ-VAULT-004 | Streaming chunk processing | D-manifest |
+  | REQ-VAULT-005 | Epoch buffer (opt-in) | D-manifest |
+  | REQ-VAULT-006 | Monotonic snapshot counter | UC-2, D-manifest |
+  | REQ-VAULT-007 | Divergence detection before push | UC-2, D-sync |
+  | REQ-VAULT-008 | Conflict renaming | UC-2 |
+  | REQ-VAULT-009 | Zero-Trace decryption | UC-1, UC-2 |
+  | REQ-VAULT-010 | Export warning | UC-1, UC-2, UC-4 |
+  | REQ-VAULT-011 | Directory hierarchy invariant | D-manifest |
+  | REQ-VAULT-012 | SQLCipher key stack policy | D-manifest |
+  | REQ-VAULT-013 | Zero-byte file handling | D-manifest |
+  | REQ-VAULT-014 | Per-vault destination scope | D-sync |
+  | REQ-VAULT-015 | Immutable manifest meta keys | D-manifest |
+
+  **REQ-SYNC: Cloud Synchronisation (15 krav)**
+
+  | Krav-ID | Titel | Kilde |
+  |---------|-------|-------|
+  | REQ-SYNC-001 | Rclone sidecar transport | D-sync |
+  | REQ-SYNC-002 | Remote path sanitisation | D-sync |
+  | REQ-SYNC-003 | Idempotent blob operations | D-sync |
+  | REQ-SYNC-004 | Rclone stderr sanitisation | D-sync |
+  | REQ-SYNC-005 | HTTPS-only cloud endpoints | D-sync |
+  | REQ-SYNC-006 | Destination probe before save | D-ipc |
+  | REQ-SYNC-007 | Explicit sync only | UC-2 |
+  | REQ-SYNC-008 | Pull-before-push enforcement | UC-2 |
+  | REQ-SYNC-009 | Offline upload queuing | UC-1, UC-5 |
+  | REQ-SYNC-010 | Multi-destination push | UC-5 |
+  | REQ-SYNC-011 | Mirror destination deletion semantics | UC-5 |
+  | REQ-SYNC-012 | Accumulating destination retention | UC-5 |
+  | REQ-SYNC-013 | Single primary destination | UC-5 |
+  | REQ-SYNC-014 | Per-destination failure reporting | UC-5 |
+  | REQ-SYNC-015 | Provider-agnostic migration | UC-1, UC-5 |
+
+  **REQ-SHARE: File Sharing (14 krav)**
+
+  | Krav-ID | Titel | Kilde |
+  |---------|-------|-------|
+  | REQ-SHARE-001 | X25519 identity keypair | D-share |
+  | REQ-SHARE-002 | Out-of-band public key exchange | D-share |
+  | REQ-SHARE-003 | Cloud provider cannot read shared content | UC-4 |
+  | REQ-SHARE-004 | Recipient-key exclusivity | UC-4 |
+  | REQ-SHARE-005 | Snapshot share semantics | D-share |
+  | REQ-SHARE-006 | Publicly readable shared blobs | D-share |
+  | REQ-SHARE-007 | Recipient vault independence | UC-4 |
+  | REQ-SHARE-008 | Sender-initiated revocation | UC-4 |
+  | REQ-SHARE-009 | Honest revocation limitation | D-share |
+  | REQ-SHARE-010 | Share expiration - owner-side enforcement | UC-4, D-share |
+  | REQ-SHARE-011 | Share expiration - recipient-side enforcement | D-share |
+  | REQ-SHARE-012 | Download receipts | UC-4, D-share |
+  | REQ-SHARE-013 | Download notification | UC-4 |
+  | REQ-SHARE-014 | Cloud provider cannot identify recipient | UC-4 |
+
+  **REQ-UI: Frontend & User Interface (17 krav)**
+
+  | Krav-ID | Titel | Kilde |
+  |---------|-------|-------|
+  | REQ-UI-001 | IPC response sanitisation | D-ipc |
+  | REQ-UI-002 | Zero-Trace frontend state | D-ipc |
+  | REQ-UI-003 | IPC password zeroization | D-ipc |
+  | REQ-UI-004 | Streaming progress for long operations | D-ipc |
+  | REQ-UI-005 | Build-time IPC allowlist | D-ipc |
+  | REQ-UI-006 | Upload via drop zone and file picker | UC-1 |
+  | REQ-UI-007 | Tier selection at vault creation | UC-1, UC-3 |
+  | REQ-UI-008 | Vault deletion confirmation | D-ipc |
+  | REQ-UI-009 | Chunk size selector at vault creation | D-ipc |
+  | REQ-UI-010 | In-app viewing size limit | D-ipc |
+  | REQ-UI-011 | Sync pending indicator | UC-1 |
+  | REQ-UI-012 | Stale manifest banner | UC-2 |
+  | REQ-UI-013 | USB key not found message | UC-2, UC-3 |
+  | REQ-UI-014 | Shared with Me view | UC-4 |
+  | REQ-UI-015 | Share package import | D-share, D-ipc |
+  | REQ-UI-016 | Per-destination failure badge | UC-5 |
+  | REQ-UI-017 | Primary destination visual distinction | UC-5 |
