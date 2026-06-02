@@ -144,5 +144,5 @@ jobs:
                 if [ "$(basename "$path")" = "latest.json" ]; then
                   sed -i 's#/salgaard/arx-runa/releases/#/salgaard/arx-runa-releases/releases/#g' "$path"
                 fi
-                gh release upload "$TAG" "$artifact" --repo "$REPO" --clobber
+                gh release upload "$TAG" "$path" --repo "$REPO" --clobber
               done
