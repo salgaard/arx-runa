@@ -6,7 +6,7 @@ resolver = "3"
 # both crates inherit it via `version.workspace = true`, and Tauri reads the resolved
 # `arx-runa-tauri` version (tauri.conf.json intentionally omits `version`).
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 
 [package]
 name = "arx-runa"
