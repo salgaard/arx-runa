@@ -1,0 +1,40 @@
+name: Setup Rust CI
+description: >-
+  Install the pinned Rust toolchain, restore the cargo cache, and create the
+  CI rclone sidecar stub. Shared by the build-and-test and e2e jobs.
+
+inputs:
+  components:
+    description: Comma-separated rustup components to install (e.g. "clippy, rustfmt").
+    required: false
+    default: ""
+  targets:
+    description: Comma-separated rustup targets to install (e.g. "wasm32-unknown-unknown").
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable @ 2026-03-27
+      with:
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+
+    - name: Cache cargo registry and build artifacts
+      uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+
+    - name: Prepare CI rclone sidecar stub
+      shell: bash
+      run: |
+        mkdir -p src-tauri/bin
+        if [[ "$RUNNER_OS" == "Linux" ]]; then
+          touch src-tauri/bin/rclone-x86_64-unknown-linux-gnu
+          chmod +x src-tauri/bin/rclone-x86_64-unknown-linux-gnu
+        elif [[ "$RUNNER_OS" == "Windows" ]]; then
+          touch src-tauri/bin/rclone-x86_64-pc-windows-msvc.exe
+        elif [[ "$RUNNER_OS" == "macOS" ]]; then
+          touch src-tauri/bin/rclone-aarch64-apple-darwin
+          chmod +x src-tauri/bin/rclone-aarch64-apple-darwin
+        fi

@@ -6,6 +6,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RCLONE_VERSION: v1.73.5
 
 jobs:
   release:
@@ -31,6 +32,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
+      - name: Verify tag matches Cargo.toml version
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          TAG_VERSION="${TAG#v}"
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "ERROR: tag $TAG does not match Cargo.toml version $CARGO_VERSION"
+            exit 1
+          fi
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable @ 2026-03-27
         with:
@@ -49,19 +61,18 @@ jobs:
 
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
-        with:
-          cache-targets: "false"
 
       - name: Install Trunk (WASM bundler)
-        run: cargo install trunk --locked
+        uses: jetli/trunk-action@69821d4eec12c308c4b811e459e37556cf920057 # v0.5.0
 
       - name: Install Node (Tailwind CSS)
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
+          cache: 'npm'
 
       - name: Install npm dependencies
-        run: npm install
+        run: npm ci
 
       - name: Install Tauri system dependencies
         if: runner.os == 'Linux'
@@ -74,10 +85,17 @@ jobs:
             patchelf \
             libudev-dev
 
+      - name: Cache rclone sidecar
+        id: rclone-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: src-tauri/bin
+          key: rclone-${{ runner.os }}-${{ env.RCLONE_VERSION }}
+
       - name: Download rclone sidecar
+        if: steps.rclone-cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
-          RCLONE_VERSION="v1.73.5"
           mkdir -p src-tauri/bin
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             curl -fsSL "https://github.com/rclone/rclone/releases/download/${RCLONE_VERSION}/rclone-${RCLONE_VERSION}-linux-amd64.zip" -o rclone.zip
@@ -139,11 +157,32 @@ jobs:
             | while read -r artifact; do
                 path="${artifact//\\//}"
                 [ -d "$path" ] && continue
-                # tauri-action writes latest.json with asset URLs pointing at the
-                # build repo (salgaard/arx-runa). Users download from the public
-                # releases repo, so rewrite the URLs before publishing the manifest.
-                if [ "$(basename "$path")" = "latest.json" ]; then
-                  sed -i 's#/salgaard/arx-runa/releases/#/salgaard/arx-runa-releases/releases/#g' "$path"
-                fi
+                [ "$(basename "$path")" = "latest.json" ] && continue
                 gh release upload "$TAG" "$path" --repo "$REPO" --clobber
               done
+
+  publish-update-manifest:
+    name: Publish update manifest
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download and rewrite latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          gh release download "$TAG" \
+            --repo salgaard/arx-runa \
+            --pattern "latest.json" \
+            --output latest.json
+          sed -i 's#/salgaard/arx-runa/releases/#/salgaard/arx-runa-releases/releases/#g' latest.json
+
+      - name: Upload latest.json to public releases repo
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" latest.json \
+            --repo salgaard/arx-runa-releases \
+            --clobber
