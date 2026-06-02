@@ -61,29 +61,46 @@ pub(crate) async fn require_active_session(state: &AppState) -> Result<(), IpcEr
 
 /// Returns the path to the rclone binary.
 ///
-/// Tries the app resource directory first (production bundle), then falls back to the system
-/// PATH (development mode). Pass `None` at session-setup time when the `AppHandle` is not yet
-/// guaranteed to be present (e.g., in `auth_commands`).
+/// Resolution order, matching how Tauri bundles an `externalBin` sidecar:
+/// 1. Next to the running executable (where the sidecar is installed in production —
+///    the target-triple suffix is stripped at bundle time, leaving plain `rclone`).
+/// 2. The app resource directory (with and without a `bin/` subfolder), covering
+///    alternate bundle layouts.
+/// 3. The system `PATH` (development mode).
+///
+/// Pass `None` at session-setup time when the `AppHandle` is not yet guaranteed to be
+/// present (e.g., in `auth_commands`).
 pub(crate) fn rclone_binary_path(handle: Option<&tauri::AppHandle>) -> std::path::PathBuf {
     use tauri::Manager as _;
-    if let Some(handle) = handle
-        && let Ok(resource_dir) = handle.path().resource_dir()
+    let name = if cfg!(target_os = "windows") {
+        "rclone.exe"
+    } else {
+        "rclone"
+    };
+
+    // Production: the sidecar is installed alongside the main executable.
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
     {
-        let name = if cfg!(target_os = "windows") {
-            "rclone.exe"
-        } else {
-            "rclone"
-        };
-        let candidate = resource_dir.join("bin").join(name);
+        let candidate = dir.join(name);
         if candidate.exists() {
             return candidate;
         }
     }
-    std::path::PathBuf::from(if cfg!(target_os = "windows") {
-        "rclone.exe"
-    } else {
-        "rclone"
-    })
+
+    // Alternate bundle layouts place the binary under the resource directory.
+    if let Some(handle) = handle
+        && let Ok(resource_dir) = handle.path().resource_dir()
+    {
+        for candidate in [resource_dir.join(name), resource_dir.join("bin").join(name)] {
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+
+    // Development fallback: rely on the system PATH.
+    std::path::PathBuf::from(name)
 }
 
 /// Converts a Unix timestamp (seconds since 1970-01-01T00:00:00Z) to an ISO 8601 string.

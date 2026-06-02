@@ -35,23 +35,13 @@ use crate::ui::vault_paths::vault_staging_dir;
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
-/// Resolves the rclone binary path: checks the app's `bin/` resource directory
-/// first, falling back to `rclone` / `rclone.exe` on `PATH`.
+/// Resolves the rclone binary path.
+///
+/// Delegates to the canonical [`rclone_binary_path`](crate::ui::commands_common::rclone_binary_path)
+/// resolver so the sidecar is located the same way everywhere (next to the executable
+/// in production, then resource dir, then `PATH`).
 fn resolve_rclone_bin(h: &tauri::AppHandle) -> PathBuf {
-    use tauri::Manager as _;
-    // sync probe on startup path
-    let name = if cfg!(target_os = "windows") {
-        "rclone.exe"
-    } else {
-        "rclone"
-    };
-    if let Ok(dir) = h.path().resource_dir() {
-        let c = dir.join("bin").join(name);
-        if c.exists() {
-            return c;
-        }
-    }
-    PathBuf::from(name)
+    crate::ui::commands_common::rclone_binary_path(Some(h))
 }
 
 /// Best-effort cleanup: revoke the SA reader permission on a shared GDrive folder.

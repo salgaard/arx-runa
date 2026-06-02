@@ -12,7 +12,7 @@
 **GitHub:** https://github.com/salgaard/arx-runa
 **Download:** https://salgaard.github.io/arx-runa/download.html
 
-> **AI-deklarering (UCL §8.5):** Claude (Anthropic) er anvendt som skrivepartner og kodenavigator i forbindelse med projektet. Konkret er AI-assistance benyttet til: sparring om arkitekturbeslutninger og kryptografiske valg i designfasen; generering af sektionsudkast til rapporten, herunder §1 Indledning samt løbende udkast til øvrige afsnit, der efterfølgende er gennemlæst, redigeret og godkendt af forfatteren; korrekturlæsning og stilredigering af dansk prosa; navigation og søgning i kodebase og designdokumenter. Al kode i projektet er skrevet af forfatteren uden AI-kodegenerering. Al rapporttekst er gennemlæst, tilrettet og godkendt af forfatteren, der er eneste ansvarlige for rapportens faglige indhold og konklusioner. Brug er sket i overensstemmelse med UCL's retningslinjer på mitucl.dk.
+> **AI-deklarering:** Claude og Copilot er anvendt som udviklingspartnere igennem hele projektet. Konkret er AI-assistance benyttet til: research og sparring om arkitekturbeslutninger og kryptografiske valg, implementering af kode, skrivepartner til rapporten og dokumentation. 
 
 ---
 
@@ -63,7 +63,7 @@ Denne tillidsmodel er sårbar af to grunde. For det første kan juridisk tvang o
 
 Kryptografisk zero-knowledge storage løser begge problemer ved at flytte krypteringskontrol til klienten. Data krypteres på brugerens enhed, og cloud-udbyderen modtager udelukkende krypterede blobs uden adgang til de nøgler der ville kunne afkode dem. Udbyderen kan dermed hverken opfylde en retskendelse om dataindhold eller lækkes til at eksponere klartekst.
 
-Eksisterende løsninger med klient-side kryptering adresserer dele af dette problem, men hver med afgrænsede begrænsninger. Cryptomator krypterer lokalt inden synkronisering, men er konstrueret som et virtuelt drev der kan skrive dekrypterede filer til disk. Tresorit tilbyder stærk end-to-end kryptering, men er en managed tjeneste, hvor brugeren er bundet til Tresorts infrastruktur. Proton Drive markedsføres som zero-knowledge, men understøtter heller ikke en brugerkontrolleret storage-backend. Ingen af dem kombinerer hardware-baseret multifaktorautentifikation, offline recovery uden tredjepart og provider-agnostisk transport i ét system (jf. Tabel 4.2 for en detaljeret sammenligning).
+Eksisterende løsninger med klient-side kryptering adresserer dele af dette problem, men hver med afgrænsede begrænsninger. Cryptomator krypterer lokalt inden synkronisering, men er konstrueret som et virtuelt drev der kan skrive dekrypterede filer til disk. Tresorit tilbyder stærk end-to-end kryptering, men er en managed tjeneste, hvor brugeren er bundet til Tresorits infrastruktur. Proton Drive markedsføres som zero-knowledge, men understøtter heller ikke en brugerkontrolleret storage-backend. Ingen af dem kombinerer hardware-baseret multifaktorautentifikation, offline recovery uden tredjepart og provider-agnostisk transport i ét system (jf. Tabel 4.2 for en detaljeret sammenligning).
 
 Dette bachelorprojekt realiserer Arx Runa, et desktop-kryptosystem der bygger på zero-knowledge-princippet som arkitektonisk fundament. Systemet krypterer hvert fil-chunk med XChaCha20-Poly1305 og HKDF-afledte per-fil-nøgler, inden data overføres til en brugerdefineret cloud-backend via Rclone. Cloud-udbyderen modtager under ingen omstændigheder klartekst, filnavne eller metadata. Autentificeringen kræver to faktorer: adgangskode og en fysisk USB-nøglefil, der konkateneres direkte i nøgleafledningsfunktionen Argon2id. En offline recovery-mekanisme baseret på BIP-39 muliggør credential-gendannelse uden delegation til tredjeparter. Dekrypteret filindhold eksisterer udelukkende i `mlock`-beskyttet RAM under en aktiv session og slettes automatisk ved vault-lås. De to motiverende brugscenarier er personlig zero-knowledge backup (UC-1) og kryptografisk fildeling med HPKE og tidsbestemt revocation (UC-4); samtlige fem scenarier specificeres i §4.3.
 
@@ -662,6 +662,8 @@ for slot in header.recovery_slots.iter() {
 *Listing 6.4: Slot-iteration i `recover_with_phrase.rs`. En forkert phrase producerer `Err(_)` fra AEAD-laget med non-orakulær fejlsemantik.*
 
 Recovery-slot bruger identiske Argon2id-parametre som primær-slot (m=65536 KiB, t=3, p=4) for slot-indistinguishability, så en angriber ikke kan skelne recovery-salt fra primær-salt i vault-headeren. Phrasen forbliver gyldig på tværs af password-rotationer.
+
+»Offline« betegner her at recovery er service-uafhængig. Vault-headeren og BIP-39-frasen er de eneste forudsætninger; ingen Arx Runa-infrastruktur eller tredjepartsudbyder kontaktes under ceremonien.
 
 ### 6.4 Realisering i Arx Runa
 
