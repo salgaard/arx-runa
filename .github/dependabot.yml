@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # Keep GitHub Actions pinned to commit SHAs and bumped automatically.
+  # Dependabot opens PRs that update the SHA and the trailing `# version` comment;
+  # review and merge to adopt a new version deliberately.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

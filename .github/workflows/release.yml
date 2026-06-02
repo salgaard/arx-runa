@@ -29,10 +29,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable @ 2026-03-27
         with:
           targets: ${{ matrix.rust_targets }}
 
@@ -48,7 +48,7 @@ jobs:
           echo $dir >> $env:GITHUB_PATH
 
       - name: Cache cargo registry and build artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
         with:
           cache-targets: "false"
 
@@ -56,7 +56,7 @@ jobs:
         run: cargo install trunk --locked
 
       - name: Install Node (Tailwind CSS)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
 
@@ -105,9 +105,13 @@ jobs:
 
       - name: Build release artifacts
         id: tauri-build
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing (free key, not code signing). Generated locally via
+          # `tauri signer generate`; the private key lives only in GitHub secrets.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Arx Runa ${{ github.ref_name }}'
@@ -132,6 +136,13 @@ jobs:
           echo '${{ steps.tauri-build.outputs.artifactPaths }}' \
             | jq -r '.[]' \
             | while read -r artifact; do
-                [ -d "${artifact//\\//}" ] && continue
+                path="${artifact//\\//}"
+                [ -d "$path" ] && continue
+                # tauri-action writes latest.json with asset URLs pointing at the
+                # build repo (salgaard/arx-runa). Users download from the public
+                # releases repo, so rewrite the URLs before publishing the manifest.
+                if [ "$(basename "$path")" = "latest.json" ]; then
+                  sed -i 's#/salgaard/arx-runa/releases/#/salgaard/arx-runa-releases/releases/#g' "$path"
+                fi
                 gh release upload "$TAG" "$artifact" --repo "$REPO" --clobber
               done

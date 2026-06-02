@@ -1,6 +1,6 @@
 [package]
 name = "arx-runa-tauri"
-version = "0.1.0"
+version.workspace = true
 description = "A Tauri App"
 authors = ["Chrizzio AKA Christian Salgård Svinding"]
 edition = "2024"
@@ -43,6 +43,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 regex = "1"
 tauri-plugin-shell = "2"
+tauri-plugin-updater = "2"
 
 # --- Cryptography (design.md Backend Cryptography table — Phase 1+) ---
 chacha20poly1305 = "0.10"

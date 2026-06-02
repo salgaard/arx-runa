@@ -169,6 +169,16 @@ After copying, mark the binary executable:
 chmod +x src-tauri/bin/rclone-*
 ```
 
+### How the binary is located at runtime
+
+`rclone_binary_path` (`src-tauri/src/ui/commands_common.rs`) resolves the sidecar in this
+order: **next to the running executable** (where Tauri installs an `externalBin` sidecar in
+production, with the target-triple suffix stripped), then the app resource directory, then the
+system `PATH`. In development the binary isn't bundled next to the debug executable, so the app
+falls back to `PATH` — cloud features under `cargo tauri dev` therefore need rclone on `PATH`
+(or run a built bundle). A local vault never spawns rclone at creation time, which is why local
+vaults can be created even when rclone is missing while cloud vaults cannot.
+
 ---
 
 ## Cloud integration tests (`.env.test`)
@@ -514,11 +524,25 @@ Remove-Item rclone.zip, rclone-tmp -Recurse
 
 ### Build
 
+`createUpdaterArtifacts` is enabled, so a full bundle build signs the updater manifest and
+therefore needs the updater **private** key in the environment. Without it, `cargo tauri build`
+fails with *"A public key has been found, but no private key"*.
+
 ```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -Raw src-tauri\arxruna-updater.key
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "<password, or '' if none>"
 cargo tauri build
 ```
 
-This compiles the Leptos frontend via Trunk, embeds the WASM bundle, and produces signed installers.
+This compiles the Leptos frontend via Trunk, embeds the WASM bundle, and produces the installers
+plus the updater artifacts (`latest.json` + `.sig`).
+
+Notes:
+- This is the **updater** signature (proves an update came from us), **not** OS code signing.
+  Installers are unsigned, so Windows SmartScreen / macOS Gatekeeper warnings appear on first install.
+- Contributors who only need to test the installer (not the update flow) can generate a throwaway
+  key with `cargo tauri signer generate -w throwaway.key` and point the env vars at it.
+- Builds that skip bundling (`cargo tauri build --no-bundle`, used by the e2e suite) do not need the key.
 
 **Output locations:**
 
@@ -532,15 +556,87 @@ This compiles the Leptos frontend via Trunk, embeds the WASM bundle, and produce
 
 ---
 
-## Pushing releases
+## Releases & versioning
 
-### Delete a tag
+Releases are built and published by `.github/workflows/release.yml`, triggered by pushing a
+`v*` tag. The workflow builds per-OS bundles, signs the updater manifest, and publishes the
+artifacts to the public **`salgaard/arx-runa-releases`** repo.
+
+### Version is single-sourced
+
+The application version lives in **one place**: `[workspace.package].version` in the root
+`Cargo.toml`. Both crates inherit it via `version.workspace = true`, and Tauri reads the resolved
+`arx-runa-tauri` version — `tauri.conf.json` intentionally has **no** `version` field. The in-app
+version and the auto-updater both come from this build version, **not** from the git tag (the tag
+only triggers the workflow and names the release).
+
+Per release:
+
+1. Bump the version in the root `Cargo.toml` (`[workspace.package]` → `version`), e.g. `0.1.0` → `0.1.1`.
+2. Commit.
+3. Tag with the **matching** version and push:
+   ```bash
+   git tag v0.1.1
+   git push origin v0.1.1
+   ```
+
+Rules:
+- Tag and workspace version must match (`vX.Y.Z` ↔ `version = "X.Y.Z"`).
+- The version must strictly increase (semver) or the updater won't offer the update — a tag bump
+  alone, with the version unchanged, ships a "release" that no installed app recognizes as newer.
+
+Re-tagging (delete then re-push):
+```bash
 git tag -d v0.1.0
 git push origin --delete v0.1.0
-
-### Push new tag
 git tag v0.1.0
 git push origin v0.1.0
+```
+
+### Auto-updater
+
+On startup the app checks for an update and offers to install it via a native dialog
+(`spawn_update_check` in `src-tauri/src/lib.rs`). The check is best-effort — any failure is logged
+at `warn!` and never blocks launch.
+
+**One-time setup (maintainer):**
+
+1. Generate the updater keypair (free — this is an *update* signature, not OS code signing):
+   ```
+   cargo tauri signer generate -w src-tauri/arxruna-updater.key
+   ```
+2. Paste the printed public key into `tauri.conf.json` → `plugins.updater.pubkey`.
+3. Add GitHub Actions secrets (Settings → Secrets → Actions):
+   - `TAURI_SIGNING_PRIVATE_KEY` — full contents of `arxruna-updater.key`
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the key password (empty string if none)
+4. Back up the private key (e.g. password manager). **Losing it means existing installs can never
+   be updated again.** `*.key` is gitignored — never commit it.
+
+**How updates reach users:** the build emits `latest.json` + `.sig` files. The updater endpoint is
+`…/arx-runa-releases/releases/latest/download/latest.json`. Because `tauri-action` writes
+`latest.json` with URLs pointing at the *build* repo, `release.yml` rewrites them to the public
+releases repo before uploading (the `sed` step in "Publish artifacts to public releases repo").
+After the first release, verify the URLs resolve to public, downloadable assets:
+```bash
+curl -sL https://github.com/salgaard/arx-runa-releases/releases/latest/download/latest.json
+```
+
+### Installer behaviour (NSIS)
+
+- `installMode: currentUser` — installs under `%LOCALAPPDATA%`, no admin/UAC prompt.
+- No OS code signing → SmartScreen ("Windows protected your PC") on first install and during the
+  updater's installer run. Document the *More info → Run anyway* click-through for end users.
+
+### CI action pinning
+
+All GitHub Actions across `.github/workflows/` are pinned to commit SHAs (with a trailing
+`# version` comment) so a mutable tag can't silently swap the code that runs with repo secrets —
+the secret-bearing `release.yml` and the credential-bearing `mirror.yml` in particular.
+`.github/dependabot.yml` opens weekly grouped PRs to bump these SHAs; review and merge to adopt a
+new version deliberately. To pin a new action or re-pin by hand, resolve the SHA:
+```bash
+gh api repos/<owner>/<repo>/commits/<tag> --jq .sha
+```
 
 ## 4. Encryption stack (for context)
 
