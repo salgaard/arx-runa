@@ -88,15 +88,44 @@ fn spawn_update_check(app_handle: tauri::AppHandle) {
     });
 }
 
+/// Builds the tracing env filter, honouring `RUST_LOG` and defaulting to `info`.
+fn tracing_env_filter() -> tracing_subscriber::EnvFilter {
+    tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+}
+
+/// Initialises tracing, writing to a daily-rotated log file in addition to
+/// stdout when a writable app-data directory is available.
+///
+/// GUI/installer builds have no attached console, so stdout-only logging makes
+/// backend failures (e.g. a stalled cloud OAuth setup) undiagnosable. The file
+/// sink — `<data_dir>/arx-runa/logs/arx-runa.log` — gives users a copyable
+/// record. Only `info`+ and already-sanitised diagnostics are emitted; no raw
+/// secret material is ever logged (see `security_audit` Zero-Trace tests).
+fn init_tracing() {
+    use tracing_subscriber::fmt::writer::MakeWriterExt as _;
+
+    let log_directory = dirs::data_dir().map(|dir| dir.join("arx-runa").join("logs"));
+    if let Some(directory) = log_directory
+        && std::fs::create_dir_all(&directory).is_ok()
+    {
+        let file_appender = tracing_appender::rolling::daily(directory, "arx-runa.log");
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_env_filter())
+            .with_ansi(false)
+            .with_writer(file_appender.and(std::io::stdout))
+            .init();
+        return;
+    }
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_env_filter())
+        .init();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Starts the Arx Runa Tauri runtime with 62 commands via `generate_handler!` plus `video_stream` registered separately (63 total).
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    init_tracing();
     if let Err(error) = crate::ui::video_stream::register(tauri::Builder::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())

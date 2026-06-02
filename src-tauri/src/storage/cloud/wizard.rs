@@ -478,12 +478,30 @@ pub(crate) fn decide_answer(option: &RcloneConfigOption) -> Result<String, Cloud
 }
 
 /// Parses one rclone non-interactive config question from a JSON stdout blob.
+///
+/// rclone prints exactly one JSON object per `--non-interactive` invocation, but
+/// the surrounding stdout is not guaranteed to be pristine: a stray notice line
+/// or a trailing newline/blank line can accompany it (observed only on some
+/// accounts/platforms). Rather than require the entire trimmed blob to be a
+/// single JSON value, locate the first `{` and decode one self-delimiting object
+/// from there, ignoring any trailing bytes. This turns a benign formatting quirk
+/// into a successful parse instead of a "failed to retrieve credentials" error.
 pub(crate) fn parse_config_question(
     stdout: &str,
 ) -> Result<RcloneConfigQuestion, CloudTransportError> {
-    let question: RcloneConfigQuestion = serde_json::from_str(stdout.trim()).map_err(|error| {
-        CloudTransportError::Other(format!("invalid rclone config state: {error}"))
+    // Never echo raw `stdout` into the error: it is logged to disk on the
+    // failure path and the post-OAuth stream can carry token material.
+    let object_start = stdout.find('{').ok_or_else(|| {
+        CloudTransportError::Other("rclone config state contained no JSON object".to_owned())
     })?;
+    let question: RcloneConfigQuestion =
+        serde_json::Deserializer::from_str(&stdout[object_start..])
+            .into_iter::<RcloneConfigQuestion>()
+            .next()
+            .ok_or_else(|| CloudTransportError::Other("rclone config state was empty".to_owned()))?
+            .map_err(|error| {
+                CloudTransportError::Other(format!("invalid rclone config state: {error}"))
+            })?;
     if !question.error.is_empty() {
         return Err(CloudTransportError::Other(format!(
             "rclone config error: {}",
@@ -931,6 +949,19 @@ mod tests {
             parse_config_question("not json at all"),
             Err(CloudTransportError::Other(_))
         ));
+    }
+
+    #[test]
+    fn test_parse_config_question_ignores_surrounding_noise() {
+        let question = parse_config_question(
+            "\nNOTICE: harmless line\n{\"State\":\"driveid_final\",\"Option\":{\"Name\":\"config_driveid\",\"Examples\":[{\"Value\":\"abc123\"}]},\"Error\":\"\"}\n\n",
+        )
+        .expect("a single JSON object surrounded by noise should parse");
+        assert_eq!(question.state, "driveid_final");
+        assert_eq!(
+            question.option.expect("option present").name,
+            "config_driveid"
+        );
     }
 
     #[derive(Default)]
