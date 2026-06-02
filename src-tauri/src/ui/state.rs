@@ -19,11 +19,17 @@ use crate::ui::types::SyncStatus;
 /// In-flight rclone OAuth subprocess handle.
 ///
 /// Created by `begin_google_drive_setup` / `begin_onedrive_setup`, consumed by
-/// `poll_oauth_setup` or `cancel_oauth_setup`.  The `child` field has its stderr
-/// already taken; a drain task is spawned at begin time.
+/// `poll_oauth_setup` or `cancel_oauth_setup`. The `child` runs rclone's local
+/// OAuth web server and blocks on the browser callback; its stdout and stderr
+/// are already taken and drained by background capture tasks.
 pub struct OAuthSetupHandle {
-    /// Live rclone subprocess waiting for the OAuth browser callback.
+    /// Live rclone subprocess running the OAuth web server.
     pub child: tokio::process::Child,
+    /// Captures the child's stdout — yields the first post-OAuth config-state
+    /// JSON once the browser callback completes.
+    pub stdout_capture: tokio::task::JoinHandle<std::io::Result<Vec<u8>>>,
+    /// Captures a bounded, redactable copy of the child's stderr for diagnostics.
+    pub stderr_capture: tokio::task::JoinHandle<String>,
     /// Temporary rclone config file written by this subprocess.
     pub temp_config_path: PathBuf,
     /// Rclone remote name used for this setup (e.g. `arx-runa-<uuid>`).

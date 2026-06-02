@@ -11,9 +11,10 @@ use crate::storage::cloud::destination_session::{
     delete_destination_session, get_primary_destination, insert_destination_session,
     list_destination_sessions, set_primary_destination as set_primary_destination_in_db,
 };
+use crate::storage::cloud::stderr_sanitiser::sanitise_stderr;
 use crate::storage::cloud::{
     OAuthProvider, begin_oauth_setup, cancel_oauth_setup as cancel_oauth_setup_process,
-    complete_oauth_setup,
+    finish_oauth_setup_after_browser,
 };
 use crate::storage::device_id::get_or_create_device_id;
 
@@ -458,6 +459,8 @@ pub async fn begin_google_drive_setup(
 
     let handle = OAuthSetupHandle {
         child: begun.child,
+        stdout_capture: begun.stdout_capture,
+        stderr_capture: begun.stderr_capture,
         temp_config_path: begun.temp_config_path,
         remote_name: begun.remote_name,
         started_at: std::time::Instant::now(),
@@ -500,6 +503,8 @@ pub async fn begin_onedrive_setup(
 
     let handle = OAuthSetupHandle {
         child: begun.child,
+        stdout_capture: begun.stdout_capture,
+        stderr_capture: begun.stderr_capture,
         temp_config_path: begun.temp_config_path,
         remote_name: begun.remote_name,
         started_at: std::time::Instant::now(),
@@ -549,9 +554,8 @@ pub async fn poll_oauth_setup(
         })?;
         drop(setups);
         let _ = handle.child.kill().await;
-        if let Err(error) = tokio::fs::remove_file(&handle.temp_config_path).await {
-            tracing::warn!(error = %error, "failed to remove timed-out OAuth temp config");
-        }
+        log_oauth_diagnostics("timed out", handle.stderr_capture).await;
+        cleanup_oauth_temp(&handle.temp_config_path).await;
         return Ok(OauthPollResponse::Failed {
             message: "Cloud provider authorization timed out. Please try again.".into(),
         });
@@ -568,22 +572,93 @@ pub async fn poll_oauth_setup(
     drop(setups);
 
     if !exit_status.success() {
-        if let Err(error) = tokio::fs::remove_file(&handle.temp_config_path).await {
-            tracing::warn!(error = %error, "failed to remove failed OAuth temp config");
-        }
+        log_oauth_diagnostics("exited with failure", handle.stderr_capture).await;
+        cleanup_oauth_temp(&handle.temp_config_path).await;
         return Ok(OauthPollResponse::Failed {
             message: "Cloud provider authorization failed. Please try again.".into(),
         });
     }
 
-    match complete_oauth_setup(&binary_path, &handle.temp_config_path, &handle.remote_name).await {
+    // The browser callback completed; the child's stdout holds the first
+    // post-OAuth config state. Drive the remaining states and extract the blob.
+    let post_oauth_stdout = match handle.stdout_capture.await {
+        Ok(Ok(bytes)) => String::from_utf8_lossy(&bytes).into_owned(),
+        Ok(Err(error)) => {
+            tracing::error!(error = %error, "failed to read OAuth child stdout");
+            cleanup_oauth_temp(&handle.temp_config_path).await;
+            return Ok(OauthPollResponse::Failed {
+                message: "Failed to retrieve cloud credentials. Please try again.".into(),
+            });
+        }
+        Err(error) => {
+            tracing::error!(error = %error, "failed to join OAuth stdout capture");
+            cleanup_oauth_temp(&handle.temp_config_path).await;
+            return Ok(OauthPollResponse::Failed {
+                message: "Failed to retrieve cloud credentials. Please try again.".into(),
+            });
+        }
+    };
+
+    match finish_oauth_setup_after_browser(
+        &binary_path,
+        &handle.temp_config_path,
+        &handle.remote_name,
+        &post_oauth_stdout,
+    )
+    .await
+    {
         Ok(rclone_config_blob) => Ok(OauthPollResponse::Completed { rclone_config_blob }),
         Err(error) => {
-            tracing::error!(error = %error, "complete_oauth_setup failed");
+            tracing::error!(error = %error, "finish_oauth_setup_after_browser failed");
+            log_oauth_diagnostics("post-browser config failed", handle.stderr_capture).await;
+            cleanup_oauth_temp(&handle.temp_config_path).await;
             Ok(OauthPollResponse::Failed {
                 message: "Failed to retrieve cloud credentials. Please try again.".into(),
             })
         }
+    }
+}
+
+/// Awaits the rclone OAuth subprocess stderr capture and logs a redacted copy.
+///
+/// Only the `sanitise_stderr`-filtered form is logged (the raw stream can carry
+/// the OAuth token on success), turning an opaque stall into a diagnosable error.
+async fn log_oauth_diagnostics(context: &str, stderr_capture: tokio::task::JoinHandle<String>) {
+    let raw = match tokio::time::timeout(std::time::Duration::from_secs(5), stderr_capture).await {
+        Ok(Ok(text)) => text,
+        Ok(Err(error)) => {
+            tracing::warn!(error = %error, "failed to join OAuth stderr capture");
+            return;
+        }
+        Err(_) => {
+            tracing::warn!("timed out collecting OAuth stderr diagnostics");
+            return;
+        }
+    };
+    if raw.trim().is_empty() {
+        return;
+    }
+    tracing::warn!(
+        context = context,
+        rclone_stderr = %sanitise_stderr(&raw),
+        "rclone OAuth setup diagnostics"
+    );
+}
+
+/// Removes a failed setup's temporary rclone config file and its directory.
+///
+/// Tolerates an already-removed file (the success path deletes it during the
+/// config dump) so it is safe to call on every failure branch.
+async fn cleanup_oauth_temp(temp_config_path: &Path) {
+    match tokio::fs::remove_file(temp_config_path).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to remove OAuth temp config");
+        }
+    }
+    if let Some(dir) = temp_config_path.parent() {
+        let _ = tokio::fs::remove_dir(dir).await;
     }
 }
 

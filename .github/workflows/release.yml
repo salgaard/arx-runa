@@ -77,7 +77,7 @@ jobs:
       - name: Download rclone sidecar
         shell: bash
         run: |
-          RCLONE_VERSION="v1.68.2"
+          RCLONE_VERSION="v1.73.5"
           mkdir -p src-tauri/bin
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             curl -fsSL "https://github.com/rclone/rclone/releases/download/${RCLONE_VERSION}/rclone-${RCLONE_VERSION}-linux-amd64.zip" -o rclone.zip
@@ -135,6 +135,7 @@ jobs:
 
           echo '${{ steps.tauri-build.outputs.artifactPaths }}' \
             | jq -r '.[]' \
+            | tr -d '\r' \
             | while read -r artifact; do
                 path="${artifact//\\//}"
                 [ -d "$path" ] && continue
@@ -144,5 +145,5 @@ jobs:
                 if [ "$(basename "$path")" = "latest.json" ]; then
                   sed -i 's#/salgaard/arx-runa/releases/#/salgaard/arx-runa-releases/releases/#g' "$path"
                 fi
-                gh release upload "$TAG" "$artifact" --repo "$REPO" --clobber
+                gh release upload "$TAG" "$path" --repo "$REPO" --clobber
               done
