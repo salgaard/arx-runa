@@ -135,6 +135,7 @@ jobs:
 
           echo '${{ steps.tauri-build.outputs.artifactPaths }}' \
             | jq -r '.[]' \
+            | tr -d '\r' \
             | while read -r artifact; do
                 path="${artifact//\\//}"
                 [ -d "$path" ] && continue
