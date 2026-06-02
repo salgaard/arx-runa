@@ -24,3 +24,6 @@ Targets Win/macOS/Linux; preserve behavior across all three; platform-specific c
 - Library APIs → context7
 - Source code → jcodemunch-mcp
 - RTK (token optimization) → See `~/.claude/RTK.md`
+
+## Report
+- when user report, rapport, rapporten, the report, bachelor rapporten. refer to docs/report/arx-runa-bachelorrapport.md.

@@ -30,6 +30,64 @@ struct DeviceEventPayload {
     mount_path: String,
 }
 
+/// Spawns a best-effort background task that checks for an application update on
+/// startup and, if one is available, offers to install it via a native dialog.
+///
+/// Any failure (no network, malformed manifest, signature mismatch, download
+/// error) is logged at `warn!` and swallowed — a failed or absent update check
+/// must never block application launch.
+fn spawn_update_check(app_handle: tauri::AppHandle) {
+    use tauri_plugin_dialog::{DialogExt as _, MessageDialogButtons};
+    use tauri_plugin_updater::UpdaterExt as _;
+
+    tauri::async_runtime::spawn(async move {
+        let updater = match app_handle.updater() {
+            Ok(updater) => updater,
+            Err(error) => {
+                tracing::warn!(error = %error, "updater unavailable");
+                return;
+            }
+        };
+
+        let update = match updater.check().await {
+            Ok(Some(update)) => update,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(error = %error, "update check failed");
+                return;
+            }
+        };
+
+        let prompt = format!(
+            "Arx Runa {} is available (you have {}). Install and restart now?",
+            update.version, update.current_version
+        );
+        let accepted = app_handle
+            .dialog()
+            .message(prompt)
+            .title("Update available")
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Install".to_owned(),
+                "Later".to_owned(),
+            ))
+            .blocking_show();
+        if !accepted {
+            return;
+        }
+
+        if let Err(error) = update
+            .download_and_install(|_chunk, _total| {}, || {})
+            .await
+        {
+            tracing::warn!(error = %error, "update download/install failed");
+            return;
+        }
+
+        // Relaunch into the freshly installed version. `restart` diverges.
+        app_handle.restart();
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Starts the Arx Runa Tauri runtime with 62 commands via `generate_handler!` plus `video_stream` registered separately (63 total).
 pub fn run() {
@@ -43,6 +101,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(crate::ui::AppState::construct_default())
         .invoke_handler(tauri::generate_handler![
             // Auth (18)
@@ -125,6 +184,10 @@ pub fn run() {
 
             // Store the AppHandle for event emission.
             let _ = state.app_handle.set(app_handle.clone());
+
+            // Best-effort: check for an application update on startup and offer to
+            // install it. Never blocks launch — see `spawn_update_check`.
+            spawn_update_check(app_handle.clone());
 
             // Sweep any orphaned rclone temp dirs left by previous crashes / forced
             // kills.  Directories are named `arx-runa-<16 hex>` in the OS temp dir.
