@@ -112,13 +112,14 @@ jobs:
           echo "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "PERL=C:\Strawberry\perl\bin\perl.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@aaa84a43aec4955a42c5ffc65d258961e39f276e # v1.19.1
+      - name: Install Trunk (WASM bundler)
+        run: cargo install trunk --locked
 
-      - name: Install Trunk, tauri-cli and tauri-driver (prebuilt)
-        # binstall fetches prebuilt release binaries instead of compiling from
-        # source; it falls back to `cargo install` if no prebuilt exists.
-        run: cargo binstall -y --locked trunk tauri-cli tauri-driver
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --locked
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
 
       - name: Set up Node with npm cache
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
