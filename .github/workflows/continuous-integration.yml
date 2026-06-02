@@ -8,6 +8,11 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# Cancel superseded runs when new commits are pushed to the same PR.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     name: Build and Test (${{ matrix.platform }})
@@ -22,13 +27,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable @ 2026-03-27
+      - name: Set up Rust CI environment
+        uses: ./.github/actions/setup-rust-ci
         with:
           components: clippy, rustfmt
-
-      - name: Cache cargo registry and build artifacts
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
 
       - name: Check formatting
         if: runner.os == 'Linux'
@@ -50,22 +52,9 @@ jobs:
         shell: pwsh
         run: echo "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Prepare CI rclone sidecar stub
-        shell: bash
-        run: |
-          mkdir -p src-tauri/bin
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            touch src-tauri/bin/rclone-x86_64-unknown-linux-gnu
-            chmod +x src-tauri/bin/rclone-x86_64-unknown-linux-gnu
-          elif [[ "$RUNNER_OS" == "Windows" ]]; then
-            touch src-tauri/bin/rclone-x86_64-pc-windows-msvc.exe
-          elif [[ "$RUNNER_OS" == "macOS" ]]; then
-            touch src-tauri/bin/rclone-aarch64-apple-darwin
-            chmod +x src-tauri/bin/rclone-aarch64-apple-darwin
-          fi
-
+      # Mirrors the local lint command and the test step so both share artifacts.
       - name: Run Clippy (warnings as errors)
-        run: cargo clippy -p arx-runa-tauri --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Run tests
         run: cargo test --workspace --all-targets --all-features
@@ -86,13 +75,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable @ 2026-03-27
+      - name: Set up Rust CI environment
+        uses: ./.github/actions/setup-rust-ci
         with:
           targets: wasm32-unknown-unknown
-
-      - name: Cache cargo registry and build artifacts
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
 
       - name: Install Tauri system dependencies (Linux)
         if: runner.os == 'Linux'
@@ -126,17 +112,6 @@ jobs:
           echo "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "PERL=C:\Strawberry\perl\bin\perl.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Prepare CI rclone sidecar stub
-        shell: bash
-        run: |
-          mkdir -p src-tauri/bin
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            touch src-tauri/bin/rclone-x86_64-unknown-linux-gnu
-            chmod +x src-tauri/bin/rclone-x86_64-unknown-linux-gnu
-          elif [[ "$RUNNER_OS" == "Windows" ]]; then
-            touch src-tauri/bin/rclone-x86_64-pc-windows-msvc.exe
-          fi
-
       - name: Install Trunk (WASM bundler)
         run: cargo install trunk --locked
 
@@ -146,11 +121,20 @@ jobs:
       - name: Install tauri-driver
         run: cargo install tauri-driver --locked
 
+      - name: Set up Node with npm cache
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            src-tauri/tests/e2e/package-lock.json
+
       - name: Install root npm dependencies (Tailwind CSS)
-        run: npm install
+        run: npm ci
 
       - name: Install e2e npm dependencies
-        run: npm install
+        run: npm ci
         working-directory: src-tauri/tests/e2e
 
       - name: Run e2e tests
