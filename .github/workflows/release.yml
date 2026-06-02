@@ -173,10 +173,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.ref_name }}"
-          gh release download "$TAG" \
-            --repo salgaard/arx-runa \
-            --pattern "latest.json" \
-            --output latest.json
+          REPO="salgaard/arx-runa"
+          # tauri-action publishes a DRAFT release, which `gh release download`
+          # cannot resolve by tag (the tags API only returns published releases).
+          # Locate the draft via the list API and fetch the merged latest.json asset.
+          ASSET_URL=$(gh api --paginate "repos/$REPO/releases" \
+            --jq ".[] | select(.tag_name==\"$TAG\") | .assets[] | select(.name==\"latest.json\") | .url" \
+            | head -1)
+          if [ -z "$ASSET_URL" ]; then
+            echo "ERROR: latest.json asset not found on $REPO release $TAG"
+            exit 1
+          fi
+          gh api -H "Accept: application/octet-stream" "$ASSET_URL" > latest.json
           sed -i 's#/salgaard/arx-runa/releases/#/salgaard/arx-runa-releases/releases/#g' latest.json
 
       - name: Upload latest.json to public releases repo
