@@ -166,7 +166,9 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # write (not read) is required: tauri-action publishes a DRAFT release,
+      # and draft releases are only visible to tokens with push access.
+      contents: write
     steps:
       - name: Download and rewrite latest.json
         env:
