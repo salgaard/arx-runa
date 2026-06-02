@@ -7,7 +7,9 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use serde::Deserialize;
 use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 use zeroize::Zeroize;
 
@@ -388,12 +390,138 @@ pub struct OAuthSetupBegun {
     pub setup_id: String,
     /// Local rclone auth URL the frontend must open in the system browser.
     pub auth_url: String,
-    /// Live rclone subprocess waiting for the OAuth browser callback.
+    /// Live rclone subprocess running the local OAuth web server and blocking on
+    /// the browser callback (the `config_is_local` continue step).
     pub child: tokio::process::Child,
+    /// Background task collecting the child's stdout — yields the first
+    /// post-OAuth config-state JSON once the browser callback completes.
+    pub stdout_capture: JoinHandle<std::io::Result<Vec<u8>>>,
+    /// Background task collecting a bounded, redactable copy of the child's
+    /// stderr for diagnostics on the failure/timeout path.
+    pub stderr_capture: JoinHandle<String>,
     /// Temporary rclone config file written by this subprocess.
     pub temp_config_path: PathBuf,
     /// Rclone remote name written into the temp config.
     pub remote_name: String,
+}
+
+/// Maximum bytes of rclone stderr retained for diagnostics (bounded so a chatty
+/// or wedged subprocess cannot grow memory without limit).
+const STDERR_DIAGNOSTIC_CAP_BYTES: usize = 16 * 1024;
+
+/// A single non-interactive rclone config question (one JSON object per
+/// `config create`/`config update --continue --non-interactive` invocation).
+#[derive(Debug, Deserialize)]
+pub(crate) struct RcloneConfigQuestion {
+    /// Opaque continuation token; empty string means the config flow finished.
+    #[serde(rename = "State", default)]
+    pub state: String,
+    /// The option rclone is asking about; absent once `state` is empty.
+    #[serde(rename = "Option", default)]
+    pub option: Option<RcloneConfigOption>,
+    /// Non-empty when rclone reports an error for this step.
+    #[serde(rename = "Error", default)]
+    pub error: String,
+}
+
+/// The `Option` block of a non-interactive rclone config question.
+#[derive(Debug, Deserialize)]
+pub(crate) struct RcloneConfigOption {
+    /// rclone's internal name for the question (e.g. `config_is_local`).
+    #[serde(rename = "Name", default)]
+    pub name: String,
+    /// rclone's own string rendering of the default answer.
+    #[serde(rename = "DefaultStr", default)]
+    pub default_str: String,
+    /// Typed default value, used as a fallback when `DefaultStr` is empty.
+    #[serde(rename = "Default", default)]
+    pub default: Option<serde_json::Value>,
+    /// Offered choices, used as a last-resort fallback for the answer.
+    #[serde(rename = "Examples", default)]
+    pub examples: Vec<RcloneConfigExample>,
+}
+
+/// A single offered choice within an rclone config option.
+#[derive(Debug, Deserialize)]
+pub(crate) struct RcloneConfigExample {
+    /// The literal value to pass back as `--result`.
+    #[serde(rename = "Value", default)]
+    pub value: String,
+}
+
+/// Picks the answer for a non-interactive rclone config question.
+///
+/// Always chooses rclone's own default (`DefaultStr`, then `Default`, then the
+/// first example), which deterministically selects the account's primary drive
+/// and accepts every confirmation — no keyboard input is ever required. This is
+/// what lets setup complete on accounts whose drive layout would otherwise show
+/// an interactive chooser.
+pub(crate) fn decide_answer(option: &RcloneConfigOption) -> Result<String, CloudTransportError> {
+    if !option.default_str.is_empty() {
+        return Ok(option.default_str.clone());
+    }
+    if let Some(default) = &option.default {
+        match default {
+            serde_json::Value::String(value) if !value.is_empty() => return Ok(value.clone()),
+            serde_json::Value::Bool(value) => return Ok(value.to_string()),
+            serde_json::Value::Number(value) => return Ok(value.to_string()),
+            _ => {}
+        }
+    }
+    if let Some(example) = option.examples.first() {
+        return Ok(example.value.clone());
+    }
+    Err(CloudTransportError::Other(format!(
+        "rclone config question '{}' has no default answer",
+        option.name
+    )))
+}
+
+/// Parses one rclone non-interactive config question from a JSON stdout blob.
+pub(crate) fn parse_config_question(
+    stdout: &str,
+) -> Result<RcloneConfigQuestion, CloudTransportError> {
+    let question: RcloneConfigQuestion = serde_json::from_str(stdout.trim()).map_err(|error| {
+        CloudTransportError::Other(format!("invalid rclone config state: {error}"))
+    })?;
+    if !question.error.is_empty() {
+        return Err(CloudTransportError::Other(format!(
+            "rclone config error: {}",
+            question.error
+        )));
+    }
+    Ok(question)
+}
+
+/// Runs one `rclone config update <remote> --continue` step and parses the
+/// resulting question. Used for the fast, non-blocking config states (the OAuth
+/// browser step is driven separately by `begin_oauth_setup`).
+async fn run_config_continue(
+    binary_path: &std::path::Path,
+    temp_config_path: &std::path::Path,
+    remote_name: &str,
+    state: &str,
+    result: &str,
+) -> Result<RcloneConfigQuestion, CloudTransportError> {
+    let stdout = run_rclone(
+        binary_path,
+        vec![
+            OsString::from("config"),
+            OsString::from("update"),
+            OsString::from(remote_name),
+            OsString::from("--continue"),
+            OsString::from("--state"),
+            OsString::from(state),
+            OsString::from("--result"),
+            OsString::from(result),
+            OsString::from("--config"),
+            temp_config_path.as_os_str().to_os_string(),
+            OsString::from("--non-interactive"),
+        ],
+        Duration::from_secs(30),
+    )
+    .await?;
+    parse_config_question(&stdout)
 }
 
 /// Extracts the rclone local OAuth auth URL from a single line of rclone output.
@@ -416,18 +544,30 @@ fn extract_rclone_auth_url(line: &str) -> Option<String> {
     }
 }
 
-/// Spawns rclone for an OAuth provider setup flow.
+/// Spawns rclone for an OAuth provider setup flow using rclone's documented
+/// `--non-interactive` config state machine.
 ///
-/// Reads rclone stderr line-by-line until the local auth URL
-/// (`http://127.0.0.1:…`) is found, then spawns a background drain task so
-/// the pipe buffer cannot stall the rclone process.  The caller must insert the
-/// returned handle into `AppState.oauth_setups`.
+/// Runs `config create` to seed the remote, advances the (fast) pre-OAuth
+/// states until the `config_is_local` browser step, then spawns the long-lived
+/// child that runs the local OAuth web server. It reads that child's stderr for
+/// the auth URL (`http://127.0.0.1:…`) and returns once found, leaving the child
+/// blocked on the browser callback. Background tasks capture the child's stdout
+/// (the first post-OAuth config state, consumed by `poll_oauth_setup` →
+/// `finish_oauth_setup_after_browser`) and a bounded copy of its stderr (for
+/// redacted diagnostics). The caller must insert the returned handle into
+/// `AppState.oauth_setups`.
+///
+/// Because every config question is answered programmatically with rclone's own
+/// default (`decide_answer`), no terminal input is ever required — this is what
+/// fixes setup stalling on accounts whose drive layout shows an interactive
+/// chooser.
 pub async fn begin_oauth_setup(
     provider: OAuthProvider,
     binary_path: &std::path::Path,
 ) -> Result<OAuthSetupBegun, CloudTransportError> {
     use std::ffi::OsStr;
     use tokio::io::AsyncBufReadExt as _;
+    use tokio::io::AsyncReadExt as _;
     use tokio::io::BufReader;
 
     let setup_id = Uuid::new_v4().hyphenated().to_string();
@@ -440,28 +580,73 @@ pub async fn begin_oauth_setup(
         OAuthProvider::OneDrive => "onedrive",
     };
 
-    let mut extra_args: Vec<&OsStr> = Vec::new();
-    let scope_flag;
-    let drive_type_flag;
-    if provider == OAuthProvider::GoogleDrive {
-        scope_flag = OsString::from("scope=drive");
-        extra_args.push(scope_flag.as_os_str());
+    // `config create <remote> <type> [opts] --config <path> --non-interactive`
+    // writes the remote stanza and returns the first config question.
+    let mut create_args = vec![
+        OsString::from("config"),
+        OsString::from("create"),
+        OsString::from(&remote_name),
+        OsString::from(rclone_type),
+    ];
+    match provider {
+        OAuthProvider::GoogleDrive => create_args.push(OsString::from("scope=drive")),
+        OAuthProvider::OneDrive => create_args.push(OsString::from("drive_type=personal")),
     }
-    if provider == OAuthProvider::OneDrive {
-        drive_type_flag = OsString::from("drive_type=personal");
-        extra_args.push(drive_type_flag.as_os_str());
-    }
+    create_args.push(OsString::from("--config"));
+    create_args.push(temp_config_path.as_os_str().to_os_string());
+    create_args.push(OsString::from("--non-interactive"));
 
+    let create_stdout = run_rclone(binary_path, create_args, Duration::from_secs(30)).await?;
+    let mut question = parse_config_question(&create_stdout)?;
+
+    // Advance the fast pre-OAuth states until rclone asks to use the local
+    // browser, capturing the state + answer for that step. In practice it is the
+    // first question, but looping keeps this resilient to provider-specific
+    // pre-steps.
+    let (oauth_state, oauth_answer) = loop {
+        let option = question.option.as_ref().ok_or_else(|| {
+            CloudTransportError::Other(
+                "rclone OAuth setup finished before the browser step".to_owned(),
+            )
+        })?;
+        let answer = decide_answer(option)?;
+        // The browser-OAuth step: rclone asks `config_is_local` under the
+        // `*oauth-islocal` state. Matching either is robust across rclone
+        // versions (the state prefix has been stable far longer than the option
+        // name). Answering it spawns the local web server, so stop the fast loop
+        // here and run that step as the long-lived child below.
+        if option.name == "config_is_local" || question.state.starts_with("*oauth-islocal") {
+            break (question.state.clone(), answer);
+        }
+        let state = question.state.clone();
+        question = run_config_continue(
+            binary_path,
+            &temp_config_path,
+            &remote_name,
+            &state,
+            &answer,
+        )
+        .await?;
+    };
+
+    // The continue that answers `config_is_local` runs rclone's local OAuth web
+    // server: it prints the auth URL on stderr and blocks until the browser
+    // callback, then emits the next config state on stdout and exits.
     let mut command = tokio::process::Command::new(binary_path);
     command
         .args([
             OsStr::new("config"),
-            OsStr::new("create"),
+            OsStr::new("update"),
             OsStr::new(&remote_name),
-            OsStr::new(rclone_type),
+            OsStr::new("--continue"),
+            OsStr::new("--state"),
+            OsStr::new(&oauth_state),
+            OsStr::new("--result"),
+            OsStr::new(&oauth_answer),
+            OsStr::new("--config"),
+            temp_config_path.as_os_str(),
+            OsStr::new("--non-interactive"),
         ])
-        .args(&extra_args)
-        .args([OsStr::new("--config"), temp_config_path.as_os_str()])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -470,7 +655,7 @@ pub async fn begin_oauth_setup(
 
     let mut child = command.spawn().map_err(CloudTransportError::from)?;
 
-    let stdout = child
+    let mut stdout = child
         .stdout
         .take()
         .ok_or_else(|| CloudTransportError::Other("failed to capture rclone stdout".to_owned()))?;
@@ -479,51 +664,56 @@ pub async fn begin_oauth_setup(
         .take()
         .ok_or_else(|| CloudTransportError::Other("failed to capture rclone stderr".to_owned()))?;
 
-    let mut stdout_reader = BufReader::new(stdout).lines();
     let mut stderr_reader = BufReader::new(stderr).lines();
-    let mut stdout_done = false;
-    let mut stderr_done = false;
+    let mut diagnostics = String::new();
     let mut auth_url: Option<String> = None;
 
-    loop {
-        tokio::select! {
-            line = stdout_reader.next_line(), if !stdout_done => {
-                match line.map_err(|e| CloudTransportError::Other(format!("reading rclone stdout: {e}")))? {
-                    None => { stdout_done = true; }
-                    Some(l) => {
-                        if let Some(url) = extract_rclone_auth_url(&l) {
-                            auth_url = Some(url);
-                            break;
-                        }
-                    }
-                }
-            }
-            line = stderr_reader.next_line(), if !stderr_done => {
-                match line.map_err(|e| CloudTransportError::Other(format!("reading rclone stderr: {e}")))? {
-                    None => { stderr_done = true; }
-                    Some(l) => {
-                        if let Some(url) = extract_rclone_auth_url(&l) {
-                            auth_url = Some(url);
-                            break;
-                        }
-                    }
-                }
-            }
-            else => { break; }
+    while let Some(line) = stderr_reader
+        .next_line()
+        .await
+        .map_err(|e| CloudTransportError::Other(format!("reading rclone stderr: {e}")))?
+    {
+        if diagnostics.len() < STDERR_DIAGNOSTIC_CAP_BYTES {
+            diagnostics.push_str(&line);
+            diagnostics.push('\n');
+        }
+        if let Some(url) = extract_rclone_auth_url(&line) {
+            auth_url = Some(url);
+            break;
         }
     }
 
-    tokio::spawn(async move { while let Ok(Some(_)) = stdout_reader.next_line().await {} });
-    tokio::spawn(async move { while let Ok(Some(_)) = stderr_reader.next_line().await {} });
-
     let auth_url = auth_url.ok_or_else(|| {
-        CloudTransportError::Other("rclone did not emit an auth URL on stdout or stderr".to_owned())
+        CloudTransportError::Other("rclone did not emit an auth URL on stderr".to_owned())
     })?;
+
+    // Keep draining stderr (so the pipe cannot stall rclone) while retaining a
+    // bounded copy for diagnostics on the failure/timeout path.
+    let stderr_capture = tokio::spawn(async move {
+        let mut buffer = diagnostics;
+        while let Ok(Some(line)) = stderr_reader.next_line().await {
+            if buffer.len() < STDERR_DIAGNOSTIC_CAP_BYTES {
+                buffer.push_str(&line);
+                buffer.push('\n');
+            }
+        }
+        buffer
+    });
+
+    // The post-OAuth config state arrives on stdout only after the browser
+    // callback; collect it to completion (i.e. once the child exits).
+    let stdout_capture = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).await?;
+        Ok::<Vec<u8>, std::io::Error>(bytes)
+    });
 
     Ok(OAuthSetupBegun {
         setup_id,
         auth_url,
         child,
+        stdout_capture,
+        stderr_capture,
         temp_config_path,
         remote_name,
     })
@@ -572,6 +762,44 @@ pub async fn complete_oauth_setup(
     Ok(blob)
 }
 
+/// Drives the remaining non-interactive config states after the browser OAuth
+/// callback, then extracts the credential blob.
+///
+/// `post_oauth_stdout` is the first post-OAuth config state captured from the
+/// blocking child's stdout (e.g. the OneDrive drive chooser). Each state is
+/// answered with rclone's own default via `decide_answer` until `State` is
+/// empty, at which point the remote is fully written and `complete_oauth_setup`
+/// dumps it. The bounded loop guard prevents a pathological provider from
+/// looping forever.
+pub async fn finish_oauth_setup_after_browser(
+    binary_path: &std::path::Path,
+    temp_config_path: &std::path::Path,
+    remote_name: &str,
+    post_oauth_stdout: &str,
+) -> Result<String, CloudTransportError> {
+    const MAX_CONFIG_STATES: usize = 32;
+
+    let mut question = parse_config_question(post_oauth_stdout)?;
+    let mut steps = 0;
+    while !question.state.is_empty() {
+        steps += 1;
+        if steps > MAX_CONFIG_STATES {
+            return Err(CloudTransportError::Other(
+                "rclone OAuth setup exceeded the maximum number of config states".to_owned(),
+            ));
+        }
+        let option = question.option.as_ref().ok_or_else(|| {
+            CloudTransportError::Other("rclone config state missing its option".to_owned())
+        })?;
+        let answer = decide_answer(option)?;
+        let state = question.state.clone();
+        question = run_config_continue(binary_path, temp_config_path, remote_name, &state, &answer)
+            .await?;
+    }
+
+    complete_oauth_setup(binary_path, temp_config_path, remote_name).await
+}
+
 /// Kills the rclone subprocess and removes the temporary config file.
 ///
 /// Safe to call even if the process has already exited.
@@ -605,13 +833,105 @@ mod tests {
 
     use super::{
         CloudEndpoint, DestinationType, GoogleDriveRuntimePaths, GoogleDriveSetupRequest,
-        GoogleDriveSetupResult, OpenerLike, S3SetupRequest, extract_remote_blob_from_dump,
-        setup_google_drive, setup_google_drive_with_remote_name, setup_s3_provider,
+        GoogleDriveSetupResult, OpenerLike, S3SetupRequest, decide_answer,
+        extract_remote_blob_from_dump, parse_config_question, setup_google_drive,
+        setup_google_drive_with_remote_name, setup_s3_provider,
         setup_s3_provider_with_endpoint_saver,
     };
     use crate::storage::CloudTransportError;
     use crate::storage::cloud::destination_session::list_destination_sessions;
     use crate::storage::sqlcipher::SqlCipherMetadataStore;
+
+    #[test]
+    fn test_decide_answer_config_is_local_uses_default_str_true() {
+        // First OneDrive/Google Drive question: use the local web browser.
+        let question = parse_config_question(
+            r#"{"State":"*oauth-islocal,choose_type,,","Option":{"Name":"config_is_local","DefaultStr":"true","Default":true,"Type":"bool"},"Error":""}"#,
+        )
+        .unwrap();
+        let answer = decide_answer(question.option.as_ref().unwrap()).unwrap();
+        assert_eq!(answer, "true");
+    }
+
+    #[test]
+    fn test_decide_answer_config_type_selects_onedrive() {
+        let question = parse_config_question(
+            r#"{"State":"choose_type_done","Option":{"Name":"config_type","DefaultStr":"onedrive","Default":"onedrive","Type":"string","Examples":[{"Value":"onedrive"},{"Value":"sharepoint"}]},"Error":""}"#,
+        )
+        .unwrap();
+        let answer = decide_answer(question.option.as_ref().unwrap()).unwrap();
+        assert_eq!(answer, "onedrive");
+    }
+
+    #[test]
+    fn test_decide_answer_drive_chooser_selects_primary_drive() {
+        // The state that stalls on a dead stdin: multi-drive account. The
+        // default is the account's primary drive — auto-select it.
+        let question = parse_config_question(
+            r#"{"State":"driveid_final","Option":{"Name":"config_driveid","DefaultStr":"435E689A6789EBEF","Default":"435E689A6789EBEF","Type":"string","Examples":[{"Value":"435E689A6789EBEF"},{"Value":"b!second"}]},"Error":""}"#,
+        )
+        .unwrap();
+        let answer = decide_answer(question.option.as_ref().unwrap()).unwrap();
+        assert_eq!(answer, "435E689A6789EBEF");
+    }
+
+    #[test]
+    fn test_decide_answer_falls_back_to_typed_bool_default_when_default_str_empty() {
+        let question = parse_config_question(
+            r#"{"State":"driveid_final_end","Option":{"Name":"config_drive_ok","DefaultStr":"","Default":true,"Type":"bool"},"Error":""}"#,
+        )
+        .unwrap();
+        let answer = decide_answer(question.option.as_ref().unwrap()).unwrap();
+        assert_eq!(answer, "true");
+    }
+
+    #[test]
+    fn test_decide_answer_falls_back_to_first_example_when_no_default() {
+        let question = parse_config_question(
+            r#"{"State":"teamdrive","Option":{"Name":"config_team_drive","DefaultStr":"","Examples":[{"Value":"first"},{"Value":"second"}]},"Error":""}"#,
+        )
+        .unwrap();
+        let answer = decide_answer(question.option.as_ref().unwrap()).unwrap();
+        assert_eq!(answer, "first");
+    }
+
+    #[test]
+    fn test_decide_answer_no_default_or_examples_returns_error() {
+        let question = parse_config_question(
+            r#"{"State":"needs_input","Option":{"Name":"config_token","DefaultStr":""},"Error":""}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            decide_answer(question.option.as_ref().unwrap()),
+            Err(CloudTransportError::Other(_))
+        ));
+    }
+
+    #[test]
+    fn test_parse_config_question_empty_state_means_done() {
+        let question =
+            parse_config_question(r#"{"State":"","Option":null,"Error":"","Result":""}"#).unwrap();
+        assert!(question.state.is_empty());
+        assert!(question.option.is_none());
+    }
+
+    #[test]
+    fn test_parse_config_question_non_empty_error_field_returns_error() {
+        let result =
+            parse_config_question(r#"{"State":"some_state","Option":null,"Error":"backend boom"}"#);
+        match result {
+            Err(CloudTransportError::Other(message)) => assert!(message.contains("backend boom")),
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_config_question_invalid_json_returns_error() {
+        assert!(matches!(
+            parse_config_question("not json at all"),
+            Err(CloudTransportError::Other(_))
+        ));
+    }
 
     #[derive(Default)]
     struct RecordingOpener {
