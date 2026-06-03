@@ -72,6 +72,7 @@
     "allow-configure-cloud",
     "allow-check-pending-vault-operations",
     "allow-retry-pending-vault-operation",
+    "allow-select-oauth-drive",
     {
       "identifier": "shell:allow-execute",
       "allow": [

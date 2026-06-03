@@ -327,6 +327,16 @@ pub struct PollOauthSetupRequest {
     pub setup_id: String,
 }
 
+/// Argument payload for the `select_oauth_drive` Tauri command.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectOauthDriveRequest {
+    /// Opaque setup ID returned by `begin_onedrive_setup`.
+    pub setup_id: String,
+    /// Identifier of the drive the user selected (from `NeedsDriveSelection`).
+    pub drive_id: String,
+}
+
 /// Argument payload for the `cancel_oauth_setup` Tauri command.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

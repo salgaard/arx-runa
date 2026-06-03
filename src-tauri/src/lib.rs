@@ -123,7 +123,7 @@ fn init_tracing() {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-/// Starts the Arx Runa Tauri runtime with 62 commands via `generate_handler!` plus `video_stream` registered separately (63 total).
+/// Starts the Arx Runa Tauri runtime with 63 commands via `generate_handler!` plus `video_stream` registered separately (64 total).
 pub fn run() {
     init_tracing();
     if let Err(error) = crate::ui::video_stream::register(tauri::Builder::default())
@@ -173,7 +173,7 @@ pub fn run() {
             ui::sync_commands::migrate_vault,
             ui::sync_commands::sync_backup,
             ui::sync_commands::get_backup_health,
-            // Destinations (8)
+            // Destinations (9)
             ui::destination_commands::add_destination,
             ui::destination_commands::list_destinations,
             ui::destination_commands::delete_destination,
@@ -181,6 +181,7 @@ pub fn run() {
             ui::destination_commands::begin_google_drive_setup,
             ui::destination_commands::begin_onedrive_setup,
             ui::destination_commands::poll_oauth_setup,
+            ui::destination_commands::select_oauth_drive,
             ui::destination_commands::cancel_oauth_setup,
             // Sharing (11)
             ui::sharing_commands::export_public_key,
