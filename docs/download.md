@@ -3,7 +3,7 @@
 > ⚠️ **Early demo — expect bugs and data loss**
 > This is pre-release software. Encrypted vaults, keys, and file metadata may be lost or corrupted between versions. Do **not** rely on this as your only copy of important files.
 
-All releases are available on GitHub.
+All releases are available on GitHub. HOWEVER! i have only been able to test windows so far on real machines! so probably only windows that works atm.
 
 **[→ View all releases on GitHub](https://github.com/salgaard/arx-runa-releases/releases)**
 

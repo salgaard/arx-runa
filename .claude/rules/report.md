@@ -81,23 +81,23 @@ Rapporten følger denne kæde konsekvent (rød tråd):
 **Problemformulering → Use Cases → Kravindsamling → Design → Implementering → Evaluering**
 
 - §2 etablerer problemet og underspørgsmålene (UQ1–5)
-- §4.X Use Cases viser de konkrete scenarier der motiverer kravene
-- §4.X Systemkrav (fra `requirements.md`) viser hvad systemet skal kunne
-- §5–9 analyserer om designbeslutningerne imødekommer kravene
-- §10–11 evaluerer og konkluderer mod problemformuleringen
+- §5.1 Use Cases viser de konkrete scenarier der motiverer kravene
+- §5.2 Systemkrav (fra `requirements.md`) viser hvad systemet skal kunne
+- §6–10 analyserer om designbeslutningerne imødekommer kravene
+- §11–13 evaluerer, diskuterer og konkluderer mod problemformuleringen
 
 ---
 
 ## Struktur-regler
 
-- **Kapitelstruktur:** §5–9 er selvstændige top-niveau kapitler (ikke samlet under ét "Analyse"-kapitel). 1-til-1 mapping underspørgsmål→kapitel er intentionel og må ikke ændres.
+- **Kapitelstruktur:** §6–10 er selvstændige top-niveau kapitler (ikke samlet under ét "Analyse"-kapitel). 1-til-1 mapping underspørgsmål→kapitel er intentionel og må ikke ændres (UQ1=§6, UQ2=§7, UQ3=§8, UQ4=§9, UQ5=§10).
 - **Rød tråd:** Hvert kapitel åbner med en sætning der forankrer det i problemformuleringen, fx "Dette kapitel undersøger underspørgsmål 1:..."
-- **Delkonklusioner:** Hvert analysekapitel (§5–9) afsluttes med en delkonklusion (max 150 ord) der direkte besvarer det pågældende underspørgsmål og refererer tilbage til §2. Label: `Delkonklusion - Underspørgsmål N` (bindestreg, ikke em-streg).
+- **Delkonklusioner:** Hvert analysekapitel (§6–10) afsluttes med en delkonklusion (max 150 ord) der direkte besvarer det pågældende underspørgsmål og refererer tilbage til §2. Label: `Delkonklusion - Underspørgsmål N` (bindestreg, ikke em-streg).
 - **Figurer og tabeller:** Altid ledsaget af billedtekst + analyse i brødteksten. Ikke bare "se figur X".
-- **Anbefalinger i §10:** Skal være teoriforankrede: citér kilde eller design-princip, ikke personlig vurdering.
-- **Use cases i §4.X:** Alle 5 UC'er præsenteres som tabel (UC-ID, scenarie, primær sikkerhedsegenskab, krav-domæner). UC-1 og UC-4 nævnes kort i §1 som konkrete eksempler.
-- **Requirements.md:** Bruges som intern reference i UQ-kapitlerne (fx REQ-CRYPTO-001 som belæg). §4.4 indeholder kun domæneoversigtstabellen (6 rækker). Fuldt kravkatalog (106 krav) er i Bilag F.
-- **Trusselsmodel:** §4.7 etablerer adversary-model, trust boundaries og out of scope. §5–9 refererer til den: "Jf. trusselsmodellen (§4.7)..."
+- **Anbefalinger i §11:** Skal være teoriforankrede: citér kilde eller design-princip, ikke personlig vurdering.
+- **Use cases i §5.1:** Alle 5 UC'er præsenteres som tabel (UC-ID, scenarie, primær sikkerhedsegenskab, krav-domæner). UC-1 og UC-4 nævnes kort i §1 som konkrete eksempler.
+- **Requirements.md:** Bruges som intern reference i UQ-kapitlerne (fx REQ-CRYPTO-001 som belæg). §5.2 indeholder kun domæneoversigtstabellen (6 rækker). Fuldt kravkatalog (101 krav) er i Bilag E.
+- **Trusselsmodel:** §5.4 etablerer adversary-model, trust boundaries og out of scope. §6–10 refererer til den: "Jf. trusselsmodellen (§5.4)..."
 
 ---
 
@@ -173,9 +173,9 @@ Brug `WebFetch` til at verificere at URL'er i litteraturlisten faktisk indeholde
 - Brugeren reviewer og justerer stemme. Bed om stilfeedback tidligt, det låser samarbejdet.
 - Arbejd sektion for sektion i denne rækkefølge:
   1. §3 Metode
-  2. §4 Teknisk kontekst (inkl. §4.X Systemkrav med UC-tabel)
-  3. §5 UQ1 → §6 UQ2 → §7 UQ3 → §8 UQ4 → §9 UQ5
-  4. §10 Diskussion → §11 Konklusion
+  2. §4 Relaterede systemer (ren related work, ingen scoreboard) → §5 Kravanalyse og systemramme (UC-tabel, systemkrav, arkitektur, trusselsmodel)
+  3. §6 UQ1 → §7 UQ2 → §8 UQ3 → §9 UQ4 → §10 UQ5
+  4. §11 Test → §12 Diskussion → §13 Konklusion
   5. §1 Indledning (sidst, skrives bedst når argumentet er færdigt)
   6. Forside (tegntælling indsættes ved aflevering), sidenummerering, referencer, AI-deklarering
 
@@ -190,7 +190,7 @@ Brug `jdocmunch-mcp` til at finde sektioner i docs. Primære kildefiler (priorit
 3. `docs/architecture/designs/*/design.md`: fase 1–5 design-docs
 4. `docs/research/`: kryptografisk rationale, file sharing, recovery
 5. `docs/use-cases/`: UC-1 til UC-5 med success criteria
-6. `docs/architecture/requirements.md`: 106 krav med traceabilitet (UC → krav → design)
+6. `docs/architecture/requirements.md`: 101 krav med traceabilitet (UC → krav → design)
 7. `docs/report-log/`: designbeslutninger og problemformulering-session
 8. `docs/how-it-works/`: brugervenlige forklaringer der kan parafraseres
 9. `docs/notes/`: noter af forskellige ting gemt løbende igennem processen
@@ -262,8 +262,8 @@ Censorer vurderer efter disse ni kriterier - skriv mod dem:
 |-----------|-----------------------------------|
 | **Problemstilling** | Skarphed i problemformulering (§2) og afgrænsning - underspørgsmålene skal være præcise |
 | **Teoretisk fundament** | RFC'er, NIST, kryptografiske papers er teorifundamentet, ikke blot beskrivelse af valg |
-| **Analytisk dybde** | Teori anvendt på empiri: alternativanalyse i §5–9 er dette. Undgå beskrivende afsnit uden analyse |
-| **Argumentation** | Faglig tyngde, særligt diskussionens kvalitet (§11) - personlige holdninger erstattes af faglige begrundelser |
+| **Analytisk dybde** | Teori anvendt på empiri: alternativanalyse i §6–10 er dette. Undgå beskrivende afsnit uden analyse |
+| **Argumentation** | Faglig tyngde, særligt diskussionens kvalitet (§12) - personlige holdninger erstattes af faglige begrundelser |
 | **Rød tråd** | Kohærens: problemformulering → use cases → krav → analyse → konklusion |
 | **Produkt** | Kvalitet, funktionalitet, kompleksitet - produktet bedømmes ved mundtlig eksamen |
 | **Struktur** | Logisk og professionel opbygning - sidenummerering på alle sider, figurtekster, overgangssætninger |
@@ -280,29 +280,30 @@ UCL har eksplicitte regler for brug af AI i bachelorprojektet. Det er den studer
 
 ## Sidebudget (30 normalsider = ~72.000 tegn)
 
-Tegnbudget: §1–§12 inklusiv, ekskl. kodeblokke, mermaid-diagrammer, forside/TOC, §13 Litteraturliste og Bilag. Mål: ≤72.000 tegn (max). Aktuelt niveau: ~71.800 tegn (2026-05-27).
+Tegnbudget: §1–§13 inklusiv, ekskl. kodeblokke, mermaid-diagrammer, forside/TOC, §14 Litteraturliste og Bilag. Mål: ≤72.000 tegn (max). Aktuelt niveau: ~71.800 tegn (2026-05-27).
 
 | Sektion | Sider | Tegnbudget |
 |---------|-------|-----------|
 | §1 Indledning | 2 | 3.700 |
 | §2 Problemformulering | 1 | 2.100 |
 | §3 Metode | 2,5 | 4.800 |
-| §4 Teknisk kontekst (inkl. §4.X Systemkrav + §4.6 Arkitektur + §4.7 Trusselsmodel) | 4,5 | 7.700 |
-| §5 UQ1 - Kryptering (inkl. Realisering) | 4 | 9.000 |
-| §6 UQ2 - Autentifikation (inkl. Realisering) | 4 | 9.600 |
-| §7 UQ3 - Chunking & Sync (inkl. Realisering) | 3 | 9.600 |
-| §8 UQ4 - Zero-Trace (inkl. Realisering) | 3 | 7.300 |
-| §9 UQ5 - Fildeling (inkl. Realisering) | 3,5 | 9.000 |
-| §10 Test og evaluering | 2,5 | 4.800 |
-| §11 Diskussion | 1 | 3.400 |
-| §12 Konklusion | 1 | 2.800 |
+| §4 Relaterede systemer | 1 | 1.500 |
+| §5 Kravanalyse og systemramme (use cases, krav, §5.3 arkitektur, §5.4 trusselsmodel) | 2,5 | 4.700 |
+| §6 UQ1 - Kryptering (inkl. Realisering) | 4 | 9.000 |
+| §7 UQ2 - Autentifikation (inkl. Realisering) | 4 | 9.600 |
+| §8 UQ3 - Chunking & Sync (inkl. Realisering) | 3 | 9.600 |
+| §9 UQ4 - Zero-Trace (inkl. Realisering) | 3 | 7.300 |
+| §10 UQ5 - Fildeling (inkl. Realisering) | 3,5 | 9.000 |
+| §11 Test og evaluering | 2,5 | 4.800 |
+| §12 Diskussion | 1 | 3.400 |
+| §13 Konklusion | 1 | 2.800 |
 | **Total (tæller mod 30 sider)** | **~30 sider** | **≤72.000** |
-| §13 Litteraturliste | ikke talt med | — |
+| §14 Litteraturliste | ikke talt med | — |
 | Bilag A–F | ikke talt med | — |
 
 ### Tegntælling (verificér inden aflevering)
 
-Kør i projektets rodmappe — giver samlet prosa-tegnantal for §1–§12 ekskl. kodeblokke og bilag:
+Kør i projektets rodmappe — giver samlet prosa-tegnantal for §1–§13 ekskl. kodeblokke og bilag:
 
 ```python
 python3 -c "
@@ -310,7 +311,7 @@ import re
 c = open('docs/report/arx-runa-bachelorrapport.md', encoding='utf-8').read()
 c = re.sub(r'\x60\x60\x60[\s\S]*?\x60\x60\x60', '', c)
 s = re.search(r'^## 1\.', c, re.M)
-e = min((m.start() for p in [r'^## 13\.', r'^## Bilag', r'^## Litteratur'] if (m := re.search(p, c, re.M))), default=len(c))
+e = min((m.start() for p in [r'^## 14\.', r'^## Bilag', r'^## Litteratur'] if (m := re.search(p, c, re.M))), default=len(c))
 print(len(c[s.start():e]))
 "
 ```
@@ -318,5 +319,5 @@ print(len(c[s.start():e]))
 Eller som PowerShell-oneliner:
 
 ```powershell
-python3 -c "import re; c=open('docs/report/arx-runa-bachelorrapport.md',encoding='utf-8').read(); c=re.sub(r'\x60\x60\x60[\s\S]*?\x60\x60\x60','',c); s=re.search(r'^## 1\.',c,re.M); e=min((m.start() for p in [r'^## 13\.',r'^## Bilag',r'^## Litteratur'] if (m:=re.search(p,c,re.M))),default=len(c)); print(len(c[s.start():e]))"
+python3 -c "import re; c=open('docs/report/arx-runa-bachelorrapport.md',encoding='utf-8').read(); c=re.sub(r'\x60\x60\x60[\s\S]*?\x60\x60\x60','',c); s=re.search(r'^## 1\.',c,re.M); e=min((m.start() for p in [r'^## 14\.',r'^## Bilag',r'^## Litteratur'] if (m:=re.search(p,c,re.M))),default=len(c)); print(len(c[s.start():e]))"
 ```
