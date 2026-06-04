@@ -286,7 +286,7 @@ flowchart TD
     classDef proc fill:#6b7280,stroke:#374151,color:#fff
 ```
 
-*Figur 5.1: Nøgleafledningstre for Arx Runa. Adgangskode og USB-nøglefil kombineres som input til Argon2id (m=65.536, t=3, p=4), der producerer master_key. HKDF-SHA256 ekspanderer master_key til tre vault-nøgler via domæneseparerede info-strenge. master_key zeroises lige efter HKDF-ekspansionen.*
+*Figur 6.1: Nøgleafledningstre for Arx Runa. Adgangskode og USB-nøglefil kombineres som input til Argon2id (m=65.536, t=3, p=4), der producerer master_key. HKDF-SHA256 ekspanderer master_key til tre vault-nøgler via domæneseparerede info-strenge. master_key zeroises lige efter HKDF-ekspansionen.*
 
 ### 6.3 Nøglehåndtering og vault-arkitektur
 
@@ -308,13 +308,13 @@ Nøgler der aldrig forlader enheden: master_key, key_encryption_key, sqlcipher_k
 
 Designvalgene realiseres i modulet `src-tauri/src/crypto/`, struktureret med én fil pr. primitiv.
 
-`hkdf.rs` eksponerer `derive_vault_keys()` der udfører HKDF-SHA256-ekspansionen og returnerer `VaultKeys` med `key_encryption_key`, `sqlcipher_key` og `manifest_key` som stærkt typede felter med unikke info-strenge (Listing 5.1).
+`hkdf.rs` eksponerer `derive_vault_keys()` der udfører HKDF-SHA256-ekspansionen og returnerer `VaultKeys` med `key_encryption_key`, `sqlcipher_key` og `manifest_key` som stærkt typede felter med unikke info-strenge (Listing 6.1).
 
 ```rust
-// src-tauri/src/crypto/hkdf.rs
-pub(crate) const HKDF_SALT: &[u8]                 = b"arx-runa-v1";
-pub(crate) const HKDF_INFO_KEY_ENCRYPTION: &[u8]  = b"arx-runa-key-encryption";
-pub(crate) const HKDF_INFO_SQLCIPHER: &[u8]       = b"arx-runa-sqlcipher";
+// src-tauri/src/crypto/hkdf.rs:10–65
+pub(crate) const HKDF_SALT: &[u8] = b"arx-runa-v1";
+pub(crate) const HKDF_INFO_KEY_ENCRYPTION: &[u8] = b"arx-runa-key-encryption";
+pub(crate) const HKDF_INFO_SQLCIPHER: &[u8] = b"arx-runa-sqlcipher";
 pub(crate) const HKDF_INFO_MANIFEST_BACKUP: &[u8] = b"arx-runa-manifest-backup";
 // ...
 pub fn derive_vault_keys(master_key_bytes: &[u8; 32]) -> Result<VaultKeys, CryptoError> {
@@ -335,12 +335,12 @@ pub fn derive_vault_keys(master_key_bytes: &[u8; 32]) -> Result<VaultKeys, Crypt
 }
 ```
 
-*Listing 5.1: `derive_vault_keys()` i `hkdf.rs`. Én HKDF-expand pr. nøgle med unik info-streng; alle nøgler returneres som `SecretBox<[u8; 32]>`.*
+*Listing 6.1: `derive_vault_keys()` i `hkdf.rs:10–65`. Én HKDF-expand pr. nøgle med unik info-streng; alle nøgler returneres som `SecretBox<[u8; 32]>`.*
 
-Listing 5.2 viser `encrypt_chunk()`. AAD konstrueres fra `file_id || chunk_index` og binder chunk til position, og wire-format er `[nonce | ciphertext | tag]`.
+Listing 6.2 viser `encrypt_chunk()`. AAD konstrueres fra `file_id || chunk_index` og binder chunk til position, og wire-format er `[nonce | ciphertext | tag]`.
 
 ```rust
-// src-tauri/src/crypto/encrypt_chunk.rs
+// src-tauri/src/crypto/encrypt_chunk.rs:30–52
 pub fn encrypt_chunk(
     mut plaintext: Zeroizing<Vec<u8>>,
     file_key: &FileKey,
@@ -366,12 +366,12 @@ pub fn encrypt_chunk(
 }
 ```
 
-*Listing 5.2: `encrypt_chunk()` med CSPRNG-nonce, AAD-binding og wire-format `[nonce | ciphertext | tag]`.*
+*Listing 6.2: `encrypt_chunk()` i `encrypt_chunk.rs:30–52` med CSPRNG-nonce, AAD-binding og wire-format `[nonce | ciphertext | tag]`.*
 
-`wrap_key.rs` anvender identisk mønster med `key_encryption_key` og `file_id` som AAD til at wrap/unwrap `file_keys` (72-byte blob). `types/mod.rs` definerer nøgletyperne (Listing 5.3) med `ZeroizeOnDrop` og `SecretBox<T>`^[`SecretBox<T>` fra `secrecy`-cratet: redacter `Debug`-output og kræver `expose()`-kald for adgang til bytes. Forhindrer utilsigtet logning af nøglemateriale; se §9.2.] for Debug-redaction.
+`wrap_key.rs` anvender identisk mønster med `key_encryption_key` og `file_id` som AAD til at wrap/unwrap `file_keys` (72-byte blob). `types/mod.rs` definerer nøgletyperne (Listing 6.3) med `ZeroizeOnDrop` og `SecretBox<T>`^[`SecretBox<T>` fra `secrecy`-cratet: redacter `Debug`-output og kræver `expose()`-kald for adgang til bytes. Forhindrer utilsigtet logning af nøglemateriale; se §9.2.] for Debug-redaction.
 
 ```rust
-// src-tauri/src/crypto/types/mod.rs
+// src-tauri/src/crypto/types/mod.rs:7–51
 #[derive(ZeroizeOnDrop)]
 pub struct FileKey(SecretBox<[u8; 32]>);
 // ...
@@ -379,7 +379,7 @@ pub struct FileKey(SecretBox<[u8; 32]>);
 pub struct KeyEncryptionKey(SecretBox<[u8; 32]>);
 ```
 
-*Listing 5.3: Nøgletypedefinitioner. `ZeroizeOnDrop` sikrer volatile-skriv ved drop; `SecretBox<T>` giver redacted Debug.*
+*Listing 6.3: Nøgletypedefinitioner i `types/mod.rs:7–51`. `ZeroizeOnDrop` sikrer volatile-skriv ved drop; `SecretBox<T>` giver redacted Debug.*
 
 ```mermaid
 sequenceDiagram
@@ -398,7 +398,7 @@ sequenceDiagram
     encrypt_chunk-->>Caller: Result#60;Vec#60;u8#62;, CryptoError#62;
 ```
 
-*Figur 5.2: Krypteringsflow for ét chunk med CSPRNG-nonce, AAD-binding og wire-format `[nonce | ciphertext | tag]`.*
+*Figur 6.2: Krypteringsflow for ét chunk med CSPRNG-nonce, AAD-binding og wire-format `[nonce | ciphertext | tag]`.*
 
 Unit-tests dækker AEAD round-trip, nonce-uniqueness og forkert-nøgle-fejl i `wrap_key.rs`, mens property-based tests via `proptest` udvider inputrummet på AAD (`file_id` og `chunk_index`) og plaintextstørrelse. Integrationsdækningen dækkes af scenario-tests i `src-tauri/src/tests/`, der kører mod real SQLCipher på disk med mocket cloud-transport.
 
@@ -412,9 +412,9 @@ Dette kapitel undersøger Underspørgsmål 2. Hvordan kan en fysisk USB-nøglefi
 
 ### 7.1 Tier-model for autentificering
 
-Adgangskodebaseret autentificering har en fundamental svaghed: én faktor er ét angrebspunkt. Et kompromitteret password giver fuld adgang, og angriberen behøver ikke bryde krypteringen direkte. NIST SP 800-63B definerer tre Authenticator Assurance Levels (AAL1–AAL3), der graduerer kravet til autentificering efter risikoprofil (NIST, 2017). AAL1 tillader enkeltfaktor, mens AAL2 kræver to uafhængige faktorer fra forskellige kategorier, typisk en vidensbaseret (password) og en besiddelsesbaseret (hardware token).
+Adgangskodebaseret autentificering har den fundamentale svaghed, at én faktor er ét angrebspunkt. Et kompromitteret password giver fuld adgang, og angriberen behøver ikke bryde krypteringen direkte. NIST SP 800-63B definerer tre Authenticator Assurance Levels (AAL1–AAL3), der graduerer kravet til autentificering efter risikoprofil (NIST, 2017). AAL1 tillader enkeltfaktor, mens AAL2 kræver to uafhængige faktorer fra forskellige kategorier, typisk en vidensbaseret (password) og en besiddelsesbaseret (hardware token).
 
-Arx Runa implementerer to autentificeringsniveauer svarende til disse trin. Tier 1 anvender kun adgangskode (AAL1). Tier 2 kræver adgangskode kombineret med en USB-nøglefil (AAL2, REQ-AUTH-001). Den afgørende designbeslutning er, at de to faktorer ikke er stacked som separate valideringstrin, men kombineres til ét samlet KDF-input. Tier 1-afledningen er:
+Arx Runa implementerer to autentificeringsniveauer svarende til disse trin. Tier 1 anvender kun adgangskode (AAL1). Tier 2 kræver adgangskode kombineret med en USB-nøglefil (AAL2, REQ-AUTH-001). Den afgørende designbeslutning er, at de to faktorer ikke er koblet som separate valideringstrin, men kombineres til ét samlet KDF-input. Tier 1-afledningen er:
 
 `master_key = Argon2id(password_bytes, salt)`
 
@@ -424,27 +424,15 @@ Tier 2-afledningen er:
 
 Konkatenering er entydigt fordi key_file_bytes altid er præcis 32 bytes (REQ-AUTH-008). Et forkert password producerer en anden master_key. En forkert key_file producerer ligeledes en anden master_key. Ingen faktor er tilstrækkelig alene (REQ-AUTH-003, REQ-AUTH-004, REQ-AUTH-005).
 
-FIDO2/WebAuthn^[FIDO2/WebAuthn (FIDO Alliance, 2019): hardwarebaseret challenge-response-autentificering; godkendelsen afhænger af en session-specifik nonce og kan ikke reproduceres på tværs af sessioner.] og TOTP^[TOTP (RFC 6238): tidsbaseret engangskode udledt af en delt hemmelighed og det aktuelle 30-sekunders tidsvindue; output varierer pr. interval.] er begge forkastet fordi de er non-deterministiske. Argon2id kræver et reproducerbart KDF-input for at producere samme `master_key` på tværs af sessioner. FIDO2's challenge-response-output varierer pr. session; TOTP varierer pr. 30-sekunders vindue (FIDO Alliance, 2019; IETF, 2011). Determinisme er ikke valgfrit, fordi KDF-output er nøglen.
+Som besiddelsesfaktor overvejedes FIDO2/WebAuthn og TOTP som alternativer til USB-nøglefilen. Begge er forkastet af strukturelle årsager. FIDO2/WebAuthn (FIDO Alliance, 2019) producerer en session-unik signatur, ikke reproducérbart nøglemateriale, og Argon2id kræver identisk input på tværs af sessioner. TOTP (RFC 6238) har et cirkulæritetsproblem: den delte hemmelighed `K` kan ikke lagres sikkert i en lokal ZK-applikation. Lagres `K` inden i vault'en, er verificering kun mulig efter åbning. Lagres `K` i klartekst udenfor, er den tilgængelig for angriberen (NIST SP 800-63B, 2017). USB-nøglefilen løser besiddelsesfaktoren (*something you have*) uden disse begrænsninger.
 
 ### 7.2 USB-nøglefil: design og angrebsovervejelser
 
-En USB-nøglefil er 32 bytes genereret af CSPRNG^[CSPRNG: Cryptographically Secure Pseudo-Random Number Generator; OS-leveret tilfældighedskilde (`getrandom` på Linux, `BCryptGenRandom` på Windows).] (`rand::rng().fill_bytes()`) ved vault-oprettelse (REQ-AUTH-008). Filen har ingen intern struktur, ingen versionsbyte og intet enheds-id, den er ren tilfældig entropi svarende til 256 bits og samme størrelse som en X25519 privat nøgle. Brugeren kan navngive filen og placere den frit på drevet. Listing 6.1 viser genereringen i `auth/ceremonies/create.rs`:
-
-```rust
-// src-tauri/src/auth/ceremonies/create.rs
-let mut buffer: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-rand::rng().fill_bytes(buffer.as_mut_slice());
-staging::write_owner_only_new(&key_file_path, buffer.as_slice()).await?;
-let digest = blake3::hash(buffer.as_slice());
-key_file_blake3_hex = Some(hex::encode(digest.as_bytes()));
-key_file_bytes = Some(buffer);
-```
-
-*Listing 6.1: Generering af USB-nøglefil i `create.rs`. 32 bytes CSPRNG-entropi skrives til drevet med owner-only rettigheder. En BLAKE3-hash gemmes i vault-headeren som fingeraftryk til auto-detektion.*
+En USB-nøglefil er 32 bytes genereret af CSPRNG^[CSPRNG: Cryptographically Secure Pseudo-Random Number Generator; OS-leveret tilfældighedskilde (`getrandom` på Linux, `BCryptGenRandom` på Windows).] (`rand::rng().fill_bytes()`) ved vault-oprettelse (REQ-AUTH-008). Filen har ingen intern struktur, ingen versionsbyte og intet enheds-id, den er ren tilfældig entropi svarende til 256 bits og samme størrelse som en X25519 privat nøgle. Brugeren kan navngive filen og placere den frit på drevet. I `auth/ceremonies/create.rs` genereres bufferen som `Zeroizing<[u8; 32]>`, skrives til drevet med owner-only rettigheder og hashes med BLAKE3 til fingeraftryk.
 
 BLAKE3-hashen er et offentligt verificeringstegn (O'Connor et al., 2019). Den er preimage-resistent, så kendskab til hashen ikke giver information om de 32 bytes, der producerede den. Hashen lagres i klartext i vault-headeren fordi bootstrapping af autentificering kræver den, og den afslører intet om nøglefilens indhold.
 
-Brugeren behøver ikke navigere manuelt til nøglefilen. Arx Runa overvåger OS-native mount-events og scanner det tilsluttede drev automatisk ved indsætning (REQ-AUTH-010, REQ-AUTH-012). Figur 6.1 illustrerer forløbet fra USB-tilslutning til åben session.
+Brugeren behøver ikke navigere manuelt til nøglefilen. Arx Runa overvåger OS-native mount-events og scanner det tilsluttede drev automatisk ved indsætning (REQ-AUTH-010, REQ-AUTH-012). Figur 7.1 illustrerer forløbet fra USB-tilslutning til åben session.
 
 ```mermaid
 sequenceDiagram
@@ -473,33 +461,17 @@ sequenceDiagram
     App-->>You: Vault locked - re-enter password to continue
 ```
 
-*Figur 6.1: Unlock-flow for Tier 2-vault. USB-tilslutning udløser BLAKE3-scanning, og et match starter Argon2id-derivation, hvorefter session keys mlockes. Timeout eller USB-fjernelse zeroizer alle nøgler.*
+*Figur 7.1: Unlock-flow for Tier 2-vault. USB-tilslutning udløser BLAKE3-scanning, og et match starter Argon2id-derivation, hvorefter session keys mlockes. Timeout eller USB-fjernelse zeroizer alle nøgler.*
 
-Scanningsalgoritmen filtrerer på 32-byte filstørrelse (Listing 6.2):
-
-```rust
-// src-tauri/src/auth/autodetect.rs
-if metadata.len() != KEY_FILE_SIZE {
-    continue;   // filtrerer alle filer der ikke er præcis 32 bytes
-}
-// ...
-let hash = blake3::hash(buffer.as_ref());
-if hash.as_bytes().ct_eq(&reference_hash.0).into() {
-    return Ok(Some(entry.into_path()));
-}
-```
-
-*Listing 6.2: Scanningslogik i `autodetect.rs`. `ct_eq` forhindrer timing-sidekanalangreb mod BLAKE3-verifikation.*
+Scanningsalgoritmen i `auth/autodetect.rs` filtrerer på 32-byte filstørrelse og verificerer med `blake3::hash(...).ct_eq(...)` — constant-time sammenligning der forhindrer timing-sidekanalangreb mod BLAKE3-verifikationen.
 
 Tabel 7.1 opsummerer angrebsscenarier mod hardware-faktoren.
 
 | Scenario | Trussel | Modforanstaltning |
 |----------|---------|-------------------|
 | USB stjålet | Angriber besidder key_file, intet password | Argon2id kræver begge faktorer; password alene er utilstrækkeligt |
-| USB mistet permanent | Bruger mister hardware-faktor | BIP-39 recovery-slot muliggør re-keying uden USB og password |
+| USB mistet permanent | Bruger mister hardware-faktor | BIP-39-frasen muliggør re-keying med frasen som eneste faktor |
 | USB kopieret digitalt | Angriber har key_file-bytes | Samme risiko som stjålet USB; kræver stadig password |
-| Key file roteret | Ny nøglefil genereres; gammel kasseres | Rotationsceremoni kræver gammel USB til at afvikle eksisterende filnøgleindpakninger |
-
 *Tabel 7.1: Angrebsscenarier for USB-nøglefil og tilhørende modforanstaltninger. Fysisk besiddelse er en sikkerhedspræmis, så systemet kræver to separate kompromiser for at en angriber får adgang.*
 
 Sikkerhedsargumentet er at de to faktorer er uafhængige, så en angriber både skal kompromittere adgangskoden og besidde den fysiske USB-nøglefil.
@@ -520,7 +492,7 @@ Tabel 7.2 sammenligner de tre primære recovery-alternativer.
 
 BIP-39 (Palatinus et al., 2013) koder 256 bits entropi som 24 ord med 8-bit checksum til fejldetektering. Ordliste-enkodning er mere fejltolerant end hex ved manuel afskrivning.
 
-Recovery-slottet er en kryptografisk indpakket kopi af master_key lagret i vault-headeren i skyen. Figur 6.2 illustrerer konstruktionen.
+Recovery-slottet er en kryptografisk indpakket kopi af master_key lagret i vault-headeren i skyen. Figur 7.2 illustrerer konstruktionen.
 
 ```mermaid
 flowchart TD
@@ -555,21 +527,22 @@ flowchart TD
     classDef user fill:#9333ea,stroke:#6b21a8,color:#fff
 ```
 
-*Figur 6.2: Recovery slot-konstruktion. BIP-39-frasen ekspanderes af Argon2id til en recovery_key, der wrapper master_key med XChaCha20-Poly1305 og vault_id som AAD.*
+*Figur 7.2: Recovery slot-konstruktion. BIP-39-frasen ekspanderes af Argon2id til en recovery_key, der wrapper master_key med XChaCha20-Poly1305 og vault_id som AAD.*
 
-Listing 6.3 viser implementeringen i `setup_recovery.rs`:
+Listing 7.3 viser implementeringen i `setup_recovery.rs`:
 
 ```rust
-// src-tauri/src/auth/ceremonies/setup_recovery.rs
+// src-tauri/src/auth/ceremonies/setup_recovery.rs:75–99
 let mut entropy: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
 rand::rng().fill_bytes(entropy.as_mut_slice());
 let mnemonic = Mnemonic::from_entropy_in(Language::English, entropy.as_slice())
     .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
 let phrase_string = canonicalize_phrase(&mnemonic);
-drop(entropy);                      // entropi zeroizes umiddelbart efter mnemonic-generering
+drop(entropy);
 
 let mut recovery_salt: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
 rand::rng().fill_bytes(recovery_salt.as_mut_slice());
+let mut recovery_key_bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
 derive_recovery_key_into(
     phrase_string.as_bytes(),
     &recovery_salt,
@@ -577,18 +550,28 @@ derive_recovery_key_into(
     &mut recovery_key_bytes,
 )?;
 let recovery_key = recovery_key_from_array(&recovery_key_bytes);
+drop(recovery_key_bytes);
 
-let wrapped = wrap_master_key_for_recovery(&master_key_typed, &recovery_key, vault_id)?;
+let master_key_typed = master_key_from_array(&master_key);
+let wrapped = wrap_master_key_for_recovery(&master_key_typed, &recovery_key, vault_id)
+    .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+drop(master_key_typed);
+drop(recovery_key);
 ```
 
-*Listing 6.3: BIP-39 mnemonic-generering og slot-wrap. Entropien zeroizes umiddelbart. Master_key indpakkes med vault_id som AAD.*
+*Listing 7.3: BIP-39 mnemonic-generering og slot-wrap (`setup_recovery.rs:75–99`). Entropi, recovery_key_bytes og master_key_typed zeroizes eksplicit. Master_key indpakkes med vault_id som AAD.*
 
-Listing 6.4 viser slot-iteration ved recovery:
+Listing 7.4 viser slot-iteration ved recovery:
 
 ```rust
-// src-tauri/src/auth/ceremonies/recover_with_phrase.rs
+// src-tauri/src/auth/ceremonies/recover_with_phrase.rs:77–109
 for slot in header.recovery_slots.iter() {
     if slot.method != "bip39" { continue; }
+    let slot_salt = decode_base64_32(&slot.argon2_salt)?;
+    let slot_params = argon2_parameters_from_json(&slot.argon2_params);
+    let wrapped = WrappedMasterKey::new(decode_base64_72(&slot.wrapped_master_key)?);
+
+    let mut recovery_key_bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
     derive_recovery_key_into(
         canonical.as_bytes(),
         &slot_salt,
@@ -596,11 +579,12 @@ for slot in header.recovery_slots.iter() {
         &mut recovery_key_bytes,
     )?;
     let recovery_key = recovery_key_from_array(&recovery_key_bytes);
+    drop(recovery_key_bytes);
     match unwrap_master_key_from_recovery(&wrapped, &recovery_key, &vault_id) {
         Ok(master_key_typed) => {
-            // ... kopiér master_key_typed til Zeroizing<[u8; 32]> bytes
+            let mut bytes: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+            master_key_typed.with_exposed(|exposed| bytes.copy_from_slice(exposed));
             recovered_master_key = Some(bytes);
-            // ... gem recovery_key til efterfølgende re-wrap af filnøgler
             break;
         }
         Err(_) => { drop(recovery_key); }   // næste slot; ingen oracle-information
@@ -608,11 +592,11 @@ for slot in header.recovery_slots.iter() {
 }
 ```
 
-*Listing 6.4: Slot-iteration i `recover_with_phrase.rs`. En forkert phrase producerer `Err(_)` fra AEAD-laget med non-orakulær fejlsemantik.*
+*Listing 7.4: Slot-iteration i `recover_with_phrase.rs`. Slot-salt og wrapped_master_key dekodes fra vault-headerens base64. En forkert phrase producerer `Err(_)` fra AEAD-laget med non-orakulær fejlsemantik.*
 
 Recovery-slot bruger identiske Argon2id-parametre som primær-slot (m=65536 KiB, t=3, p=4) for slot-indistinguishability, så en angriber ikke kan skelne recovery-salt fra primær-salt i vault-headeren. Phrasen forbliver gyldig på tværs af password-rotationer.
 
-»Offline« betegner her at recovery er service-uafhængig. Vault-headeren og BIP-39-frasen er de eneste forudsætninger; ingen Arx Runa-infrastruktur eller tredjepartsudbyder kontaktes under ceremonien.
+Offline betegner her at recovery er service-uafhængig. Vault-headeren og BIP-39-frasen er de eneste forudsætninger; ingen Arx Runa-infrastruktur eller tredjepartsudbyder kontaktes under ceremonien.
 
 ### 7.4 Realisering i Arx Runa
 
@@ -633,10 +617,10 @@ Tier-modellen, USB-nøglefilen og BIP-39-recovery er realiseret på tværs af au
 
 *Tabel 7.3: Nøglemoduler der realiserer autentificering og recovery i `src-tauri/src/auth/`.*
 
-Listing 6.5 viser KDF-input-konstruktionen i `auth/kdf.rs`. Tier-skelnet er udtrykt direkte i Rusts typesystem via `Option<&[u8; 32]>`:
+Listing 7.5 viser KDF-input-konstruktionen i `auth/kdf.rs`. Tier-skelnet er udtrykt direkte i Rusts typesystem via `Option<&[u8; 32]>`:
 
 ```rust
-// src-tauri/src/auth/kdf.rs
+// src-tauri/src/auth/kdf.rs:41–71
 pub(crate) fn derive_master_key_into(
     password_utf8_bytes: &[u8],
     key_file_bytes: Option<&[u8; KEY_FILE_LENGTH_BYTES]>,
@@ -650,7 +634,7 @@ pub(crate) fn derive_master_key_into(
         Zeroizing::new(Vec::with_capacity(combined_input_length));
     combined_input.extend_from_slice(password_utf8_bytes);
     if let Some(bytes) = key_file_bytes {
-        combined_input.extend_from_slice(bytes);   // Tier 2: password || key_file
+        combined_input.extend_from_slice(bytes);
     }
 
     let argon2_params = Params::new(
@@ -670,22 +654,9 @@ pub(crate) fn derive_master_key_into(
 }
 ```
 
-*Listing 6.5: Tier-afhængig KDF-input i `auth/kdf.rs`. `None` svarer til Tier 1 (kun password); `Some(bytes)` svarer til Tier 2 (password konkateneret med 32-byte key file). Den samlede buffer hashes derefter af Argon2id med vault-headerens salt og parametre.*
+*Listing 7.5: `derive_master_key_into` i `auth/kdf.rs:41–71`. `None` svarer til Tier 1 (kun password); `Some(bytes)` svarer til Tier 2 (password konkateneret med 32-byte key file). Tier-skelnet er kodet direkte i typesystemet.*
 
-`DeviceMonitor`-trait-mønsteret deles af tre platformsimplementeringer og en mock (Listing 6.6):
-
-```rust
-// src-tauri/src/auth/device_monitor/mod.rs
-pub trait DeviceMonitor: Send + Sync {
-    fn watch(&self) -> Pin<Box<dyn Stream<Item = DeviceEvent> + Send>>;
-}
-pub enum DeviceEvent {
-    Mounted   { mount_path: PathBuf },
-    Unmounted { mount_path: PathBuf },
-}
-```
-
-*Listing 6.6: `DeviceMonitor`-trait. `MockDeviceMonitor` muliggør test af auto-detektion uden fysisk USB-hardware.*
+`DeviceMonitor`-trait'et deles af tre platformsimplementeringer (Windows, macOS, Linux) og en `MockDeviceMonitor` til test af auto-detektion uden fysisk USB-hardware.
 
 Tre invarianter gennemføres i koden:
 
@@ -695,7 +666,7 @@ Tre invarianter gennemføres i koden:
 
 Testdækning i `scenarios_auth.rs` kører real Argon2id (m=1.024 KiB, t=1) og real SQLCipher for begge tiers og recovery end-to-end.
 
-> **Delkonklusion - Underspørgsmål 2:** USB-nøglefilen integreres som obligatorisk anden faktor ved at indgå som direkte KDF-input konkateneret med adgangskoden; ingen faktor er tilstrækkelig alene. Alternativerne FIDO2 og TOTP fravælges fordi non-deterministisk output er uforeneligt med reproducibel nøgleafledning via Argon2id (RFC 9106, 2021). BIP-39 offline recovery eliminerer tillidsproblemet ved server-side escrow og social recovery: master_key indpakkes under en Argon2id-afledt recovery_key, og den 24-ords phrase vises én gang og gemmes aldrig af systemet (Palatinus et al., 2013). Jf. trusselsmodellen (§5.4) kræver kompromittering af en Tier 2-vault to uafhængige angrebsvektorer (adgangskode og fysisk USB-besiddelse), og recovery er fuldt brugerstyret og offline uden tredjepart.
+> **Delkonklusion - Underspørgsmål 2:** Tier 2-vaults giver brugeren en valgfri hardware-faktor ved oprettelse. Vælges Tier 2, konkateneres USB-nøglefilens 32 bytes direkte med adgangskoden som Argon2id-input, og ingen af de to faktorer er tilstrækkelige alene. FIDO2 fravælges fordi session-unik signatur er uforenelig med reproducibel nøgleafledning; TOTP fravælges fordi den delte hemmelighed `K` ikke kan lagres sikkert i et zero-knowledge-system (FIDO Alliance, 2019; NIST SP 800-63B, 2017). BIP-39 offline recovery eliminerer tillidsproblemet ved server-side escrow og social recovery: master_key indpakkes under en Argon2id-afledt recovery_key, og den 24-ords phrase vises én gang og gemmes aldrig af systemet (Palatinus et al., 2013). Jf. trusselsmodellen (§5.4) kræver kompromittering af en Tier 2-vault to uafhængige angrebsvektorer (adgangskode og fysisk USB-besiddelse), og recovery er fuldt brugerstyret og offline uden tredjepart.
 
 ---
 
@@ -732,7 +703,7 @@ Selv med UUID-blobnavne lækker blob-størrelse filstørrelsesinformation. En fi
 
 *Tabel 8.2: Chunking-paradigmer i E2EE-kontekst. CDC er forkastet fordi rolling hash-beregning over klartekst udgør et metadatalæk mod trusselsmodellens adversary (§5.4). Fast størrelse er valgt (REQ-VAULT-002).*
 
-Arx Runa anvender fast chunk-størrelse default 4 MiB (128 KiB–64 MiB, immutabel efter vault-oprettelse, da ændring kræver fuld genkryptering, REQ-VAULT-002). Throughput: kryptering 4,04 ms (~989 MiB/s), dekryptering 4,85 ms (~825 MiB/s, Bilag D). Padding zero-padder det sidste chunk; filstørrelse gemmes krypteret i manifest'et. AAD er `file_id || chunk_index` (big-endian u32, REQ-CRYPTO-009), der binder chunk til position og forhindrer omplacering. Krypteringssekvensen pr. chunk er vist i Figur 5.2.
+Arx Runa anvender fast chunk-størrelse default 4 MiB (128 KiB–64 MiB, immutabel efter vault-oprettelse, da ændring kræver fuld genkryptering, REQ-VAULT-002). Throughput: kryptering 4,04 ms (~989 MiB/s), dekryptering 4,85 ms (~825 MiB/s, Bilag D). Padding zero-padder det sidste chunk; filstørrelse gemmes krypteret i manifest'et. AAD er `file_id || chunk_index` (big-endian u32, REQ-CRYPTO-009), der binder chunk til position og forhindrer omplacering. Krypteringssekvensen pr. chunk er vist i Figur 6.2.
 
 ```mermaid
 flowchart TD
