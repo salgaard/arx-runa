@@ -678,9 +678,9 @@ Underspørgsmål 3 om chunking, synkronisering og provider-agnostisk storage beh
 
 Cloud-udbyderen modtager samtlige uploadede objekter og kan observere navne, antal og relativ størrelse. Filnavne, mappestrukturer og inkrementelle ændringsmønstre er metadata, der lækkes til udbyderen, medmindre de aktivt skjules.
 
-Arx Runa anvender tilfældigt genererede UUID-strenge som blobnavne. Alle krypterede chunks og manifest-backuppen lagres under UUID-identifikatorer uden relation til det originale filnavn, mappeplacering eller indholdstype (REQ-VAULT-007). Cloud-udbyderen observerer N navngivne ciphertext-objekter og har ingen mulighed for at korrelere navne med filnavne eller mappestruktur.
+Arx Runa anvender tilfældigt genererede UUID-strenge som blobnavne for krypterede chunks. Cloud-udbyderen observerer N navngivne ciphertext-objekter uden relation til det originale filnavn, mappeplacering eller indholdstype (REQ-VAULT-007) og har ingen mulighed for at korrelere navne med filnavne eller mappestruktur. Manifest-backuppen udgør en undtagelse: den lagres under det faste navn `manifest/manifest-backup.blob`, hvilket er nødvendigt for at enhver autentificeret enhed kan lokalisere og gendanne vault'ens tilstand uden forudgående lokal kopi.
 
-Den eneste klartekstfil i den uploadede vault er `vault-header.json` (lokalt på klienten findes derudover `device_id` og evt. `.arxshare`-pakker i klartekst, jf. Bilag C). Headeren indeholder udelukkende offentlige parametre: Argon2id-salt, algoritmeidentifikatorer og et BLAKE3-fingeraftryk af USB-nøglefilen ved Tier-2-autentificering. Intet nøglemateriale, intet filnavn og ingen strukturinformation indgår. Headeren er nødvendig for at en ny enhed kan starte autentificeringen uden forudgående kontakt med vault'en.
+Den eneste klartekstfil i den uploadede vault er `vault-header.json`. Headeren indeholder udelukkende offentlige parametre: Argon2id-salt, algoritmeidentifikatorer og et BLAKE3-fingeraftryk af USB-nøglefilen ved Tier-2-autentificering. Intet nøglemateriale, intet filnavn og ingen strukturinformation indgår. Headeren er nødvendig for at en ny enhed kan starte autentificeringen uden forudgående kontakt med vault'en.
 
 | Navngivningsstrategi | Eksempel | Metadatalæk | Valgt |
 |---|---|---|---|
@@ -697,11 +697,17 @@ Selv med UUID-blobnavne lækker blob-størrelse filstørrelsesinformation. En fi
 
 | Paradigme | Fordel | Ulempe | Valgt |
 |---|---|---|---|
-| Fast størrelse | Størrelsesinfrence til ét interval; ingen klartekst-fingeraftryk | Padding-overhead for korte filer | Ja |
-| Variabel størrelse | Lav overhead | Chunk-størrelsesvariationer afslører indholdsmønstre | Nej |
-| Indholdsdefinieret (CDC) | Deduplication-venlig | Rolling hash over klartekst lækker fingeraftryk (Alexeev m.fl., 2025; Truong m.fl., 2025) | Nej |
+| Fast størrelse | Størrelsesinfrence til ét interval; ingen størrelses-fingeraftryk | Padding-overhead for korte filer: op til 88% for en 500 KB fil ved 4 MiB chunk (Nikitin m.fl., 2019) | Ja (standard) |
+| Padmé (variabel med begrænset læk) | Max 12% overhead; lækker kun O(log log M) bit pr. fil (Nikitin m.fl., 2019) | Blobs ikke uniform størrelse; adversary lærer præcis størrelsestier frem for ét interval | Nej |
+| Bin-packing | Nærzero overhead ved mange korte filer; alle blobs uniform størrelse | Write amplification: sletning af én fil i et packed blob kræver dekryptering og genkryptering af hele blob | Nej |
+| CDC (indholdsdefineret) | Deduplication-venlig | Samme problem som variabel størrelse, men forstærket: indholdsdefinerede grænser giver reproducerbart blob-størrelsesmønster, der muliggør fil-fingerprinting (Alexeev m.fl., 2025; Truong m.fl., 2025) | Nej |
+| Hybrid auto-routing (epoch buffering) | Nærzero overhead for filer under `chunk_size`; eliminerer timing-korrelation for disse; store filer uploades straks uden delay; alle blobs uniform størrelse | Kræver dual-mode manifest-opslag og soft-delete; opt-in | Ja (opt-in) |
 
-*Tabel 8.2: Chunking-paradigmer i E2EE-kontekst. CDC er forkastet fordi rolling hash-beregning over klartekst udgør et metadatalæk mod trusselsmodellens adversary (§5.4). Fast størrelse er valgt (REQ-VAULT-002).*
+*Tabel 8.2: Chunking-paradigmer og padding-strategier evalueret mod Arx Runas zero-knowledge-trusselsmodel (§5.4). Padmé er forkastet som primær løsning fordi variabel blob-størrelse svækker anonymitetsgarantien; den er noteret som fremtidig opt-in (§12.3). CDC er forkastet fordi reproducerbare blob-størrelsesmønstre muliggør fingerprinting uden dekryptering (Alexeev m.fl., 2025; Truong m.fl., 2025). Hybrid auto-routing er valgt fordi den eliminerer padding-overhead for korte filer uden at kompromittere zero-knowledge-garantien og uden write amplification. Kildegrundlag: Nikitin m.fl. (2019); Alexeev m.fl. (2025); Truong m.fl. (2025).*
+
+Hybrid auto-routing fungerer ved at routingbeslutningen træffes på filstørrelse frem for chunk-type. Filer under `chunk_size_bytes` rutes til epoch-bufferen og pakkes med andre korte filer i ét blob ved flush. Filer over grænsen, inklusive afsluttende partial chunks, uploades som selvstændige blobs med det samme. Denne opdeling løser det problem, der gør ren bin-packing uegnet: i bin-packing kræver opdatering eller sletning af én fil dekryptering og genkryptering af hele blob (write amplification). I epoch-modellen håndteres sletning via soft-delete i manifest'et og kompaktering; det afsluttende chunk af store filer uploades straks, så backup aldrig er ufuldstændig for den pågældende fil. Klartekst skrives aldrig til disk: korte filer stages i SQLCipher, store filer krypteres chunk for chunk til staging-mappen.
+
+Padmé (Nikitin m.fl., 2019) er det teoretisk optimale alternativ for storage-effektivitet med begrænset informationslæk og ville reducere overhead til max 12%. Den er fravalgt som primær løsning fordi variabel blob-størrelse giver adversary præcis størrelsesklassifikation frem for ét groft interval. Padmé er noteret som fremtidig opt-in i §12.3.
 
 Arx Runa anvender fast chunk-størrelse default 4 MiB (128 KiB–64 MiB, immutabel efter vault-oprettelse, da ændring kræver fuld genkryptering, REQ-VAULT-002). Throughput: kryptering 4,04 ms (~989 MiB/s), dekryptering 4,85 ms (~825 MiB/s, Bilag D). Padding zero-padder det sidste chunk; filstørrelse gemmes krypteret i manifest'et. AAD er `file_id || chunk_index` (big-endian u32, REQ-CRYPTO-009), der binder chunk til position og forhindrer omplacering. Krypteringssekvensen pr. chunk er vist i Figur 6.2.
 
@@ -759,27 +765,77 @@ flowchart TD
     classDef db fill:#d97706,stroke:#92400e,color:#fff
 ```
 
-*Figur 7.1: Chunk-pipeline. Krypteringsstien zero-padder, krypterer og BLAKE3-checksummer hvert blob. Dekrypteringsstien verificerer checksummen fail-fast inden dekryptering. `file_key` zeroises umiddelbart efter brug.*
-
-**Epoch buffering: padding-overhead-reduktion for mange korte filer**
-
-Fast chunk-størrelse medfører padding-overhead på op til 400:1 for korte filer. Epoch buffering (opt-in) staged filer under `chunk_size_bytes` i SQLCipher-tabellen `epoch_buffer`, så klartekst aldrig skrives til disk. Ved flush concateneres staged filer og krypteres som ét blob; extents gemmes i manifest'et til slice-baseret dekryptering.
-
-| Egenskab | Selvstændig sti | Epoch buffer-sti |
-|---|---|---|
-| Filer pr. blob | 1 | Mange (op til flush-tærskel) |
-| Padding-overhead | Fuld chunk-størrelse pr. fil | Delt på tværs af filer i en epoch |
-| Cloud API-kald | 1 pr. chunk | 1 pr. epoch-blob |
-| Klartekst i staging | Nej (krypteret blob) | Nej (staged i SQLCipher) |
-| Aktivering | Altid (default) | Opt-in ved vault-oprettelse |
-
-*Tabel 8.3: Sammenligning af selvstændig upload og epoch buffer-upload. Padding-overhead og API-kald reduceres for vaults med mange korte filer. Zero-knowledge-garantien opretholdes i begge stier.*
+*Figur 8.1: Chunk-pipeline. Krypteringsstien zero-padder, krypterer og BLAKE3-checksummer hvert blob. Dekrypteringsstien verificerer checksummen fail-fast inden dekryptering. `file_key` zeroises umiddelbart efter brug.*
 
 ### 8.3 Manifest-arkitektur
 
-Manifest'et er vault'ens lokale kilde til sandhed og indeholder al klartekst-metadata: filnavne, mappestruktur, chunk-referencer med BLAKE3-checksum, indpakkede filnøgler og synkroniseringsmetadata. Det er den eneste komponent, der holder meningsfuld information om brugerens filer.
+Manifest'et er vault'ens lokale kilde til sandhed og indeholder al meningsfuld metadata: filnavne, mappestruktur, chunk-referencer med BLAKE3-checksum, indpakkede filnøgler og synkroniseringsmetadata. Det er den eneste komponent, der holder meningsfuld information om brugerens filer.
 
 Manifest'et er en SQLCipher-database krypteret med `sqlcipher_key` (HKDF, §6.2). Til cloud-synkronisering serialiseres det via `VACUUM INTO` og krypteres separat med `manifest_key`, så cloud-udbyderen modtager en opaque blob. `manifest_key`-kompartmentalisering fra `sqlcipher_key` følger NIST SP 800-57's nøgleseparerings-princip (NIST, 2020b).
+
+Figur 8.2 viser relationsmodellen for kerneskemaet (`src-tauri/src/storage/schema.rs`).
+
+```mermaid
+erDiagram
+    nodes {
+        TEXT node_id PK
+        TEXT parent_id FK
+        TEXT node_type
+        TEXT name
+        INTEGER size_bytes
+        BLOB file_key_wrapped
+    }
+    chunks {
+        TEXT chunk_id PK
+        TEXT node_id FK
+        INTEGER chunk_index
+        TEXT blob_name
+        INTEGER size_padded
+        BLOB blake3_checksum
+        TEXT epoch_blob_id FK
+        INTEGER byte_offset
+        INTEGER byte_length
+    }
+    epoch_blobs {
+        TEXT epoch_blob_id PK
+        TEXT blob_name
+        INTEGER size_padded
+        BLOB blake3_checksum
+    }
+    manifest_meta {
+        TEXT key PK
+        TEXT value
+    }
+    pending_deletions {
+        TEXT blob_name PK
+        INTEGER queued_at
+    }
+    nodes ||--o{ nodes : "parent_id (mappe-hierarki)"
+    nodes ||--o{ chunks : "ON DELETE CASCADE"
+    epoch_blobs ||--o{ chunks : "epoch_blob_id"
+```
+
+*Figur 8.2: Manifest-skema (kerneoversigt, skema v9). `file_key_wrapped` er lagret én gang pr. fil i `nodes`; `chunks.blob_name` er et UUID v4 uden relation til filidentitet. `pending_deletions` sikrer at cloud-sletninger overlever nedbrud.*
+
+Skemaet håndhæver zero-knowledge-invarianterne direkte i DDL frem for udelukkende i applikationslogikken. `file_key_wrapped` placeres i `nodes` frem for i `chunks` fordi én nøgle pr. fil eliminerer N redundante kopier, og CASCADE-sletning fungerer korrekt. `blob_name` i `chunks` er et UUID v4 uden relation til filnavnet — manifest'et er det eneste sted sammenhængen kendes, og det er krypteret. `UNIQUE(blob_name)` omsætter en UUID-kollision (statistisk negligibel) til en deterministisk insert-fejl frem for en lydløs overskrivning.
+
+To constraints er centrale for korrekthed:
+
+```sql
+-- nodes: fil har altid nøgle; mappe har aldrig nøgle
+CHECK ((node_type = 'file'      AND file_key_wrapped IS NOT NULL)
+    OR (node_type = 'directory' AND file_key_wrapped IS NULL))
+
+-- chunks: et chunk tilhører præcis én sti — standalone eller epoch
+CHECK (
+    (blob_name IS NOT NULL AND epoch_blob_id IS NULL
+         AND byte_offset IS NULL AND byte_length IS NULL) OR
+    (blob_name IS NULL AND epoch_blob_id IS NOT NULL
+         AND byte_offset IS NOT NULL AND byte_length IS NOT NULL)
+)
+```
+
+*Kode 8.1: DDL CHECK-constraints fra `schema.rs`. Den første fanger ufuldstændige node-rækker ved skrive-tid. Den anden håndhæver routing-invarianten fra §8.2: et chunk er enten standalone eller epoch-bufferet.*
 
 ### 8.4 Provider-agnostisk transport: Rclone sidecar-model
 
@@ -811,9 +867,9 @@ pub trait CloudTransport: Send + Sync {
 }
 ```
 
-*Listing 7.1: `CloudTransport`-trait. `RcloneTransport` i produktion; in-memory mock i tests.*
+*Listing 8.1: `CloudTransport`-trait. `RcloneTransport` i produktion; in-memory mock i tests.*
 
-Rclone-processerne modtager aldrig klartekst, kun krypterede staging-blobs. Credentials krypteres i SQLCipher og eksponeres ikke i klartekst til disk.
+Rclone-processerne modtager aldrig klartekst, kun krypterede staging-blobs. Vault-credentials krypteres i SQLCipher. Under sync genereres en midlertidig `rclone.conf` på disk, som overskrives og slettes ved vault-lås.
 
 ### 8.5 Synkroniseringsprotokol og konsistensgaranti
 
@@ -834,101 +890,82 @@ Arx Runa vælger monoton snapshot-tæller (REQ-VAULT-006): `cloud_counter == loc
 sequenceDiagram
     participant User
     participant Sync as Sync Module
-    participant Meta as MetadataStore (SQLCipher)
-    participant Stage as Staging Directory
-    participant RT as RcloneTransport (sidecar)
+    participant Meta as MetadataStore
+    participant RT as RcloneTransport
     participant Cloud as Cloud Remote
 
-    note over User,Cloud: Push Flow (upload local changes)
     User->>Sync: push()
-    Sync->>Meta: get_meta("snapshot_counter") #45;#62; local_counter
-    Sync->>RT: download_blob("manifest/manifest-backup.blob", temp)
-    RT->>Cloud: rclone copyto manifest/manifest-backup.blob
-    Cloud-->>RT: manifest-backup.blob
-    RT-->>Sync: temp file
-    Sync->>Sync: decrypt manifest backup #45;#62; cloud_counter
-    break cloud_counter #62; local_counter
-        Sync-->>User: CONFLICT - pull first
-    end
-    break cloud_counter #60; local_counter
-        Sync-->>User: CONFLICT - cloud manifest older than local
-    end
-
-    Sync->>Meta: get all staged blob_names
-    Sync->>Sync: Fisher-Yates shuffle(blob_list)
-
-    note over Sync,Cloud: Concurrent upload (4 Rclone processes via JoinSet)
-
-    par Upload blob 1
-        Sync->>RT: upload_blob(staging/uuid1.blob)
-        RT->>Cloud: rclone copyto vault/uuid1.blob
-        Cloud-->>RT: ok
-        RT-->>Sync: ok
-        Sync->>Stage: delete staging/uuid1.blob
-    and Upload blob N
-        Sync->>RT: upload_blob(staging/uuidN.blob)
-        RT->>Cloud: rclone copyto vault/uuidN.blob
-        Cloud-->>RT: ok
-        RT-->>Sync: ok
-        Sync->>Stage: delete staging/uuidN.blob
-    end
-
-    note over Sync: Repeat for next batch until all blobs uploaded
-    Sync->>Meta: increment_snapshot_counter() #45;#62; new_counter
-    Sync->>Sync: VACUUM INTO temp#59; encrypt with manifest_key
-    Sync->>RT: upload_blob(temp, manifest/manifest-backup.blob)
+    Sync->>Meta: get snapshot_counter #45;#62; local_counter
+    Sync->>RT: download manifest/manifest-backup.blob
     RT->>Cloud: rclone copyto
-    Cloud-->>RT: ok
-    Sync->>RT: upload_blob(vault-header.json, vault-header.json)
+    Cloud-->>Sync: manifest-backup.blob
+    Sync->>Sync: decrypt #45;#62; cloud_counter
+    break cloud_counter != local_counter
+        Sync-->>User: CONFLICT
+    end
+    Sync->>Meta: get staged blob_names
+    Sync->>Sync: Fisher-Yates shuffle
+    par Parallel upload (max 4)
+        Sync->>RT: upload vault/uuid1.blob
+        RT->>Cloud: rclone copyto
+    and
+        Sync->>RT: upload vault/uuidN.blob
+        RT->>Cloud: rclone copyto
+    end
+    Sync->>Meta: increment_snapshot_counter()
+    Sync->>Sync: VACUUM INTO temp#59; encrypt manifest_key
+    Sync->>RT: upload manifest/manifest-backup.blob
     RT->>Cloud: rclone copyto
-    Cloud-->>RT: ok
-    Sync-->>User: push complete (new_counter blobs synced)
+    Sync->>RT: upload vault-header.json
+    RT->>Cloud: rclone copyto
+    Sync-->>User: push complete
+```
 
-    note over User,Cloud: Pull Flow (new-device recovery)
+*Figur 8.3: Push-flow. Snapshot-tæller sammenlignes med cloud-kopien; ved konflikt afbrydes; blobs uploades parallelt; manifest-backup uploades sidst (idempotent).*
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Sync as Sync Module
+    participant Meta as MetadataStore
+    participant RT as RcloneTransport
+    participant Cloud as Cloud Remote
+
     User->>Sync: pull()
-    Sync->>RT: download_blob("vault-header.json", temp)
-    RT->>Cloud: rclone copyto vault-header.json
-    Cloud-->>RT: vault-header.json
-    RT-->>Sync: temp file
-    Sync->>Sync: parse VaultHeader #45;#62; salt, params, key_file_blake3
+    Sync->>RT: download vault-header.json
+    RT->>Cloud: rclone copyto
+    Cloud-->>Sync: vault-header.json
+    Sync->>Sync: parse #45;#62; salt, params, key_file_blake3
     Sync-->>User: prompt: password + USB key file
     User->>Sync: password + key_file_path
     Sync->>Sync: Argon2id(password #124;#124; key_file, salt) #45;#62; master_key
-    Sync->>Sync: HKDF #45;#62; key_encryption_key, sqlcipher_key, manifest_key
+    Sync->>Sync: HKDF #45;#62; sqlcipher_key, manifest_key
     Sync->>Sync: zeroize(master_key)
-    Sync->>RT: download_blob("manifest/manifest-backup.blob", temp)
-    RT->>Cloud: rclone copyto manifest/manifest-backup.blob
-    Cloud-->>RT: manifest-backup.blob
-    RT-->>Sync: temp file
-    Sync->>Sync: decrypt manifest backup with manifest_key
-    Sync->>Meta: import SQLCipher DB (keyed with sqlcipher_key)
-    Sync->>Meta: get all chunk rows #45;#62; (blob_name, blake3_checksum)
-
-    note over Sync,Cloud: Concurrent download (4 Rclone processes via JoinSet)
-
-    par Download blob 1
-        Sync->>RT: download_blob(vault/uuid1.blob)
-        RT->>Cloud: rclone copyto vault/uuid1.blob
-        Cloud-->>RT: uuid1.blob
-        RT-->>Sync: staging/uuid1.blob
-        Sync->>Sync: Verify BLAKE3 (delete + record failure on mismatch)
-    and Download blob N
-        Sync->>RT: download_blob(vault/uuidN.blob)
-        RT->>Cloud: rclone copyto vault/uuidN.blob
-        Cloud-->>RT: uuidN.blob
-        RT-->>Sync: staging/uuidN.blob
-        Sync->>Sync: Verify BLAKE3
+    Sync->>RT: download manifest/manifest-backup.blob
+    RT->>Cloud: rclone copyto
+    Cloud-->>Sync: manifest-backup.blob
+    Sync->>Sync: decrypt with manifest_key
+    Sync->>Meta: import SQLCipher DB
+    Sync->>Meta: get chunk rows #45;#62; blob_names
+    par Parallel download (max 4)
+        Sync->>RT: download vault/uuid1.blob
+        RT->>Cloud: rclone copyto
+        Cloud-->>Sync: uuid1.blob
+        Sync->>Sync: verify BLAKE3
+    and
+        Sync->>RT: download vault/uuidN.blob
+        RT->>Cloud: rclone copyto
+        Cloud-->>Sync: uuidN.blob
+        Sync->>Sync: verify BLAKE3
     end
-
-    note over Sync: Repeat for next batch until all blobs downloaded
-    Sync-->>User: pull complete (any failures reported)
+    Sync-->>User: pull complete
 ```
 
-*Figur 7.2: Push/pull-flow. Snapshot-tæller kontrolleres for konflikt; blobs uploades parallelt; manifest-backup uploades sidst.*
+*Figur 8.4: Pull-flow (ny-enhed recovery). Vault-header hentes og bruges til nøgleafledning; manifest-backup dekrypteres og importeres; alle blobs downloades og BLAKE3-verificeres.*
 
 ### 8.6 Realisering i Arx Runa
 
-Tabel 8.3 angiver de primære moduler og deres ansvar.
+Tabel 8.6 angiver de primære moduler og deres ansvar.
 
 | Modul | Ansvar |
 |-------|--------|
@@ -938,9 +975,9 @@ Tabel 8.3 angiver de primære moduler og deres ansvar.
 | `storage/cloud/rclone.rs` | Rclone sidecar; alle argumenter som `Vec<OsString>`; stderr-sanitering |
 | `storage/cloud/sync.rs` | Push/pull-protokol: snapshot-tæller, Fisher-Yates-rækkefølge, konfliktsemantik |
 
-*Tabel 8.3: Nøglemoduler der realiserer chunking og synkronisering i `src-tauri/src/storage/`.*
+*Tabel 8.6: Nøglemoduler der realiserer chunking og synkronisering i `src-tauri/src/storage/`.*
 
-Listing 7.2 viser UUID-blobnavngivningen og zero-padding i `encrypt_file_inner()`. Bufferen pre-allokeres med nul-bytes, så en delvist fyldt chunk for den sidste blok automatisk er zero-paddet til fuld chunk-størrelse:
+Listing 8.2 viser UUID-blobnavngivningen og zero-padding i `encrypt_file_inner()`. Bufferen pre-allokeres med nul-bytes, så en delvist fyldt chunk for den sidste blok automatisk er zero-paddet til fuld chunk-størrelse:
 
 ```{.rust .numberLines startFrom="95"}
 // src-tauri/src/storage/pipeline/encrypt_file.rs
@@ -956,7 +993,78 @@ chunk_records.push(ChunkRecord {
 });
 ```
 
-*Listing 7.2: UUID-blobnavngivning og zero-padding i `encrypt_file_inner()`. Bufferen initialiseres med nul-bytes; en delvist fyldt buffer er automatisk zero-paddet. Blobnavnet er UUID v4 uden relation til filnavn, position eller vault-identitet.*
+*Listing 8.2: UUID-blobnavngivning og zero-padding i `encrypt_file_inner()`. Bufferen initialiseres med nul-bytes; en delvist fyldt buffer er automatisk zero-paddet. Blobnavnet er UUID v4 uden relation til filnavn, position eller vault-identitet.*
+
+Listing 8.3 viser routing-funktionen der afgør om en fil krypteres straks eller stages i epoch-bufferen. Beslutningen er en enkelt betingelse på to vault-konfigurationsparametre:
+
+```rust
+// storage/vault_ops/routing.rs
+pub fn decide(file_size: u64, chunk_size_bytes: u64, epoch_enabled: bool) -> RouteDecision {
+    if epoch_enabled && file_size < chunk_size_bytes {
+        RouteDecision::EpochBuffer
+    } else {
+        RouteDecision::Immediate
+    }
+}
+```
+
+*Listing 8.3: Routing-funktionen i `routing.rs`. Filer præcis på grænsen (`file_size == chunk_size_bytes`) rutes til den selvstændige sti, fordi de fylder én hel chunk og ikke vinder noget ved epoch-packing. Parametre læses fra `manifest_meta` ved hver upload.*
+
+Listing 8.4 viser de to routing-arme i `upload_file()`. Epoch-armen læser hele filen i RAM som én `Zeroizing<Vec<u8>>` og stages den i SQLCipher; den selvstændige arm genererer en `file_key` og streamer filen chunk for chunk til stagingmappen:
+
+```rust
+// storage/vault_ops/upload_file.rs  (forkortet)
+match decide(file_size, chunk_size_bytes, epoch_buffer_enabled) {
+    RouteDecision::EpochBuffer => {
+        let plaintext: Zeroizing<Vec<u8>> = Zeroizing::new(
+            tokio::fs::read(source).await?
+        );
+        metadata_store
+            .insert_file_node_and_stage_epoch_entry(&node, plaintext)
+            .await?;
+        Ok(node)
+    }
+    RouteDecision::Immediate => {
+        let file_key = generate_file_key();
+        let wrapped_file_key = wrap_file_key(&file_key, &FileId::from_uuid(node_id), kek)?;
+        let chunks = pipeline::encrypt_file(
+            source, node_id, &file_key, metadata_store, staging_directory, progress,
+        ).await?;
+        metadata_store.insert_file_with_chunks(&node, &chunks).await?;
+        Ok(node)
+    }
+}
+```
+
+*Listing 8.4: De to routing-arme i `upload_file()`. Epoch-armen staging'er filen som ukrypteret `Zeroizing`-buffer i SQLCipher (aldrig til disk); den selvstændige arm genererer en per-fil `file_key`, krypterer chunk for chunk og skriver krypterede blobs til stagingmappen.*
+
+Listing 8.5 viser kernen i `flush_epoch_buffer()`: concat-løkken der pakker staged filer i RAM, zero-padder til `chunk_size_bytes` og krypterer det samlede blob. Extents (byte-offset og -length pr. fil) committes atomisk med manifest-rækkerne:
+
+```rust
+// storage/vault_ops/epoch_flush.rs  (flush_one_blob, forkortet)
+let mut packed: Zeroizing<Vec<u8>> = Zeroizing::new(Vec::new());
+let mut extents: Vec<(Uuid, u32, u64, u64)> = Vec::new();
+
+for (node_id, plaintext) in entries {
+    let byte_offset = packed.len() as u64;
+    let byte_length = plaintext.len() as u64;
+    packed.extend_from_slice(plaintext);
+    extents.push((*node_id, 0u32, byte_offset, byte_length));
+}
+
+// Zero-pad til præcis chunk_size_bytes
+if packed.len() < chunk_size_usize {
+    packed.resize(chunk_size_usize, 0u8);
+}
+
+let encrypted = encrypt_chunk(
+    packed, &file_key, &FileId::from_uuid(epoch_blob_id), ChunkIndex::new(0)
+)?;
+tokio::fs::write(blob_path, &encrypted).await?;
+metadata_store.commit_epoch_flush(&record, &extents).await?;
+```
+
+*Listing 8.5: Epoch-flush i `epoch_flush.rs`. Staged plaintexts concateneres i en `Zeroizing`-buffer og zero-paddes til fuld chunk-størrelse — cloud-udbyderen ser et uniform-størrelse blob identisk med standalone-blobs. Extents committes atomisk med `epoch_blobs`- og `chunks`-rækkerne; buffer ryddes i samme transaktion.*
 
 Tre invarianter gennemføres i koden:
 
@@ -968,12 +1076,12 @@ Testdækning via `tests/scenarios_sync.rs` (UC-1 round-trip med real SQLCipher, 
 
 ---
 
-> **Delkonklusion - Underspørgsmål 3:** UUID-blobnavne eliminerer filnavn- og mappestrukturlækage. Fast chunk-størrelse med zero-padding begrænser størrelsesinfrence til ét interval. Manifest krypteres i SQLCipher med separat HKDF-nøgle. Rclone sidecar sikrer provider-agnosticitet via `Vec<OsString>`. Monoton snapshot-tæller er tilstrækkelig i en enkelt-primær-vault-model. Jf. trusselsmodellen (§5.4) modtager cloud-udbyderen alene navnløse, fast-størrelse ciphertext-blobs uden filsystem-semantik.
+> **Delkonklusion - Underspørgsmål 3:** Chunks lagres under UUID v4-blobnavne uden relation til filnavn eller mappestruktur (REQ-VAULT-007); manifest-backuppen lagres under det faste navn `manifest/manifest-backup.blob` så enhver enhed kan gendanne vault'en. Fast chunk-størrelse med zero-padding begrænser størrelsesinfrence til ét interval; hybrid auto-routing (opt-in) eliminerer padding-overhead for filer under `chunk_size_bytes` uden at bryde uniform blob-størrelse. Manifest krypteres med en HKDF-afledt `manifest_key` adskilt fra `sqlcipher_key` (NIST SP 800-57, NIST, 2020b). Rclone sidecar giver provider-agnosticitet; shell-injection afværges via `Vec<OsString>` (REQ-SYNC-004). Monoton snapshot-tæller er tilstrækkelig i en enkelt-primær-vault-model. Cloud-udbyderen modtager alene navnløse, fast-størrelse ciphertext-blobs uden filsystemsemantik eller nøglemateriale.
 
 
 ## 9. Analyse og Realisering: Zero-Trace operation og RAM-baseret UI
 
-Underspørgsmål 4 handler om Zero-Trace-drift. Hvordan kan en RAM-baseret UI sikre at dekrypteret indhold aldrig skrives til disk, og hvilke forensiske spor forbliver efter vault-låsning? Analysen er opdelt i trusselsbillede og scope (§9.1), nøglemateriale i hukommelse (§9.2), session-livscyklus (§9.3) og RAM-baseret filvisning (§9.4), efterfulgt af en tværgående realiseringstabel (§9.5).
+Underspørgsmål 4 handler om Zero-Trace-drift. Hvordan kan en RAM-baseret UI sikre at dekrypteret indhold aldrig skrives til disk, og hvilke forensiske spor forbliver efter vault-låsning? Analysen er opdelt i trusselsbillede og scope (§9.1), nøglemateriale i hukommelse (§9.2), session-livscyklus (§9.3) og RAM-baseret filvisning (§9.4).
 
 ### 9.1 Zero-Trace: trusselsbillede og scope
 
@@ -1002,7 +1110,7 @@ Fire tilgange til beskyttelse mod OS-swap er identificeret og vurderet mod evalu
 
 *Tabel 9.1: Alternativer til nøglebeskyttelse mod OS-swap. Kildegrundlag: NIST SP 800-57 Part 1 Rev 5 §6.4; POSIX mlock(2); Windows VirtualLock API.*
 
-`mlock`/`VirtualLock` er valgt frem for custom allocator (Unix-begrænset) og HSM/TEE (hardware-krav) fordi de opfylder kravene på alle målplatforme med en simpel RAII-model og hard-error-semantik (NIST, 2020b).
+`mlock`/`VirtualLock` er valgt frem for custom allocator (Unix-begrænset) og HSM/TEE (hardware-krav) fordi de opfylder kravene på alle målplatforme med en simpel RAII-model og hard-error-semantik (NIST, 2020b) (REQ-AUTH-014).
 
 `SecureBytes<N>` i `src-tauri/src/memory/secure_buffer.rs` er den kanoniske container for session-nøglers byte-indhold. Bufferen allokeres, låses og zeroizes i en samlet RAII-wrapper:
 
@@ -1039,7 +1147,7 @@ pub struct FileKey(SecretBox<[u8; 32]>);
 
 ### 9.3 Session-livscyklus og automatisk låsning
 
-Session-livscyklussen er modelleret som en tilstandsmaskine med seks tilstande (figur 8.1). SessionKeys er til stede i mlocked hukommelse i tilstandene Unlocked, Active, Idle og TimingOut og zeroizes ved overgangen til Locked.
+Session-livscyklussen er modelleret som en tilstandsmaskine med seks tilstande (figur 9.1). SessionKeys er til stede i mlocked hukommelse i tilstandene Unlocked, Active, Idle og TimingOut og zeroizes ved overgangen til Locked.
 
 ```mermaid
 stateDiagram-v2
@@ -1060,7 +1168,7 @@ stateDiagram-v2
     Locked --> [*]: App lukkes
 ```
 
-*Figur 8.1: Session-livscyklus i Arx Runa. SessionKeys er mlockede i tilstandene Unlocked–TimingOut og zeroizes ved transition til Locked via `ZeroizeOnDrop`.*
+*Figur 9.1: Session-livscyklus i Arx Runa. SessionKeys er mlockede i tilstandene Unlocked–TimingOut og zeroizes ved transition til Locked via `ZeroizeOnDrop`.*
 
 `SessionManager.lock()` lukker gaten via `fetch_or(GATE_CLOSED_FLAG)` på et atomisk `u32` der kombinerer gate-flag og operations-tæller:
 
@@ -1089,7 +1197,7 @@ Dekrypteret filindhold er en selvstændig Zero-Trace-risiko. To tilgange impleme
 
 *Tabel 9.2: Alternativer til in-app filvisning uden disk-touch.*
 
-`get_file_content(file_id)` afviser filer over 50 MiB uanset MIME-type (`FIFTY_MIB` i `file_commands.rs`). Gyldige filer dekrypteres til `Zeroizing<Vec<u8>>`, base64-kodes og returneres, og frontend opretter `blob:` URL der tilbagekaldes ved luk. Ingen plaintext berører disk. Store ikke-video-filer over grænsen kan kun ses ved at downloade til en bruger-valgt destination via `download_file`, hvilket forlader Zero-Trace-scopet og er brugerens informerede valg.
+`get_file_content(file_id)` afviser filer over 50 MiB uanset MIME-type (`FIFTY_MIB` i `file_commands.rs`). Gyldige filer dekrypteres til `Zeroizing<Vec<u8>>`, base64-kodes og returneres, og frontend opretter `blob:` URL der tilbagekaldes ved luk. Ingen plaintext berører disk (REQ-VAULT-009, REQ-UI-010). Store ikke-video-filer over grænsen kan kun ses ved at downloade til en bruger-valgt destination via `download_file`, hvilket forlader Zero-Trace-scopet og er brugerens informerede valg.
 
 #### Sti B: `arxvault://` URI-scheme, video-streaming (ingen størrelsesgrænse)
 
@@ -1104,7 +1212,7 @@ Handleren i `video_stream.rs` dekrypterer kun de chunks der overlapper `Range: b
 
 #### Frontend-tilstand og Zero-Trace-compliance
 
-Al frontend-tilstand er holdt i Leptos-signaler (RAM), uden brug af `localStorage`, `sessionStorage` eller `IndexedDB`. CSP deaktiverer service workers og ekstern script-eksekvering via `default-src 'self'`.
+Al frontend-tilstand er holdt i Leptos-signaler (RAM), uden brug af `localStorage`, `sessionStorage` eller `IndexedDB` (REQ-UI-002). CSP deaktiverer service workers og ekstern script-eksekvering via `default-src 'self'`.
 
 `SessionActions::clear()` i `src/state/session_context.rs` kaldes ved `SessionEvent::Locked` og nulstiller hele session-tilstanden til defaults i ét atomisk signal-opdatering:
 
@@ -1119,7 +1227,7 @@ Password-feltet i login-formularen zeroizes straks efter IPC-kaldet, uanset succ
 
 ---
 
-> **Delkonklusion - Underspørgsmål 4:** Zero-Trace opnås via tre adskilte lag. `mlock`/`VirtualLock` forhindrer at session-nøgler ender i swap eller hibernation. En atomisk session-gate med eksplicit `rclone.conf`-sletning minimerer credentials-vinduet på disk. RAM-only filvisning via `blob:` URL og `arxvault://` Range-stream eliminerer temp-filer og browser-caches. E2E-test bekræfter ren browser-state efter vault-lock. To undtagelser (video-frames i HTTP-handoff og OS crash dumps) er eksplicitte arkitektoniske begrænsninger.
+> **Delkonklusion - Underspørgsmål 4:** Zero-Trace opnås via tre adskilte lag. `mlock`/`VirtualLock` forhindrer at session-nøgler ender i swap eller hibernation. En atomisk session-gate med eksplicit `rclone.conf`-sletning minimerer credentials-vinduet på disk. RAM-only filvisning via `blob:` URL og `arxvault://` Range-stream eliminerer temp-filer og browser-caches. `SessionActions::clear()` ved `SessionEvent::Locked` sikrer ren browser-state efter vault-lock (REQ-UI-002). To undtagelser (video-frames i HTTP-handoff og OS crash dumps) er eksplicitte arkitektoniske begrænsninger.
 
 ## 10. Analyse og Realisering: Fildeling i et zero-trust system
 
@@ -1591,7 +1699,7 @@ U.S. Congress. (2018). *Clarifying Lawful Overseas Use of Data Act (CLOUD Act)*.
   | wrapped_master_key | `master_key` krypteret med `recovery_key` under XChaCha20-Poly1305 og lagret i recovery slot. 72 bytes: 24-byte nonce, 32-byte ciphertext, 16-byte tag. AAD inkluderer `vault_id` for transplantationsbeskyttelse. |
   | X25519 | Diffie-Hellman-funktion over Curve25519. Hver Arx Runa-bruger genererer et X25519-nøglepar som delingsidentitet; offentlig nøgle udveksles ud-af-bånd, privat nøgle wrappes i vault'en. |
   | XChaCha20-Poly1305 | AEAD-primitiv (draft-irtf-cfrg-xchacha-03) med 192-bit nonce og Poly1305-autentifikation. Anvendes til alle chunk-krypteringer og til at wrappe `master_key` i recovery slot. |
-  | Zero-Trace | Designprincip: ingen dekrypteret plaintext eller credentials forlader RAM. Eksplicitte arkitektoniske undtagelser (Tauri HTTP-handoff, OS crash dumps, Windows fast startup) er dokumenteret i §5.4 og §9.5. |
+  | Zero-Trace | Designprincip: ingen dekrypteret plaintext eller credentials forlader RAM. Eksplicitte arkitektoniske undtagelser (Tauri HTTP-handoff, OS crash dumps, Windows fast startup) er dokumenteret i §5.4 og §9.4. |
   | Zeroizing<T> / ZeroizeOnDrop | Rust-typer fra `zeroize`-cratet der overskriver bufferen med nul ved drop. Anvendes på alle session-nøgler og midlertidige plaintext-buffere. |
 - **Bilag B:** Trusselsmodel. STRIDE-kategoriseret threat matrix afledt af adversary-modellen i §5.4. STRIDE (Shostack, 2014) opdeler trusler i seks kategorier: Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service og Elevation of Privilege. Hver række kortlægger én konkret trussel mod én af de tre primære adversaries (cloud-udbyder, juridisk tvang, fysisk angriber) og angiver den eksplicitte mitigering med reference til en analysesektion eller en dokumenteret out-of-scope-note.
 
@@ -1611,7 +1719,7 @@ U.S. Congress. (2018). *Clarifying Lawful Overseas Use of Data Act (CLOUD Act)*.
   | I-4 | Information Disclosure | Cloud-udbyder | Identifikation af modtager af share-pakke | Hele routing-payload ligger i HPKE-envelopen; cloud ser kun uigennemsigtige blobs i `shared/<file_share_id>/` | §10.2, §10.5 |
   | I-5 | Information Disclosure | Cloud-udbyder | Inference af filstørrelse fra blob-antal og -størrelse | Fast 4 MiB chunk-størrelse + zero-padding begrænser size-inference til ét interval | §8.2 |
   | I-6 | Information Disclosure | Fysisk angriber | Læsning af nøglemateriale fra OS-swap eller hibernation-fil | `mlock`/`VirtualLock` på alle session-nøgler; hård fejl ved fejlet lås (REQ-AUTH-014) | §9.2 |
-  | I-7 | Information Disclosure | Fysisk angriber | Læsning af dekrypteret filindhold fra `%TEMP%` eller browser-storage efter vault-lås | `blob:` URL og `arxvault://` Range-stream uden disk-touch; `VaultActions::clear()` ved lock-event | §9.4, §9.5, Bilag C |
+  | I-7 | Information Disclosure | Fysisk angriber | Læsning af dekrypteret filindhold fra `%TEMP%` eller browser-storage efter vault-lås | `blob:` URL og `arxvault://` Range-stream uden disk-touch; `VaultActions::clear()` ved lock-event | §9.4, Bilag C |
   | I-8 | Information Disclosure | Fysisk angriber | Læsning af `rclone.conf` med cloud-credentials på disk under aktiv session | Owner-only ACL; `SetDispositionInformationEx` delete-on-close ved vault-lås; crash-vindue er dokumenteret begrænsning med startup-sweep | §12.2.3, Bilag C |
   | D-1 | Denial of Service | Cloud-udbyder | Cloud nægter at servere blobs eller sletter dem vilkårligt | Multi-destination push (REQ-SYNC-010); brugeren kan rotere til anden provider eller anvende mirror-destination som backup | §8.4, §12.2.3 |
   | D-2 | Denial of Service | Selvforvaltet (designet trade-off) | Bruger mister både USB-nøglefil og BIP-39-frase | Ingen mitigering; eksplicit konsekvens af selvforvaltet ansvar uden tredjeparts-escrow | §12.2.2, §13.2 |
@@ -1648,7 +1756,7 @@ U.S. Congress. (2018). *Clarifying Lawful Overseas Use of Data Act (CLOUD Act)*.
   |---|---|---|
   | `%TEMP%` arx-runa-filer (seneste 10 min) | Ingen | Bekræftet |
   | `rclone*.conf` i `%TEMP%` | Ingen | Bekræftet |
-  | `%APPDATA%\arx-runa` sensitive filer | Kun `vault.db`, `vault-header.json` (krypterede), `device_id`, `.arxshare` | Bekræftet |
+  | `%APPDATA%\arx-runa` sensitive filer | Kun `vault.db`, `vault-header.json` (krypterede), `device_id` (klartekst), `.arxshare` (HPKE-krypteret) | Bekræftet |
   | Orphan rclone-mapper fra tidligere sessioner | 0 (23 filer ryddet ved opstart) | Bekræftet |
 
   `*.tmp`- og `cv_debug.log`-filer i `%TEMP%` stammer fra Visual Studio og Windows-systemprocesser og er uden relation til Arx Runa.
