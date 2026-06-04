@@ -19,4 +19,4 @@ secrets/
 .cursor/
 # mdBook build output
 docs/book/
-docs/report/mermaid-tmp/*
+docs/report/mermaid-tmp/

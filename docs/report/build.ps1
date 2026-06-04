@@ -19,12 +19,12 @@ for ($i = $blocks.Count - 1; $i -ge 0; $i--) {
     $pngFile = Join-Path $imgDir "mermaid_$num.png"
 
     [System.IO.File]::WriteAllText($mmdFile, $m.Groups[1].Value, [System.Text.Encoding]::UTF8)
-    & "C:\Users\chris\AppData\Roaming\npm\mmdc.cmd" -i $mmdFile -o $pngFile -w 1400 -b white 2>$null
+    & "C:\Users\chris\AppData\Roaming\npm\mmdc.cmd" -i $mmdFile -o $pngFile -w 2000 -b white 2>$null
 
     if (Test-Path $pngFile) {
         Write-Host "  OK: diagram $num"
         $pngRel = "mermaid-tmp/mermaid_$num.png"
-        $replacement = "![]($pngRel)"
+        $replacement = "\noindent\makebox[\linewidth][c]{\includegraphics[width=185mm,height=0.9\textheight,keepaspectratio]{$pngRel}}"
     } else {
         Write-Warning "  FEJL: diagram $num - beholder kildekode"
         $replacement = $m.Value
