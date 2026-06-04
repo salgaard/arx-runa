@@ -13,7 +13,7 @@ flowchart TD
         ARGON["Argon2id<br/>m=65536, t=3, p=4"]:::crypto
     end
 
-    MK_NODE(["master_key<br/>(mlocked memory)"]):::secret
+    MK_NODE(["master_key<br/>(Zeroizing, zeroized on drop)"]):::secret
 
     subgraph HKDF_LAYER ["Key Expansion — HKDF-SHA256 (RFC 5869)"]
         HKDF1["HKDF<br/>info: arx-runa-key-encryption"]:::crypto
@@ -72,7 +72,7 @@ provides file-granularity access control.
 For the opt-in recovery path, see [key-derivation-recovery-slot.md](key-derivation-recovery-slot.md).
 
 **Legend:**
-- `master_key` — output of Argon2id; never stored, held in mlocked memory only during HKDF expansion, then immediately zeroized
+- `master_key` — output of Argon2id; never stored, stack-only `Zeroizing<[u8; 32]>`, zeroized on drop after HKDF expansion
 - `key_encryption_key` — wraps and unwraps per-file `file_key` values; never used directly for chunk encryption
 - `sqlcipher_key` — used to key the local SQLCipher manifest database
 - `manifest_key` — used to encrypt the manifest backup blob uploaded to cloud storage

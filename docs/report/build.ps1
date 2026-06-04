@@ -36,10 +36,11 @@ $tmpMd = Join-Path $PSScriptRoot "arx-runa-bachelorrapport-build.md"
 [System.IO.File]::WriteAllText($tmpMd, $mdContent, [System.Text.Encoding]::UTF8)
 
 pandoc $tmpMd `
-  --pdf-engine=xelatex `
+  --pdf-engine=lualatex `
   --from=markdown+footnotes `
   --output=arx-runa-bachelorrapport.pdf `
   --lua-filter=table-wrap.lua `
+  --lua-filter=table-grid.lua `
   --lua-filter=path-break.lua `
   --include-before-body=cover.tex `
   --include-in-header=header-includes.tex `

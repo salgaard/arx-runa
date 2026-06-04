@@ -183,8 +183,13 @@ vaults can be created even when rclone is missing while cloud vaults cannot.
 
 ## Cloud integration tests (`.env.test`)
 
-The real-cloud integration tests (`cargo test -p arx-runa-tauri -- --ignored`) require a
-`.env.test` file in the project root. This file is **not in git**. Create it:
+The real-cloud scenario tests in `src-tauri/src/tests/scenarios_real_cloud.rs` use an
+env-guard: each test checks for its required env-vars at startup and returns silently if they
+are absent. They are **not** marked `#[ignore]` — they run with every `cargo test` invocation
+but become no-ops without credentials.
+
+To actually exercise them, source a `.env.test` file before running tests. This file is
+**not in git**. Create it:
 
 ```env
 ARX_TEST_B2_KEY_ID=
@@ -193,6 +198,22 @@ ARX_TEST_B2_BUCKET=arx-runa-test
 ARX_TEST_GDRIVE_REFRESH_TOKEN=
 ARX_TEST_ONEDRIVE_REFRESH_TOKEN=
 ARX_TEST_ONEDRIVE_DRIVE_ID=
+```
+
+Then run:
+
+```powershell
+# Windows
+Get-Content .env.test | ForEach-Object {
+    if ($_ -match '^([^#=]+)=(.*)$') { [System.Environment]::SetEnvironmentVariable($Matches[1].Trim(), $Matches[2].Trim()) }
+}
+cargo test -p arx-runa-tauri-lib real_cloud
+```
+
+```bash
+# macOS / Linux
+export $(grep -v '^#' .env.test | xargs)
+cargo test -p arx-runa-tauri-lib real_cloud
 ```
 
 ### Backblaze B2

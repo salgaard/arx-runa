@@ -13,7 +13,7 @@
 
     note over Owner,Cloud: Fase 1 #45;#45; Del en fil
     Owner->>Owner: SELECT file_key_wrapped fra nodes (SQLCipher)
-    Owner->>Owner: unwrap_file_key #45;#62; file_key (mlocked hukommelse)
+    Owner->>Owner: unwrap_file_key #45;#62; file_key (SecretBox, zeroized on drop)
     Owner->>Owner: Assemblér JSON#58; share_id, file_key, chunk_uuids, cloud_endpoint
     Owner->>Owner: HPKE.Seal(recipient_pub, info=arx-runa-share, JSON) #45;#62; (enc, ct)
     Owner->>Cloud: Kopiér krypterede blobs til shared/[file_share_id]/

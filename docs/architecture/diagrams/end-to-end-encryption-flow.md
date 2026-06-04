@@ -21,7 +21,7 @@ sequenceDiagram
     note right of Auth: ~3-6 seconds (m=65536 KiB, t=3, p=4)
     
     alt Authentication Success
-        Auth->>Crypto: master_key (32B, mlocked)
+        Auth->>Crypto: master_key (32B, Zeroizing)
         Crypto->>Crypto: HKDF-SHA256 expand
         note right of Crypto: info: arx-runa-key-encryption, arx-runa-sqlcipher, arx-runa-manifest-backup
         Crypto-->>Auth: VaultKeys { key_encryption_key, sqlcipher_key, manifest_key }

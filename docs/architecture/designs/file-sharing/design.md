@@ -78,7 +78,7 @@ Mitigation: fingerprint verification. Arx Runa displays a short hash (first 16 h
 The base Arx Runa design uses a vault-wide `key_encryption_key` (HKDF-derived from `master_key`) that wraps per-file random keys. Each file has its own `file_key` — a random 256-bit value generated at file creation time via CSPRNG.
 
 ```
-master_key  (Argon2id output, mlocked memory, never stored)
+master_key  (Argon2id output, stack-only Zeroizing<[u8; 32]>, never stored)
     │
     ├─ key_encryption_key  (HKDF-SHA256, info: "arx-runa-key-encryption")
     │       └─ wraps/unwraps per-file file_keys stored in SQLCipher

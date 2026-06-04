@@ -195,7 +195,7 @@ pub enum Argon2MigrationIntent {
 After Argon2id produces `master_key`, HKDF-SHA256 derives three vault-level keys:
 
 ```
-master_key: Zeroizing<[u8; 32]>  (Argon2id output, held in mlocked memory)
+master_key: Zeroizing<[u8; 32]>  (Argon2id output, stack-only, zeroized on drop)
     │
     HKDF-SHA256 (salt: b"arx-runa-v1")
     ├─ info: "arx-runa-key-encryption"  → key_encryption_key
@@ -713,7 +713,7 @@ These decisions are intentional MVP scope limitations that will persist through 
 **Threat Model Statement**: Arx Runa protects against:
 - Untrusted cloud providers (all blobs are encrypted, opaque ciphertext)
 - Network eavesdropping (HTTPS + AEAD + per-file key isolation)
-- Disk theft (files encrypted at rest, keys held in mlocked memory only)
+- Disk theft (files encrypted at rest; session keys held in mlocked memory, master_key zeroized on drop)
 - Lost credentials (recovery slots via BIP-39 as post-creation opt-in)
 
 Arx Runa does **not** protect against:

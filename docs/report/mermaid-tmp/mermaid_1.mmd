@@ -7,7 +7,7 @@
         ARGON["Argon2id<br/>m=65536, t=3, p=4"]:::crypto
     end
 
-    MK_NODE(["master_key<br/>(mlocked memory)"]):::secret
+    MK_NODE(["master_key<br/>(Zeroizing, zeroized on drop)"]):::secret
 
     subgraph HKDF_LAYER ["Key Expansion - HKDF-SHA256 (RFC 5869)"]
         HKDF1["HKDF<br/>info: arx-runa-key-encryption"]:::crypto

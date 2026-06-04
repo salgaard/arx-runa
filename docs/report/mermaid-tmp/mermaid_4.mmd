@@ -8,7 +8,7 @@
 
     REC_KEY(["recovery_key"]):::secret
 
-    MK_INPUT(["master_key<br/>(from primary derivation;<br/>held in mlocked memory)"]):::secret
+    MK_INPUT(["master_key<br/>(from primary derivation;<br/>Zeroizing, zeroized on drop)"]):::secret
 
     subgraph WRAP_BLOCK ["Key Wrapping - XChaCha20-Poly1305"]
         WRAP["XChaCha20-Poly1305 encrypt<br/>AAD: #34;arx-runa recovery v1#34; #124;#124; vault_id_bytes<br/>Nonce: 24B CSPRNG"]:::crypto
