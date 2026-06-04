@@ -1,0 +1,50 @@
+﻿flowchart TD
+    PW["Password"]:::user
+    KF["USB Key File<br/>(32 bytes random)"]:::user
+    SALT["Argon2 Salt<br/>(from vault header)"]:::storage
+
+    subgraph KDF ["Key Derivation - Argon2id"]
+        ARGON["Argon2id<br/>m=65536, t=3, p=4"]:::crypto
+    end
+
+    MK_NODE(["master_key<br/>(mlocked memory)"]):::secret
+
+    subgraph HKDF_LAYER ["Key Expansion - HKDF-SHA256 (RFC 5869)"]
+        HKDF1["HKDF<br/>info: arx-runa-key-encryption"]:::crypto
+        HKDF2["HKDF<br/>info: arx-runa-sqlcipher"]:::crypto
+        HKDF3["HKDF<br/>info: arx-runa-manifest-backup"]:::crypto
+    end
+
+    subgraph VAULT_KEYS ["Vault-Level Keys"]
+        KEK["key_encryption_key<br/>Wraps per-file file_keys"]:::secret
+        SK["sqlcipher_key<br/>SQLCipher DB"]:::secret
+        MK["manifest_key<br/>Cloud backup blob"]:::secret
+    end
+
+    subgraph PER_FILE ["Per-File Keys"]
+        FK["file_key<br/>(random 256-bit via CSPRNG)"]:::secret
+        FKW["file_key_wrapped<br/>(stored in SQLCipher)"]:::storage
+    end
+
+    PW -->|combined input| ARGON
+    KF -->|combined input| ARGON
+    SALT -->|salt| ARGON
+    ARGON -->|outputs| MK_NODE
+    MK_NODE -->|input| HKDF1
+    MK_NODE -->|input| HKDF2
+    MK_NODE -->|input| HKDF3
+    HKDF1 -->|derives| KEK
+    HKDF2 -->|derives| SK
+    HKDF3 -->|derives| MK
+    HKDF3 --> ZEROIZE_MK["zeroize(master_key)"]:::zeroize
+    KEK -->|wraps/unwraps| FK
+    FK -->|encrypted with KEK| FKW
+    FK --> USE_FK["chunk encrypt/decrypt"]:::proc
+    USE_FK --> ZEROIZE_FK["zeroize(file_key)"]:::zeroize
+
+    classDef secret fill:#dc2626,stroke:#991b1b,color:#fff
+    classDef crypto fill:#2563eb,stroke:#1e40af,color:#fff
+    classDef storage fill:#16a34a,stroke:#166534,color:#fff
+    classDef user fill:#9333ea,stroke:#6b21a8,color:#fff
+    classDef zeroize fill:#ef4444,stroke:#991b1b,color:#fff,stroke-width:3px,stroke-dasharray:5 5
+    classDef proc fill:#6b7280,stroke:#374151,color:#fff

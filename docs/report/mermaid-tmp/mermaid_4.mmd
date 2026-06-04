@@ -1,0 +1,30 @@
+﻿flowchart TD
+    PHRASE["BIP-39 Phrase<br/>(24 words, 256-bit entropy)"]:::user
+    REC_SALT["Recovery Salt<br/>(from vault header)"]:::storage
+
+    subgraph REC_KDF ["Recovery Key Derivation - Argon2id"]
+        REC_ARGON["Argon2id<br/>same params as primary slot"]:::crypto
+    end
+
+    REC_KEY(["recovery_key"]):::secret
+
+    MK_INPUT(["master_key<br/>(from primary derivation;<br/>held in mlocked memory)"]):::secret
+
+    subgraph WRAP_BLOCK ["Key Wrapping - XChaCha20-Poly1305"]
+        WRAP["XChaCha20-Poly1305 encrypt<br/>AAD: #34;arx-runa recovery v1#34; #124;#124; vault_id_bytes<br/>Nonce: 24B CSPRNG"]:::crypto
+    end
+
+    WMK["wrapped_master_key<br/>(72 bytes: 24B nonce #124; 32B ciphertext #124; 16B tag)<br/>stored in vault header recovery_slot"]:::storage
+
+    PHRASE -->|phrase input| REC_ARGON
+    REC_SALT -->|salt| REC_ARGON
+    REC_ARGON -->|derives| REC_KEY
+
+    MK_INPUT -->|plaintext input| WRAP
+    REC_KEY -->|encryption key| WRAP
+    WRAP -->|ciphertext blob| WMK
+
+    classDef secret fill:#dc2626,stroke:#991b1b,color:#fff
+    classDef crypto fill:#2563eb,stroke:#1e40af,color:#fff
+    classDef storage fill:#16a34a,stroke:#166534,color:#fff
+    classDef user fill:#9333ea,stroke:#6b21a8,color:#fff

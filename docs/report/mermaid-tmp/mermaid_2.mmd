@@ -1,0 +1,14 @@
+﻿sequenceDiagram
+    participant Caller
+    participant encrypt_chunk
+    participant CSPRNG
+    participant XChaCha20Poly1305
+
+    Caller->>encrypt_chunk: plaintext, file_key, file_id, chunk_index
+    encrypt_chunk->>CSPRNG: generate_nonce()
+    CSPRNG-->>encrypt_chunk: nonce (24 bytes)
+    encrypt_chunk->>encrypt_chunk: construct AAD = file_id #124;#124; chunk_index (u32 big-endian)
+    encrypt_chunk->>XChaCha20Poly1305: encrypt_in_place_detached(nonce, aad, plaintext)
+    XChaCha20Poly1305-->>encrypt_chunk: tag (16 bytes)
+    encrypt_chunk->>encrypt_chunk: assemble [nonce #124; ciphertext #124; tag]
+    encrypt_chunk-->>Caller: Result#60;Vec#60;u8#62;, CryptoError#62;

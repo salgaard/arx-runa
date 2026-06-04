@@ -1,0 +1,30 @@
+﻿sequenceDiagram
+    participant Owner as Owner (Arx Runa)
+    participant Cloud as Cloud Storage
+    participant Channel as Out-of-Band Channel
+    participant Recipient as Recipient (Arx Runa)
+
+    note over Owner,Recipient: Fase 0 #45;#45; Nøgleudveksling (ét setup pr. kontaktpar)
+    Owner->>Channel: Eksportér X25519 public key (fil eller QR-kode)
+    Channel->>Recipient: Levér public key
+    Recipient->>Owner: Eksportér X25519 public key (fil eller QR-kode)
+    Owner->>Channel: Levér public key
+    note over Owner,Recipient: Valgfrit#58; sammenlign fingeraftryk ud-af-bånd (MITM-mitigering)
+
+    note over Owner,Cloud: Fase 1 #45;#45; Del en fil
+    Owner->>Owner: SELECT file_key_wrapped fra nodes (SQLCipher)
+    Owner->>Owner: unwrap_file_key #45;#62; file_key (mlocked hukommelse)
+    Owner->>Owner: Assemblér JSON#58; share_id, file_key, chunk_uuids, cloud_endpoint
+    Owner->>Owner: HPKE.Seal(recipient_pub, info=arx-runa-share, JSON) #45;#62; (enc, ct)
+    Owner->>Cloud: Kopiér krypterede blobs til shared/[file_share_id]/
+    Owner->>Channel: Eksportér share-pakke (.arxshare) ud-af-bånd
+
+    note over Recipient,Cloud: Fase 2 #45;#45; Import og hentning
+    Recipient->>Recipient: HPKE.Open(recipient_priv, enc, ct) #45;#62; JSON
+    Recipient->>Recipient: Wrap file_key med lokal key_encryption_key
+    Recipient->>Cloud: Hent blobs via Rclone (cloud_endpoint)
+    Recipient->>Recipient: Verificér BLAKE3 pr. blob, dekryptér med file_key
+
+    note over Owner,Cloud: Fase 3 #45;#45; Revokering (afsender-initieret)
+    Owner->>Cloud: Slet shared/#60;file_share_id#62;/
+    Owner->>Owner: Sæt revoked_at i shares-tabellen

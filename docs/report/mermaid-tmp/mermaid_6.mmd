@@ -1,0 +1,91 @@
+﻿sequenceDiagram
+    participant User
+    participant Sync as Sync Module
+    participant Meta as MetadataStore (SQLCipher)
+    participant Stage as Staging Directory
+    participant RT as RcloneTransport (sidecar)
+    participant Cloud as Cloud Remote
+
+    note over User,Cloud: Push Flow (upload local changes)
+    User->>Sync: push()
+    Sync->>Meta: get_meta("snapshot_counter") #45;#62; local_counter
+    Sync->>RT: download_blob("manifest/manifest-backup.blob", temp)
+    RT->>Cloud: rclone copyto manifest/manifest-backup.blob
+    Cloud-->>RT: manifest-backup.blob
+    RT-->>Sync: temp file
+    Sync->>Sync: decrypt manifest backup #45;#62; cloud_counter
+    break cloud_counter #62; local_counter
+        Sync-->>User: CONFLICT - pull first
+    end
+    break cloud_counter #60; local_counter
+        Sync-->>User: CONFLICT - cloud manifest older than local
+    end
+
+    Sync->>Meta: get all staged blob_names
+    Sync->>Sync: Fisher-Yates shuffle(blob_list)
+
+    note over Sync,Cloud: Concurrent upload (4 Rclone processes via JoinSet)
+
+    par Upload blob 1
+        Sync->>RT: upload_blob(staging/uuid1.blob)
+        RT->>Cloud: rclone copyto vault/uuid1.blob
+        Cloud-->>RT: ok
+        RT-->>Sync: ok
+        Sync->>Stage: delete staging/uuid1.blob
+    and Upload blob N
+        Sync->>RT: upload_blob(staging/uuidN.blob)
+        RT->>Cloud: rclone copyto vault/uuidN.blob
+        Cloud-->>RT: ok
+        RT-->>Sync: ok
+        Sync->>Stage: delete staging/uuidN.blob
+    end
+
+    note over Sync: Repeat for next batch until all blobs uploaded
+    Sync->>Meta: increment_snapshot_counter() #45;#62; new_counter
+    Sync->>Sync: VACUUM INTO temp#59; encrypt with manifest_key
+    Sync->>RT: upload_blob(temp, manifest/manifest-backup.blob)
+    RT->>Cloud: rclone copyto
+    Cloud-->>RT: ok
+    Sync->>RT: upload_blob(vault-header.json, vault-header.json)
+    RT->>Cloud: rclone copyto
+    Cloud-->>RT: ok
+    Sync-->>User: push complete (new_counter blobs synced)
+
+    note over User,Cloud: Pull Flow (new-device recovery)
+    User->>Sync: pull()
+    Sync->>RT: download_blob("vault-header.json", temp)
+    RT->>Cloud: rclone copyto vault-header.json
+    Cloud-->>RT: vault-header.json
+    RT-->>Sync: temp file
+    Sync->>Sync: parse VaultHeader #45;#62; salt, params, key_file_blake3
+    Sync-->>User: prompt: password + USB key file
+    User->>Sync: password + key_file_path
+    Sync->>Sync: Argon2id(password #124;#124; key_file, salt) #45;#62; master_key
+    Sync->>Sync: HKDF #45;#62; key_encryption_key, sqlcipher_key, manifest_key
+    Sync->>Sync: zeroize(master_key)
+    Sync->>RT: download_blob("manifest/manifest-backup.blob", temp)
+    RT->>Cloud: rclone copyto manifest/manifest-backup.blob
+    Cloud-->>RT: manifest-backup.blob
+    RT-->>Sync: temp file
+    Sync->>Sync: decrypt manifest backup with manifest_key
+    Sync->>Meta: import SQLCipher DB (keyed with sqlcipher_key)
+    Sync->>Meta: get all chunk rows #45;#62; (blob_name, blake3_checksum)
+
+    note over Sync,Cloud: Concurrent download (4 Rclone processes via JoinSet)
+
+    par Download blob 1
+        Sync->>RT: download_blob(vault/uuid1.blob)
+        RT->>Cloud: rclone copyto vault/uuid1.blob
+        Cloud-->>RT: uuid1.blob
+        RT-->>Sync: staging/uuid1.blob
+        Sync->>Sync: Verify BLAKE3 (delete + record failure on mismatch)
+    and Download blob N
+        Sync->>RT: download_blob(vault/uuidN.blob)
+        RT->>Cloud: rclone copyto vault/uuidN.blob
+        Cloud-->>RT: uuidN.blob
+        RT-->>Sync: staging/uuidN.blob
+        Sync->>Sync: Verify BLAKE3
+    end
+
+    note over Sync: Repeat for next batch until all blobs downloaded
+    Sync-->>User: pull complete (any failures reported)
