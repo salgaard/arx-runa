@@ -1906,8 +1906,8 @@ For supported file types, Arx Runa decrypts file content into WASM memory and re
 
 | Type | Rendering approach |
 |------|-------------------|
-| Images (JPEG, PNG, GIF, WebP) | Decrypt → base64 → `blob:` URL in `<img>` tag |
-| Text (plain text, Markdown, JSON, CSV) | Decrypt → UTF-8 string → `<pre>` or rendered Markdown |
+| Images (JPEG, PNG, GIF, WebP) | Decrypt → base64 → inline `data:` URI in `<img src>` |
+| Text (plain text, Markdown, JSON, CSV) | Decrypt → UTF-8 string → `<pre>` element |
 | PDF | Deferred — requires embedded PDF viewer |
 | Video | Deferred — requires streaming decryption and progressive playback |
 
@@ -1918,8 +1918,8 @@ For supported file types, Arx Runa decrypts file content into WASM memory and re
 3. Backend validates file size:
    - If `size_bytes > 50 MiB`: return `IpcError::InvalidInput("File too large for in-app viewing; use download instead")`
    - Else: decrypt all chunks into a RAM buffer, assemble the file, and return it as base64 in a `FileContent` response
-4. Frontend creates a `blob:` URL from the decoded bytes and renders it in the appropriate viewer component
-5. On close or vault lock, the `blob:` URL is revoked and the buffer is released
+4. Frontend renders the content: images as an inline `data:` URI in `<img src>`; text decoded to UTF-8 and displayed in a `<pre>` element
+5. On close or vault lock, the Leptos signal is set to `None`, unmounting the viewer component and releasing all decoded data from WASM memory
 
 ### Size limits
 
@@ -1929,11 +1929,11 @@ The user must use `download_file` to export a decrypted copy. This limit prevent
 
 ### Security property
 
-No decrypted content touches the filesystem. The `blob:` URL exists only in WebView memory and is revoked when the viewer closes. The CSP prevents `blob:` URLs from being accessed by external scripts.
+No decrypted content touches the filesystem. Decoded data exists only in WASM memory as a Leptos signal; setting the signal to `None` on close unmounts the viewer and releases the data. Images are rendered as inline `data:` URIs (no separate browser object to revoke); text is decoded directly to a UTF-8 string in the component.
 
 ### Scope
 
-Implementation target: Phase 6.
+Implemented in Phase 6.
 
 ---
 

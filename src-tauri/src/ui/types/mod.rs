@@ -38,7 +38,7 @@ pub use file_entry::FileEntry;
 pub use import_share_response::ImportShareResponse;
 pub use local_entry::LocalEntry;
 pub use migration_progress::MigrationProgress;
-pub use oauth_setup_response::{BeginOauthSetupResponse, OauthPollResponse};
+pub use oauth_setup_response::{BeginOauthSetupResponse, DriveChoice, OauthPollResponse};
 pub use progress_update::ProgressUpdate;
 pub use received_share_entry::ReceivedShareEntry;
 pub use reconcile_result::ReconcileResult;

@@ -85,7 +85,7 @@ flowchart TD
     KF["USB Key File (32 bytes)"]
     SALT["Argon2 Salt"]
     ARGON["Argon2id"]
-    MK_NODE(["master_key (mlocked)"])
+    MK_NODE(["master_key (Zeroizing, zeroized on drop)"])
     HKDF1["HKDF info: key-encryption"]
     HKDF2["HKDF info: sqlcipher"]
     HKDF3["HKDF info: manifest-backup"]

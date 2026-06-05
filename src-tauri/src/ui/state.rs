@@ -38,6 +38,26 @@ pub struct OAuthSetupHandle {
     pub started_at: Instant,
 }
 
+/// An OAuth flow paused at the OneDrive multi-drive chooser, awaiting the user's
+/// drive selection.
+///
+/// Created by `poll_oauth_setup` when rclone offers more than one drive; consumed
+/// by `select_oauth_drive` (which resumes the config state machine) or removed by
+/// `cancel_oauth_setup`. The temporary config file already holds the OAuth token,
+/// so it must be cleaned up on either path.
+pub struct PendingDriveSelection {
+    /// Temporary rclone config file holding the freshly authorised remote.
+    pub temp_config_path: PathBuf,
+    /// Rclone remote name used for this setup.
+    pub remote_name: String,
+    /// Opaque rclone continuation token for the drive-chooser question.
+    pub resume_state: String,
+    /// Drive identifiers rclone offered; the user's choice must be one of these.
+    pub drive_ids: Vec<String>,
+    /// When the flow paused; used to enforce a selection timeout.
+    pub started_at: Instant,
+}
+
 /// Shared application state injected into every Tauri command via `tauri::State`.
 ///
 /// Contains only IPC and runtime orchestration handles — no key material,
@@ -51,10 +71,11 @@ pub struct OAuthSetupHandle {
 /// 1. `sync_mutex`
 /// 2. `flush_mutex`
 /// 3. `oauth_setups`
-/// 4. `allowed_reveal_paths`
-/// 5. `cloud_transport` (RwLock)
-/// 6. `sync_status` (RwLock)
-/// 7. `active_vault_id` (RwLock)
+/// 4. `oauth_pending_drives`
+/// 5. `allowed_reveal_paths`
+/// 6. `cloud_transport` (RwLock)
+/// 7. `sync_status` (RwLock)
+/// 8. `active_vault_id` (RwLock)
 ///
 /// In practice `flush_mutex` is always released before `cloud_transport` is
 /// acquired (e.g. `sync_backup`), so concurrent holding of multiple locks is
@@ -88,6 +109,12 @@ pub struct AppState {
     /// Uses `tokio::sync::Mutex` so it can be held across `.await` points
     /// inside `poll_oauth_setup`.
     pub(crate) oauth_setups: Arc<tokio::sync::Mutex<HashMap<String, OAuthSetupHandle>>>,
+    /// OAuth flows paused at the OneDrive drive chooser, keyed by setup ID.
+    ///
+    /// Populated by `poll_oauth_setup` when the user must pick a drive; drained by
+    /// `select_oauth_drive` or `cancel_oauth_setup`.
+    pub(crate) oauth_pending_drives:
+        Arc<tokio::sync::Mutex<HashMap<String, PendingDriveSelection>>>,
     /// Canonical paths that `reveal_in_explorer` is permitted to open this session.
     ///
     /// Populated by `download_received_share` on successful decryption; cleared on
@@ -195,6 +222,7 @@ impl AppState {
             flush_mutex: Arc::new(tokio::sync::Mutex::new(())),
             sync_mutex: Arc::new(tokio::sync::Mutex::new(())),
             oauth_setups: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            oauth_pending_drives: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             allowed_reveal_paths: Arc::new(tokio::sync::Mutex::new(HashSet::new())),
             session_vault_info: Arc::new(RwLock::new(None)),
         }

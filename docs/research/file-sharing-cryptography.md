@@ -2,7 +2,7 @@
 
 > **Document type**: Exploration / feasibility research
 > **Status**: Concluded
-> **Last updated**: 2026-04-12
+> **Last updated**: 2026-06-05
 
 Justification and alternative analysis for the cryptographic decisions in the Arx Runa Phase 5 file-sharing design: ECIES variant selection (historical draft), elliptic curve choice (X25519 vs P-256), KDF construction inside ECIES (historical draft), and committing AEAD selection (mandated by Phase 1 primitive research).
 
@@ -222,7 +222,16 @@ Use `DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + CTX-ChaCha20-Poly1305` as the HP
 
 The current ad-hoc ECIES construction is functional but lacks a formal security proof and requires manual discipline to keep correct. HPKE (RFC 9180) standardizes exactly this pattern with an IND-CCA2 proof, automatic inclusion of both public keys in the key schedule, test vectors, and a modular design that makes algorithm agility straightforward. The `hpke` crate (v0.13.0, ~4M downloads) provides a production-quality Rust implementation.
 
-**Impact on existing cryptographic-primitives design**: none. HPKE is additive — a new Phase 5 module only. The vault encryption stack (XChaCha20-Poly1305, HKDF from `master_key`, Argon2id, BLAKE3, ZeroizeOnDrop) is untouched. Note that the AEAD inside HPKE is ChaCha20-Poly1305 (96-bit nonce managed by HPKE), not XChaCha20-Poly1305 — this is correct and intentional.
+**Implementation outcome (supersedes the crate recommendation).** The shipped implementation in `src-tauri/src/sharing/hpke.rs` implements RFC 9180 Base mode *entirely manually* and does **not** depend on the `hpke` crate. DHKEM(X25519, HKDF-SHA256) uses `x25519-dalek` directly; the key schedule (RFC 9180 §4–5) is built on `hkdf` + `sha2`. Two reasons drove the decision to drop the crate:
+
+1. The crate's sealed `Aead` trait cannot express the CTX construction — it assumes a standard tag length (16 bytes) and a 12-byte nonce, whereas CTX uses a 32-byte BLAKE3 tag and this implementation expands `base_nonce` to a 24-byte XChaCha20 nonce. The committing AEAD therefore cannot be plugged into the crate at all.
+2. A secondary dependency conflict reinforced the choice: the crate (v0.13) pins `rand_core 0.9`, which does not coexist cleanly with the project's `rand 0.10` (`rand_core 0.10`).
+
+Implementing DHKEM manually with `x25519-dalek` is low-risk: encapsulation/decapsulation is a single DH plus the `ExtractAndExpand` labeled-KDF steps, and the result is anchored to RFC 9180 §4.1 test vectors. The DH output is constant-time zero-checked (`ct_eq`) before use as a small-subgroup defense.
+
+**Impact on existing cryptographic-primitives design**: none. HPKE is additive — a new Phase 5 module only. The vault encryption stack (XChaCha20-Poly1305, HKDF from `master_key`, Argon2id, BLAKE3, ZeroizeOnDrop) is untouched.
+
+The AEAD inside HPKE is registered as ChaCha20-Poly1305 (AEAD ID `0x0003`) in the `suite_id`, but the shipped implementation expands `base_nonce` to 24 bytes and uses **XChaCha20-Poly1305** for the CTX layer rather than the 12-byte-nonce ChaCha20-Poly1305 originally sketched here. The 24-byte nonce reuses the same XChaCha20 primitive as the vault encryption stack and removes any nonce-collision concern; the `I2OSP(L, 2)` length prefix in `LabeledExpand` provides domain separation. The trade-off is that the suite is intentionally non-interoperable with standard HPKE implementations, which is acceptable because share packages are only ever produced and consumed by Arx Runa.
 
 ### 2. CTX construction for key commitment
 
@@ -295,6 +304,8 @@ No change. X25519 is SafeCurves-compliant, constant-time by construction, patent
 | KDF inside ECIES: absorbed into HPKE key schedule | Manual HKDF with ephemeral_pk only as salt | HPKE's key schedule automatically includes both public keys and provides domain separation via labeled ops |
 | Committing AEAD: CTX construction over ChaCha20-Poly1305 | UtC prefix, AES-GCM-SIV (not committing), AEGIS-256-MAC (draft only) | CTX achieves CMT-4 (full commitment); one BLAKE3 call over a short string; tag grows from 16 → 32 bytes (negligible at share package size); no plaintext pass required |
 | `file_key` included as raw bytes inside HPKE envelope | `file_key_wrapped` (double-encrypted with same key) | HPKE outer envelope already provides confidentiality and integrity; inner wrapping is redundant and requires a second nonce; "wrapped" terminology is reserved for KEK-based wrapping in the vault |
+| HPKE implemented manually (no `hpke` crate); DHKEM via `x25519-dalek` | `hpke` crate v0.13.0 for DHKEM + key schedule | The crate's sealed `Aead` trait cannot express the CTX 32-byte BLAKE3 tag / 24-byte nonce; the crate's `rand_core 0.9` conflicts with the project's `rand 0.10`. Manual DHKEM is a single DH + labeled ExtractAndExpand anchored to RFC 9180 §4.1 test vectors |
+| Inner AEAD: XChaCha20-Poly1305, 24-byte nonce (CTX) | ChaCha20-Poly1305, 12-byte nonce | Reuses the vault's XChaCha20 primitive; 24-byte nonce removes collision concern; suite intentionally non-interoperable (share packages never leave the Arx Runa ecosystem) |
 
 ---
 

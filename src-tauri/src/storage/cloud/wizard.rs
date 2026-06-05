@@ -447,15 +447,75 @@ pub(crate) struct RcloneConfigExample {
     /// The literal value to pass back as `--result`.
     #[serde(rename = "Value", default)]
     pub value: String,
+    /// Human-readable description. For the OneDrive drive chooser rclone formats
+    /// this as `"<DriveName> (<DriveType>)"`, which lets us pick the account's own
+    /// drive by type rather than by list position.
+    #[serde(rename = "Help", default)]
+    pub help: String,
+}
+
+/// rclone's name for the OneDrive drive-selection question.
+const ONEDRIVE_DRIVE_CHOOSER: &str = "config_driveid";
+
+/// A drive offered by rclone's OneDrive chooser, surfaced to the UI so the user
+/// can choose which drive to use.
+#[derive(Debug, Clone)]
+pub struct DriveChoice {
+    /// Opaque rclone drive identifier, passed back as `--result`.
+    pub id: String,
+    /// Human-readable label (`"<DriveName> (<DriveType>)"`) shown in the picker.
+    pub label: String,
+}
+
+/// Outcome of advancing the post-OAuth config state machine.
+#[derive(Debug)]
+pub enum OAuthConfigOutcome {
+    /// The remote is fully configured; carries the credential INI blob.
+    Completed(String),
+    /// rclone offered more than one drive; the user must pick one. `resume_state`
+    /// is the opaque rclone state to continue from once a drive is chosen.
+    NeedsDriveSelection {
+        /// rclone continuation token for the drive-chooser question.
+        resume_state: String,
+        /// Drives to present to the user.
+        drives: Vec<DriveChoice>,
+    },
+}
+
+/// Returns the offered drives when an option is a multi-drive OneDrive chooser.
+///
+/// rclone lists every drive the account can reach (personal/business plus any
+/// SharePoint document libraries it follows). When more than one is offered the
+/// flow pauses for an explicit user choice rather than guessing; a single drive
+/// is answered automatically by [`decide_answer`].
+fn drives_needing_selection(option: &RcloneConfigOption) -> Option<Vec<DriveChoice>> {
+    if option.name != ONEDRIVE_DRIVE_CHOOSER || option.examples.len() <= 1 {
+        return None;
+    }
+    Some(
+        option
+            .examples
+            .iter()
+            .map(|example| DriveChoice {
+                id: example.value.clone(),
+                label: if example.help.is_empty() {
+                    example.value.clone()
+                } else {
+                    example.help.clone()
+                },
+            })
+            .collect(),
+    )
 }
 
 /// Picks the answer for a non-interactive rclone config question.
 ///
-/// Always chooses rclone's own default (`DefaultStr`, then `Default`, then the
-/// first example), which deterministically selects the account's primary drive
-/// and accepts every confirmation — no keyboard input is ever required. This is
-/// what lets setup complete on accounts whose drive layout would otherwise show
-/// an interactive chooser.
+/// Takes rclone's own default (`DefaultStr`, then `Default`, then the first
+/// example) and accepts each confirmation — so no keyboard input is required for
+/// the automatic questions. The multi-drive OneDrive chooser is *not* answered
+/// here; the config loop pauses for an explicit user choice (see
+/// [`drives_needing_selection`]). A single-drive chooser still resolves here via
+/// its sole example.
 pub(crate) fn decide_answer(option: &RcloneConfigOption) -> Result<String, CloudTransportError> {
     if !option.default_str.is_empty() {
         return Ok(option.default_str.clone());
@@ -478,12 +538,30 @@ pub(crate) fn decide_answer(option: &RcloneConfigOption) -> Result<String, Cloud
 }
 
 /// Parses one rclone non-interactive config question from a JSON stdout blob.
+///
+/// rclone prints exactly one JSON object per `--non-interactive` invocation, but
+/// the surrounding stdout is not guaranteed to be pristine: a stray notice line
+/// or a trailing newline/blank line can accompany it (observed only on some
+/// accounts/platforms). Rather than require the entire trimmed blob to be a
+/// single JSON value, locate the first `{` and decode one self-delimiting object
+/// from there, ignoring any trailing bytes. This turns a benign formatting quirk
+/// into a successful parse instead of a "failed to retrieve credentials" error.
 pub(crate) fn parse_config_question(
     stdout: &str,
 ) -> Result<RcloneConfigQuestion, CloudTransportError> {
-    let question: RcloneConfigQuestion = serde_json::from_str(stdout.trim()).map_err(|error| {
-        CloudTransportError::Other(format!("invalid rclone config state: {error}"))
+    // Never echo raw `stdout` into the error: it is logged to disk on the
+    // failure path and the post-OAuth stream can carry token material.
+    let object_start = stdout.find('{').ok_or_else(|| {
+        CloudTransportError::Other("rclone config state contained no JSON object".to_owned())
     })?;
+    let question: RcloneConfigQuestion =
+        serde_json::Deserializer::from_str(&stdout[object_start..])
+            .into_iter::<RcloneConfigQuestion>()
+            .next()
+            .ok_or_else(|| CloudTransportError::Other("rclone config state was empty".to_owned()))?
+            .map_err(|error| {
+                CloudTransportError::Other(format!("invalid rclone config state: {error}"))
+            })?;
     if !question.error.is_empty() {
         return Err(CloudTransportError::Other(format!(
             "rclone config error: {}",
@@ -762,24 +840,22 @@ pub async fn complete_oauth_setup(
     Ok(blob)
 }
 
-/// Drives the remaining non-interactive config states after the browser OAuth
-/// callback, then extracts the credential blob.
+/// Drives non-interactive config states from `question` until the remote is
+/// fully written, pausing if a multi-drive OneDrive chooser is encountered.
 ///
-/// `post_oauth_stdout` is the first post-OAuth config state captured from the
-/// blocking child's stdout (e.g. the OneDrive drive chooser). Each state is
-/// answered with rclone's own default via `decide_answer` until `State` is
-/// empty, at which point the remote is fully written and `complete_oauth_setup`
-/// dumps it. The bounded loop guard prevents a pathological provider from
-/// looping forever.
-pub async fn finish_oauth_setup_after_browser(
+/// Each automatic question is answered with rclone's own default via
+/// `decide_answer`. If rclone offers more than one drive, the loop stops and
+/// returns [`OAuthConfigOutcome::NeedsDriveSelection`] so the caller can ask the
+/// user; once `State` is empty the remote is dumped via `complete_oauth_setup`.
+/// The bounded guard prevents a pathological provider from looping forever.
+async fn drive_config_loop(
     binary_path: &std::path::Path,
     temp_config_path: &std::path::Path,
     remote_name: &str,
-    post_oauth_stdout: &str,
-) -> Result<String, CloudTransportError> {
+    mut question: RcloneConfigQuestion,
+) -> Result<OAuthConfigOutcome, CloudTransportError> {
     const MAX_CONFIG_STATES: usize = 32;
 
-    let mut question = parse_config_question(post_oauth_stdout)?;
     let mut steps = 0;
     while !question.state.is_empty() {
         steps += 1;
@@ -791,13 +867,64 @@ pub async fn finish_oauth_setup_after_browser(
         let option = question.option.as_ref().ok_or_else(|| {
             CloudTransportError::Other("rclone config state missing its option".to_owned())
         })?;
+        if let Some(drives) = drives_needing_selection(option) {
+            return Ok(OAuthConfigOutcome::NeedsDriveSelection {
+                resume_state: question.state.clone(),
+                drives,
+            });
+        }
         let answer = decide_answer(option)?;
         let state = question.state.clone();
         question = run_config_continue(binary_path, temp_config_path, remote_name, &state, &answer)
             .await?;
     }
 
-    complete_oauth_setup(binary_path, temp_config_path, remote_name).await
+    let blob = complete_oauth_setup(binary_path, temp_config_path, remote_name).await?;
+    Ok(OAuthConfigOutcome::Completed(blob))
+}
+
+/// Advances the config state machine from the first post-OAuth state.
+///
+/// `post_oauth_stdout` is the config state captured from the blocking child's
+/// stdout once the browser callback completes. Returns
+/// [`OAuthConfigOutcome::Completed`] for single-drive accounts and
+/// [`OAuthConfigOutcome::NeedsDriveSelection`] when the user must choose a drive.
+pub async fn drive_config_after_browser(
+    binary_path: &std::path::Path,
+    temp_config_path: &std::path::Path,
+    remote_name: &str,
+    post_oauth_stdout: &str,
+) -> Result<OAuthConfigOutcome, CloudTransportError> {
+    let question = parse_config_question(post_oauth_stdout)?;
+    drive_config_loop(binary_path, temp_config_path, remote_name, question).await
+}
+
+/// Resumes config after the user picked a drive in the chooser dialog.
+///
+/// Answers the paused `resume_state` with the chosen `drive_id`, then drives the
+/// remaining states to completion and returns the credential blob. A second
+/// drive-selection pause is treated as an error (rclone asks at most once).
+pub async fn resume_oauth_with_selected_drive(
+    binary_path: &std::path::Path,
+    temp_config_path: &std::path::Path,
+    remote_name: &str,
+    resume_state: &str,
+    drive_id: &str,
+) -> Result<String, CloudTransportError> {
+    let question = run_config_continue(
+        binary_path,
+        temp_config_path,
+        remote_name,
+        resume_state,
+        drive_id,
+    )
+    .await?;
+    match drive_config_loop(binary_path, temp_config_path, remote_name, question).await? {
+        OAuthConfigOutcome::Completed(blob) => Ok(blob),
+        OAuthConfigOutcome::NeedsDriveSelection { .. } => Err(CloudTransportError::Other(
+            "rclone requested a second drive selection".to_owned(),
+        )),
+    }
 }
 
 /// Kills the rclone subprocess and removes the temporary config file.
@@ -834,8 +961,8 @@ mod tests {
     use super::{
         CloudEndpoint, DestinationType, GoogleDriveRuntimePaths, GoogleDriveSetupRequest,
         GoogleDriveSetupResult, OpenerLike, S3SetupRequest, decide_answer,
-        extract_remote_blob_from_dump, parse_config_question, setup_google_drive,
-        setup_google_drive_with_remote_name, setup_s3_provider,
+        drives_needing_selection, extract_remote_blob_from_dump, parse_config_question,
+        setup_google_drive, setup_google_drive_with_remote_name, setup_s3_provider,
         setup_s3_provider_with_endpoint_saver,
     };
     use crate::storage::CloudTransportError;
@@ -864,15 +991,41 @@ mod tests {
     }
 
     #[test]
-    fn test_decide_answer_drive_chooser_selects_primary_drive() {
-        // The state that stalls on a dead stdin: multi-drive account. The
-        // default is the account's primary drive — auto-select it.
+    fn test_drives_needing_selection_pauses_on_multiple_drives() {
+        // Multi-drive (work/M365) account: rclone offers several drives. The flow
+        // must pause and present all of them rather than guess.
         let question = parse_config_question(
-            r#"{"State":"driveid_final","Option":{"Name":"config_driveid","DefaultStr":"435E689A6789EBEF","Default":"435E689A6789EBEF","Type":"string","Examples":[{"Value":"435E689A6789EBEF"},{"Value":"b!second"}]},"Error":""}"#,
+            r#"{"State":"driveid_final","Option":{"Name":"config_driveid","DefaultStr":"","Type":"string","Examples":[{"Value":"b!sharepoint","Help":"Documents (documentLibrary)"},{"Value":"me-drive","Help":"OneDrive (personal)"}]},"Error":""}"#,
         )
         .unwrap();
-        let answer = decide_answer(question.option.as_ref().unwrap()).unwrap();
-        assert_eq!(answer, "435E689A6789EBEF");
+        let drives = drives_needing_selection(question.option.as_ref().unwrap())
+            .expect("multiple drives should require selection");
+        assert_eq!(drives.len(), 2);
+        assert_eq!(drives[0].id, "b!sharepoint");
+        assert_eq!(drives[0].label, "Documents (documentLibrary)");
+        assert_eq!(drives[1].id, "me-drive");
+    }
+
+    #[test]
+    fn test_drives_needing_selection_single_drive_resolves_automatically() {
+        // One drive: no choice to make. The chooser falls through to decide_answer,
+        // which selects the sole example.
+        let question = parse_config_question(
+            r#"{"State":"driveid_final","Option":{"Name":"config_driveid","DefaultStr":"","Type":"string","Examples":[{"Value":"only-drive","Help":"OneDrive (personal)"}]},"Error":""}"#,
+        )
+        .unwrap();
+        let option = question.option.as_ref().unwrap();
+        assert!(drives_needing_selection(option).is_none());
+        assert_eq!(decide_answer(option).unwrap(), "only-drive");
+    }
+
+    #[test]
+    fn test_drives_needing_selection_ignores_non_chooser_options() {
+        let question = parse_config_question(
+            r#"{"State":"choose_type_done","Option":{"Name":"config_type","DefaultStr":"onedrive","Examples":[{"Value":"onedrive"},{"Value":"sharepoint"}]},"Error":""}"#,
+        )
+        .unwrap();
+        assert!(drives_needing_selection(question.option.as_ref().unwrap()).is_none());
     }
 
     #[test]
@@ -931,6 +1084,19 @@ mod tests {
             parse_config_question("not json at all"),
             Err(CloudTransportError::Other(_))
         ));
+    }
+
+    #[test]
+    fn test_parse_config_question_ignores_surrounding_noise() {
+        let question = parse_config_question(
+            "\nNOTICE: harmless line\n{\"State\":\"driveid_final\",\"Option\":{\"Name\":\"config_driveid\",\"Examples\":[{\"Value\":\"abc123\"}]},\"Error\":\"\"}\n\n",
+        )
+        .expect("a single JSON object surrounded by noise should parse");
+        assert_eq!(question.state, "driveid_final");
+        assert_eq!(
+            question.option.expect("option present").name,
+            "config_driveid"
+        );
     }
 
     #[derive(Default)]

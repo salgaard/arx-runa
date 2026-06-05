@@ -14,8 +14,8 @@ use leptos::prelude::*;
 use crate::dialog::open_directory_dialog;
 use crate::invoke::invoke_command;
 use crate::ipc_types::{
-    BeginOauthSetupResponse, CancelOauthSetupRequest, DestinationSessionConfig, OauthPollResponse,
-    PollOauthSetupRequest,
+    BeginOauthSetupResponse, CancelOauthSetupRequest, DestinationSessionConfig, DriveChoice,
+    OauthPollResponse, PollOauthSetupRequest, SelectOauthDriveRequest,
 };
 
 // ─── Destination kind ────────────────────────────────────────────────────────
@@ -29,7 +29,7 @@ pub enum DestinationKind {
     ExternalDrive,
     /// Backblaze B2 object storage (key-ID + app-key credentials).
     BackblazeB2,
-    /// Personal Microsoft OneDrive (OAuth, auto-selected single drive).
+    /// Microsoft OneDrive (OAuth; prompts to choose a drive when several exist).
     OneDrive,
     /// Google Drive (OAuth).
     GoogleDrive,
@@ -58,6 +58,13 @@ enum OAuthFlowState {
     Starting,
     /// rclone is running; user is completing the browser flow.
     WaitingForBrowser { setup_id: String, auth_url: String },
+    /// Account exposes multiple drives; user must pick one before finishing.
+    SelectingDrive {
+        setup_id: String,
+        drives: Vec<DriveChoice>,
+    },
+    /// `select_oauth_drive` is in flight after the user picked a drive.
+    FinishingDrive,
     /// OAuth completed; blob ready — `on_change` has been fired.
     Completed,
     /// OAuth failed.
@@ -214,7 +221,10 @@ pub fn DestinationSelector(
     Effect::new(move |_| {
         let pending = matches!(
             oauth_state.get(),
-            OAuthFlowState::Starting | OAuthFlowState::WaitingForBrowser { .. }
+            OAuthFlowState::Starting
+                | OAuthFlowState::WaitingForBrowser { .. }
+                | OAuthFlowState::SelectingDrive { .. }
+                | OAuthFlowState::FinishingDrive
         );
         on_oauth_pending_sv.with_value(|cb| {
             if let Some(cb) = cb {
@@ -283,105 +293,147 @@ pub fn DestinationSelector(
         });
     };
 
-    let begin_oauth = StoredValue::new({
+    // Shared completion: build the destination config from a finished OAuth blob
+    // and notify the caller. Used by both the browser-poll path and the
+    // drive-picker path.
+    let complete_with_blob = StoredValue::new({
         let on_change_clone = on_change.clone();
-        move |provider_kind: DestinationKind| {
-            let on_change_inner = on_change_clone.clone();
-            let captured_oauth_path = oauth_path.get_untracked();
-            set_oauth_state.set(OAuthFlowState::Starting);
-            leptos::task::spawn_local(async move {
-                let command = match provider_kind {
-                    DestinationKind::GoogleDrive => "begin_google_drive_setup",
-                    DestinationKind::OneDrive => "begin_onedrive_setup",
-                    _ => return,
-                };
+        move |provider_kind: DestinationKind, rclone_config_blob: String| {
+            let oauth_path_value = oauth_path.get_untracked();
+            let config = build_config_for_kind(
+                provider_kind,
+                DestinationFields {
+                    local_path: "",
+                    external_path: "",
+                    b2_account_id: "",
+                    b2_app_key: "",
+                    b2_bucket: "",
+                    b2_path_prefix: "",
+                    custom_rclone_config: "",
+                    oauth_blob: &rclone_config_blob,
+                    oauth_path: &oauth_path_value,
+                },
+            );
+            set_oauth_state.set(OAuthFlowState::Completed);
+            on_change_clone(config);
+        }
+    });
 
-                let begin_result = invoke_command::<_, BeginOauthSetupResponse>(command, &()).await;
+    let begin_oauth = StoredValue::new(move |provider_kind: DestinationKind| {
+        set_oauth_state.set(OAuthFlowState::Starting);
+        leptos::task::spawn_local(async move {
+            let command = match provider_kind {
+                DestinationKind::GoogleDrive => "begin_google_drive_setup",
+                DestinationKind::OneDrive => "begin_onedrive_setup",
+                _ => return,
+            };
 
-                let response = match begin_result {
-                    Ok(response) => response,
+            let begin_result = invoke_command::<_, BeginOauthSetupResponse>(command, &()).await;
+
+            let response = match begin_result {
+                Ok(response) => response,
+                Err(error) => {
+                    set_oauth_state.set(OAuthFlowState::Failed {
+                        message: error.to_string(),
+                    });
+                    return;
+                }
+            };
+
+            let setup_id = response.setup_id.clone();
+            let auth_url = response.auth_url.clone();
+            set_oauth_state.set(OAuthFlowState::WaitingForBrowser {
+                setup_id: setup_id.clone(),
+                auth_url,
+            });
+
+            // 150 polls × 2 s = 5 minutes frontend timeout.
+            let mut polls_remaining: u32 = 150;
+            loop {
+                sleep(Duration::from_secs(2)).await;
+
+                if !matches!(
+                    oauth_state.get_untracked(),
+                    OAuthFlowState::WaitingForBrowser { .. }
+                ) {
+                    break;
+                }
+
+                if polls_remaining == 0 {
+                    set_oauth_state.set(OAuthFlowState::Failed {
+                        message: "Cloud provider authorization timed out. Please try again.".into(),
+                    });
+                    break;
+                }
+                polls_remaining -= 1;
+
+                let poll_result = invoke_command::<_, OauthPollResponse>(
+                    "poll_oauth_setup",
+                    &PollOauthSetupRequest {
+                        setup_id: setup_id.clone(),
+                    },
+                )
+                .await;
+
+                match poll_result {
                     Err(error) => {
                         set_oauth_state.set(OAuthFlowState::Failed {
                             message: error.to_string(),
                         });
-                        return;
-                    }
-                };
-
-                let setup_id = response.setup_id.clone();
-                let auth_url = response.auth_url.clone();
-                set_oauth_state.set(OAuthFlowState::WaitingForBrowser {
-                    setup_id: setup_id.clone(),
-                    auth_url,
-                });
-
-                // 150 polls × 2 s = 5 minutes frontend timeout.
-                let mut polls_remaining: u32 = 150;
-                loop {
-                    sleep(Duration::from_secs(2)).await;
-
-                    if !matches!(
-                        oauth_state.get_untracked(),
-                        OAuthFlowState::WaitingForBrowser { .. }
-                    ) {
                         break;
                     }
-
-                    if polls_remaining == 0 {
-                        set_oauth_state.set(OAuthFlowState::Failed {
-                            message: "Cloud provider authorization timed out. Please try again."
-                                .into(),
+                    Ok(OauthPollResponse::Pending) => {
+                        continue;
+                    }
+                    Ok(OauthPollResponse::NeedsDriveSelection { drives }) => {
+                        // Stop polling and hand off to the picker dialog.
+                        set_oauth_state.set(OAuthFlowState::SelectingDrive {
+                            setup_id: setup_id.clone(),
+                            drives,
                         });
                         break;
                     }
-                    polls_remaining -= 1;
-
-                    let poll_result = invoke_command::<_, OauthPollResponse>(
-                        "poll_oauth_setup",
-                        &PollOauthSetupRequest {
-                            setup_id: setup_id.clone(),
-                        },
-                    )
-                    .await;
-
-                    match poll_result {
-                        Err(error) => {
-                            set_oauth_state.set(OAuthFlowState::Failed {
-                                message: error.to_string(),
-                            });
-                            break;
-                        }
-                        Ok(OauthPollResponse::Pending) => {
-                            continue;
-                        }
-                        Ok(OauthPollResponse::Failed { message }) => {
-                            set_oauth_state.set(OAuthFlowState::Failed { message });
-                            break;
-                        }
-                        Ok(OauthPollResponse::Completed { rclone_config_blob }) => {
-                            set_oauth_state.set(OAuthFlowState::Completed);
-                            let config = build_config_for_kind(
-                                provider_kind,
-                                DestinationFields {
-                                    local_path: "",
-                                    external_path: "",
-                                    b2_account_id: "",
-                                    b2_app_key: "",
-                                    b2_bucket: "",
-                                    b2_path_prefix: "",
-                                    custom_rclone_config: "",
-                                    oauth_blob: &rclone_config_blob,
-                                    oauth_path: &captured_oauth_path,
-                                },
-                            );
-                            on_change_inner(config);
-                            break;
-                        }
+                    Ok(OauthPollResponse::Failed { message }) => {
+                        set_oauth_state.set(OAuthFlowState::Failed { message });
+                        break;
+                    }
+                    Ok(OauthPollResponse::Completed { rclone_config_blob }) => {
+                        complete_with_blob.with_value(|f| f(provider_kind, rclone_config_blob));
+                        break;
                     }
                 }
-            });
-        }
+            }
+        });
     });
+
+    // Resume the flow once the user picks a drive in the chooser dialog.
+    let select_drive = StoredValue::new(
+        move |provider_kind: DestinationKind, setup_id: String, drive_id: String| {
+            set_oauth_state.set(OAuthFlowState::FinishingDrive);
+            leptos::task::spawn_local(async move {
+                let result = invoke_command::<_, OauthPollResponse>(
+                    "select_oauth_drive",
+                    &SelectOauthDriveRequest { setup_id, drive_id },
+                )
+                .await;
+                match result {
+                    Err(error) => set_oauth_state.set(OAuthFlowState::Failed {
+                        message: error.to_string(),
+                    }),
+                    Ok(OauthPollResponse::Completed { rclone_config_blob }) => {
+                        complete_with_blob.with_value(|f| f(provider_kind, rclone_config_blob));
+                    }
+                    Ok(OauthPollResponse::Failed { message }) => {
+                        set_oauth_state.set(OAuthFlowState::Failed { message });
+                    }
+                    Ok(_) => set_oauth_state.set(OAuthFlowState::Failed {
+                        message: "Unexpected response while selecting a drive. Please try again."
+                            .into(),
+                    }),
+                }
+            });
+        },
+    );
 
     let cancel_oauth = move |_| {
         let current_state = oauth_state.get_untracked();
@@ -583,9 +635,8 @@ pub fn DestinationSelector(
                     let (provider_name, scope_note) = match current_kind {
                         DestinationKind::OneDrive => (
                             "OneDrive",
-                            "Connects to personal Microsoft OneDrive. \
-                            OneDrive Business and SharePoint are not supported — \
-                            use Custom (Rclone) for those.",
+                            "Connects to Microsoft OneDrive. If your account has more \
+                            than one drive, you'll be asked which one to use.",
                         ),
                         _ => (
                             "Google Drive",
@@ -669,6 +720,61 @@ pub fn DestinationSelector(
                                 >
                                     "Cancel"
                                 </button>
+                            </div>
+                        }.into_any(),
+                        OAuthFlowState::SelectingDrive { setup_id, drives } => {
+                            let cancel_setup_id = setup_id.clone();
+                            let drive_buttons = drives
+                                .into_iter()
+                                .map(|drive| {
+                                    let setup_id = setup_id.clone();
+                                    let drive_id = drive.id.clone();
+                                    let label = drive.label.clone();
+                                    view! {
+                                        <button
+                                            type="button"
+                                            on:click=move |_| {
+                                                select_drive.with_value(|f| {
+                                                    f(current_kind, setup_id.clone(), drive_id.clone())
+                                                });
+                                            }
+                                            class="w-full px-3 py-2 border border-border-default text-bone text-sm rounded-lg hover:bg-surface-overlay transition-colors cursor-pointer text-left"
+                                        >
+                                            {label}
+                                        </button>
+                                    }
+                                })
+                                .collect_view();
+                            view! {
+                                <div class="mt-2 space-y-2">
+                                    <p class="text-xs text-text-secondary">
+                                        "This account has multiple drives. Choose which one to use:"
+                                    </p>
+                                    {drive_buttons}
+                                    <button
+                                        type="button"
+                                        on:click=move |_| {
+                                            let setup_id = cancel_setup_id.clone();
+                                            leptos::task::spawn_local(async move {
+                                                let _ = invoke_command::<_, ()>(
+                                                    "cancel_oauth_setup",
+                                                    &CancelOauthSetupRequest { setup_id },
+                                                )
+                                                .await;
+                                            });
+                                            set_oauth_state.set(OAuthFlowState::Idle);
+                                        }
+                                        class="w-full px-4 py-2 border border-border-default text-bone text-sm font-medium rounded-lg hover:bg-surface-overlay transition-colors cursor-pointer"
+                                    >
+                                        "Cancel"
+                                    </button>
+                                </div>
+                            }.into_any()
+                        }
+                        OAuthFlowState::FinishingDrive => view! {
+                            <div class="mt-2 p-3 bg-surface-overlay border border-border-default rounded-lg flex items-center gap-2">
+                                <div class="w-4 h-4 border-2 border-rune border-t-transparent rounded-full animate-spin" />
+                                <span class="text-xs text-text-secondary">"Finishing setup…"</span>
                             </div>
                         }.into_any(),
                         OAuthFlowState::Completed => view! {

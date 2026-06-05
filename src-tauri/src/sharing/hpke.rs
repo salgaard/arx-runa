@@ -209,7 +209,7 @@ fn key_schedule(shared_secret: &[u8; 32]) -> Result<KeyScheduleOutput, SharingEr
 
 /// Encrypts `plaintext` for `recipient_public_key` using HPKE Base mode.
 ///
-/// Returns the `.vgshare` wire bytes: `[32B enc | ciphertext | 32B CTX tag]`.
+/// Returns the `.arxshare` wire bytes: `[32B enc | ciphertext | 32B CTX tag]`.
 pub(crate) fn seal(
     recipient_public_key: &X25519PublicKey,
     plaintext: &[u8],
@@ -228,7 +228,7 @@ pub(crate) fn seal(
     Ok(wire)
 }
 
-/// Decrypts a `.vgshare` wire blob using the recipient's private key.
+/// Decrypts a `.arxshare` wire blob using the recipient's private key.
 ///
 /// Returns the decrypted plaintext wrapped in `Zeroizing` for zeroize-on-drop.
 /// All authentication failures (wrong key, corrupted enc, corrupted ciphertext,
@@ -333,5 +333,56 @@ mod tests {
 
         let result = open(&private_key, &wire);
         assert!(matches!(result, Err(SharingError::AuthenticationFailed)));
+    }
+
+    /// Decodes a 64-character hex string into 32 bytes for RFC test vectors.
+    fn decode_hex_32(hex: &str) -> [u8; 32] {
+        let bytes = hex.as_bytes();
+        assert_eq!(bytes.len(), 64, "expected 64 hex chars");
+        let mut out = [0u8; 32];
+        for (index, slot) in out.iter_mut().enumerate() {
+            let high = (bytes[2 * index] as char)
+                .to_digit(16)
+                .expect("valid hex digit");
+            let low = (bytes[2 * index + 1] as char)
+                .to_digit(16)
+                .expect("valid hex digit");
+            *slot = ((high << 4) | low) as u8;
+        }
+        out
+    }
+
+    /// RFC 9180 Appendix A.1 known-answer vector for DHKEM(X25519, HKDF-SHA256) Decap.
+    ///
+    /// The shared secret of DHKEM is independent of the AEAD, so the A.1 vector
+    /// (AES-128-GCM suite) validates our `kem_decap` even though the shipped suite
+    /// uses CTX-ChaCha20-Poly1305. This anchors the manual key schedule
+    /// (`LabeledExtract`/`LabeledExpand`, `KEM_SUITE_ID`, `kem_context = enc || pk_R`)
+    /// against the published RFC value. Round-trip tests cannot catch a divergence
+    /// from RFC 9180 because both seal and open share the same code; this test can.
+    #[test]
+    fn test_hpke_dhkem_decap_matches_rfc9180_a1_known_answer_vector() {
+        let recipient_private_key =
+            decode_hex_32("4612c550263fc8ad58375df3f557aac531d26850903e55a9f23f21d8534e8ac8");
+        let recipient_public_key =
+            decode_hex_32("3948cfe0ad1ddb695d780e59077195da6c56506b027329794ab02bca80815c4d");
+        let enc = decode_hex_32("37fda3567bdbd628e88668c3c8d7e97d1d1253b6d4ea6d44c150f741f1bf4431");
+        let expected_shared_secret =
+            decode_hex_32("fe0e18c9f024ce43799ae393c7e8fe8fce9d218875e8227b0187c04e7d2ea1fc");
+
+        // pk_R must derive from sk_R; this validates the public-key serialization
+        // that feeds `kem_context`.
+        let derived_public_key = DalekPublicKey::from(&StaticSecret::from(recipient_private_key));
+        assert_eq!(
+            derived_public_key.as_bytes(),
+            &recipient_public_key,
+            "derived pk_R must match the RFC 9180 A.1 vector"
+        );
+
+        let shared_secret = kem_decap(&recipient_private_key, &enc).expect("decap should succeed");
+        assert_eq!(
+            *shared_secret, expected_shared_secret,
+            "DHKEM shared secret must match RFC 9180 A.1 known-answer vector"
+        );
     }
 }

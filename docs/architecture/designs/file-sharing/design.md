@@ -78,7 +78,7 @@ Mitigation: fingerprint verification. Arx Runa displays a short hash (first 16 h
 The base Arx Runa design uses a vault-wide `key_encryption_key` (HKDF-derived from `master_key`) that wraps per-file random keys. Each file has its own `file_key` — a random 256-bit value generated at file creation time via CSPRNG.
 
 ```
-master_key  (Argon2id output, mlocked memory, never stored)
+master_key  (Argon2id output, stack-only Zeroizing<[u8; 32]>, never stored)
     │
     ├─ key_encryption_key  (HKDF-SHA256, info: "arx-runa-key-encryption")
     │       └─ wraps/unwraps per-file file_keys stored in SQLCipher
@@ -137,7 +137,7 @@ plaintext = HPKE.Open(
 
 ### Rust implementation
 
-The `hpke` crate (v0.13.0) is used only for DHKEM(X25519, HKDF-SHA256) encapsulation/decapsulation via `hpke::kem::X25519HkdfSha256`. The HPKE key schedule (RFC 9180 §5.1) is implemented manually in `sharing::hpke` so that `CTX-ChaCha20-Poly1305` can be plugged in as the AEAD without using the crate's sealed `Aead` trait, which does not support custom tag lengths. The `suite_id` used for labeled extraction/expansion is `b"HPKE" || 0x0020 || 0x0001 || 0x0003`, where AEAD ID `0x0003` is the IANA-registered identifier for ChaCha20-Poly1305; CTX is a wire-equivalent committing wrapper that does not alter the key schedule.
+The `hpke` crate is **not** used. RFC 9180 Base mode is implemented manually in `sharing::hpke`: DHKEM(X25519, HKDF-SHA256) encapsulation/decapsulation uses `x25519-dalek` directly, and the HPKE key schedule (RFC 9180 §4–5) is built on `hkdf` + `sha2`. The crate was rejected for two reasons. First, its sealed `Aead` trait does not support the CTX construction's 32-byte BLAKE3 tag and 24-byte XChaCha20 nonce, so `CTX-ChaCha20-Poly1305` cannot be plugged in as the AEAD. Second, the crate (v0.13, `rand_core 0.9`) does not coexist cleanly with the project's `rand 0.10` (`rand_core 0.10`). The `suite_id` used for labeled extraction/expansion is `b"HPKE" || 0x0020 || 0x0001 || 0x0003`, where AEAD ID `0x0003` is the IANA-registered identifier for ChaCha20-Poly1305; the implementation expands `base_nonce` to 24 bytes for XChaCha20, making the suite intentionally non-interoperable with standard HPKE. CTX is a wire-equivalent committing wrapper that does not alter the key schedule.
 
 `CTX-ChaCha20-Poly1305` is a thin wrapper type in the sharing crypto module that replaces the standard 16-byte Poly1305 tag with a 32-byte BLAKE3 commitment.
 Implementation must include adversarial tests that flip one bit in `enc`, ciphertext, and the 32-byte CTX tag; all variants must fail decryption with authentication error.

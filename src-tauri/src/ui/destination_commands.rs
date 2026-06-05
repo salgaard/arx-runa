@@ -13,17 +13,19 @@ use crate::storage::cloud::destination_session::{
 };
 use crate::storage::cloud::stderr_sanitiser::sanitise_stderr;
 use crate::storage::cloud::{
-    OAuthProvider, begin_oauth_setup, cancel_oauth_setup as cancel_oauth_setup_process,
-    finish_oauth_setup_after_browser,
+    OAuthConfigOutcome, OAuthProvider, begin_oauth_setup,
+    cancel_oauth_setup as cancel_oauth_setup_process, drive_config_after_browser,
+    resume_oauth_with_selected_drive,
 };
 use crate::storage::device_id::get_or_create_device_id;
 
 use crate::ui::commands_common::{rclone_binary_path, require_active_session};
 use crate::ui::error::IpcError;
-use crate::ui::state::{AppState, OAuthSetupHandle};
+use crate::ui::state::{AppState, OAuthSetupHandle, PendingDriveSelection};
 use crate::ui::sync_commands::build_destination_transport;
 use crate::ui::types::{
-    BeginOauthSetupResponse, DestinationEntry, DestinationSessionConfig, OauthPollResponse,
+    BeginOauthSetupResponse, DestinationEntry, DestinationSessionConfig, DriveChoice,
+    OauthPollResponse,
 };
 
 /// Validate a local `path_prefix` before creating a destination session.
@@ -599,7 +601,7 @@ pub async fn poll_oauth_setup(
         }
     };
 
-    match finish_oauth_setup_after_browser(
+    match drive_config_after_browser(
         &binary_path,
         &handle.temp_config_path,
         &handle.remote_name,
@@ -607,11 +609,89 @@ pub async fn poll_oauth_setup(
     )
     .await
     {
-        Ok(rclone_config_blob) => Ok(OauthPollResponse::Completed { rclone_config_blob }),
+        Ok(OAuthConfigOutcome::Completed(rclone_config_blob)) => {
+            Ok(OauthPollResponse::Completed { rclone_config_blob })
+        }
+        Ok(OAuthConfigOutcome::NeedsDriveSelection {
+            resume_state,
+            drives,
+        }) => {
+            // Pause until the user picks a drive. The temp config (with the token)
+            // stays on disk until `select_oauth_drive` or `cancel_oauth_setup`.
+            let drive_ids = drives.iter().map(|drive| drive.id.clone()).collect();
+            state.oauth_pending_drives.lock().await.insert(
+                setup_id,
+                PendingDriveSelection {
+                    temp_config_path: handle.temp_config_path,
+                    remote_name: handle.remote_name,
+                    resume_state,
+                    drive_ids,
+                    started_at: std::time::Instant::now(),
+                },
+            );
+            Ok(OauthPollResponse::NeedsDriveSelection {
+                drives: drives.into_iter().map(DriveChoice::from).collect(),
+            })
+        }
         Err(error) => {
-            tracing::error!(error = %error, "finish_oauth_setup_after_browser failed");
+            tracing::error!(error = %error, "drive_config_after_browser failed");
             log_oauth_diagnostics("post-browser config failed", handle.stderr_capture).await;
             cleanup_oauth_temp(&handle.temp_config_path).await;
+            Ok(OauthPollResponse::Failed {
+                message: "Failed to retrieve cloud credentials. Please try again.".into(),
+            })
+        }
+    }
+}
+
+/// Resume an OAuth setup after the user picked a drive in the chooser dialog.
+///
+/// Looks up the paused flow by `setup_id`, validates `drive_id` against the
+/// drives rclone offered, drives the remaining config states to completion, and
+/// returns the credential blob. The temporary config is removed on every path.
+#[tauri::command]
+pub async fn select_oauth_drive(
+    setup_id: String,
+    drive_id: String,
+    state: State<'_, AppState>,
+) -> Result<OauthPollResponse, IpcError> {
+    let app_handle = state
+        .app_handle
+        .get()
+        .ok_or_else(|| IpcError::InternalError("App handle not initialised".into()))?;
+    let binary_path = rclone_binary_path(Some(app_handle));
+
+    let pending = state
+        .oauth_pending_drives
+        .lock()
+        .await
+        .remove(&setup_id)
+        .ok_or_else(|| {
+            IpcError::NotFound(format!("pending drive selection '{setup_id}' not found"))
+        })?;
+
+    // Reject any drive ID rclone did not offer — never forward arbitrary input
+    // to the rclone `--result` argument.
+    if !pending.drive_ids.contains(&drive_id) {
+        cleanup_oauth_temp(&pending.temp_config_path).await;
+        return Ok(OauthPollResponse::Failed {
+            message: "Selected drive is no longer available. Please try again.".into(),
+        });
+    }
+
+    match resume_oauth_with_selected_drive(
+        &binary_path,
+        &pending.temp_config_path,
+        &pending.remote_name,
+        &pending.resume_state,
+        &drive_id,
+    )
+    .await
+    {
+        Ok(rclone_config_blob) => Ok(OauthPollResponse::Completed { rclone_config_blob }),
+        Err(error) => {
+            tracing::error!(error = %error, "resume_oauth_with_selected_drive failed");
+            cleanup_oauth_temp(&pending.temp_config_path).await;
             Ok(OauthPollResponse::Failed {
                 message: "Failed to retrieve cloud credentials. Please try again.".into(),
             })
@@ -671,6 +751,13 @@ pub async fn cancel_oauth_setup(
     setup_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), IpcError> {
+    // A flow paused at the drive chooser has no live child — just a temp config
+    // (holding the token) to remove.
+    if let Some(pending) = state.oauth_pending_drives.lock().await.remove(&setup_id) {
+        cleanup_oauth_temp(&pending.temp_config_path).await;
+        return Ok(());
+    }
+
     let mut setups = state.oauth_setups.lock().await;
     let Some(mut handle) = setups.remove(&setup_id) else {
         return Ok(());
