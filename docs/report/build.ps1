@@ -24,7 +24,7 @@ for ($i = $blocks.Count - 1; $i -ge 0; $i--) {
     if (Test-Path $pngFile) {
         Write-Host "  OK: diagram $num"
         $pngRel = "mermaid-tmp/mermaid_$num.png"
-        $replacement = "\noindent\makebox[\linewidth][c]{\includegraphics[width=185mm,height=0.9\textheight,keepaspectratio]{$pngRel}}"
+        $replacement = "\noindent\makebox[\linewidth][c]{\includegraphics[width=205mm,height=0.9\textheight,keepaspectratio]{$pngRel}}"
     } else {
         Write-Warning "  FEJL: diagram $num - beholder kildekode"
         $replacement = $m.Value

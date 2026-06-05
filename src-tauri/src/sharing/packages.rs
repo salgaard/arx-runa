@@ -58,7 +58,7 @@ impl Drop for SharePackagePayload {
 ///
 /// Reads the file node and chunk metadata from the manifest, unwraps the file
 /// key, builds the JSON payload, and seals it with HPKE for the recipient.
-/// Returns the binary `.vgshare` wire bytes.
+/// Returns the binary `.arxshare` wire bytes.
 pub(crate) async fn create_share_package(
     file_id: Uuid,
     recipient_public_key: &X25519PublicKey,

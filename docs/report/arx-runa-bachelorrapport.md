@@ -1245,11 +1245,11 @@ Det andet problem er nøgle-distributionen. I et serverløst system er der ingen
 
 #### X25519-identiteter uden central server
 
-Arx Runa genererer et X25519-nøglepar ved første opstart. Den private nøgle er wrappet med `key_encryption_key` og gemt i SQLCipher-manifestet under samme autentificeringskæde som resten af vault-indholdet. Den offentlige nøgle eksporteres som en fil eller QR-kode og udveksles via en vilkårlig kanal, brugeren har tillid til. Der kræves ingen konto, ingen server og ingen tilknytning til en specifik cloud-udbyder.
+Arx Runa genererer et X25519-nøglepar ved første opstart. Den private nøgle er wrappet med `key_encryption_key` og gemt i SQLCipher-manifestet under samme autentificeringskæde som resten af vault-indholdet. Den offentlige nøgle eksporteres som en fil og udveksles via en vilkårlig kanal, brugeren har tillid til. Der kræves ingen konto, ingen server og ingen tilknytning til en specifik cloud-udbyder.
 
 Modellen deler grundprincipper med age-krypteringsformatet, der anvender X25519-nøglepar til at adressere specifikke modtagere og uddelegerer kanalvalget til brugeren (C2SP, u.å.).
 
-En potentiel angrebsvektor er MITM-substitution under nøgleudvekslingen, hvor en angriber på kanalen erstatter modtagerens offentlige nøgle med sin egen og dermed kan åbne share-pakker beregnet til modtageren. Arx Runa mindsker risikoen ved at vise et fingeraftryk for hver kontakt, beregnet som de første 8 bytes af SHA-256(public_key) og vist som 16 hexadecimale tegn. En kort verifikation ud-af-bånd, fx et telefonopkald, er tilstrækkelig til at afvise et sådant angreb. Verifikationen er ikke obligatorisk og kræver koordination.
+En potentiel angrebsvektor er MITM-substitution under nøgleudvekslingen, hvor en angriber på kanalen erstatter modtagerens offentlige nøgle med sin egen og dermed kan åbne share-pakker beregnet til modtageren. Arx Runa mindsker risikoen ved at vise et fingeraftryk for hver kontakt, beregnet som de første 8 bytes af SHA-256(public_key) og vist som 16 hexadecimale tegn. En kort verifikation out-of-band, fx et telefonopkald, er tilstrækkelig til at afvise et sådant angreb. Verifikationen er ikke obligatorisk og kræver koordination.
 
 #### HPKE (RFC 9180) som nøgle-enkapsleringsmekanisme
 
@@ -1270,7 +1270,7 @@ Sender-operationen:
 wire = [enc (32 B) | ciphertext | CTX_tag (32 B)]
 ```
 
-HPKE genererer internt et efemert X25519-nøglepar. Den efemere private nøgle kasseres efter encapsulaturen, og `enc` (den efemere offentlige nøgle) inkluderes i wire-formatet. Afsenders statiske nøgle indgår ikke i KEM-operationen, så pakken er kryptografisk adresseret udelukkende til modtagerens private nøgle. Afsenderens identitet (`sender_public_key`) er inkluderet i payloaden inden for HPKE-envelopen.
+HPKE genererer internt et efemert X25519-nøglepar. Den efemere private nøgle kasseres efter encapsuleringen, og `enc` (den efemere offentlige nøgle) inkluderes i wire-formatet. Afsenders statiske nøgle indgår ikke i KEM-operationen, så pakken er kryptografisk adresseret udelukkende til modtagerens private nøgle. Afsenderens identitet (`sender_public_key`) er inkluderet i payloaden inden for HPKE-envelopen.
 
 Modtager-operationen:
 
@@ -1287,7 +1287,7 @@ Hele share-pakken, inklusiv `file_key`, `chunk_uuids`, `cloud_endpoint` og event
 
 #### CTX-ChaCha20-Poly1305 og nøgle-commitment
 
-Standard ChaCha20-Poly1305 er ikke key-committing, og en angriber kan derfor konstruere et ciphertext, der verificerer gyldigt under to separate nøgler (Chan & Rogaway, 2022). For `file_key`-deling er konsekvensen et potentielt partition oracle-angreb, hvor en angriber skelner den korrekte nøgle ved at observere, om dekrypteringen lykkes.
+Standard ChaCha20-Poly1305 er ikke key-committing, og en angriber kan derfor konstruere et ciphertext, der verificerer gyldigt under to separate nøgler (Chan & Rogaway, 2022). For `file_key`-deling er konsekvensen et potentielt partition oracle-angreb, hvor en angriber skelner den korrekte nøgle ved at observere, om dekrypteringen lykkes (Len m.fl., 2021).
 
 Arx Runa erstatter Poly1305-tagget (16 bytes) med en BLAKE3-commitment-tag (32 bytes):
 
@@ -1297,29 +1297,26 @@ CTX_TAG = BLAKE3("arx-runa-ctx-v1" || key || nonce || ciphertext)
 
 Commitmentet opnår CMT-4-sikkerhed (full key commitment): en forfalskningsangriber kan ikke konstruere et ciphertext, der åbner gyldigt under to separate `file_key`-værdier. Tagget verificeres med constant-time comparison inden dekryptering. Egenskaben er ikke tilgængelig i RFC 9180's standard-ciphersuiter og udgør en bevidst afvigelse motiveret af den specifikke eksponering af `file_key` i share-pakken (Chan & Rogaway, 2022). AAD er tom (`&[]`) i denne konstruktion, så commitmentet dækker alle variable input.
 
-Figur 9.1 viser det samlede delingsflow fra engangsnøgleudveksling til revokering.
+Figur 10.1 viser det samlede delingsflow fra engangsnøgleudveksling til revokering.
 
 ```mermaid
 sequenceDiagram
     participant Owner as Owner (Arx Runa)
     participant Cloud as Cloud Storage
-    participant Channel as Out-of-Band Channel
     participant Recipient as Recipient (Arx Runa)
 
     note over Owner,Recipient: Fase 0 #45;#45; Nøgleudveksling (ét setup pr. kontaktpar)
-    Owner->>Channel: Eksportér X25519 public key (fil eller QR-kode)
-    Channel->>Recipient: Levér public key
-    Recipient->>Owner: Eksportér X25519 public key (fil eller QR-kode)
-    Owner->>Channel: Levér public key
-    note over Owner,Recipient: Valgfrit#58; sammenlign fingeraftryk ud-af-bånd (MITM-mitigering)
+    Owner->>Recipient: Send Owner public key (fil)
+    Recipient->>Owner: Send Recipient public key (fil)
+    note over Owner,Recipient: Valgfrit#58; sammenlign fingeraftryk via en separat kanal (MITM-mitigering)
 
     note over Owner,Cloud: Fase 1 #45;#45; Del en fil
     Owner->>Owner: SELECT file_key_wrapped fra nodes (SQLCipher)
     Owner->>Owner: unwrap_file_key #45;#62; file_key (SecretBox, zeroized on drop)
-    Owner->>Owner: Assemblér JSON#58; share_id, file_key, chunk_uuids, cloud_endpoint
+    Owner->>Owner: Assemblér JSON#58; share_id, file_id, file_key, chunk_uuids, sender_public_key, cloud_endpoint
     Owner->>Owner: HPKE.Seal(recipient_pub, info=arx-runa-share, JSON) #45;#62; (enc, ct)
     Owner->>Cloud: Kopiér krypterede blobs til shared/[file_share_id]/
-    Owner->>Channel: Eksportér share-pakke (.arxshare) ud-af-bånd
+    Owner->>Recipient: Send share-pakke (.arxshare)
 
     note over Recipient,Cloud: Fase 2 #45;#45; Import og hentning
     Recipient->>Recipient: HPKE.Open(recipient_priv, enc, ct) #45;#62; JSON
@@ -1328,24 +1325,33 @@ sequenceDiagram
     Recipient->>Recipient: Verificér BLAKE3 pr. blob, dekryptér med file_key
 
     note over Owner,Cloud: Fase 3 #45;#45; Revokering (afsender-initieret)
-    Owner->>Cloud: Slet shared/#60;file_share_id#62;/
+    Owner->>Cloud: Slet shared/[file_share_id]/ (eller tilbagekald cloud-credential ved flere modtagere)
     Owner->>Owner: Sæt revoked_at i shares-tabellen
 ```
 
-*Figur 9.1: Delingsflow i Arx Runa fordelt på tre faser. Fase 0 er et engangsetup pr. kontaktpar. Cloud-udbyderen modtager kun uigennemsigtige krypterede blobs og kan hverken læse indholdet eller identificere modtageren.*
+*Figur 10.1: Det centrale delingsflow i Arx Runa. Fase 0 er et engangsetup pr. kontaktpar. Cloud-udbyderen modtager kun uigennemsigtige krypterede blobs og kan hverken læse indholdet eller identificere modtageren. Download-kvitteringer og share-udløb er udeladt af figuren for overskuelighed.*
 
 ### 10.3 Sammenligning med eksisterende delingsmodeller
 
-Tabel 10.1 sammenligner tre eksisterende løsninger. OneDrive er ikke zero-knowledge, og filindhold kan udleveres ved juridisk pålæg (U.S. Congress, 2018). Cryptomator (desktop) kræver delt vault-adgangskode (alle-eller-intet) (Cryptomator, u.å.). Hub tilføjer nøgle-broking, men kræver dedikeret server. age løser nøgle-distribution via X25519 + HKDF + ChaCha20-Poly1305 men er designet til engangs-filkryptering uden revokering (C2SP, u.å.).
+**OneDrive** er en cloud-baseret fildelingstjeneste med server-side kryptering. Deling sker via platformens egne mekanismer (link eller invitation), og adgang styres og tilbagekaldes server-side (Microsoft, u.å.-b). Microsoft er som amerikansk virksomhed underlagt CLOUD Act og kan pålægges at udlevere data ved juridisk pålæg (U.S. Congress, 2018).
 
-| Løsning | Tillidsniveau | Filgranularitet | Modtager-discovery | Revokering |
-|---------|--------------|-----------------|---------------------|-----------|
-| **OneDrive** | Provider har adgang | Nej (mappeniveau) | Offentligt link | Server-håndhævet |
-| **Cryptomator (desktop)** | Delt vault-kodeord | Nej (alle-eller-intet) | Pre-delt adgangskode | Re-kryptér vault |
-| **age** | Zero-trust | Ja (pr. besked) | X25519 public key | Ingen |
-| **Arx Runa** | Zero-trust | Ja (pr. fil) | X25519 out-of-band | Cloud-blob-sletning + udløb |
+**Cryptomator (desktop)** krypterer en hel vault med én fælles `masterkey` afledt via scrypt fra vault-adgangskoden. Deling sker ved at overdrage vault-adgangskoden til modtageren, som dermed får adgang til hele vaultens indhold (Cryptomator, u.å.).
 
-*Tabel 10.1: Sammenligning af delingsmodeller. Kildegrundlag: Microsoft (u.å.); Cryptomator (u.å.); C2SP (u.å.).*
+**Cryptomator Hub** udvider modellen med per-bruger nøgledistribution: vault-nøglen forsegles individuelt for hver bruger via ECDH-ES og en brugerspecifik EC-nøgle. Hub fungerer som nøgle-mægler og kræver en separat Hub-serverinstans (Cryptomator Hub, u.å.).
+
+**age** krypterer filer til én eller flere modtagere via X25519-nøglepar. Modtagerens offentlige nøgle angives eksplicit ved krypteringstidspunktet. Specifikationen definerer ingen revokeringsmekanisme (C2SP, u.å.).
+
+Tabel 10.1 sammenfatter de fire modellers centrale dimensioner samt Arx Runas tilgang.
+
+| Løsning | Nøglekontrol | Delingsgranularitet | Modtager-discovery | Revokering |
+|---------|-------------|---------------------|--------------------|------------|
+| **OneDrive** | Server (Microsoft) | Fil/mappe | Link eller invitation | Server-håndhævet |
+| **Cryptomator (desktop)** | Klient (delt) | Vault | Delt vault-kodeord | Re-kryptér vault |
+| **Cryptomator Hub** | Klient + Hub-mægler | Vault (per bruger) | Per-bruger EC-nøgle via Hub | Tilbagekald i Hub |
+| **age** | Klient | Fil | X25519 public key | Ingen |
+| **Arx Runa** | Klient | Fil | X25519 out-of-band + HPKE | Blob-sletning + udløb |
+
+*Tabel 10.1: Sammenligning af delingsmodeller. Kildegrundlag: Microsoft (u.å.); Cryptomator (u.å.); Cryptomator Hub (u.å.); C2SP (u.å.).*
 
 ### 10.4 Snapshot-semantik, revokering og designgrænser
 
@@ -1353,9 +1359,11 @@ Share-pakken er et snapshot af filens tilstand på delingstidspunktet, så ændr
 
 Nøgle-autenticitet er ikke løst, og fingeraftryksverifikation (§10.2) er opt-in mitigering mod MITM. Kvitteringssystemet HPKE-forsegles til afsenderens nøgle ved download og import og er best-effort. Mislykkes det, fuldføres download stadig.
 
+En tredje grænse er provider-dækningen. Selve nøgledistributionen er provider-agnostisk, fordi `file_key` rejser inden i HPKE-envelopen, men modtagerens hentning af de delte blobs forudsætter at udbyderen kan udstede en scoped, read-only og tidsbegrænset credential til en undermappe, som modtageren kan bruge uden egen konto. Det er kun realiseret for Backblaze B2 og Google Drive. B2 er turnkey, da en scoped read-only applikationsnøgle udledes automatisk fra afsenderens B2-konfiguration, mens Google Drive kræver at afsenderen først lagrer en Service Account-nøgle (JSON fra Google Cloud). OneDrive understøttes ikke, fordi Shares API for OneDrive for Business og SharePoint altid kræver en autentificeret brugerkontekst og ikke kan tilgå anonymt delt indhold (Microsoft, u.å.-a), og anonyme links på OneDrive Personal er upålidelige til automatiseret download. Hver udbyder kræver desuden sin egen rclone-konfiguration uden en generisk skabelon, så nye udbydere kræver yderligere implementering.
+
 ### 10.5 Realisering i Arx Runa
 
-Tabel 10.1 angiver modulernes ansvar i `src-tauri/src/sharing/`.
+Tabel 10.2 angiver modulernes ansvar i `src-tauri/src/sharing/`.
 
 | Modul | Ansvar |
 |-------|--------|
@@ -1366,9 +1374,9 @@ Tabel 10.1 angiver modulernes ansvar i `src-tauri/src/sharing/`.
 | `revocation.rs` | Revokering og `RevocationPartial`-semantik |
 | `store.rs` | `SharingStore`-interface til SQLCipher |
 
-*Tabel 10.1: Nøglemoduler der realiserer fildeling i `src-tauri/src/sharing/`.*
+*Tabel 10.2: Nøglemoduler der realiserer fildeling i `src-tauri/src/sharing/`.*
 
-Listing 9.1 viser `kem_encap()` der realiserer DHKEM(X25519)-encapsulering per RFC 9180 §4.1. Et engangs-X25519-keypair genereres, DH udføres mod modtagerens offentlige nøgle, og `kem_context = enc || pk_R` bindes til `extract_and_expand`:
+Listing 10.1 viser `kem_encap()` der realiserer DHKEM(X25519)-encapsulering per RFC 9180 §4.1. Et engangs-X25519-keypair genereres, DH udføres mod modtagerens offentlige nøgle, og `kem_context = enc || pk_R` bindes til `extract_and_expand`:
 
 ```rust
 // src-tauri/src/sharing/hpke.rs:128–149
@@ -1392,37 +1400,57 @@ fn kem_encap(
 }
 ```
 
-*Listing 9.1: `kem_encap()` i `sharing/hpke.rs`. DH-resultatet zero-tjekkes via `ct_eq` som forsvar mod small-subgroup-angreb. `kem_context = enc || pk_R` binder shared secret til denne specifikke transaktion per RFC 9180 §4.1.*
+*Listing 10.1: `kem_encap()` i `sharing/hpke.rs`. DH-resultatet zero-tjekkes via `ct_eq` som forsvar mod small-subgroup-angreb. `kem_context = enc || pk_R` binder shared secret til denne specifikke transaktion per RFC 9180 §4.1.*
 
 `SharePackagePayload` implementerer eksplicit `Drop` der zeroizer `file_key`-strengen:
 
 ```rust
-// src-tauri/src/sharing/packages.rs:24–55
+// src-tauri/src/sharing/packages.rs:22–55
+/// JSON payload sealed inside the HPKE envelope of a share package.
+#[derive(Serialize, Deserialize)]
 pub(crate) struct SharePackagePayload {
+    /// Unique share identifier (UUID v4 hyphenated).
     pub share_id: String,
-    pub file_key: String,         // base64-kodet 32-byte nøgle; nulstilles ved drop
-    pub sender_public_key: String,
+    /// File node identifier (UUID v4 hyphenated).
+    pub file_id: String,
+    /// Original file name.
+    pub file_name: String,
+    /// Number of chunks in the shared file.
+    pub chunk_count: u32,
+    /// Chunk size in bytes.
+    pub chunk_size: u32,
+    /// Ordered blob-name UUIDs for each chunk (UUID v4 hyphenated).
     pub chunk_uuids: Vec<String>,
+    /// Base64-encoded 32-byte file key.
+    pub file_key: String,
+    /// Base64-encoded 32-byte X25519 sender public key.
+    pub sender_public_key: String,
+    /// Cloud endpoint metadata for locating the shared blobs.
     pub cloud_endpoint: serde_json::Value,
-    // ...
+    /// Total file size in bytes (used by recipient to truncate last-chunk padding on decrypt).
+    #[serde(default)]
+    pub file_size: u64,
+    /// Optional Unix timestamp when the share expires.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
 }
 
 impl Drop for SharePackagePayload {
     fn drop(&mut self) {
-        self.file_key.zeroize();  // aktiv heap-overskrivning ved drop
+        self.file_key.zeroize();
     }
 }
 ```
 
-HPKE Base-mode er implementeret manuelt i `sharing/hpke.rs` ovenpå `x25519-dalek` (DHKEM-encapsulering), `hkdf` og `sha2` (key schedule per RFC 9180 §4) og `sharing/ctx_aead.rs` (CTX-ChaCha20-Poly1305). Det publicerede `hpke`-crate er fravalgt fordi dets sealed `Aead`-trait ikke understøtter CTX-konstruktionens 32-byte BLAKE3-tag og 24-byte XChaCha20-nonce. En sekundær teknisk konflikt forstærker valget: crate'ets `rand_core 0.9` lader sig ikke umiddelbart sameksistere med projektets `rand 0.10` (`rand_core 0.10`).
+HPKE Base-mode er implementeret manuelt i `sharing/hpke.rs` ovenpå `x25519-dalek` (DHKEM-encapsulering), `hkdf` og `sha2` (key schedule per RFC 9180 §4) og `sharing/ctx_aead.rs` (CTX-ChaCha20-Poly1305). Det publicerede `hpke`-crate er fravalgt, fordi dets sealed `Aead`-trait ikke understøtter CTX-konstruktionens 32-byte BLAKE3-tag og 24-byte XChaCha20-nonce.
 
 Tre invarianter gennemføres på tværs af modulet:
 
 - Alle HPKE-fejlformer (KEM-fejl, CTX-mismatch, stream-dekrypteringsfejl) returnerer `SharingError::AuthenticationFailed` uden kildekontekst, så ingen orakel-information lækker (REQ-SHARING-007).
 - DH-resultatet zero-tjekkes via `ct_eq` inden `extract_and_expand` som forsvar mod small-subgroup-angreb på X25519.
-- `SharePackagePayload.file_key` zeroizes ved drop via eksplicit `Drop`-impl; ingen anden kode behøver at håndtere nøgle-livstid manuelt.
+- `SharePackagePayload.file_key` zeroizes ved drop via eksplicit `Drop`-impl. Ingen anden kode behøver at håndtere nøgle-livstid manuelt.
 
-`scenarios_sharing.rs` verificerer UC-4 end-to-end med `FakeSharingStore`; unit-tests dækker round-trip, forkert modtager, korrupt `enc` og bit-flip-fejl i ciphertext og CTX-tag.
+`scenarios_sharing.rs` verificerer UC-4 end-to-end med `FakeSharingStore`. Unit-tests dækker round-trip, forkert modtager, korrupt `enc` og bit-flip-fejl i ciphertext og CTX-tag. Den manuelle key schedule er desuden forankret mod RFC 9180's known-answer-vektor for DHKEM(X25519) (Appendix A.1). `kem_decap` reproducerer standardens `shared_secret` eksakt, hvilket fanger afvigelser i labels, suite-ID eller `kem_context`-layout, som round-trip-tests ikke kan opdage, fordi seal og open deler samme kode.
 
 > **Delkonklusion - Underspørgsmål 5:** Nøgle-distributionsproblemet i et serverløst zero-trust system løses ved at kombinere X25519-identiteter med HPKE (RFC 9180, Barnes m.fl., 2022). Kun `file_key` for den specifikke fil eksponeres, aldrig vault-dækkende nøgler, og cloud-udbyderen modtager udelukkende krypterede blobs. CTX-ChaCha20-Poly1305 med BLAKE3-commitment eliminerer risikoen for partition oracle-angreb mod `file_key`-dekryptering (Chan & Rogaway, 2022). Sammenlignet med eksisterende løsninger, der enten kræver provider-tillid (OneDrive) eller delt vault-adgangskode (Cryptomator desktop), opnår Arx Runa filgranulær deling med kryptografisk isolation pr. modtager. To begrænsninger er ærlige designvalg: revokering er kun effektiv for data, modtageren endnu ikke har hentet, og nøgle-autenticitet afhænger af den out-of-band-kanal, brugeren selv vælger.
 
@@ -1575,7 +1603,7 @@ Cryptomator. (u.å.). *Security Architecture*. Hentet fra https://docs.cryptomat
 
 Cryptomator Hub. (u.å.). *Cryptomator Hub — Security*. Hentet fra https://docs.cryptomator.org/en/latest/security/hub/ *(verificeret 2026-05-25)*
 
-Cure53. (2017). *Cryptomator Cryptographic Review*. https://cryptomator.org/audits/2017-11-27%20crypto%20cure53.pdf
+Cure53. (2017). *Cryptomator Cryptographic Review*. https://cryptomator.org/audits/2017-11-27%20crypto%20cure53.pdf *(verificeret 2026-06-05)*
 
 Dropbox. (u.å.). *Dropbox account safety: how Dropbox keeps your files secure*. Hentet fra https://help.dropbox.com/security/how-security-works *(verificeret 2026-05-25)*
 
@@ -1607,11 +1635,15 @@ kernel.org. (u.å.). *fscrypt: filesystem-level encryption*. https://docs.kernel
 
 Krawczyk, H., & Eronen, P. (2010). *RFC 5869: HMAC-based extract-and-expand key derivation function (HKDF)*. Internet Engineering Task Force. https://www.rfc-editor.org/rfc/rfc5869
 
+Len, J., Grubbs, P., & Ristenpart, T. (2021). Partitioning oracle attacks. *30th USENIX Security Symposium (USENIX Security 21)*. https://www.usenix.org/conference/usenixsecurity21/presentation/len
+
 Marick, B. (2003). *Agile Testing Directions*. Testing Foundations. https://www.exampler.com/old-blog/2003/08/21/ *(verificeret 2026-05-25)*
 
 McLean, T. (2016). *SIV-mode security review*. https://chosenplaintext.ca/publications/20161104-siv-mode-report.pdf *(verificeret 2026-05-25)*
 
-Microsoft. (u.å.). *How OneDrive safeguards your data in the cloud*. Hentet fra https://support.microsoft.com/en-us/office/how-onedrive-safeguards-your-data-in-the-cloud-23c6ea94-3608-48d7-8bf0-80e142edd1e1 *(verificeret 2026-05-25)*
+Microsoft. (u.å.-a). *Access shared items (Shares API) — Microsoft Graph v1.0*. Hentet fra https://learn.microsoft.com/en-us/graph/api/shares-get *(verificeret 2026-06-05)*
+
+Microsoft. (u.å.-b). *How OneDrive safeguards your data in the cloud*. Hentet fra https://support.microsoft.com/en-us/office/how-onedrive-safeguards-your-data-in-the-cloud-23c6ea94-3608-48d7-8bf0-80e142edd1e1 *(verificeret 2026-05-25)*
 
 NIST. (2007). *NIST SP 800-38D: Recommendation for block cipher modes of operation: Galois/Counter Mode (GCM) and GMAC*. https://csrc.nist.gov/pubs/sp/800/38/d/final
 
@@ -1697,7 +1729,7 @@ U.S. Congress. (2018). *Clarifying Lawful Overseas Use of Data Act (CLOUD Act)*.
   | Vault / Vault Header | Vault: hele det krypterede storage-namespace for én bruger. Vault header: klartekst JSON med offentlige parametre (salt, Argon2-parametre, BLAKE3-fingeraftryk, recovery slot) — nødvendig for bootstrap på en ny enhed. |
   | WASM | WebAssembly: binært instruktionsformat der eksekverer i browsere og Tauri-shells med near-native hastighed. Arx Runa anvender Leptos/WASM som frontend; dekrypteret indhold holdes i WASM-hukommelsesrummet og skrives ikke til disk. |
   | wrapped_master_key | `master_key` krypteret med `recovery_key` under XChaCha20-Poly1305 og lagret i recovery slot. 72 bytes: 24-byte nonce, 32-byte ciphertext, 16-byte tag. AAD inkluderer `vault_id` for transplantationsbeskyttelse. |
-  | X25519 | Diffie-Hellman-funktion over Curve25519. Hver Arx Runa-bruger genererer et X25519-nøglepar som delingsidentitet; offentlig nøgle udveksles ud-af-bånd, privat nøgle wrappes i vault'en. |
+  | X25519 | Diffie-Hellman-funktion over Curve25519. Hver Arx Runa-bruger genererer et X25519-nøglepar som delingsidentitet; offentlig nøgle udveksles out-of-band, privat nøgle wrappes i vault'en. |
   | XChaCha20-Poly1305 | AEAD-primitiv (draft-irtf-cfrg-xchacha-03) med 192-bit nonce og Poly1305-autentifikation. Anvendes til alle chunk-krypteringer og til at wrappe `master_key` i recovery slot. |
   | Zero-Trace | Designprincip: ingen dekrypteret plaintext eller credentials forlader RAM. Eksplicitte arkitektoniske undtagelser (Tauri HTTP-handoff, OS crash dumps, Windows fast startup) er dokumenteret i §5.4 og §9.4. |
   | Zeroizing<T> / ZeroizeOnDrop | Rust-typer fra `zeroize`-cratet der overskriver bufferen med nul ved drop. Anvendes på alle session-nøgler og midlertidige plaintext-buffere. |
@@ -1707,7 +1739,7 @@ U.S. Congress. (2018). *Clarifying Lawful Overseas Use of Data Act (CLOUD Act)*.
 
   | ID | Kategori | Adversary | Trussel | Mitigering | Reference |
   |----|----------|-----------|---------|-----------|-----------|
-  | S-1 | Spoofing | Kanalangriber | MITM-substitution af modtagers offentlige nøgle ved out-of-band-udveksling | BLAKE3-fingeraftryksverifikation ud-af-bånd; opt-in og afhænger af brugerdisciplin | §10.2, §13.2 |
+  | S-1 | Spoofing | Kanalangriber | MITM-substitution af modtagers offentlige nøgle ved out-of-band-udveksling | BLAKE3-fingeraftryksverifikation out-of-band; opt-in og afhænger af brugerdisciplin | §10.2, §13.2 |
   | T-1 | Tampering | Cloud-udbyder | Modifikation af krypteret chunk-blob | Poly1305 AEAD-tag detekterer bit-flip; BLAKE3-checksum i manifest fail-fast inden dekryptering | §6.1, §8.2 |
   | T-2 | Tampering | Cloud-udbyder | Chunk-swap: splicing af én fils chunk ind i en anden fils sekvens | AAD-binding `file_id #124;#124; chunk_index` får dekryptering til at fejle ved ompositionering | §6.4, §8.2 |
   | T-3 | Tampering | Cloud-udbyder | Rollback af manifest til ældre snapshot eller modifikation af manifest-backup | Monoton snapshot_counter; cloud-snapshot < lokal afvises. Manifest-backup AEAD-krypteret med `manifest_key`; tampering producerer auth-failure | §8.3, §8.5 |
