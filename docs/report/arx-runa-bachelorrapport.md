@@ -1,3 +1,5 @@
+\newpage
+
 ## 1. Indledning
 
 Når en fil uploades til Google Drive, OneDrive eller Dropbox, krypteres forbindelsen. Transport Layer Security sikrer at data ikke kan aflæses undervejs. Men krypteringen stopper ved serveren. Cloud-udbyderen modtager klarteksten, lagrer den og besidder selv de nøgler der beskytter den (Microsoft, u.å.; Google, u.å.; Dropbox, u.å.). Brugerens privatlivs-garanti er dermed ikke kryptografisk, men kontraktlig, fordi man stoler på at udbyderen ikke misbruger adgangen.
@@ -81,7 +83,7 @@ Kildekritik er relevant på to områder. Kryptografiske standarder kan forældes
 
 ### 3.4 AI som metodisk redskab
 
-Claude CLI og Copilot CLI er anvendt som research-, design- og implementeringsredskaber igennem hele projektet. Tekniske påstande om kryptografiske primitiver og protokoller er verificeret mod primærkilder (RFC'er, NIST-dokumenter, kryptografiske papers), ikke mod AI-output alene. Automatiserede tests (unit, scenario, integration og E2E) udgør den primære validering af AI-assisterede implementeringsændringer og reducerer risikoen for stille regressioner i implementeringsflows.
+Claude CLI og Copilot CLI er anvendt som research-, design- og implementeringsredskaber igennem hele projektet. Tekniske påstande om kryptografiske primitiver og protokoller er verificeret mod primærkilder (RFC'er, NIST-dokumenter, kryptografiske papers), ikke mod AI-output alene. Automatiserede tests (unit, scenario, integration og E2E) sikrer løbende at AI-assisterede implementeringsændringer ikke introducerer stille regressioner i kryptografiske flows.
 
 ---
 
@@ -1386,7 +1388,7 @@ HPKE Base-mode er implementeret manuelt i `sharing/hpke.rs` ovenpå `x25519-dale
 
 ## 11. Test og evaluering
 
-Arx Runas teststrategi er organiseret i fire lag med klart adskilte ansvarsområder. Rust-lagene ejer kryptografisk korrekthed, mens E2E-laget verificerer brugergrænsefladen. Traceabiliteten fra use case til test er en bevidst designbeslutning der gør det muligt at knytte hvert krav i §5.2 direkte til en automatiseret verifikation.
+Arx Runas teststrategi er organiseret i fire lag med klart adskilte ansvarsområder. Unit-, scenario- og integrationstestene verificerer kryptografisk korrekthed, mens E2E-laget verificerer brugergrænsefladen. Traceabiliteten fra use case til test er en bevidst designbeslutning der gør det muligt at knytte hvert krav i §5.2 direkte til en automatiseret verifikation.
 
 ### 11.1 Testlag og ansvarsfordeling
 
@@ -1399,7 +1401,9 @@ Arx Runa anvender fire testlag med klart adskilte ansvarsområder:
 | Integration | `src-tauri/tests/*.rs` | Real I/O | `pub` kun | Fuld encrypt, upload, download og decrypt round-trip |
 | E2E | `src-tauri/tests/e2e/` | Real Tauri-app | UI (WebDriver) | Brugergrænseflade og browser-storage-oprydning efter lås |
 
-Kryptografisk korrekthed ejes af Rust-lagene; E2E verificerer brugerfladen. `MockCloudTransport` er et in-memory blob-store der holder scenario-tests hermetiske via samme `CloudTransport`-trait som i produktion.
+Unit-, scenario- og integrationstestene verificerer kryptografisk korrekthed. E2E-laget verificerer brugergrænsefladen. `MockCloudTransport` er et in-memory blob-store der holder scenario-tests hermetiske via samme `CloudTransport`-trait som i produktion. Scenario-tests opererer på integrationsniveau med rigtig kryptografi og rigtig SQLCipher, men `MockCloudTransport` isolerer dem fra netværk og gør dem deterministiske og hurtige nok til at køre i hvert CI-job.
+
+Unit-testenes primære funktion er regressionsikring. Kryptografiske primitiver, nøgleafledningsparametre og chunk-parsingslogik dækkes på funktionsniveau, så ændringer bryder tests inden de når produktion. Testene holdes bevidst fri af I/O og SQLCipher, så de kan køre som del af normal compilering og give øjeblikkelig feedback under udvikling. Testsuiten tæller i alt 907 automatiserede Rust-tests: 846 unit-tests, 34 scenario-tests og 27 øvrige tests (integrationstests, property-based tests og statiske sikkerhedsrevisionstest). Hertil kommer E2E-testene der kører via WebDriver udenfor `cargo test`.
 
 ### 11.2 Scenarietest som use case-traceabilitet
 
