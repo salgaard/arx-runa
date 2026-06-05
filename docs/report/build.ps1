@@ -2,24 +2,25 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";"
 
 Push-Location $PSScriptRoot
 
-# Pre-render mermaid diagrams til PNG
-$imgDir = Join-Path $PSScriptRoot "mermaid-tmp"
-New-Item -ItemType Directory -Force $imgDir | Out-Null
-
 $mdContent = [System.IO.File]::ReadAllText("$PSScriptRoot\arx-runa-bachelorrapport.md", [System.Text.Encoding]::UTF8)
-$pattern   = [System.Text.RegularExpressions.Regex]::new('```mermaid\r?\n([\s\S]*?)\r?\n```')
-$blocks    = $pattern.Matches($mdContent)
 
-Write-Host "Renderer $($blocks.Count) mermaid-diagram(mer)..."
+# Pre-render mermaid diagrams til PNG
+$mermaidDir = Join-Path $PSScriptRoot "mermaid-tmp"
+New-Item -ItemType Directory -Force $mermaidDir | Out-Null
 
-for ($i = $blocks.Count - 1; $i -ge 0; $i--) {
-    $m       = $blocks[$i]
+$mermaidPattern = [System.Text.RegularExpressions.Regex]::new('```mermaid\r?\n([\s\S]*?)\r?\n```')
+$mermaidBlocks  = $mermaidPattern.Matches($mdContent)
+
+Write-Host "Renderer $($mermaidBlocks.Count) mermaid-diagram(mer)..."
+
+for ($i = $mermaidBlocks.Count - 1; $i -ge 0; $i--) {
+    $m       = $mermaidBlocks[$i]
     $num     = $i + 1
-    $mmdFile = Join-Path $imgDir "mermaid_$num.mmd"
-    $pngFile = Join-Path $imgDir "mermaid_$num.png"
+    $mmdFile = Join-Path $mermaidDir "mermaid_$num.mmd"
+    $pngFile = Join-Path $mermaidDir "mermaid_$num.png"
 
     [System.IO.File]::WriteAllText($mmdFile, $m.Groups[1].Value, [System.Text.Encoding]::UTF8)
-    & "C:\Users\chris\AppData\Roaming\npm\mmdc.cmd" -i $mmdFile -o $pngFile -w 2000 -b white 2>$null
+    & "C:\Users\chris\AppData\Roaming\npm\mmdc.cmd" -i $mmdFile -o $pngFile -w 2000 -s 3 -b white 2>$null
 
     if (Test-Path $pngFile) {
         Write-Host "  OK: diagram $num"
@@ -27,6 +28,40 @@ for ($i = $blocks.Count - 1; $i -ge 0; $i--) {
         $replacement = "\noindent\makebox[\linewidth][c]{\includegraphics[width=205mm,height=0.9\textheight,keepaspectratio]{$pngRel}}"
     } else {
         Write-Warning "  FEJL: diagram $num - beholder kildekode"
+        $replacement = $m.Value
+    }
+    $mdContent = $mdContent.Remove($m.Index, $m.Length).Insert($m.Index, $replacement)
+}
+
+# Pre-render kodeblokke til PNG via Pygments + Pillow
+$renderScript = Join-Path $PSScriptRoot "render_code.py"
+$codeDir = Join-Path $PSScriptRoot "code-tmp"
+New-Item -ItemType Directory -Force $codeDir | Out-Null
+
+# Match kodeblokke med angivet sprog (undtagen mermaid som allerede er håndteret)
+$codePattern = [System.Text.RegularExpressions.Regex]::new('```(?!mermaid)(\w+)\r?\n([\s\S]*?)\r?\n```')
+$codeBlocks  = $codePattern.Matches($mdContent)
+
+Write-Host "Renderer $($codeBlocks.Count) kodeblok(ke) som billeder..."
+
+for ($i = $codeBlocks.Count - 1; $i -ge 0; $i--) {
+    $m        = $codeBlocks[$i]
+    $num      = $i + 1
+    $lang     = $m.Groups[1].Value
+    $code     = $m.Groups[2].Value
+    $srcFile  = Join-Path $codeDir "code_$num.$lang"
+    $pngFile  = Join-Path $codeDir "code_$num.png"
+
+    [System.IO.File]::WriteAllText($srcFile, $code, [System.Text.Encoding]::UTF8)
+
+    python3 $renderScript $srcFile $lang $pngFile 2>$null
+
+    if (Test-Path $pngFile) {
+        Write-Host "  OK: kodeblok $num ($lang)"
+        $pngRel = "code-tmp/code_$num.png"
+        $replacement = "\noindent\makebox[\linewidth][c]{\includegraphics[width=\linewidth,keepaspectratio]{$pngRel}}"
+    } else {
+        Write-Warning "  FEJL: kodeblok $num ($lang) - beholder kildekode"
         $replacement = $m.Value
     }
     $mdContent = $mdContent.Remove($m.Index, $m.Length).Insert($m.Index, $replacement)

@@ -17,15 +17,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          #- platform: ubuntu-24.04
-          #  rust_targets: wasm32-unknown-unknown
-          #  args: ''
+          - platform: ubuntu-24.04
+            rust_targets: wasm32-unknown-unknown
+            args: ""
           - platform: windows-latest
             rust_targets: wasm32-unknown-unknown
             args: ""
-          #- platform: macos-latest
-          #  rust_targets: wasm32-unknown-unknown,aarch64-apple-darwin,x86_64-apple-darwin
-          #  args: '--target universal-apple-darwin'
+          - platform: macos-latest
+            rust_targets: wasm32-unknown-unknown,aarch64-apple-darwin,x86_64-apple-darwin
+            args: "--target universal-apple-darwin"
     runs-on: ${{ matrix.platform }}
 
     steps:
