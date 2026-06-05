@@ -1084,26 +1084,24 @@ Tre kategorier af utilsigtet persistens udgør truslen:
 - Filvisning via temp-filer efterlader disk-artefakter.
 - WebView kan persistere session-IDs i `localStorage`.
 
-Design-invariant 17 og 7 specificerer kontrakten. Nøgler memory-låses, zeroizes ved vault-lock, og plaintext persisteres aldrig til disk.
-
 ### 9.2 Kryptografisk nøglemateriale og hukommelseslåsning
 
 #### Alternativvurdering
 
-Fire tilgange til beskyttelse mod OS-swap er identificeret og vurderet mod evalueringsparametrene swap-risiko, platformsdækning, fejlhåndtering og granularitet:
+Fire tilgange til nøglebeskyttelse mod OS-swap er vurderet:
 
-| Alternativ | Swap-risiko | Platformsdækning | Fejlhåndtering | Granularitet |
-|---|---|---|---|---|
-| Ingen beskyttelse | Høj | Universal | N/A | N/A |
-| Custom allocator + `mprotect` | Lav | Unix-only | Kompleks | Fin |
-| `mlock`/`VirtualLock` (valgt) | Ingen | Win + Unix | Hard error | Pr. buffer |
-| HSM/TEE | Ingen | Hardware-krav | Eksternt afhængig | Nøgle-niveau |
+| Alternativ | Vurdering | Valgt |
+|---|---|---|
+| Soft-fail (advar, fortsæt) | Stille degradering. Nøgler kan skrives til swap uden brugerens viden, hvilket bryder zero-knowledge-løftet | Nej |
+| `mlockall` (lås hele procesrummet) | Låser kode, stak og heap. Medfører betydeligt hukommelsesforbrug og overskrider realistiske RLIMIT-grænser | Nej |
+| `memsec`-crate (`malloc_secure`) | Kombinerer mlock og allokering i ét kald, men tilføjer en ekstra afhængighed. Feltvis `mlock` med `ZeroizeOnDrop` er mere transparent og sammensætbar | Nej |
+| `mlock`/`VirtualLock` | Forhindrer swap på alle tre målplatforme med feltvis granularitet og uden ekstra afhængighed | Ja |
 
-*Tabel 9.1: Alternativer til nøglebeskyttelse mod OS-swap. Kildegrundlag: NIST SP 800-57 Part 1 Rev 5 §6.4; POSIX mlock(2); Windows VirtualLock API.*
+*Tabel 9.1: Alternativvurdering for nøglebeskyttelse mod OS-swap. Kildegrundlag: POSIX mlock(2); Windows VirtualLock API; NIST SP 800-57 Part 1 Rev 5.*
 
-`mlock`/`VirtualLock` er valgt frem for custom allocator (Unix-begrænset) og HSM/TEE (hardware-krav) fordi de opfylder kravene på alle målplatforme med en simpel RAII-model og hard-error-semantik (NIST, 2020b) (REQ-AUTH-014).
+`mlock`/`VirtualLock` er valgt fordi det er den eneste tilgang der forhindrer swap på alle tre målplatforme (Windows, Linux, macOS) med feltvis granularitet og uden ekstra afhængighed. Fejler låsning, afbrydes autentificeringen med en hård fejl. En sikkerhedsapplikation der stille degraderer sin hukommelsesbeskyttelse kan ikke verificeres at opfylde sit eget sikkerhedsløfte. OpenSSH følger samme princip og nægter at starte `ssh-agent` hvis hukommelseslåsning fejler (NIST, 2020b) (REQ-AUTH-014).
 
-`SecureBytes<N>` i `src-tauri/src/memory/secure_buffer.rs` er den kanoniske container for session-nøglers byte-indhold. Bufferen allokeres, låses og zeroizes i en samlet RAII-wrapper:
+`SecureBytes<N>` i `src-tauri/src/memory/secure_buffer.rs` er den kanoniske container for session-nøglers byte-indhold. Bufferen allokeres, låses og zeroizes i en samlet RAII-wrapper (ressource-acquisition is initialization: ressourcer erhverves ved konstruktion og frigives automatisk når objektet går ud af scope):
 
 ```rust
 // src-tauri/src/memory/secure_buffer.rs:20–52
@@ -1123,7 +1121,7 @@ impl<const N: usize> Drop for SecureBytes<N> {
 }
 ```
 
-mlock-fejl behandles som hård fejl. Autentificeringen afbrydes med `AuthenticationError::MemoryLockFailed`, og der sker ingen stille degradering. `SessionKeys`-felterne er mlocket via `SecureBytes<32>`; øvrige nøgletyper (`FileKey`, `KeyEncryptionKey` m.fl.) anvender `#[derive(ZeroizeOnDrop)]` via `secrecy`-cratens `SecretBox<[u8; 32]>` og zeroizes ved drop, men er ikke mlocket:
+Fejler mlock, afbrydes autentificeringen med `AuthenticationError::MemoryLockFailed`. Der er ingen stille fallback. `SessionKeys`-felterne er mlocket via `SecureBytes<32>`. Øvrige nøgletyper (`FileKey`, `KeyEncryptionKey` m.fl.) nulstilles ved drop via `secrecy`-cratens `SecretBox<[u8; 32]>`, men er ikke mlocket:
 
 ```rust
 // src-tauri/src/crypto/types/mod.rs:7–20
@@ -1134,32 +1132,24 @@ pub struct KeyEncryptionKey(SecretBox<[u8; 32]>);
 pub struct FileKey(SecretBox<[u8; 32]>);
 ```
 
-`SecretBox<T>` deaktiverer `Debug` og eksponerer bytes via `with_exposed`-callback, så råbyte-referencer ikke undslipper deres scope.
+`SecretBox<T>` deaktiverer `Debug`-output og eksponerer bytes udelukkende via en `expose()`-callback, så råbyte-referencer ikke lever ud over kaldsrammen.
 
 ### 9.3 Session-livscyklus og automatisk låsning
 
-Session-livscyklussen er modelleret som en tilstandsmaskine med seks tilstande (figur 9.1). SessionKeys er til stede i mlocked hukommelse i tilstandene Unlocked, Active, Idle og TimingOut og zeroizes ved overgangen til Locked.
+Session-livscyklussen er modelleret som en tilstandsmaskine med tre tilstande (figur 9.1). `SessionKeys` er lagret i mlocked hukommelse udelukkende i tilstanden `Active` og zeroizes ved overgangen til `Expired` via `SecureBytes`, der i sin `Drop`-implementering kalder `zeroize()` efterfulgt af `munlock`.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Locked: App-start
-    Locked --> Authenticating: Kodeord + nøglefil indsendt
-    Authenticating --> Unlocked: Gyldige credentials
-    Authenticating --> Locked: Fejlslagne credentials
-    Unlocked --> Active: Brugeraktivitet
-    Unlocked --> Idle: Ingen aktivitet i 1 min.
-    Active --> Idle: Ingen aktivitet i 1 min.
-    Idle --> Active: Brugeraktivitet
-    Idle --> TimingOut: 15 min. inaktivitet
-    TimingOut --> Active: Aktivitet eller annullering
-    TimingOut --> Locked: 60 sek. udløbet
-    Unlocked --> Locked: Manuel lås
-    Active --> Locked: Manuel lås
-    Idle --> Locked: Manuel lås
-    Locked --> [*]: App lukkes
+    [*] --> NoSession: App-start
+    NoSession --> Active: Autentificering gennemført
+    Active --> Active: Brugeraktivitet (inaktivitetstimer nulstilles)
+    Active --> Expired: Timeout eller manuel lås
+    Expired --> Active: Gen-autentificering
+    Expired --> [*]: App lukkes
+    NoSession --> [*]: App lukkes
 ```
 
-*Figur 9.1: Session-livscyklus i Arx Runa. SessionKeys er mlockede i tilstandene Unlocked–TimingOut og zeroizes ved transition til Locked via `ZeroizeOnDrop`.*
+*Figur 9.1: Session-livscyklus i Arx Runa. `SessionKeys` er mlockede i tilstanden `Active` og zeroizes ved overgangen til `Expired`. En `TimeoutWarning { seconds_remaining }`-hændelse emittered via intern broadcast-kanal kort før automatisk lås.*
 
 `SessionManager.lock()` lukker gaten via `fetch_or(GATE_CLOSED_FLAG)` på et atomisk `u32` der kombinerer gate-flag og operations-tæller:
 
@@ -1169,9 +1159,25 @@ const GATE_CLOSED_FLAG: u32 = 0x8000_0000;
 const COUNTER_MASK: u32 = 0x7FFF_FFFF;
 ```
 
-Nye IPC-operationer blokeres. `waiter.wait_for(|count| *count == 0)` venter til løbende operationer er færdige. SQLCipher-forbindelsen droppes (`keys.metadata_store = None`), `rclone.conf` overskrives og slettes, og `SessionKeys` droppes med `ZeroizeOnDrop` inden munlock.
+Nye IPC-operationer blokeres. `waiter.wait_for(|count| *count == 0)` venter til løbende operationer er færdige. Herefter eksekveres en ordnet nedlukning, hvor SQLCipher-forbindelsen droppes eksplicit, `rclone.conf` overskrives og slettes, og `SessionKeys` droppes som det absolutte sidste trin:
 
-Operations-gaten løser et race, hvor et concurrent `begin_operation()`-kald der lykkes med CAS umiddelbart inden gate-lukning blokkeres af double-check-loopet og dermed ikke kan fortsætte med nøglereferencer under zeroization.
+```rust
+// src-tauri/src/auth/session/manager.rs:334–350
+{
+    let mut session_guard = self.session.write().await;
+    if let Some(mut keys) = session_guard.take() {
+        keys.metadata_store = None;       // frigiv SQLCipher-forbindelsen
+    }
+}
+self.destroy_rclone_conf().await;         // overskriv og slet cloud-legitimationsoplysninger
+
+{
+    let mut session_guard = self.session.write().await;
+    *session_guard = None;                // drop SessionKeys → zeroize + munlock
+}
+```
+
+Rækkefølgen er intentionel: SQLCipher og `rclone.conf` håndteres mens sessionsnøglerne stadig er gyldige, og `SessionKeys` frigives som det allersidste, så ingen ressource kan tilgå nøgler efter zeroization.
 
 ### 9.4 RAM-baseret UI og in-app filvisning
 
@@ -1184,11 +1190,12 @@ Dekrypteret filindhold er en selvstændig Zero-Trace-risiko. To tilgange impleme
 | Download til temp-fil | Ja | Ingen | Universal |
 | Browser File API | Nej | Browser-sandbox | Web-only |
 | Tauri asset-protokol | Potentielt | Begrænset | Tauri |
-| `blob:` URL i WebView (valgt) | Nej | WASM-hukommelse | Tauri/Chromium |
+| `blob:` URL i WebView | Nej | WASM-hukommelse | Tauri/Chromium |
+| `data:` URI / direkte tekstdekodning (valgt) | Nej | WASM-hukommelse | Tauri/Chromium |
 
 *Tabel 9.2: Alternativer til in-app filvisning uden disk-touch.*
 
-`get_file_content(file_id)` afviser filer over 50 MiB uanset MIME-type (`FIFTY_MIB` i `file_commands.rs`). Gyldige filer dekrypteres til `Zeroizing<Vec<u8>>`, base64-kodes og returneres, og frontend opretter `blob:` URL der tilbagekaldes ved luk. Ingen plaintext berører disk (REQ-VAULT-009, REQ-UI-010). Store ikke-video-filer over grænsen kan kun ses ved at downloade til en bruger-valgt destination via `download_file`, hvilket forlader Zero-Trace-scopet og er brugerens informerede valg.
+`get_file_content(file_id)` afviser filer over 50 MiB uanset MIME-type (`FIFTY_MIB` i `file_commands.rs`). Gyldige filer dekrypteres til `Zeroizing<Vec<u8>>`, base64-kodes og returneres. Frontend viser billeder som inline `data:`-URI og tekst i et `<pre>`-element. Signal-tilstanden nulstilles ved luk (Zero-Trace). Ingen plaintext berører disk (REQ-VAULT-009, REQ-UI-010). Store ikke-video-filer over grænsen kan kun ses ved at downloade til en bruger-valgt destination via `download_file`, hvilket forlader Zero-Trace-scopet og er brugerens informerede valg.
 
 #### Sti B: `arxvault://` URI-scheme, video-streaming (ingen størrelsesgrænse)
 
@@ -1199,13 +1206,13 @@ arxvault://localhost/view/{file_id}       (macOS/Linux)
 http://arxvault.localhost/view/{file_id}  (Windows)
 ```
 
-Handleren i `video_stream.rs` dekrypterer kun de chunks der overlapper `Range: bytes=N-M`. Åbne range-anmodninger begrænses til 8 MiB (`MAX_RANGE_BYTES`); højst ét chunks plaintext er i RAM ad gangen. Design-invariant 7 dokumenterer én undtagelse, hvor dekrypterede bytes kopieres til en plain `Vec<u8>` ved overdragelse til Tauris `ResponseBuilder::body()`, og zeroize derfor ikke er mulig.
+Handleren i `video_stream.rs` dekrypterer kun de chunks der overlapper `Range: bytes=N-M`. Åbne range-anmodninger begrænses til 8 MiB (`MAX_RANGE_BYTES`); højst én Range-svarbuffer er i RAM ad gangen. En accepteret begrænsning ved Tauris URI-scheme-API er, at dekrypterede bytes kopieres til en plain `Vec<u8>` ved overdragelse til `ResponseBuilder::body()`. Tauri overtager ejerskabet, og zeroize er ikke mulig efter overdragelsen.
 
 #### Frontend-tilstand og Zero-Trace-compliance
 
 Al frontend-tilstand er holdt i Leptos-signaler (RAM), uden brug af `localStorage`, `sessionStorage` eller `IndexedDB` (REQ-UI-002). CSP deaktiverer service workers og ekstern script-eksekvering via `default-src 'self'`.
 
-`SessionActions::clear()` i `src/state/session_context.rs` kaldes ved `SessionEvent::Locked` og nulstiller hele session-tilstanden til defaults i ét atomisk signal-opdatering:
+`SessionActions::clear()` i `src/state/session_context.rs` kaldes ved `SessionEvent::Locked` og nulstiller hele session-tilstanden til defaults i én atomisk signal-opdatering:
 
 ```rust
 // src/state/session_context.rs:89–91
@@ -1218,7 +1225,7 @@ Password-feltet i login-formularen zeroizes straks efter IPC-kaldet, uanset succ
 
 ---
 
-> **Delkonklusion - Underspørgsmål 4:** Zero-Trace opnås via tre adskilte lag. `mlock`/`VirtualLock` forhindrer at session-nøgler ender i swap eller hibernation. En atomisk session-gate med eksplicit `rclone.conf`-sletning minimerer credentials-vinduet på disk. RAM-only filvisning via `blob:` URL og `arxvault://` Range-stream eliminerer temp-filer og browser-caches. `SessionActions::clear()` ved `SessionEvent::Locked` sikrer ren browser-state efter vault-lock (REQ-UI-002). To undtagelser (video-frames i HTTP-handoff og OS crash dumps) er eksplicitte arkitektoniske begrænsninger.
+> **Delkonklusion - Underspørgsmål 4:** Zero-Trace opnås via tre adskilte lag. `mlock`/`VirtualLock` forhindrer at session-nøgler ender i swap eller hibernation. En atomisk session-gate med eksplicit `rclone.conf`-sletning minimerer credentials-vinduet på disk. RAM-only filvisning via inline `data:`-URI (billeder) og `arxvault://` Range-stream (video) eliminerer temp-filer og browser-caches. `SessionActions::clear()` ved `SessionEvent::Locked` sikrer ren browser-state efter vault-lock (REQ-UI-002). To undtagelser (video-frames i HTTP-handoff og OS crash dumps) er eksplicitte arkitektoniske begrænsninger.
 
 ## 10. Analyse og Realisering: Fildeling i et zero-trust system
 
