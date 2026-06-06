@@ -4,8 +4,6 @@
 //! Password memory is zeroed on both the local `String` and the Leptos signal
 //! immediately after each IPC call resolves.
 
-use std::sync::{Arc, Mutex};
-
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use zeroize::Zeroize;
@@ -16,6 +14,7 @@ use crate::components::{
 };
 use crate::destinations::GdriveShareSetupModal;
 use crate::dialog::{open_directory_dialog, open_file_dialog};
+use crate::events::{event_payload, on_tauri_event_raw};
 use crate::invoke::{invoke_command, invoke_command_with_channel};
 use crate::ipc_channel::IpcChannel;
 use crate::ipc_types::VaultSummary;
@@ -32,32 +31,6 @@ use crate::transfer::ProgressModal;
 pub use crate::components::{CHUNK_MAX, CHUNK_MIN, PRESETS, clamp_chunk_size};
 
 // ─── KeyFileIndicator ─────────────────────────────────────────────────────────
-
-#[wasm_bindgen]
-extern "C" {
-    /// Subscribes to Tauri events via `window.__TAURI__.event.listen`.
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"], catch)]
-    async fn listen(event: &str, handler: &js_sys::Function) -> Result<JsValue, JsValue>;
-}
-
-/// Checks if Tauri event API is available.
-fn is_tauri_event_available() -> bool {
-    use wasm_bindgen::JsValue;
-    match web_sys::window() {
-        Some(window) => {
-            let tauri = js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI__"));
-            if let Ok(tauri_obj) = tauri
-                && !tauri_obj.is_undefined()
-                && !tauri_obj.is_null()
-            {
-                let event_api = js_sys::Reflect::get(&tauri_obj, &JsValue::from_str("event"));
-                return event_api.is_ok() && !event_api.unwrap().is_undefined();
-            }
-            false
-        }
-        None => false,
-    }
-}
 
 /// Key-file selector indicator.
 ///
@@ -122,71 +95,38 @@ pub fn LoginPage(
     if vault_tier == 2
         && let Some(blake3_hex) = vault_key_file_blake3
     {
-        Effect::new(move |_| {
-            if !is_tauri_event_available() {
+        on_tauri_event_raw("device-event", move |event| {
+            // Tauri v2 delivers { event, id, payload } — unwrap the inner payload.
+            let payload = event_payload(&event);
+            let kind = js_sys::Reflect::get(&payload, &JsValue::from_str("kind"))
+                .ok()
+                .and_then(|v| v.as_string());
+            let mount_path_val = js_sys::Reflect::get(&payload, &JsValue::from_str("mountPath"))
+                .ok()
+                .and_then(|v| v.as_string());
+
+            if kind.as_deref() != Some("mounted") {
+                return;
+            }
+            let Some(mp) = mount_path_val else { return };
+            if key_file_path.get().is_some() {
                 return;
             }
 
-            let blake3_hex = blake3_hex.clone();
-            // Arc created fresh each Effect run so the closure stays FnMut.
-            let unlisten_fn: Arc<Mutex<Option<js_sys::Function>>> = Arc::new(Mutex::new(None));
-            let unlisten_for_cleanup = Arc::clone(&unlisten_fn);
-
+            let blake3_hex_inner = blake3_hex.clone();
             leptos::task::spawn_local(async move {
-                let blake3_for_closure = blake3_hex.clone();
-                let event_closure = Closure::wrap(Box::new(move |event: JsValue| {
-                    // Tauri v2 delivers { event, id, payload } — unwrap the inner payload.
-                    let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload"))
-                        .unwrap_or(JsValue::UNDEFINED);
-                    let kind = js_sys::Reflect::get(&payload, &JsValue::from_str("kind"))
-                        .ok()
-                        .and_then(|v| v.as_string());
-                    let mount_path_val =
-                        js_sys::Reflect::get(&payload, &JsValue::from_str("mountPath"))
-                            .ok()
-                            .and_then(|v| v.as_string());
-
-                    if kind.as_deref() != Some("mounted") {
-                        return;
-                    }
-                    let Some(mp) = mount_path_val else { return };
-                    if key_file_path.get().is_some() {
-                        return;
-                    }
-
-                    let blake3_hex_inner = blake3_for_closure.clone();
-                    leptos::task::spawn_local(async move {
-                        if let Ok(Some(found_path)) =
-                            invoke_command::<ScanForKeyFileRequest, Option<String>>(
-                                "scan_for_key_file",
-                                &ScanForKeyFileRequest {
-                                    mount_path: mp,
-                                    expected_hash_hex: blake3_hex_inner,
-                                },
-                            )
-                            .await
-                        {
-                            set_key_file_path.set(Some(found_path));
-                            crate::components::use_toast()
-                                .info("Key file detected on removable drive");
-                        }
-                    });
-                }) as Box<dyn Fn(JsValue)>);
-
-                if let Ok(unlisten_val) =
-                    listen("device-event", event_closure.as_ref().unchecked_ref()).await
-                    && let Ok(f) = unlisten_val.dyn_into::<js_sys::Function>()
+                if let Ok(Some(found_path)) =
+                    invoke_command::<ScanForKeyFileRequest, Option<String>>(
+                        "scan_for_key_file",
+                        &ScanForKeyFileRequest {
+                            mount_path: mp,
+                            expected_hash_hex: blake3_hex_inner,
+                        },
+                    )
+                    .await
                 {
-                    *unlisten_fn.lock().unwrap_or_else(|e| e.into_inner()) = Some(f);
-                }
-                event_closure.forget();
-            });
-
-            on_cleanup(move || {
-                if let Ok(mut guard) = unlisten_for_cleanup.lock()
-                    && let Some(f) = guard.take()
-                {
-                    let _ = f.call0(&JsValue::undefined());
+                    set_key_file_path.set(Some(found_path));
+                    crate::components::use_toast().info("Key file detected on removable drive");
                 }
             });
         });

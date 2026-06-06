@@ -1693,6 +1693,11 @@ pub async fn set_gdrive_service_account(
     // Zeroize before drop.
     *sa_json = String::new();
 
+    // Rebuild the active cloud transport so the new service-account credential is
+    // attached immediately. Without this the live `RcloneTransport` keeps its
+    // `sharing_config = None` until the next lock/unlock, and GDrive sharing fails.
+    crate::ui::auth_commands::try_build_and_swap_rclone_transport(&state, db).await;
+
     Ok(())
 }
 

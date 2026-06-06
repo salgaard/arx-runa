@@ -7,6 +7,7 @@ pub mod auth_commands;
 pub(crate) mod commands_common;
 pub mod destination_commands;
 pub mod error;
+pub(crate) mod events;
 pub mod file_commands;
 pub mod sharing_commands;
 pub mod shell_commands;

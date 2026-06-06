@@ -266,6 +266,7 @@ pub async fn upload_file(
     .await
     .map_err(IpcError::from)?;
 
+    crate::ui::events::emit_sync_status(&state).await;
     Ok(node_to_file_entry(&node, false))
 }
 
@@ -356,7 +357,10 @@ pub async fn delete_file(file_id: String, state: State<'_, AppState>) -> Result<
 
     vault_delete(node_uuid, db, &staging_dir)
         .await
-        .map_err(IpcError::from)
+        .map_err(IpcError::from)?;
+
+    crate::ui::events::emit_sync_status(&state).await;
+    Ok(())
 }
 
 /// Recursively deletes a directory node and all its descendants from the vault.
@@ -387,7 +391,10 @@ pub async fn delete_directory(
 
     vault_delete_directory(node_uuid, db, &staging_dir)
         .await
-        .map_err(IpcError::from)
+        .map_err(IpcError::from)?;
+
+    crate::ui::events::emit_sync_status(&state).await;
+    Ok(())
 }
 
 /// Decrypt and return file content for in-app viewing (Zero-Trace).
@@ -619,7 +626,13 @@ pub async fn flush_epoch_buffer(
         Some(&progress_fn),
     )
     .await
-    .map_err(IpcError::from)
+    .map_err(IpcError::from)?;
+
+    // Release the flush guard before emitting so the status read isn't serialised
+    // behind the flush mutex.
+    drop(_flush_guard);
+    crate::ui::events::emit_sync_status(&state).await;
+    Ok(())
 }
 
 /// Check whether a local filesystem path is a directory.
@@ -741,6 +754,7 @@ pub async fn create_vault_directory(
     );
     db.insert_node(&node).await.map_err(IpcError::from)?;
 
+    crate::ui::events::emit_sync_status(&state).await;
     Ok(node_to_file_entry(&node, false))
 }
 

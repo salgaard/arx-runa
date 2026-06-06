@@ -12,6 +12,7 @@ pub mod destinations;
 pub mod dialog;
 pub mod drag_drop;
 pub mod error;
+pub mod events;
 pub mod invoke;
 pub mod ipc_channel;
 pub mod ipc_types;

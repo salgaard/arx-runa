@@ -1,13 +1,12 @@
 //! Sync state context: SyncState, SyncActions, SyncProvider, and accessor hooks.
 
-use gloo_timers::future::sleep;
 use leptos::prelude::*;
 use serde::Serialize;
 use std::cell::Cell;
 use std::rc::Rc;
-use std::time::Duration;
 
 use crate::components::use_toast;
+use crate::events::on_tauri_event;
 use crate::invoke::{invoke_command, invoke_command_with_channel};
 use crate::ipc_channel::IpcChannel;
 use crate::ipc_types::{
@@ -236,8 +235,9 @@ pub fn use_sync_actions() -> SyncActions {
 
 /// Provides `ReadSignal<SyncState>` + `SyncActions` to descendants.
 ///
-/// Polls `get_sync_status` every 5 seconds and updates frontend sync state.
-/// Polling is cancelled when the component unmounts.
+/// Sync state is event-driven (no polling): the backend emits `sync-status-changed`
+/// after any operation that alters pending changes (upload / delete / flush / sync).
+/// On mount a single `get_sync_status` call seeds the initial `pending_changes`.
 #[component]
 pub fn SyncProvider(children: Children) -> impl IntoView {
     let (state, set_state) = signal(SyncState::default());
@@ -246,18 +246,16 @@ pub fn SyncProvider(children: Children) -> impl IntoView {
         .expect("VaultProvider must wrap SyncProvider — check provider order in src/app.rs");
     provide_context(SyncActions { set_state, vault });
 
-    // Poll get_sync_status every 5 seconds to keep pending_changes current.
-    // spawn_local runs in the WASM microtask queue; the loop is naturally
-    // bounded to the app lifetime (SyncProvider is never unmounted).
+    // Initial sync: seed pending_changes once at mount.
     leptos::task::spawn_local(async move {
-        loop {
-            sleep(Duration::from_millis(5000)).await;
-            if let Ok(status) = invoke_command::<(), SyncStatus>("get_sync_status", &()).await {
-                set_state.update(|s| {
-                    s.pending_changes = status.pending_changes;
-                });
-            }
+        if let Ok(status) = invoke_command::<(), SyncStatus>("get_sync_status", &()).await {
+            set_state.update(|s| s.pending_changes = status.pending_changes);
         }
+    });
+
+    // Backend pushes `sync-status-changed` whenever pending changes move.
+    on_tauri_event::<SyncStatus, _>("sync-status-changed", move |status| {
+        set_state.update(|s| s.pending_changes = status.pending_changes);
     });
 
     children()

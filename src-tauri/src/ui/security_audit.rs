@@ -575,4 +575,38 @@ mod security_audit {
              sharing_commands.rs. Re-add the progress channel to download_received_share.",
         );
     }
+
+    /// Verifies that `set_gdrive_service_account` rebuilds the cloud transport.
+    ///
+    /// Persisting the service-account JSON to the DB is not enough: the live
+    /// `RcloneTransport` keeps `sharing_config = None` until it is rebuilt, so GDrive
+    /// sharing silently fails until the next lock/unlock. The command must call
+    /// `try_build_and_swap_rclone_transport` so the credential takes effect immediately.
+    #[test]
+    fn test_set_gdrive_service_account_rebuilds_transport() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let sharing_commands = Path::new(manifest_dir).join("src/ui/sharing_commands.rs");
+        let fn_marker = "fn set_gdrive_service_account";
+        let rebuild_marker = "try_build_and_swap_rclone_transport";
+
+        let content = fs::read_to_string(&sharing_commands)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {e}", sharing_commands.display()));
+
+        let start = content
+            .find(fn_marker)
+            .unwrap_or_else(|| panic!("`{fn_marker}` not found in sharing_commands.rs"));
+        let body = &content[start..];
+        // Bound the search to this function's body (up to the next top-level item).
+        let end = body[1..]
+            .find("\npub async fn ")
+            .map(|i| i + 1)
+            .unwrap_or(body.len());
+        let found = body[..end].contains(rebuild_marker);
+
+        assert!(
+            found,
+            "Expected `{rebuild_marker}` inside `{fn_marker}` in sharing_commands.rs. \
+             Without it, GDrive sharing fails until a lock/unlock cycle.",
+        );
+    }
 }

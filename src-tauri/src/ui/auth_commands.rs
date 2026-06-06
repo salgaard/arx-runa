@@ -170,7 +170,10 @@ async fn validate_storage_destination(
 /// Best-effort: writes rclone.conf from the DB and installs an `RcloneTransport`.
 ///
 /// Failures are logged as warnings. The caller must not treat this as fatal.
-async fn try_build_and_swap_rclone_transport(state: &AppState, db: &SqlCipherMetadataStore) {
+pub(crate) async fn try_build_and_swap_rclone_transport(
+    state: &AppState,
+    db: &SqlCipherMetadataStore,
+) {
     // Crash recovery: destroy any leftover conf from a previous session that failed to clean up.
     if let Some(stale_conf_path) = state.session_manager.rclone_conf_path().await {
         if let Err(error) = destroy_session_rclone_conf(&stale_conf_path).await {

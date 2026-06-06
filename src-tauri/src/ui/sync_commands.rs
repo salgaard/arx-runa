@@ -589,6 +589,8 @@ pub async fn sync_to_cloud(
         pending_changes: 0,
     };
 
+    crate::ui::events::emit_sync_status(&state).await;
+
     Ok(SyncResult {
         files_uploaded: push_report.blobs_uploaded as u32,
         files_downloaded: 0,
@@ -909,6 +911,8 @@ pub async fn pull_and_reconcile(
     // Best-effort: revoke shares that have passed their expiry deadline.
     crate::ui::sharing_commands::sweep_expired_shares(&state).await;
 
+    crate::ui::events::emit_sync_status(&state).await;
+
     Ok(ReconcileResult {
         pending_deletions_drained: pending_deletions_drained as u32,
         cloud_counter,
@@ -920,11 +924,7 @@ pub async fn pull_and_reconcile(
 #[tauri::command]
 pub async fn get_sync_status(state: State<'_, AppState>) -> Result<SyncStatus, IpcError> {
     state.session_manager.reset_timer().await;
-    let mut status = state.sync_status.read().await.clone();
-    if let Some(db_store) = state.session_manager.get_metadata_store().await {
-        status.pending_changes = db_store.get_epoch_buffer_count().await.unwrap_or(0);
-    }
-    Ok(status)
+    Ok(crate::ui::events::current_sync_status(&state).await)
 }
 
 /// Re-download every vault blob from the current primary destination into
