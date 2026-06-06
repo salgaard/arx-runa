@@ -504,7 +504,7 @@ mod tests {
 
     /// Verifies wrong KEK produces a decrypt failure surfaced as storage error.
     #[tokio::test]
-    async fn test_download_file_wrong_kek_fails_with_database_or_checksum_error() {
+    async fn test_download_file_wrong_kek_fails_with_decryption_or_checksum_error() {
         let temp_dir = TempDir::new().expect("temporary directory should be created");
         let source_path = temp_dir.path().join("source.bin");
         let destination_path = temp_dir.path().join("destination.bin");
@@ -548,7 +548,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(StorageError::Database(_)) | Err(StorageError::ChecksumMismatch)
+            Err(StorageError::DecryptionFailed) | Err(StorageError::ChecksumMismatch)
         ));
     }
 
