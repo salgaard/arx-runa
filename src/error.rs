@@ -8,7 +8,8 @@ use serde::Deserialize;
 pub struct IpcError {
     /// Machine-readable discriminator: `"vaultLocked"`, `"authenticationFailed"`,
     /// `"notFound"`, `"alreadyExists"`, `"cloudError"`, `"invalidInput"`,
-    /// `"internalError"`.
+    /// `"internalError"`, `"pendingFlush"`, `"syncConflict"`,
+    /// `"sharingNotSupported"`, `"dataDesync"`.
     pub kind: String,
     /// User-safe, displayable message (no paths, keys, or internals).
     pub message: String,

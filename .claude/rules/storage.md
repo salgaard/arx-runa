@@ -44,7 +44,7 @@ paths:
 
 ## I/O, Errors, Traits
 - Stream via `BufReader`/`BufWriter`; async only (`tokio::io`)
-- `StorageError::from_crypto`: checksum mismatches → `ChecksumMismatch`; all other crypto failures → `Database`
+- `StorageError::from_crypto`: checksum mismatches → `ChecksumMismatch`; decryption/AEAD tag mismatches → `DecryptionFailed`; all other crypto failures → `Database`
 - `MetadataStore` for manifest; `CloudTransport` for Rclone (`&str` cloud-root-relative, forward slashes; `BlobName` for chunk filenames)
 - Not on `MetadataStore`: sharing/session/cloud-config CRUD — use `SharingStore` or SQLCipher-specific accessors
 - SQLCipher-only: `rollback_snapshot_counter`, `list_sync_chunks`, `list_all_blob_names`, `replace_file_key_and_chunks` (single transaction; enqueues old blob_names into `pending_deletions`)

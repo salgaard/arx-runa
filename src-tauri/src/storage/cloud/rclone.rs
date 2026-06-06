@@ -294,8 +294,9 @@ impl CloudTransport for RcloneTransport {
     /// Generates scoped credentials for a share recipient.
     ///
     /// For Backblaze B2 remotes: creates a time-limited scoped application key.
-    /// For Google Drive remotes: grants the configured Service Account read permission
-    /// on the share folder with `expirationTime`.
+    /// For Google Drive remotes: grants the configured Service Account writer
+    /// permission on the share folder and pre-creates the receipt placeholder
+    /// blobs (so the quota-less SA can later overwrite them in place).
     /// Returns `SharingNotSupported` for other backends.
     async fn generate_share_credentials(
         &self,
@@ -353,6 +354,31 @@ impl CloudTransport for RcloneTransport {
 }
 
 impl RcloneTransport {
+    /// Pre-creates the owner-owned `receipts/` and `import-receipts/` placeholder
+    /// blobs for a Google Drive share.
+    ///
+    /// Uploaded via the owner's own (quota-bearing) transport so the recipient's
+    /// Service Account can later overwrite them in place. Best-effort: every
+    /// failure is logged at `warn` and does not abort share creation.
+    async fn precreate_gdrive_receipt_placeholders(&self, path_prefix: &str) {
+        let base = path_prefix.trim_end_matches('/');
+        let local = std::env::temp_dir().join(format!(
+            "arx-rcpt-placeholder-{}.blob",
+            uuid::Uuid::new_v4()
+        ));
+        if let Err(e) = tokio::fs::write(&local, crate::sharing::RECEIPT_PLACEHOLDER).await {
+            tracing::warn!(%e, "receipt placeholder: temp write failed");
+            return;
+        }
+        for dir in ["receipts", "import-receipts"] {
+            let remote_path = format!("{base}/{dir}/{}", crate::sharing::RECEIPT_BLOB_NAME);
+            if let Err(e) = self.upload_blob(&local, &remote_path).await {
+                tracing::warn!(%e, dir, "receipt placeholder: pre-create failed");
+            }
+        }
+        let _ = tokio::fs::remove_file(&local).await;
+    }
+
     async fn generate_b2_share_credentials(
         &self,
         path_prefix: &str,
@@ -524,12 +550,21 @@ impl RcloneTransport {
 
         tracing::debug!(permission_id = %permission.permission_id, "granted Google Drive SA permission");
 
+        // Pre-create the owner-owned receipt blobs so the recipient SA (no Drive
+        // storage quota) can update them in place instead of creating new files.
+        // Best-effort: failure only disables receipts, not the share itself.
+        self.precreate_gdrive_receipt_placeholders(path_prefix)
+            .await;
+
         Ok(Some(serde_json::json!({
             "provider": "drive",
             "folder_id": folder_id,
             "sa_credentials_json": sa_json_str.as_str(),
             "path_prefix": path_prefix,
             "permission_id": permission.permission_id,
+            // Mirrors B2: signals the recipient to upload delivery-receipt blobs. The
+            // SA is granted writer access (see `gdrive_create_permission`) so it can.
+            "receipt_requested": true,
         })))
     }
 }

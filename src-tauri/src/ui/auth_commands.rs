@@ -26,7 +26,8 @@ use crate::auth::key_source::FileKeySource;
 use crate::crypto::VaultId;
 use crate::storage::SqlCipherMetadataStore;
 use crate::storage::cloud::{
-    CloudEndpoint, CloudTransport as _, DestinationSessionPublic, RcloneTransport, SyncConfig,
+    CloudEndpoint, CloudTransport as _, DestinationSessionPublic,
+    PENDING_POST_RECOVERY_PUSH_META_KEY, RcloneTransport, SyncConfig,
     destination_session::{
         BackupSyncMode, DestinationSession, DestinationType, build_session_rclone_conf,
         create_session_rclone_dir, destroy_session_rclone_conf, get_primary_destination,
@@ -51,6 +52,7 @@ use crate::ui::commands_common::{
 };
 use crate::ui::error::IpcError;
 use crate::ui::state::{AppState, SessionVaultInfo};
+use crate::ui::sync_commands::push_active_vault;
 use crate::ui::types::{
     AuthResponse, DestinationSessionConfig, ProgressUpdate, SessionStatus, VaultSummary,
 };
@@ -170,7 +172,10 @@ async fn validate_storage_destination(
 /// Best-effort: writes rclone.conf from the DB and installs an `RcloneTransport`.
 ///
 /// Failures are logged as warnings. The caller must not treat this as fatal.
-async fn try_build_and_swap_rclone_transport(state: &AppState, db: &SqlCipherMetadataStore) {
+pub(crate) async fn try_build_and_swap_rclone_transport(
+    state: &AppState,
+    db: &SqlCipherMetadataStore,
+) {
     // Crash recovery: destroy any leftover conf from a previous session that failed to clean up.
     if let Some(stale_conf_path) = state.session_manager.rclone_conf_path().await {
         if let Err(error) = destroy_session_rclone_conf(&stale_conf_path).await {
@@ -823,6 +828,40 @@ pub async fn recover_vault_with_phrase(
                 ?error,
                 "Failed to prepare vault storage after phrase recovery"
             );
+        }
+
+        // Deferred repair: the in-ceremony cloud uploads ran before the real
+        // rclone transport was installed, so the cloud may still hold the
+        // old-key snapshot. Now that a live transport is available, re-push the
+        // re-keyed manifest/header/blobs so files open without a manual sync.
+        // Best-effort — on failure the flag stays set and the next sync_to_cloud
+        // retries; without it a file read fails with IpcError::DataDesync.
+        let needs_repair_push = matches!(
+            db.get_meta(PENDING_POST_RECOVERY_PUSH_META_KEY).await,
+            Ok(Some(value)) if value == "1"
+        );
+        if needs_repair_push && state.cloud_transport.read().await.is_configured() {
+            let _ = progress_ch.try_send_if_open(ProgressUpdate {
+                percent: 90,
+                bytes_processed: 0,
+                bytes_total: 0,
+                status: "Syncing recovered vault…".into(),
+            });
+            let repair_progress = |_: u32, _: u32, _: Option<&str>| {};
+            if let Err(error) = push_active_vault(
+                &state,
+                &vault_id_str,
+                &db_path,
+                &updated_header,
+                &repair_progress,
+            )
+            .await
+            {
+                tracing::warn!(
+                    ?error,
+                    "Post-recovery repair push failed; next sync will retry"
+                );
+            }
         }
     }
 

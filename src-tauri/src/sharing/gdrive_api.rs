@@ -281,7 +281,10 @@ async fn find_drive_folder(
     Ok(data.files.into_iter().next().map(|f| f.id))
 }
 
-/// Grants a service account read permission on a Drive folder with an optional expiry.
+/// Grants a service account writer permission on a Drive folder with an optional expiry.
+///
+/// Writer (not reader) is required so the recipient can upload delivery-receipt blobs
+/// back into the share folder, matching the B2 scoped key's `writeFiles` capability.
 ///
 /// Calls `POST /drive/v3/files/{folder_id}/permissions`.
 /// `expiration_rfc3339` must be an RFC 3339 string with millisecond precision
@@ -295,7 +298,10 @@ pub(crate) async fn gdrive_create_permission(
 ) -> Result<GdrivePermission, GdriveApiError> {
     let mut body = serde_json::json!({
         "type": "user",
-        "role": "reader",
+        // "writer" (not "reader") so the recipient SA can upload delivery-receipt
+        // blobs back into the share folder. Mirrors the B2 scoped key, which is
+        // granted `writeFiles` over the same share prefix.
+        "role": "writer",
         "emailAddress": sa_email,
     });
     if let Some(expiry) = expiration_rfc3339 {

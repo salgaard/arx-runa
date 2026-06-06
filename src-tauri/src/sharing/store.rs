@@ -80,6 +80,32 @@ pub struct ShareRecord {
     pub receipt_received_at: Option<i64>,
 }
 
+/// Immutable per-`file_share_id` re-encryption snapshot persisted in the `file_shares` table.
+///
+/// When a file is shared it is decrypted from the vault (where it may live inside a cross-file
+/// epoch blob) and re-encrypted under a fresh share file key and a fresh share `file_id`, then
+/// uploaded as standalone per-chunk blobs. This snapshot records that re-encrypted layout so every
+/// recipient of the same `file_share_id` seals an identical package against the same blobs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileShareSnapshot {
+    /// Groups all recipients of the same shared file version under one shared-blob prefix.
+    pub file_share_id: String,
+    /// Fresh file identifier used as chunk AAD for the re-encrypted blobs (UUID v4 hyphenated).
+    pub share_file_id: String,
+    /// Fresh share file key wrapped with the local key-encryption key (72 bytes).
+    pub share_file_key_wrapped: [u8; 72],
+    /// Ordered blob-name UUIDs of the re-encrypted chunks (UUID v4 hyphenated).
+    pub chunk_uuids: Vec<String>,
+    /// Chunk size in bytes used when re-encrypting.
+    pub chunk_size: u32,
+    /// Plaintext size of the shared file in bytes.
+    pub file_size: u64,
+    /// Original file name carried into the recipient package.
+    pub file_name: String,
+    /// Unix timestamp when the snapshot was created.
+    pub created_at: i64,
+}
+
 /// Persistence boundary for identity, contacts, and received-shares operations.
 #[async_trait]
 pub trait SharingStore: Send + Sync {
@@ -137,4 +163,16 @@ pub trait SharingStore: Send + Sync {
         share_id: &str,
         revoked_at: i64,
     ) -> Result<(), SharingError>;
+
+    /// Inserts one `file_shares` re-encryption snapshot row.
+    async fn insert_file_share(&self, snapshot: &FileShareSnapshot) -> Result<(), SharingError>;
+
+    /// Fetches the re-encryption snapshot for a `file_share_id`, or `None` if absent.
+    async fn get_file_share(
+        &self,
+        file_share_id: &str,
+    ) -> Result<Option<FileShareSnapshot>, SharingError>;
+
+    /// Deletes the `file_shares` snapshot row for a `file_share_id` (idempotent).
+    async fn delete_file_share(&self, file_share_id: &str) -> Result<(), SharingError>;
 }

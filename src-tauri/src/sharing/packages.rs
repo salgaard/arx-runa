@@ -11,14 +11,12 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::crypto::types::{FileId, FileKey, KeyEncryptionKey, WrappedFileKey};
-use crate::crypto::{unwrap_file_key, wrap_file_key};
+use crate::crypto::types::{FileId, FileKey, KeyEncryptionKey};
+use crate::crypto::wrap_file_key;
 use crate::sharing::error::SharingError;
 use crate::sharing::hpke;
-use crate::sharing::store::{ReceivedShare, SharingStore};
+use crate::sharing::store::{FileShareSnapshot, ReceivedShare, SharingStore};
 use crate::sharing::types::X25519PublicKey;
-use crate::storage::metadata_store::MetadataStore;
-use crate::storage::types::NodeType;
 /// JSON payload sealed inside the HPKE envelope of a share package.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct SharePackagePayload {
@@ -56,71 +54,36 @@ impl Drop for SharePackagePayload {
 
 /// Creates a share package sealed for the given recipient.
 ///
-/// Reads the file node and chunk metadata from the manifest, unwraps the file
-/// key, builds the JSON payload, and seals it with HPKE for the recipient.
-/// Returns the binary `.arxshare` wire bytes.
+/// Builds the JSON payload from the per-file-share re-encryption [`FileShareSnapshot`] (the
+/// fresh share `file_id`, re-encrypted chunk blob names, and plaintext metadata) plus the
+/// unwrapped fresh share file key, then seals it with HPKE for the recipient. The vault's own
+/// file key and storage layout (which may pack the file into a cross-file epoch blob) never
+/// leave the sender. Returns the binary `.arxshare` wire bytes.
 pub(crate) async fn create_share_package(
-    file_id: Uuid,
     recipient_public_key: &X25519PublicKey,
     expires_at: Option<i64>,
     cloud_endpoint: serde_json::Value,
-    metadata_store: &dyn MetadataStore,
+    snapshot: &FileShareSnapshot,
+    share_file_key: &FileKey,
     sharing_store: &dyn SharingStore,
-    key_encryption_key: &KeyEncryptionKey,
 ) -> Result<Vec<u8>, SharingError> {
-    let node = metadata_store
-        .get_node(file_id)
-        .await
-        .map_err(|_| SharingError::Backend("file not found".to_owned()))?;
-
-    if node.node_type != NodeType::File {
-        return Err(SharingError::Backend("node is not a file".to_owned()));
-    }
-
-    let wrapped_bytes = node
-        .file_key_wrapped
-        .ok_or_else(|| SharingError::Backend("file node has no wrapped key".to_owned()))?;
-    let file_key = unwrap_file_key(
-        &WrappedFileKey::new(wrapped_bytes),
-        &FileId::from_uuid(file_id),
-        key_encryption_key,
-    )
-    .map_err(|_| SharingError::Backend("file key unwrap failed".to_owned()))?;
-
-    let chunks = metadata_store
-        .get_chunks(file_id)
-        .await
-        .map_err(|_| SharingError::Backend("chunk lookup failed".to_owned()))?;
-
-    let chunk_uuids: Vec<String> = chunks.iter().map(|chunk| chunk.blob_name.clone()).collect();
-    let chunk_count = chunks.len() as u32;
-
-    let chunk_size_text = metadata_store
-        .get_meta("chunk_size_bytes")
-        .await
-        .map_err(|_| SharingError::Backend("manifest meta lookup failed".to_owned()))?
-        .ok_or_else(|| SharingError::Backend("chunk_size_bytes not set".to_owned()))?;
-    let chunk_size: u32 = chunk_size_text
-        .parse()
-        .map_err(|_| SharingError::Backend("chunk_size_bytes is not a valid u32".to_owned()))?;
-
     let owner_public_key = sharing_store.get_own_public_key().await?;
 
-    let file_key_base64 =
-        file_key.with_exposed(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes));
+    let file_key_base64 = share_file_key
+        .with_exposed(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes));
 
     let payload = SharePackagePayload {
         share_id: Uuid::new_v4().hyphenated().to_string(),
-        file_id: file_id.hyphenated().to_string(),
-        file_name: node.name.clone(),
-        chunk_count,
-        chunk_size,
-        chunk_uuids,
+        file_id: snapshot.share_file_id.clone(),
+        file_name: snapshot.file_name.clone(),
+        chunk_count: snapshot.chunk_uuids.len() as u32,
+        chunk_size: snapshot.chunk_size,
+        chunk_uuids: snapshot.chunk_uuids.clone(),
         file_key: file_key_base64,
         sender_public_key: base64::engine::general_purpose::STANDARD
             .encode(owner_public_key.as_bytes()),
         cloud_endpoint,
-        file_size: node.size_bytes,
+        file_size: snapshot.file_size,
         expires_at,
     };
 
@@ -275,8 +238,11 @@ mod tests {
     use uuid::Uuid;
 
     use crate::crypto::types::KeyEncryptionKey;
+    use crate::crypto::{FileKey, generate_file_key};
     use crate::sharing::error::SharingError;
-    use crate::sharing::store::{Contact, ReceivedShare, ShareRecord, SharingStore};
+    use crate::sharing::store::{
+        Contact, FileShareSnapshot, ReceivedShare, ShareRecord, SharingStore,
+    };
     use crate::sharing::types::{ContactId, X25519PublicKey};
     use crate::storage::error::StorageError;
     use crate::storage::metadata_store::MetadataStore;
@@ -284,6 +250,9 @@ mod tests {
 
     use super::{SharePackagePayload, create_share_package, import_share_package};
 
+    // Retained as a fixture builder for the manifest types used to derive share snapshots;
+    // `create_share_package` no longer reads a `MetadataStore` directly.
+    #[allow(dead_code)]
     struct FakeMetadataStore {
         node: Node,
         chunks: Vec<ChunkRecord>,
@@ -469,10 +438,45 @@ mod tests {
         ) -> Result<(), SharingError> {
             unimplemented!()
         }
+
+        async fn insert_file_share(
+            &self,
+            _snapshot: &crate::sharing::FileShareSnapshot,
+        ) -> Result<(), SharingError> {
+            unimplemented!()
+        }
+
+        async fn get_file_share(
+            &self,
+            _file_share_id: &str,
+        ) -> Result<Option<crate::sharing::FileShareSnapshot>, SharingError> {
+            unimplemented!()
+        }
+
+        async fn delete_file_share(&self, _file_share_id: &str) -> Result<(), SharingError> {
+            unimplemented!()
+        }
     }
 
     fn make_test_kek() -> KeyEncryptionKey {
         KeyEncryptionKey::from_bytes([0xAA; 32])
+    }
+
+    /// Builds a re-encryption snapshot and fresh share key from test node/chunk fixtures,
+    /// mirroring what `build_new_file_share` produces before sealing a recipient package.
+    fn make_test_snapshot(node: &Node, chunks: &[ChunkRecord]) -> (FileShareSnapshot, FileKey) {
+        let share_file_key = generate_file_key();
+        let snapshot = FileShareSnapshot {
+            file_share_id: Uuid::new_v4().hyphenated().to_string(),
+            share_file_id: Uuid::new_v4().hyphenated().to_string(),
+            share_file_key_wrapped: [0u8; 72],
+            chunk_uuids: chunks.iter().map(|chunk| chunk.blob_name.clone()).collect(),
+            chunk_size: 4_194_304,
+            file_size: node.size_bytes,
+            file_name: node.name.clone(),
+            created_at: 0,
+        };
+        (snapshot, share_file_key)
     }
 
     fn make_wrapped_file_key(kek: &KeyEncryptionKey, node_id: Uuid) -> [u8; 72] {
@@ -533,24 +537,19 @@ mod tests {
         let (sender_secret, sender_public_key) = make_x25519_keypair();
         let (recipient_secret, recipient_public_key) = make_x25519_keypair();
 
-        let metadata_store = FakeMetadataStore {
-            node: node.clone(),
-            chunks: chunks.clone(),
-            chunk_size_bytes: "4194304".to_owned(),
-        };
         let sharing_store = FakeSharingStore {
             owner_public_key: sender_public_key,
             received_shares: Arc::new(Mutex::new(Vec::new())),
         };
+        let (snapshot, share_file_key) = make_test_snapshot(&node, &chunks);
 
         let wire = create_share_package(
-            *node.node_id.as_uuid(),
             &recipient_public_key,
             Some(1_800_000_000),
             serde_json::json!({"provider": "s3", "bucket": "test"}),
-            &metadata_store,
+            &snapshot,
+            &share_file_key,
             &sharing_store,
-            &kek,
         )
         .await
         .expect("create should succeed");
@@ -588,24 +587,19 @@ mod tests {
         let (_sender_secret, sender_public_key) = make_x25519_keypair();
         let (recipient_secret, recipient_public_key) = make_x25519_keypair();
 
-        let metadata_store = FakeMetadataStore {
-            node: node.clone(),
-            chunks,
-            chunk_size_bytes: "4194304".to_owned(),
-        };
         let sharing_store = FakeSharingStore {
             owner_public_key: sender_public_key,
             received_shares: Arc::new(Mutex::new(Vec::new())),
         };
+        let (snapshot, share_file_key) = make_test_snapshot(&node, &chunks);
 
         let wire = create_share_package(
-            *node.node_id.as_uuid(),
             &recipient_public_key,
             None,
             serde_json::json!({}),
-            &metadata_store,
+            &snapshot,
+            &share_file_key,
             &sharing_store,
-            &kek,
         )
         .await
         .expect("create should succeed");
@@ -752,25 +746,20 @@ mod tests {
         let (_sender_secret, sender_public_key) = make_x25519_keypair();
         let (recipient_secret, recipient_public_key) = make_x25519_keypair();
 
-        let metadata_store = FakeMetadataStore {
-            node: node.clone(),
-            chunks,
-            chunk_size_bytes: "4194304".to_owned(),
-        };
         let received_shares = Arc::new(Mutex::new(Vec::new()));
         let sharing_store = FakeSharingStore {
             owner_public_key: sender_public_key,
             received_shares: received_shares.clone(),
         };
+        let (snapshot, share_file_key) = make_test_snapshot(&node, &chunks);
 
         let wire = create_share_package(
-            *node.node_id.as_uuid(),
             &recipient_public_key,
             None,
             serde_json::json!({"remote": "test"}),
-            &metadata_store,
+            &snapshot,
+            &share_file_key,
             &sharing_store,
-            &kek,
         )
         .await
         .expect("create should succeed");
@@ -837,24 +826,19 @@ mod tests {
         let (_sender_secret, sender_public_key) = make_x25519_keypair();
         let (recipient_secret, recipient_public_key) = make_x25519_keypair();
 
-        let metadata_store = FakeMetadataStore {
-            node: node.clone(),
-            chunks,
-            chunk_size_bytes: "4194304".to_owned(),
-        };
         let sharing_store = FakeSharingStore {
             owner_public_key: sender_public_key,
             received_shares: Arc::new(Mutex::new(Vec::new())),
         };
+        let (snapshot, share_file_key) = make_test_snapshot(&node, &chunks);
 
         let wire = create_share_package(
-            *node.node_id.as_uuid(),
             &recipient_public_key,
             None,
             serde_json::json!({}),
-            &metadata_store,
+            &snapshot,
+            &share_file_key,
             &sharing_store,
-            &kek,
         )
         .await
         .expect("create should succeed");

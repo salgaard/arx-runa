@@ -36,6 +36,16 @@ use uuid::Uuid;
 const CONFLICT_PROBE_DB_FILE_NAME: &str = "manifest-backup-conflict-probe.db";
 const PENDING_DELETIONS_BATCH_LIMIT: usize = 128;
 
+/// `manifest_meta` key flagging that a re-keyed vault still needs its first
+/// post-recovery push to the cloud.
+///
+/// Set to `"1"` by `recover_with_phrase` when its in-ceremony cloud uploads
+/// could not reach a live transport (e.g. the pre-auth recovery path runs
+/// against `NoOpCloudTransport`). The first successful `push_vault` clears it to
+/// `"0"`. Until then the cloud still holds the old-key manifest/blobs, so a file
+/// read may surface [`StorageError::DecryptionFailed`].
+pub const PENDING_POST_RECOVERY_PUSH_META_KEY: &str = "pending_post_recovery_push";
+
 /// Cloud snapshot state used for local/cloud conflict detection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CloudSnapshotState {

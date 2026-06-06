@@ -1147,7 +1147,10 @@ pub async fn get_received_share_content(
     })
 }
 
-/// Seals and uploads a delivery receipt blob to the sender's B2 prefix.
+/// Seals and uploads a delivery receipt blob to the sender's share folder.
+///
+/// Supports B2 (scoped key) and Google Drive (writer-granted Service Account)
+/// destinations; the blob lands under `{receipt_prefix}/<uuid>.blob`.
 ///
 /// Non-fatal: all errors are logged at `warn` level; the download is already complete.
 async fn write_receipt_blob(
@@ -1183,20 +1186,6 @@ async fn write_receipt_blob(
         tracing::warn!("receipt: no provider in cloud_endpoint");
         return;
     };
-    if provider != "b2" {
-        return;
-    }
-    let (Some(key_id), Some(app_key), Some(bucket), Some(path_prefix)) = (
-        cloud_endpoint.get("key_id").and_then(|v| v.as_str()),
-        cloud_endpoint
-            .get("application_key")
-            .and_then(|v| v.as_str()),
-        cloud_endpoint.get("bucket").and_then(|v| v.as_str()),
-        cloud_endpoint.get("path_prefix").and_then(|v| v.as_str()),
-    ) else {
-        tracing::warn!("receipt: missing B2 credentials in cloud_endpoint");
-        return;
-    };
 
     let Some(rclone_binary) = rclone_bin else {
         tracing::warn!("receipt: no rclone binary available");
@@ -1204,15 +1193,30 @@ async fn write_receipt_blob(
     };
 
     let receipt_uuid = Uuid::new_v4();
-    let local_receipt = staging_dir.join(format!("receipt-{receipt_uuid}.blob"));
+    let conf_path = staging_dir.join(format!("rcpt-{receipt_uuid}.conf"));
 
+    // Build the provider-specific rclone conf and the remote target. Both the B2
+    // and Drive recipients have write access scoped to the share folder, so the
+    // receipt blob lands under `{receipt_prefix}/<uuid>.blob` inside it.
+    let conf_target = match provider {
+        "b2" => receipt_conf_b2(cloud_endpoint, receipt_prefix, receipt_uuid),
+        "drive" => receipt_conf_gdrive(cloud_endpoint, receipt_prefix),
+        other => {
+            tracing::warn!(provider = %other, "receipt: unsupported provider");
+            return;
+        }
+    };
+    let Some((conf_content, remote_root, remote_path)) = conf_target else {
+        // The helper already logged the specific missing field.
+        return;
+    };
+
+    let local_receipt = staging_dir.join(format!("receipt-{receipt_uuid}.blob"));
     if let Err(e) = tokio::fs::write(&local_receipt, &wire).await {
         tracing::warn!(%e, "receipt: failed to write local receipt blob");
         return;
     }
 
-    let conf_content = format!("[arxshare-rcpt]\ntype = b2\naccount = {key_id}\nkey = {app_key}\n");
-    let conf_path = staging_dir.join(format!("rcpt-{receipt_uuid}.conf"));
     if let Err(e) =
         crate::storage::staging::write_owner_only(&conf_path, conf_content.as_bytes()).await
     {
@@ -1221,10 +1225,8 @@ async fn write_receipt_blob(
         return;
     }
 
-    let remote_root = format!("arxshare-rcpt:{bucket}/{path_prefix}{receipt_prefix}");
     let upload_transport =
         RcloneTransport::new_for_share_download(rclone_binary, conf_path.clone(), remote_root);
-    let remote_path = format!("{receipt_uuid}.blob");
 
     if let Err(e) = upload_transport
         .upload_blob(&local_receipt, &remote_path)
@@ -1237,6 +1239,72 @@ async fn write_receipt_blob(
 
     let _ = tokio::fs::remove_file(&local_receipt).await;
     let _ = tokio::fs::remove_file(&conf_path).await;
+}
+
+/// Builds the B2 rclone conf, remote root, and remote path for a receipt upload.
+///
+/// Returns `None` (after logging) if the cloud endpoint lacks B2 credentials.
+fn receipt_conf_b2(
+    cloud_endpoint: &serde_json::Value,
+    receipt_prefix: &str,
+    receipt_uuid: Uuid,
+) -> Option<(String, String, String)> {
+    let (Some(key_id), Some(app_key), Some(bucket), Some(path_prefix)) = (
+        cloud_endpoint.get("key_id").and_then(|v| v.as_str()),
+        cloud_endpoint
+            .get("application_key")
+            .and_then(|v| v.as_str()),
+        cloud_endpoint.get("bucket").and_then(|v| v.as_str()),
+        cloud_endpoint.get("path_prefix").and_then(|v| v.as_str()),
+    ) else {
+        tracing::warn!("receipt: missing B2 credentials in cloud_endpoint");
+        return None;
+    };
+
+    let conf_content = format!("[arxshare-rcpt]\ntype = b2\naccount = {key_id}\nkey = {app_key}\n");
+    let remote_root = format!("arxshare-rcpt:{bucket}/{path_prefix}{receipt_prefix}");
+    let remote_path = format!("{receipt_uuid}.blob");
+    Some((conf_content, remote_root, remote_path))
+}
+
+/// Builds the Google Drive rclone conf, remote root, and remote path for a receipt upload.
+///
+/// Uses `scope = drive` (writable, unlike the read-only share-download config) so the
+/// recipient Service Account can create the `{receipt_prefix}/` subfolder and upload the
+/// blob. `folder_id` is the share folder, so the receipt path is relative to it.
+/// Returns `None` (after logging) if the cloud endpoint lacks Drive credentials.
+fn receipt_conf_gdrive(
+    cloud_endpoint: &serde_json::Value,
+    receipt_prefix: &str,
+) -> Option<(String, String, String)> {
+    let (Some(folder_id), Some(sa_json_raw)) = (
+        cloud_endpoint.get("folder_id").and_then(|v| v.as_str()),
+        cloud_endpoint
+            .get("sa_credentials_json")
+            .and_then(|v| v.as_str()),
+    ) else {
+        tracing::warn!("receipt: missing Drive credentials in cloud_endpoint");
+        return None;
+    };
+
+    let Some(sa_json_compact) = serde_json::from_str::<serde_json::Value>(sa_json_raw)
+        .ok()
+        .and_then(|v| serde_json::to_string(&v).ok())
+    else {
+        tracing::warn!("receipt: invalid Drive SA credentials in cloud_endpoint");
+        return None;
+    };
+
+    let conf_content = format!(
+        "[arxshare-rcpt]\ntype = drive\nscope = drive\n\
+         service_account_credentials = {sa_json_compact}\n\
+         root_folder_id = {folder_id}\n"
+    );
+    let remote_root = "arxshare-rcpt:".to_owned();
+    // Fixed name: overwrite the owner-pre-created placeholder in place. The SA has
+    // no Drive quota to create a new file, but can update this existing one.
+    let remote_path = format!("{receipt_prefix}/{}", crate::sharing::RECEIPT_BLOB_NAME);
+    Some((conf_content, remote_root, remote_path))
 }
 
 /// Decrypts chunk blobs for a received share, writing plaintext to `destination`.
@@ -1430,7 +1498,10 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
         // List receipt blobs using the vault owner's transport.
         let mut blob_names = match transport.list_blobs(&receipt_prefix).await {
             Ok(names) => names,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::debug!(%share_id, %e, "receipt: download-receipt list failed");
+                continue;
+            }
         };
         if blob_names.is_empty() {
             continue;
@@ -1459,6 +1530,12 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
                 }
             };
             let _ = tokio::fs::remove_file(&local_path).await;
+
+            // The owner pre-creates the receipt blob with this sentinel; skip it
+            // until the recipient overwrites it with a real sealed receipt.
+            if bytes == crate::sharing::RECEIPT_PLACEHOLDER {
+                continue;
+            }
 
             match crate::sharing::hpke::open(&private_key_bytes, &bytes) {
                 Ok(plaintext) => {
@@ -1536,7 +1613,10 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
 
         let mut blob_names = match transport.list_blobs(&receipt_prefix).await {
             Ok(names) => names,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::debug!(%share_id, %e, "receipt: import-receipt list failed");
+                continue;
+            }
         };
         if blob_names.is_empty() {
             continue;
@@ -1565,6 +1645,12 @@ pub async fn check_share_receipts(state: State<'_, AppState>) -> Result<Vec<Shar
                 }
             };
             let _ = tokio::fs::remove_file(&local_path).await;
+
+            // The owner pre-creates the receipt blob with this sentinel; skip it
+            // until the recipient overwrites it with a real sealed receipt.
+            if bytes == crate::sharing::RECEIPT_PLACEHOLDER {
+                continue;
+            }
 
             match crate::sharing::hpke::open(&private_key_bytes, &bytes) {
                 Ok(plaintext) => {
@@ -1636,6 +1722,56 @@ mod tests {
         let share_id_2 = Uuid::new_v4().hyphenated().to_string();
         assert_ne!(share_id_1, share_id_2);
     }
+
+    #[test]
+    fn test_receipt_conf_b2_builds_prefixed_remote() {
+        let endpoint = serde_json::json!({
+            "provider": "b2",
+            "bucket": "my-bucket",
+            "key_id": "k123",
+            "application_key": "secret",
+            "path_prefix": "shared/abc/",
+        });
+        let uuid = Uuid::new_v4();
+        let (conf, remote_root, remote_path) =
+            super::receipt_conf_b2(&endpoint, "receipts", uuid).expect("b2 conf");
+        assert!(conf.contains("type = b2"));
+        assert!(conf.contains("account = k123"));
+        assert_eq!(remote_root, "arxshare-rcpt:my-bucket/shared/abc/receipts");
+        assert_eq!(remote_path, format!("{uuid}.blob"));
+    }
+
+    #[test]
+    fn test_receipt_conf_b2_missing_credentials_returns_none() {
+        let endpoint = serde_json::json!({ "provider": "b2", "bucket": "b" });
+        assert!(super::receipt_conf_b2(&endpoint, "receipts", Uuid::new_v4()).is_none());
+    }
+
+    #[test]
+    fn test_receipt_conf_gdrive_uses_writable_scope_and_relative_path() {
+        let endpoint = serde_json::json!({
+            "provider": "drive",
+            "folder_id": "fld_xyz",
+            "sa_credentials_json": "{\"client_email\":\"sa@example.com\"}",
+        });
+        let (conf, remote_root, remote_path) =
+            super::receipt_conf_gdrive(&endpoint, "import-receipts").expect("drive conf");
+        assert!(conf.contains("type = drive"));
+        assert!(conf.contains("scope = drive\n"));
+        assert!(conf.contains("root_folder_id = fld_xyz"));
+        assert_eq!(remote_root, "arxshare-rcpt:");
+        // Fixed placeholder name (overwritten in place), not a per-event UUID.
+        assert_eq!(
+            remote_path,
+            format!("import-receipts/{}", crate::sharing::RECEIPT_BLOB_NAME)
+        );
+    }
+
+    #[test]
+    fn test_receipt_conf_gdrive_missing_credentials_returns_none() {
+        let endpoint = serde_json::json!({ "provider": "drive", "folder_id": "f" });
+        assert!(super::receipt_conf_gdrive(&endpoint, "receipts").is_none());
+    }
 }
 
 /// Store a Google Drive Service Account JSON key for sharing.
@@ -1692,6 +1828,11 @@ pub async fn set_gdrive_service_account(
 
     // Zeroize before drop.
     *sa_json = String::new();
+
+    // Rebuild the active cloud transport so the new service-account credential is
+    // attached immediately. Without this the live `RcloneTransport` keeps its
+    // `sharing_config = None` until the next lock/unlock, and GDrive sharing fails.
+    crate::ui::auth_commands::try_build_and_swap_rclone_transport(&state, db).await;
 
     Ok(())
 }

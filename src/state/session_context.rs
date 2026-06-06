@@ -1,9 +1,26 @@
 use leptos::prelude::*;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use serde::Deserialize;
 
+use crate::components::use_toast;
+use crate::events::on_tauri_event;
 use crate::invoke::invoke_command;
 use crate::ipc_types::SessionStatus;
+
+/// Payload for the backend `session-changed` event.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionChangedPayload {
+    /// Whether the vault session is currently unlocked.
+    is_unlocked: bool,
+}
+
+/// Payload for the backend `session-timeout-warning` event.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionTimeoutWarningPayload {
+    /// Seconds remaining before the session locks automatically.
+    seconds_remaining: u64,
+}
 
 /// Authentication and session state held in Leptos signals (RAM only).
 #[derive(Clone, Debug, Default)]
@@ -105,79 +122,57 @@ pub fn use_session_actions() -> SessionActions {
     )
 }
 
-/// Provides `ReadSignal<SessionState>` + `SessionActions` to descendants
-/// and polls `get_session_status` every 5 seconds until unmount.
+/// Provides `ReadSignal<SessionState>` + `SessionActions` to descendants.
 ///
 /// On mount, performs a single initial `get_session_status` call to sync frontend
-/// state with the backend before the polling loop begins. This recovers from hot
-/// reloads and app restarts where the backend session remains active but the
-/// frontend WASM state has been reset to defaults.
+/// state with the backend. This recovers from hot reloads and app restarts where
+/// the backend session remains active but the frontend WASM state has been reset
+/// to defaults.
 ///
-/// The stop flag is checked at three points in the loop:
-///   1. At the top of the while condition.
-///   2. After `invoke_command` resolves and before `set_state.update()`, preventing
-///      a write to a disposed signal when `on_cleanup` fires during an in-flight IPC call.
-///   3. After `set_state.update()` and before `TimeoutFuture` begins, preventing a
-///      new sleep when `on_cleanup` fires after the IPC call returns. The post-sleep
-///      guard is the while condition re-evaluation (point 1) once the timer resolves.
+/// Subsequent updates are event-driven (no polling): the backend emits
+/// `session-changed` when a session locks (idle timeout or window close) and
+/// `session-timeout-warning` shortly before an automatic lock. Unlock/auth
+/// transitions are applied directly by the auth command handlers, so they do not
+/// require an event.
 #[component]
 pub fn SessionProvider(children: Children) -> impl IntoView {
     let (state, set_state) = signal(SessionState::default());
     provide_context(state);
     provide_context(SessionActions { set_state });
 
-    let stop = Arc::new(AtomicBool::new(false));
-    let stop_poll = Arc::clone(&stop);
-    let (is_unlocked, set_is_unlocked) = signal(false);
-
+    // Initial sync: read backend session state once at mount.
     leptos::task::spawn_local(async move {
-        // Initial sync: check backend session state once at mount.
-        // Handles hot reloads and app restarts where the backend session remains
-        // active but frontend WASM state has been reset to defaults.
-        if !stop_poll.load(Ordering::Relaxed)
-            && let Ok(status) = invoke_command::<(), SessionStatus>("get_session_status", &()).await
-            && !stop_poll.load(Ordering::Relaxed)
-        {
+        if let Ok(status) = invoke_command::<(), SessionStatus>("get_session_status", &()).await {
             set_state.update(|s| s.apply_status(status));
         }
+    });
 
-        loop {
-            if stop_poll.load(Ordering::Relaxed) {
-                break;
-            }
-
-            // Only poll when unlocked; otherwise just wait and check again
-            if !is_unlocked.get_untracked() {
-                gloo_timers::future::TimeoutFuture::new(5_000).await;
-                continue;
-            }
-
-            if let Ok(status) = invoke_command::<(), SessionStatus>("get_session_status", &()).await
-            {
-                if stop_poll.load(Ordering::Relaxed) {
-                    break;
-                }
-                // Only update signal if vault_id changed (session locked/switched)
-                set_state.update(|s| {
-                    if s.vault_id != status.vault_id {
-                        s.apply_status(status);
-                    }
+    // Backend-initiated lock (idle timeout / window close): clear session fields.
+    on_tauri_event::<SessionChangedPayload, _>("session-changed", move |payload| {
+        if !payload.is_unlocked {
+            set_state.update(|s| {
+                s.apply_status(SessionStatus {
+                    is_unlocked: false,
+                    vault_id: None,
+                    timeout_seconds: None,
+                    vault_tier: None,
+                    has_recovery_slot: None,
                 });
-            }
-            if stop_poll.load(Ordering::Relaxed) {
-                break;
-            }
-            gloo_timers::future::TimeoutFuture::new(5_000).await;
+            });
         }
     });
 
-    // Watch for unlock/lock to enable/disable polling
-    Effect::new(move || {
-        let unlocked = state.read().is_unlocked;
-        set_is_unlocked.set(unlocked);
+    // Warn the user shortly before an automatic idle-timeout lock.
+    on_tauri_event::<SessionTimeoutWarningPayload, _>("session-timeout-warning", move |payload| {
+        let minutes = payload.seconds_remaining / 60;
+        let seconds = payload.seconds_remaining % 60;
+        let remaining = if minutes > 0 {
+            format!("{minutes}m {seconds}s")
+        } else {
+            format!("{seconds}s")
+        };
+        use_toast().warning(format!("Session locks in {remaining} due to inactivity"));
     });
-
-    on_cleanup(move || stop.store(true, Ordering::Relaxed));
 
     children()
 }

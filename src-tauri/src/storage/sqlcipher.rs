@@ -18,9 +18,10 @@ use crate::storage::error::StorageError;
 use crate::storage::metadata_store::MetadataStore;
 use crate::storage::schema::{
     apply_backup_v5_migration, apply_canonical_schema, apply_device_id_v7_migration,
-    apply_epoch_v2_migration, apply_gdrive_sharing_v8_migration, apply_pending_backup_v6_migration,
-    apply_shares_cascade_v9_migration, apply_sharing_v3_migration, apply_sharing_v4_migration,
-    seed_manifest_meta, validate_manifest_meta, validate_schema_integrity, verify_sqlcipher_key,
+    apply_epoch_v2_migration, apply_file_shares_v10_migration, apply_gdrive_sharing_v8_migration,
+    apply_pending_backup_v6_migration, apply_shares_cascade_v9_migration,
+    apply_sharing_v3_migration, apply_sharing_v4_migration, seed_manifest_meta,
+    validate_manifest_meta, validate_schema_integrity, verify_sqlcipher_key,
 };
 use crate::storage::types::{
     ChunkRecord, EpochBlobRecord, EpochBufferEntry, Node, NodeId, NodeType, SyncChunkRecord,
@@ -79,6 +80,7 @@ impl SqlCipherMetadataStore {
             apply_device_id_v7_migration(&conn)?;
             apply_gdrive_sharing_v8_migration(&conn)?;
             apply_shares_cascade_v9_migration(&conn)?;
+            apply_file_shares_v10_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             Ok(conn)
@@ -113,6 +115,7 @@ impl SqlCipherMetadataStore {
             apply_device_id_v7_migration(&conn)?;
             apply_gdrive_sharing_v8_migration(&conn)?;
             apply_shares_cascade_v9_migration(&conn)?;
+            apply_file_shares_v10_migration(&conn)?;
             validate_schema_integrity(&conn)?;
             validate_manifest_meta(&conn)?;
             validate_create_immutable_meta_matches(

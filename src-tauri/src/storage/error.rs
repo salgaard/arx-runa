@@ -18,6 +18,12 @@ pub enum StorageError {
     /// A blob checksum verification failed.
     #[error("blob checksum mismatch")]
     ChecksumMismatch,
+    /// Decryption of vault data failed (AEAD authentication tag mismatch).
+    ///
+    /// Distinct from [`StorageError::Database`] so the IPC layer can surface an
+    /// actionable "data out of sync" message instead of a generic engine error.
+    #[error("vault data could not be decrypted")]
+    DecryptionFailed,
     /// A filesystem or database-open I/O operation failed.
     #[error("I/O operation failed: {0}")]
     Io(String),
@@ -57,6 +63,7 @@ impl StorageError {
     pub(crate) fn from_crypto(error: CryptoError) -> Self {
         match error {
             CryptoError::ChecksumMismatch => Self::ChecksumMismatch,
+            CryptoError::DecryptionFailed => Self::DecryptionFailed,
             other => Self::Database(other.to_string()),
         }
     }
@@ -206,13 +213,21 @@ mod tests {
         ));
     }
 
-    /// Verifies decryption failures map to storage database errors.
+    /// Verifies decryption failures map to the dedicated `DecryptionFailed` variant.
     #[test]
-    fn test_from_crypto_decryption_failed_maps_to_database() {
+    fn test_from_crypto_decryption_failed_maps_to_decryption_failed() {
         assert!(matches!(
             StorageError::from_crypto(CryptoError::DecryptionFailed),
-            StorageError::Database(message) if message == "decryption failed: authentication tag mismatch"
+            StorageError::DecryptionFailed
         ));
+    }
+
+    /// Verifies `DecryptionFailed` formats with a user-safe message that leaks no
+    /// crypto internals (no "tag", "key", or "nonce").
+    #[test]
+    fn test_decryption_failed_variant_formats_expected_message() {
+        let error = StorageError::DecryptionFailed;
+        assert_eq!(error.to_string(), "vault data could not be decrypted");
     }
 
     /// Verifies encryption failures map to storage database errors.

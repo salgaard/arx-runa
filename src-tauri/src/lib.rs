@@ -265,6 +265,33 @@ pub fn run() {
                 }
             }));
 
+            // Bridge `SessionManager` lifecycle events to the frontend. The frontend
+            // listens for `session-changed` / `session-timeout-warning` instead of
+            // polling `get_session_status`. Auth/unlock transitions are driven by
+            // command returns, so only backend-initiated locks need an event here.
+            let mut session_events = state.session_manager.subscribe();
+            let session_app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                use crate::auth::SessionEvent;
+                use tokio::sync::broadcast::error::RecvError;
+                loop {
+                    match session_events.recv().await {
+                        Ok(SessionEvent::Locked) => {
+                            crate::ui::events::emit_session_locked(&session_app_handle);
+                        }
+                        Ok(SessionEvent::TimeoutWarning { seconds_remaining }) => {
+                            crate::ui::events::emit_timeout_warning(
+                                &session_app_handle,
+                                seconds_remaining,
+                            );
+                        }
+                        // A slow listener dropped events; the next state read recovers.
+                        Err(RecvError::Lagged(_)) => continue,
+                        Err(RecvError::Closed) => break,
+                    }
+                }
+            });
+
             if let (Some(window), Some(icon)) =
                 (app.get_webview_window("main"), app.default_window_icon())
             {
