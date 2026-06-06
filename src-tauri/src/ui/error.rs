@@ -47,6 +47,10 @@ pub enum IpcError {
     /// Sharing is not supported for the active cloud destination.
     #[error("Sharing not supported: {0}")]
     SharingNotSupported(String),
+    /// Vault data could not be decrypted — local and cloud snapshots are out of
+    /// sync (typically right after a phrase recovery, before the repair sync runs).
+    #[error("Data out of sync: {0}")]
+    DataDesync(String),
 }
 
 impl From<crate::auth::AuthenticationError> for IpcError {
@@ -88,6 +92,9 @@ impl From<crate::storage::StorageError> for IpcError {
             }
             S::EpochBufferNotFlushed(_) => IpcError::PendingFlush(
                 "File is pending encryption — flush the epoch buffer first".into(),
+            ),
+            S::DecryptionFailed => IpcError::DataDesync(
+                "This file couldn't be decrypted — your vault may be out of sync after recovery. Sync with your cloud, then reopen the file.".into(),
             ),
             S::Database(_) => IpcError::InternalError("Storage engine error".into()),
             S::Io(_) => IpcError::InternalError("File system error".into()),
@@ -236,6 +243,7 @@ mod tests {
             (IpcError::InternalError("x".into()), "internalError"),
             (IpcError::PendingFlush("x".into()), "pendingFlush"),
             (IpcError::SyncConflict("x".into()), "syncConflict"),
+            (IpcError::DataDesync("x".into()), "dataDesync"),
         ];
         for (err, expected_kind) in cases {
             let value = serde_json::to_value(&err).expect("serialisation must succeed");
@@ -530,6 +538,26 @@ mod tests {
             obj.contains_key("message"),
             "JSON object must contain 'message'"
         );
+    }
+
+    /// Verifies that `From<StorageError::DecryptionFailed>` emits `dataDesync` kind
+    /// with an actionable message that leaks no crypto internals.
+    #[test]
+    fn test_from_storage_decryption_failed_emits_data_desync() {
+        let err = IpcError::from(crate::storage::StorageError::DecryptionFailed);
+        let value = serde_json::to_value(&err).expect("serialisation must succeed");
+        assert_eq!(value["kind"], "dataDesync");
+        let message = value["message"].as_str().expect("message must be a string");
+        assert!(
+            message.contains("sync"),
+            "message must guide the user to sync: {message}"
+        );
+        for forbidden in ["tag", "nonce", "key", "AEAD", "XChaCha"] {
+            assert!(
+                !message.contains(forbidden),
+                "crypto internal '{forbidden}' must not appear in IPC message: {message}"
+            );
+        }
     }
 
     /// Verifies that `From<StorageError::EpochBufferNotFlushed>` emits `pendingFlush` kind.

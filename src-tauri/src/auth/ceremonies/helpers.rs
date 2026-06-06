@@ -413,6 +413,54 @@ pub(super) fn rekey_vault_db(
                 .map_err(|_| AuthenticationError::InvalidCredentials)?;
             }
         }
+        // Epoch-packed files are encrypted with a per-epoch-blob key wrapped under
+        // the KEK (AAD = epoch_blob_id), stored in `epoch_blobs.file_key_wrapped`.
+        // These must be re-wrapped on rekey too; otherwise epoch-packed files
+        // become undecryptable after recovery or password change (the old-KEK
+        // wrapping can no longer be unwrapped, surfacing as a chunk-decrypt
+        // failure). A row that cannot be unwrapped with the current KEK is
+        // tolerated (skipped with a warning) so a legacy vault re-keyed before
+        // this fix existed can still complete recovery and open the rest of its
+        // files rather than aborting the whole rekey.
+        {
+            let mut stmt = conn
+                .prepare("SELECT epoch_blob_id, file_key_wrapped FROM epoch_blobs")
+                .map_err(|_| AuthenticationError::InvalidCredentials)?;
+            let rows: Vec<(String, Vec<u8>)> = stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map_err(|_| AuthenticationError::InvalidCredentials)?
+                .collect::<Result<_, _>>()
+                .map_err(|_| AuthenticationError::InvalidCredentials)?;
+            for (epoch_blob_id, wrapped_blob) in rows {
+                let Ok(epoch_uuid) = Uuid::parse_str(&epoch_blob_id) else {
+                    tracing::warn!("skipping epoch blob with invalid id during rekey");
+                    continue;
+                };
+                let file_id = FileId::from_uuid(epoch_uuid);
+                let Ok(wrapped_array) = <[u8; 72]>::try_from(wrapped_blob) else {
+                    tracing::warn!(%epoch_blob_id, "skipping epoch blob with malformed wrapped key during rekey");
+                    continue;
+                };
+                let wrapped = WrappedFileKey::new(wrapped_array);
+                let file_key = match unwrap_file_key(&wrapped, &file_id, current_kek) {
+                    Ok(key) => key,
+                    Err(_) => {
+                        tracing::warn!(
+                            %epoch_blob_id,
+                            "epoch blob key could not be unwrapped with current KEK during rekey; leaving as-is (legacy stranded key)"
+                        );
+                        continue;
+                    }
+                };
+                let rewrapped = wrap_file_key(&file_key, &file_id, new_kek)
+                    .map_err(|_| AuthenticationError::VaultHeaderInvalid)?;
+                conn.execute(
+                    "UPDATE epoch_blobs SET file_key_wrapped = ? WHERE epoch_blob_id = ?",
+                    params![rewrapped.as_bytes().to_vec(), epoch_blob_id],
+                )
+                .map_err(|_| AuthenticationError::InvalidCredentials)?;
+            }
+        }
         let identity_file_id = FileId::new(vault_id_bytes);
         let identity_wrapped: Option<Vec<u8>> = conn
             .query_row(

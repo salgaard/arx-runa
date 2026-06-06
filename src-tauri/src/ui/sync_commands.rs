@@ -21,8 +21,9 @@ use crate::storage::cloud::sync::drain_pending_deletions;
 use crate::storage::cloud::vault_header::VaultHeader;
 use crate::storage::cloud::vault_header_io::upload_vault_header;
 use crate::storage::cloud::{
-    CloudEndpoint, CloudTransport, CloudTransportError, DestinationSessionPublic, RcloneTransport,
-    SyncConfig, pull_vault, push_vault,
+    CloudEndpoint, CloudTransport, CloudTransportError, DestinationSessionPublic,
+    PENDING_POST_RECOVERY_PUSH_META_KEY, PushReport, RcloneTransport, SyncConfig, pull_vault,
+    push_vault,
 };
 use crate::storage::device_id::get_or_create_device_id;
 use crate::storage::metadata_store::MetadataStore;
@@ -43,6 +44,87 @@ use crate::ui::vault_paths::{resolve_vault_by_id, vault_db_path, vault_staging_d
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
+
+/// Pushes the active vault to the primary cloud destination: flush the epoch
+/// buffer, push staged blobs + manifest backup + header, enqueue mirror backups,
+/// and clear the post-recovery repair flag on success.
+///
+/// Shared by [`sync_to_cloud`] and the post-phrase-recovery auto-repair so both
+/// reconcile a stale cloud snapshot identically. The caller is responsible for
+/// session/`sync_mutex` guarding and for reading the vault header.
+pub(crate) async fn push_active_vault(
+    state: &AppState,
+    vault_id: &str,
+    db_path: &std::path::Path,
+    vault_header: &VaultHeader,
+    progress_fn: &(dyn Fn(u32, u32, Option<&str>) + Send + Sync),
+) -> Result<PushReport, IpcError> {
+    let staging_dir = vault_staging_dir(vault_id);
+
+    let db_store = state
+        .session_manager
+        .get_metadata_store()
+        .await
+        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
+    let db = &*db_store;
+    let cloud_transport = state.cloud_transport.read().await.clone();
+
+    let sqlcipher_key = extract_sqlcipher_key(&state.session_manager).await?;
+    let manifest_key = extract_manifest_key(&state.session_manager).await?;
+
+    // Flush any epoch-buffered files before pushing to the cloud.
+    {
+        let kek = extract_kek(state).await?;
+        let chunk_size_bytes = crate::storage::pipeline::read_chunk_size_bytes(db)
+            .await
+            .map_err(IpcError::from)?;
+        let _flush_guard = state.flush_mutex.lock().await;
+        crate::storage::vault_ops::flush_epoch_buffer(
+            db,
+            &kek,
+            &staging_dir.join("pending"),
+            chunk_size_bytes,
+            None,
+        )
+        .await
+        .map_err(IpcError::from)?;
+    }
+
+    let push_report = push_vault(
+        db_path,
+        &sqlcipher_key,
+        &manifest_key,
+        db,
+        &*cloud_transport,
+        vault_header,
+        &staging_dir,
+        &SyncConfig::default(),
+        Some(progress_fn),
+    )
+    .await
+    .map_err(IpcError::from)?;
+
+    // Enqueue successfully-uploaded blobs for any active mirror destinations so
+    // sync_backup knows exactly what still needs to reach each mirror.
+    if !push_report.uploaded_blob_names.is_empty() {
+        let mirror_dests = list_destination_sessions(db)
+            .await
+            .map_err(IpcError::from)?;
+        for dest in mirror_dests.into_iter().filter(|d| !d.is_primary) {
+            let _ = db
+                .bulk_insert_pending_backup(&push_report.uploaded_blob_names, &dest.destination_id)
+                .await;
+        }
+    }
+
+    // This push reconciled the cloud snapshot under the current key, so any
+    // pending post-recovery repair is now satisfied.
+    if let Err(error) = db.set_meta(PENDING_POST_RECOVERY_PUSH_META_KEY, "0").await {
+        tracing::warn!(?error, "Failed to clear post-recovery push flag after push");
+    }
+
+    Ok(push_report)
+}
 
 // ---------------------------------------------------------------------------
 // Conflict-reconcile helpers
@@ -499,27 +581,12 @@ pub async fn sync_to_cloud(
         .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
     let (vault_id, db_path, header_path) = resolve_vault_by_id(&vault_id)?;
 
-    let staging_dir = vault_staging_dir(&vault_id);
-
     // Read vault header.
     let header_json = tokio::fs::read_to_string(&header_path)
         .await
         .map_err(|e| IpcError::InternalError(format!("vault header read failed: {e}")))?;
     let vault_header: VaultHeader = serde_json::from_str(&header_json)
         .map_err(|e| IpcError::InternalError(format!("vault header parse failed: {e}")))?;
-
-    // Acquire database and cloud transport.
-    let db_store = state
-        .session_manager
-        .get_metadata_store()
-        .await
-        .ok_or_else(|| IpcError::VaultLocked("Vault is locked".into()))?;
-    let db = &*db_store;
-    let cloud_transport = state.cloud_transport.read().await.clone();
-
-    // Extract keys inside session closures — raw bytes never leave the closures.
-    let sqlcipher_key = extract_sqlcipher_key(&state.session_manager).await?;
-    let manifest_key = extract_manifest_key(&state.session_manager).await?;
 
     // Wrap the Tauri channel in a ProgressChannel to gracefully handle
     // closed connections (M3: Streaming Progress Channel Validation)
@@ -537,50 +604,8 @@ pub async fn sync_to_cloud(
         }
     };
 
-    // Flush any epoch-buffered files before pushing to the cloud.
-    {
-        let kek = extract_kek(&state).await?;
-        let chunk_size_bytes = crate::storage::pipeline::read_chunk_size_bytes(db)
-            .await
-            .map_err(IpcError::from)?;
-        let _flush_guard = state.flush_mutex.lock().await;
-        crate::storage::vault_ops::flush_epoch_buffer(
-            db,
-            &kek,
-            &staging_dir.join("pending"),
-            chunk_size_bytes,
-            None,
-        )
-        .await
-        .map_err(IpcError::from)?;
-    }
-
-    let push_report = push_vault(
-        &db_path,
-        &sqlcipher_key,
-        &manifest_key,
-        db,
-        &*cloud_transport,
-        &vault_header,
-        &staging_dir,
-        &SyncConfig::default(),
-        Some(&progress_fn),
-    )
-    .await
-    .map_err(IpcError::from)?;
-
-    // Enqueue successfully-uploaded blobs for any active mirror destinations so
-    // sync_backup knows exactly what still needs to reach each mirror.
-    if !push_report.uploaded_blob_names.is_empty() {
-        let mirror_dests = list_destination_sessions(db)
-            .await
-            .map_err(IpcError::from)?;
-        for dest in mirror_dests.into_iter().filter(|d| !d.is_primary) {
-            let _ = db
-                .bulk_insert_pending_backup(&push_report.uploaded_blob_names, &dest.destination_id)
-                .await;
-        }
-    }
+    let push_report =
+        push_active_vault(&state, &vault_id, &db_path, &vault_header, &progress_fn).await?;
 
     // Update cached sync status.
     *state.sync_status.write().await = SyncStatus {

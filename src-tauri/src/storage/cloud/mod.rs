@@ -30,8 +30,8 @@ pub use manifest_backup::{
 };
 pub use rclone::RcloneTransport;
 pub use sync::{
-    CloudDeletionReport, PullReport, PushReport, SyncConflict, SyncError, delete_vault_from_cloud,
-    pull_vault, push_vault,
+    CloudDeletionReport, PENDING_POST_RECOVERY_PUSH_META_KEY, PullReport, PushReport, SyncConflict,
+    SyncError, delete_vault_from_cloud, pull_vault, push_vault,
 };
 pub use sync_config::SyncConfig;
 pub use vault_header_io::{

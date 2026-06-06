@@ -14,12 +14,15 @@ use crate::crypto::{
     wrap_master_key_for_recovery,
 };
 use crate::storage;
+use crate::storage::SqlCipherMetadataStore;
+use crate::storage::cloud::PENDING_POST_RECOVERY_PUSH_META_KEY;
 use crate::storage::cloud::upload_vault_header;
 use crate::storage::cloud::vault_header::{VaultHeader, VaultHeaderTrustPolicy};
 use crate::storage::cloud::{
     ManifestBackupSyncError, download_manifest_backup, download_vault_header,
     upload_manifest_backup,
 };
+use crate::storage::metadata_store::MetadataStore;
 
 #[cfg(test)]
 use super::VAULT_HEADER_BLOB_NAME;
@@ -225,11 +228,13 @@ pub async fn recover_with_phrase(
     // Best-effort cloud upload: when transport is unavailable (e.g. NoOp during
     // local recovery), warn and continue. The caller must persist the returned
     // header locally; the next sync will push it to cloud.
+    let mut cloud_repair_complete = true;
     if let Err(error) = upload_vault_header(&header, cloud_transport, &staging_dir).await {
         tracing::warn!(
             ?error,
             "Failed to upload rekeyed vault header to cloud after phrase recovery; will sync later"
         );
+        cloud_repair_complete = false;
     }
 
     // Re-upload manifest backup under the new manifest key. Without this,
@@ -253,6 +258,34 @@ pub async fn recover_with_phrase(
                 ?error,
                 "Failed to upload re-keyed manifest backup after phrase recovery; next sync will repair"
             );
+            cloud_repair_complete = false;
+        }
+    }
+
+    // Record whether the cloud still needs the re-keyed snapshot. When the
+    // in-ceremony uploads could not reach a live transport (pre-auth recovery
+    // runs against NoOpCloudTransport), flag the vault so the first post-login
+    // sync re-pushes manifest/header/blobs under the new key. Until then a file
+    // read can surface a decryption error against the stale cloud snapshot.
+    {
+        let sqlcipher_key_bytes = *new_session_keys.sqlcipher_key.expose();
+        let flag_value = if cloud_repair_complete { "0" } else { "1" };
+        match SqlCipherMetadataStore::open(&request.vault_db_path, &sqlcipher_key_bytes).await {
+            Ok(flag_store) => {
+                let result = flag_store
+                    .set_meta(PENDING_POST_RECOVERY_PUSH_META_KEY, flag_value)
+                    .await;
+                drop(flag_store);
+                if let Err(error) = result {
+                    tracing::warn!(?error, "Failed to record post-recovery push flag");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "Failed to open vault DB to record post-recovery push flag"
+                );
+            }
         }
     }
 
@@ -304,7 +337,7 @@ mod tests {
     };
     use crate::crypto::{RecoveryKey, VaultId, WrappedMasterKey, unwrap_master_key_from_recovery};
     use crate::storage::cloud::CloudTransport;
-    use crate::storage::cloud::mock::MockCloudTransport;
+    use crate::storage::cloud::mock::{CloudTransportErrorKind, MockCloudTransport};
     use crate::storage::cloud::vault_header::VaultHeader;
 
     /// Builds a [`RecoverWithPhraseRequest`] with default new-credential fields
@@ -893,6 +926,104 @@ mod tests {
         )
         .unwrap();
         assert_eq!(recovered.expose(), &*expected_master);
+    }
+
+    /// Reads the `pending_post_recovery_push` flag from a re-keyed vault DB using
+    /// the new-password-derived sqlcipher key.
+    async fn read_post_recovery_flag(
+        db_path: &std::path::Path,
+        header: &VaultHeader,
+    ) -> Option<String> {
+        let salt = decode_base64_32(&header.argon2_salt).unwrap();
+        let params = argon2_parameters_from_json(&header.argon2_params);
+        let mut master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+        derive_master_key_into(TEST_NEW_PASSWORD, None, &salt, &params, &mut master).unwrap();
+        let keys = SessionKeys::from_master_key_bytes(&master).unwrap();
+        let store =
+            crate::storage::SqlCipherMetadataStore::open(db_path, keys.sqlcipher_key.expose())
+                .await
+                .expect("rekeyed DB must open with new sqlcipher key");
+        let flag = store
+            .get_meta(crate::storage::cloud::PENDING_POST_RECOVERY_PUSH_META_KEY)
+            .await
+            .expect("get_meta must succeed");
+        drop(store);
+        flag
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_recover_with_phrase_clears_post_recovery_flag_when_cloud_uploads_succeed() {
+        let _lock = ceremony_lock().await;
+        let mut vault = create_tier_one_vault_with_default_params().await;
+        let phrase = add_recovery_slot_with_default_params(&mut vault).await;
+        let phrase_string = phrase.as_str().to_string();
+        upload_manifest_backup_for(&vault).await;
+        vault.session.lock().await;
+
+        let new_session = test_session_manager();
+        let new_temp = temp_dir();
+        let new_db_path = new_temp.path().join("flag-clear.db");
+        let request = phrase_request(&phrase_string, new_db_path.clone());
+        let (_id, header) = recover_with_phrase(request, &new_session, &vault.cloud)
+            .await
+            .expect("recover_with_phrase must succeed");
+
+        assert_eq!(
+            read_post_recovery_flag(&new_db_path, &header)
+                .await
+                .as_deref(),
+            Some("0"),
+            "flag must be cleared when in-ceremony cloud uploads succeed"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_recover_with_phrase_sets_post_recovery_flag_when_cloud_uploads_fail() {
+        let _lock = ceremony_lock().await;
+        let mut vault = create_tier_one_vault_with_default_params().await;
+        let phrase = add_recovery_slot_with_default_params(&mut vault).await;
+        let phrase_string = phrase.as_str().to_string();
+        upload_manifest_backup_for(&vault).await;
+        let header = vault.header.clone();
+        let db_path = vault.vault_db_path.clone();
+        vault.session.lock().await;
+
+        // Fail the post-rekey re-uploads (header + manifest backup). Recovery
+        // itself needs no downloads here: the header is supplied and the local DB
+        // already exists, so the in-place rekey proceeds and only the uploads fail.
+        vault
+            .cloud
+            .inject_failure(VAULT_HEADER_BLOB_NAME, CloudTransportErrorKind::Timeout)
+            .await;
+        vault
+            .cloud
+            .inject_failure(
+                crate::storage::cloud::manifest_backup::MANIFEST_BACKUP_BLOB_NAME,
+                CloudTransportErrorKind::Timeout,
+            )
+            .await;
+
+        let new_session = test_session_manager();
+        let request = RecoverWithPhraseRequest {
+            phrase: phrase_string.as_bytes(),
+            vault_db_path: db_path.clone(),
+            new_password_bytes: TEST_NEW_PASSWORD,
+            new_key_file_path: None,
+            argon2_params: Argon2Params::DEFAULT,
+            argon2_migration_intent: Argon2MigrationIntent::PreserveTrusted,
+            vault_header: Some(header),
+        };
+        let (_id, recovered_header) = recover_with_phrase(request, &new_session, &vault.cloud)
+            .await
+            .expect("recover_with_phrase must succeed even when cloud uploads fail");
+
+        assert_eq!(
+            read_post_recovery_flag(&db_path, &recovered_header)
+                .await
+                .as_deref(),
+            Some("1"),
+            "flag must be set when in-ceremony cloud uploads fail (deferred repair)"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

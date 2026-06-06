@@ -125,31 +125,43 @@ pub async fn change_password(
     drop(recovery_key_for_rewrap);
     drop(new_master_key);
 
-    let new_manifest_key_bytes = Zeroizing::new(*new_session_keys.manifest_key.expose());
-    let new_sqlcipher_for_upload =
-        SqlcipherKey::from_slice(new_session_keys.sqlcipher_key.expose());
-    let staging_dir = staging::staging_directory().await?;
+    // Compute upload artifacts before the session swap consumes `new_session_keys`.
+    // Skip cloud uploads entirely for local-only vaults (no configured transport):
+    // attempting them would fail and, after the rekey + session swap below, abort
+    // the ceremony — leaving the on-disk vault header out of step with the
+    // re-keyed database (a potential lockout). The caller persists the updated
+    // header locally; a configured vault still uploads as before.
+    let upload_artifacts = if cloud_transport.is_configured() {
+        Some((
+            Zeroizing::new(*new_session_keys.manifest_key.expose()),
+            SqlcipherKey::from_slice(new_session_keys.sqlcipher_key.expose()),
+        ))
+    } else {
+        None
+    };
     session_manager
         .swap_active_session(new_session_keys, vault_id.to_uuid().to_string())
         .await?;
-    let upload_result = upload_vault_header(vault_header, cloud_transport, &staging_dir).await;
-    if let Err(error) = upload_result {
-        return Err(map_vault_header_sync_error(error));
-    }
-    if let Err(error) = upload_manifest_backup(
-        &request.vault_db_path,
-        &new_sqlcipher_for_upload,
-        &new_manifest_key_bytes,
-        vault_id,
-        cloud_transport,
-        &staging_dir,
-    )
-    .await
-    {
-        tracing::warn!(
-            ?error,
-            "Failed to upload re-keyed manifest backup after password change; next sync will repair"
-        );
+    if let Some((new_manifest_key_bytes, new_sqlcipher_for_upload)) = upload_artifacts {
+        let staging_dir = staging::staging_directory().await?;
+        if let Err(error) = upload_vault_header(vault_header, cloud_transport, &staging_dir).await {
+            return Err(map_vault_header_sync_error(error));
+        }
+        if let Err(error) = upload_manifest_backup(
+            &request.vault_db_path,
+            &new_sqlcipher_for_upload,
+            &new_manifest_key_bytes,
+            vault_id,
+            cloud_transport,
+            &staging_dir,
+        )
+        .await
+        {
+            tracing::warn!(
+                ?error,
+                "Failed to upload re-keyed manifest backup after password change; next sync will repair"
+            );
+        }
     }
 
     drop(new_salt);
@@ -220,6 +232,104 @@ mod tests {
         ) -> Result<Vec<String>, CloudTransportError> {
             Ok(Vec::new())
         }
+    }
+
+    /// Local-only transport: reports `is_configured() == false` and fails every
+    /// upload. Used to prove the ceremony skips cloud uploads for local-only
+    /// vaults rather than aborting after the rekey.
+    #[derive(Debug, Default)]
+    struct LocalOnlyCloudTransport;
+
+    #[async_trait]
+    impl CloudTransport for LocalOnlyCloudTransport {
+        async fn upload_blob(
+            &self,
+            _local_path: &std::path::Path,
+            _remote_path: &str,
+        ) -> Result<(), CloudTransportError> {
+            Err(CloudTransportError::Other(
+                "local-only: no transport".to_string(),
+            ))
+        }
+
+        async fn download_blob(
+            &self,
+            _remote_path: &str,
+            _local_path: &std::path::Path,
+        ) -> Result<(), CloudTransportError> {
+            Err(CloudTransportError::NotFound)
+        }
+
+        async fn delete_blob(&self, _remote_path: &str) -> Result<(), CloudTransportError> {
+            Ok(())
+        }
+
+        async fn list_blobs(
+            &self,
+            _remote_prefix: &str,
+        ) -> Result<Vec<String>, CloudTransportError> {
+            Ok(Vec::new())
+        }
+
+        fn is_configured(&self) -> bool {
+            false
+        }
+    }
+
+    /// Regression: changing the password on a local-only vault must succeed even
+    /// though every cloud upload would fail — the ceremony skips uploads when the
+    /// transport is unconfigured. Without the `is_configured()` gate the fatal
+    /// header upload aborts after the rekey, stranding the on-disk header.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_change_password_local_only_vault_succeeds_without_cloud_upload() {
+        let _lock = ceremony_lock().await;
+        let mut vault = create_tier_one_vault().await;
+        let local_only = LocalOnlyCloudTransport;
+
+        let request = ChangePasswordRequest {
+            current_password_bytes: TEST_PASSWORD,
+            new_password_bytes: TEST_NEW_PASSWORD,
+            current_key_source: None,
+            recovery_phrase: None,
+            argon2_params: test_parameters(),
+            argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
+            vault_db_path: vault.vault_db_path.clone(),
+        };
+        change_password(
+            request,
+            &vault.session,
+            &local_only,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await
+        .expect("change_password on a local-only vault must succeed without cloud upload");
+
+        // The re-keyed DB must open with the new-password-derived sqlcipher key.
+        let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
+        let new_params = argon2_parameters_from_json(&vault.header.argon2_params);
+        let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+        derive_master_key_into(
+            TEST_NEW_PASSWORD,
+            None,
+            &new_salt,
+            &new_params,
+            &mut new_master,
+        )
+        .unwrap();
+        let new_keys = SessionKeys::from_master_key_bytes(&new_master).unwrap();
+        let new_sqlcipher: [u8; 32] = *new_keys.sqlcipher_key.expose();
+        let vault_db_path = vault.vault_db_path.clone();
+        let opens = tokio::task::spawn_blocking(move || {
+            let key = SqlcipherKey::from_slice(&new_sqlcipher);
+            open_sqlcipher(&vault_db_path, &key).is_ok()
+        })
+        .await
+        .unwrap();
+        assert!(
+            opens,
+            "DB must open with new-password key after local-only change"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -407,6 +517,105 @@ mod tests {
             unwrap_with_kek_bytes(&WrappedFileKey::new(wrapped_array), &node_file_id, &new_kek)
                 .expect("unwrap with new kek must succeed");
         assert_eq!(*recovered.expose(), file_key_plain);
+    }
+
+    /// Regression: epoch-blob keys (`epoch_blobs.file_key_wrapped`) must also be
+    /// re-wrapped on password change, or epoch-packed files become undecryptable
+    /// after a rekey. The key is AEAD-bound to `epoch_blob_id`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_change_password_new_kek_can_unwrap_epoch_blob_keys_after_change() {
+        let _lock = ceremony_lock().await;
+        let mut vault = create_tier_one_vault().await;
+
+        let current_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
+        let current_params = argon2_parameters_from_json(&vault.header.argon2_params);
+        let mut current_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+        derive_master_key_into(
+            TEST_PASSWORD,
+            None,
+            &current_salt,
+            &current_params,
+            &mut current_master,
+        )
+        .unwrap();
+        let current_keys = SessionKeys::from_master_key_bytes(&current_master).unwrap();
+        let current_kek = Zeroizing::new(*current_keys.key_encryption_key.expose());
+        let current_sqlcipher = Zeroizing::new(*current_keys.sqlcipher_key.expose());
+
+        let epoch_key_plain = [0x5Au8; 32];
+        let epoch_blob_id = "00000000-0000-0000-0000-0000000000ee";
+        let epoch_file_id =
+            FileId::from_uuid(uuid::Uuid::parse_str(epoch_blob_id).expect("uuid must parse"));
+        let wrapped = wrap_with_kek_bytes(&current_kek, &epoch_file_id, &epoch_key_plain).unwrap();
+        let vault_db_path = vault.vault_db_path.clone();
+        let wrapped_vec = wrapped.as_bytes().to_vec();
+        tokio::task::spawn_blocking(move || {
+            let sqlcipher_key = SqlcipherKey::from_slice(&current_sqlcipher);
+            let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key).unwrap();
+            conn.execute(
+                "INSERT INTO epoch_blobs (epoch_blob_id, blob_name, file_key_wrapped, size_padded, blake3_checksum) VALUES (?, ?, ?, 4194304, X'00')",
+                params![epoch_blob_id, "11111111-1111-4111-8111-111111111111", wrapped_vec],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+        let request = ChangePasswordRequest {
+            current_password_bytes: TEST_PASSWORD,
+            new_password_bytes: TEST_NEW_PASSWORD,
+            current_key_source: None,
+            recovery_phrase: None,
+            argon2_params: test_parameters(),
+            argon2_migration_intent: crate::auth::Argon2MigrationIntent::PreserveTrusted,
+            vault_db_path: vault.vault_db_path.clone(),
+        };
+        change_password(
+            request,
+            &vault.session,
+            &vault.cloud,
+            &mut vault.header,
+            &vault.vault_id,
+        )
+        .await
+        .expect("change_password must succeed");
+
+        let new_salt = decode_base64_32(&vault.header.argon2_salt).unwrap();
+        let new_params = argon2_parameters_from_json(&vault.header.argon2_params);
+        let mut new_master: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+        derive_master_key_into(
+            TEST_NEW_PASSWORD,
+            None,
+            &new_salt,
+            &new_params,
+            &mut new_master,
+        )
+        .unwrap();
+        let new_keys = SessionKeys::from_master_key_bytes(&new_master).unwrap();
+        let new_kek = Zeroizing::new(*new_keys.key_encryption_key.expose());
+        let new_sqlcipher = Zeroizing::new(*new_keys.sqlcipher_key.expose());
+
+        let vault_db_path = vault.vault_db_path.clone();
+        let row_blob: Vec<u8> = tokio::task::spawn_blocking(move || {
+            let sqlcipher_key = SqlcipherKey::from_slice(&new_sqlcipher);
+            let conn = open_sqlcipher(&vault_db_path, &sqlcipher_key).unwrap();
+            conn.query_row(
+                "SELECT file_key_wrapped FROM epoch_blobs WHERE epoch_blob_id = ?",
+                params!["00000000-0000-0000-0000-0000000000ee"],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+        let wrapped_array: [u8; 72] = row_blob.try_into().unwrap();
+        let recovered = unwrap_with_kek_bytes(
+            &WrappedFileKey::new(wrapped_array),
+            &epoch_file_id,
+            &new_kek,
+        )
+        .expect("epoch blob key must unwrap with new kek after change_password");
+        assert_eq!(*recovered.expose(), epoch_key_plain);
     }
 
     #[tokio::test(flavor = "multi_thread")]

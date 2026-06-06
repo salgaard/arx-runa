@@ -376,6 +376,7 @@ pub fn FileItem(
                                             "Failed to prefetch video: {}",
                                             err.message
                                         );
+                                        actions.set_error(err.message);
                                     }
                                 }
                             });
@@ -408,6 +409,7 @@ pub fn FileItem(
                                             "Failed to fetch file content: {}",
                                             err.message
                                         );
+                                        actions.set_error(err.message);
                                     }
                                 }
                             });

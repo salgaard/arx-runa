@@ -141,31 +141,43 @@ pub async fn rotate_key_file(
     drop(recovery_key_for_rewrap);
     drop(new_master_key);
 
-    let new_manifest_key_bytes = Zeroizing::new(*new_session_keys.manifest_key.expose());
-    let new_sqlcipher_for_upload =
-        SqlcipherKey::from_slice(new_session_keys.sqlcipher_key.expose());
-    let staging_dir = staging::staging_directory().await?;
+    // Compute upload artifacts before the session swap consumes `new_session_keys`.
+    // Skip cloud uploads entirely for local-only vaults (no configured transport):
+    // attempting them would fail and, after the rekey + session swap below, abort
+    // the ceremony — leaving the on-disk vault header out of step with the
+    // re-keyed database (a potential lockout). The caller persists the updated
+    // header locally; a configured vault still uploads as before.
+    let upload_artifacts = if cloud_transport.is_configured() {
+        Some((
+            Zeroizing::new(*new_session_keys.manifest_key.expose()),
+            SqlcipherKey::from_slice(new_session_keys.sqlcipher_key.expose()),
+        ))
+    } else {
+        None
+    };
     session_manager
         .swap_active_session(new_session_keys, vault_id.to_uuid().to_string())
         .await?;
-    let upload_result = upload_vault_header(vault_header, cloud_transport, &staging_dir).await;
-    if let Err(error) = upload_result {
-        return Err(map_vault_header_sync_error(error));
-    }
-    if let Err(error) = upload_manifest_backup(
-        &request.vault_db_path,
-        &new_sqlcipher_for_upload,
-        &new_manifest_key_bytes,
-        vault_id,
-        cloud_transport,
-        &staging_dir,
-    )
-    .await
-    {
-        tracing::warn!(
-            ?error,
-            "Failed to upload re-keyed manifest backup after key file rotation; next sync will repair"
-        );
+    if let Some((new_manifest_key_bytes, new_sqlcipher_for_upload)) = upload_artifacts {
+        let staging_dir = staging::staging_directory().await?;
+        if let Err(error) = upload_vault_header(vault_header, cloud_transport, &staging_dir).await {
+            return Err(map_vault_header_sync_error(error));
+        }
+        if let Err(error) = upload_manifest_backup(
+            &request.vault_db_path,
+            &new_sqlcipher_for_upload,
+            &new_manifest_key_bytes,
+            vault_id,
+            cloud_transport,
+            &staging_dir,
+        )
+        .await
+        {
+            tracing::warn!(
+                ?error,
+                "Failed to upload re-keyed manifest backup after key file rotation; next sync will repair"
+            );
+        }
     }
 
     drop(new_salt);
