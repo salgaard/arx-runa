@@ -55,6 +55,14 @@ pub(crate) async fn revoke_share(
         .set_share_revoked_at(share_id, now_unix_seconds)
         .await?;
 
+    if is_last {
+        // No recipients remain for this file version: drop the re-encryption snapshot so its
+        // wrapped share key is not retained after the shared blobs are gone.
+        sharing_store
+            .delete_file_share(&share.file_share_id)
+            .await?;
+    }
+
     Ok(())
 }
 
@@ -68,7 +76,9 @@ mod tests {
 
     use super::revoke_share;
     use crate::sharing::error::SharingError;
-    use crate::sharing::store::{Contact, ReceivedShare, ShareRecord, SharingStore};
+    use crate::sharing::store::{
+        Contact, FileShareSnapshot, ReceivedShare, ShareRecord, SharingStore,
+    };
     use crate::sharing::types::{ContactId, X25519PublicKey};
     use crate::storage::CloudTransport;
     use crate::storage::cloud::mock::{CloudTransportErrorKind, MockCloudTransport};
@@ -78,6 +88,7 @@ mod tests {
     struct MockSharingState {
         shares: HashMap<String, ShareRecord>,
         contacts: HashMap<ContactId, Contact>,
+        file_shares: HashMap<String, FileShareSnapshot>,
     }
 
     /// In-memory `SharingStore` for revocation unit tests.
@@ -254,6 +265,36 @@ mod tests {
                 return Err(SharingError::ShareAlreadyRevoked);
             }
             share.revoked_at = Some(revoked_at);
+            Ok(())
+        }
+
+        async fn insert_file_share(
+            &self,
+            snapshot: &FileShareSnapshot,
+        ) -> Result<(), SharingError> {
+            self.state
+                .lock()
+                .unwrap()
+                .file_shares
+                .insert(snapshot.file_share_id.clone(), snapshot.clone());
+            Ok(())
+        }
+
+        async fn get_file_share(
+            &self,
+            file_share_id: &str,
+        ) -> Result<Option<FileShareSnapshot>, SharingError> {
+            Ok(self
+                .state
+                .lock()
+                .unwrap()
+                .file_shares
+                .get(file_share_id)
+                .cloned())
+        }
+
+        async fn delete_file_share(&self, file_share_id: &str) -> Result<(), SharingError> {
+            self.state.lock().unwrap().file_shares.remove(file_share_id);
             Ok(())
         }
     }

@@ -6,8 +6,8 @@ use rusqlite::{OptionalExtension, Row, params};
 use uuid::Uuid;
 
 use crate::sharing::{
-    Contact, ContactId, DisplayName, ReceivedShare, ShareRecord, SharingError, SharingStore,
-    X25519PublicKey,
+    Contact, ContactId, DisplayName, FileShareSnapshot, ReceivedShare, ShareRecord, SharingError,
+    SharingStore, X25519PublicKey,
 };
 use crate::storage::{SqlCipherMetadataStore, StorageError};
 
@@ -444,6 +444,114 @@ impl SharingStore for SqlCipherMetadataStore {
             StorageError::ConstraintViolation(_) => SharingError::ShareAlreadyRevoked,
             _ => SharingError::Backend("storage backend failure".to_owned()),
         })
+    }
+
+    /// Inserts one `file_shares` re-encryption snapshot row.
+    async fn insert_file_share(&self, snapshot: &FileShareSnapshot) -> Result<(), SharingError> {
+        let file_share_id = snapshot.file_share_id.clone();
+        let share_file_id = snapshot.share_file_id.clone();
+        let wrapped_blob = snapshot.share_file_key_wrapped.to_vec();
+        let chunk_uuids_json = serde_json::to_string(&snapshot.chunk_uuids)
+            .map_err(|error| SharingError::InvalidJsonPayload(error.to_string()))?;
+        let chunk_size = snapshot.chunk_size as i64;
+        let file_size = snapshot.file_size as i64;
+        let file_name = snapshot.file_name.clone();
+        let created_at = snapshot.created_at;
+
+        self.with_connection_blocking(move |connection| {
+            connection
+                .execute(
+                    "INSERT INTO file_shares (file_share_id, share_file_id, share_file_key_wrapped, chunk_uuids, chunk_size, file_size, file_name, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![file_share_id, share_file_id, wrapped_blob, chunk_uuids_json, chunk_size, file_size, file_name, created_at],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+        .map_err(map_storage_error)
+    }
+
+    /// Fetches the re-encryption snapshot for a `file_share_id`, or `None` if absent.
+    async fn get_file_share(
+        &self,
+        file_share_id: &str,
+    ) -> Result<Option<FileShareSnapshot>, SharingError> {
+        let file_share_id_owned = file_share_id.to_owned();
+        let row = self
+            .with_connection_blocking(move |connection| {
+                connection
+                    .query_row(
+                        "SELECT file_share_id, share_file_id, share_file_key_wrapped, chunk_uuids, chunk_size, file_size, file_name, created_at FROM file_shares WHERE file_share_id = ?1",
+                        params![file_share_id_owned],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, Vec<u8>>(2)?,
+                                row.get::<_, String>(3)?,
+                                row.get::<_, i64>(4)?,
+                                row.get::<_, i64>(5)?,
+                                row.get::<_, String>(6)?,
+                                row.get::<_, i64>(7)?,
+                            ))
+                        },
+                    )
+                    .optional()
+                    .map_err(StorageError::from_rusqlite)
+            })
+            .await
+            .map_err(map_storage_error)?;
+
+        let Some((
+            file_share_id,
+            share_file_id,
+            wrapped_blob,
+            chunk_uuids_json,
+            chunk_size,
+            file_size,
+            file_name,
+            created_at,
+        )) = row
+        else {
+            return Ok(None);
+        };
+
+        let share_file_key_wrapped: [u8; 72] =
+            wrapped_blob.try_into().map_err(|blob: Vec<u8>| {
+                SharingError::Backend(format!(
+                    "file_shares wrapped key is not 72 bytes: got {}",
+                    blob.len()
+                ))
+            })?;
+        let chunk_uuids: Vec<String> = serde_json::from_str(&chunk_uuids_json)
+            .map_err(|error| SharingError::InvalidJsonPayload(error.to_string()))?;
+
+        Ok(Some(FileShareSnapshot {
+            file_share_id,
+            share_file_id,
+            share_file_key_wrapped,
+            chunk_uuids,
+            chunk_size: chunk_size as u32,
+            file_size: file_size as u64,
+            file_name,
+            created_at,
+        }))
+    }
+
+    /// Deletes the `file_shares` snapshot row for a `file_share_id` (idempotent).
+    async fn delete_file_share(&self, file_share_id: &str) -> Result<(), SharingError> {
+        let file_share_id_owned = file_share_id.to_owned();
+        self.with_connection_blocking(move |connection| {
+            connection
+                .execute(
+                    "DELETE FROM file_shares WHERE file_share_id = ?1",
+                    params![file_share_id_owned],
+                )
+                .map_err(StorageError::from_rusqlite)?;
+            Ok(())
+        })
+        .await
+        .map_err(map_storage_error)
     }
 }
 

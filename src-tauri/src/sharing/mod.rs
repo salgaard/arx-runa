@@ -18,5 +18,5 @@ pub use identity::{compute_fingerprint, export_public_key_bytes, public_key_qr_s
 pub(crate) use packages::create_share_package;
 pub(crate) use packages::import_share_package;
 pub(crate) use revocation::revoke_share;
-pub use store::{Contact, ReceivedShare, ShareRecord, SharingStore};
+pub use store::{Contact, FileShareSnapshot, ReceivedShare, ShareRecord, SharingStore};
 pub use types::{ContactId, DisplayName, Fingerprint, X25519PublicKey};

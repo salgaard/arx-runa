@@ -159,6 +159,7 @@ pub(crate) fn apply_epoch_v2_migration(conn: &Connection) -> Result<(), StorageE
         || version == "7"
         || version == "8"
         || version == "9"
+        || version == "10"
     {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
@@ -251,6 +252,7 @@ pub(crate) fn apply_sharing_v3_migration(conn: &Connection) -> Result<(), Storag
         || version == "7"
         || version == "8"
         || version == "9"
+        || version == "10"
     {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
@@ -298,6 +300,7 @@ pub(crate) fn apply_sharing_v4_migration(conn: &Connection) -> Result<(), Storag
         || version == "7"
         || version == "8"
         || version == "9"
+        || version == "10"
     {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
@@ -342,7 +345,13 @@ pub(crate) fn apply_backup_v5_migration(conn: &Connection) -> Result<(), Storage
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "5" || version == "6" || version == "7" || version == "8" || version == "9" {
+    if version == "5"
+        || version == "6"
+        || version == "7"
+        || version == "8"
+        || version == "9"
+        || version == "10"
+    {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -392,7 +401,7 @@ pub(crate) fn apply_pending_backup_v6_migration(conn: &Connection) -> Result<(),
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "6" || version == "7" || version == "8" || version == "9" {
+    if version == "6" || version == "7" || version == "8" || version == "9" || version == "10" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -440,7 +449,7 @@ pub(crate) fn apply_device_id_v7_migration(conn: &Connection) -> Result<(), Stor
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "7" || version == "8" || version == "9" {
+    if version == "7" || version == "8" || version == "9" || version == "10" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -483,7 +492,7 @@ pub(crate) fn apply_gdrive_sharing_v8_migration(conn: &Connection) -> Result<(),
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "8" || version == "9" {
+    if version == "8" || version == "9" || version == "10" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -538,7 +547,7 @@ pub(crate) fn apply_shares_cascade_v9_migration(conn: &Connection) -> Result<(),
             StorageError::Database("missing manifest_meta key: schema_version".to_owned())
         })?;
 
-    if version == "9" {
+    if version == "9" || version == "10" {
         conn.execute_batch("COMMIT")
             .map_err(StorageError::from_rusqlite)?;
         return Ok(());
@@ -573,6 +582,65 @@ pub(crate) fn apply_shares_cascade_v9_migration(conn: &Connection) -> Result<(),
         ALTER TABLE shares_new RENAME TO shares;
 
         UPDATE manifest_meta SET value = '9' WHERE key = 'schema_version';
+        ",
+    )
+    .map_err(StorageError::from_rusqlite)?;
+
+    conn.execute_batch("COMMIT")
+        .map_err(StorageError::from_rusqlite)?;
+
+    Ok(())
+}
+
+/// Adds the `file_shares` table holding the per-file-share re-encryption snapshot (schema v10).
+///
+/// Idempotent: if `schema_version` is already `'10'`, commits immediately and returns.
+/// Must be called after `apply_shares_cascade_v9_migration` on any vault opened from disk.
+///
+/// Each shared file is re-encrypted under a fresh share file key and a fresh share `file_id`
+/// before upload, so the recipient never receives a vault-internal (possibly cross-file
+/// epoch-blob) key. This table persists that snapshot so additional recipients of the same
+/// `file_share_id` reuse the identical key, blob names, and chunk layout.
+///
+/// Migration steps (single `BEGIN IMMEDIATE` transaction):
+/// 1. Create `file_shares` keyed by `file_share_id`.
+/// 2. Bump `schema_version` to `'10'`.
+pub(crate) fn apply_file_shares_v10_migration(conn: &Connection) -> Result<(), StorageError> {
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(StorageError::from_rusqlite)?;
+
+    let version = conn
+        .query_row(
+            "SELECT value FROM manifest_meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(StorageError::from_rusqlite)?
+        .ok_or_else(|| {
+            StorageError::Database("missing manifest_meta key: schema_version".to_owned())
+        })?;
+
+    if version == "10" {
+        conn.execute_batch("COMMIT")
+            .map_err(StorageError::from_rusqlite)?;
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        "
+        CREATE TABLE file_shares (
+            file_share_id          TEXT PRIMARY KEY,
+            share_file_id          TEXT NOT NULL,
+            share_file_key_wrapped BLOB NOT NULL,
+            chunk_uuids            TEXT NOT NULL CHECK (json_valid(chunk_uuids)),
+            chunk_size             INTEGER NOT NULL,
+            file_size              INTEGER NOT NULL,
+            file_name              TEXT NOT NULL,
+            created_at             INTEGER NOT NULL
+        );
+
+        UPDATE manifest_meta SET value = '10' WHERE key = 'schema_version';
         ",
     )
     .map_err(StorageError::from_rusqlite)?;
@@ -677,9 +745,10 @@ pub(crate) fn validate_manifest_meta(conn: &Connection) -> Result<(), StorageErr
         && schema_version != "7"
         && schema_version != "8"
         && schema_version != "9"
+        && schema_version != "10"
     {
         return Err(StorageError::Database(
-            "invalid schema_version: expected 1, 2, 3, 4, 5, 6, 7, 8, or 9".to_owned(),
+            "invalid schema_version: expected 1, 2, 3, 4, 5, 6, 7, 8, 9, or 10".to_owned(),
         ));
     }
 
@@ -723,9 +792,11 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        apply_canonical_schema, apply_epoch_v2_migration, apply_sharing_v3_migration,
-        apply_sharing_v4_migration, seed_manifest_meta, validate_manifest_meta,
-        validate_schema_integrity,
+        apply_backup_v5_migration, apply_canonical_schema, apply_device_id_v7_migration,
+        apply_epoch_v2_migration, apply_file_shares_v10_migration,
+        apply_gdrive_sharing_v8_migration, apply_pending_backup_v6_migration,
+        apply_shares_cascade_v9_migration, apply_sharing_v3_migration, apply_sharing_v4_migration,
+        seed_manifest_meta, validate_manifest_meta, validate_schema_integrity,
     };
     use crate::storage::error::StorageError;
 
@@ -1112,5 +1183,59 @@ mod tests {
 
         let result = apply_sharing_v4_migration(&conn);
         assert!(result.is_ok(), "second v4 migration should be idempotent");
+    }
+
+    /// Applies the full migration chain through v9 onto a freshly seeded in-memory schema.
+    fn migrate_through_v9(conn: &Connection) {
+        apply_canonical_schema(conn).expect("schema should apply");
+        seed_manifest_meta(conn, Uuid::new_v4(), 4_194_304, false).expect("seed should succeed");
+        apply_epoch_v2_migration(conn).expect("v2 migration should succeed");
+        apply_sharing_v3_migration(conn).expect("v3 migration should succeed");
+        apply_sharing_v4_migration(conn).expect("v4 migration should succeed");
+        apply_backup_v5_migration(conn).expect("v5 migration should succeed");
+        apply_pending_backup_v6_migration(conn).expect("v6 migration should succeed");
+        apply_device_id_v7_migration(conn).expect("v7 migration should succeed");
+        apply_gdrive_sharing_v8_migration(conn).expect("v8 migration should succeed");
+        apply_shares_cascade_v9_migration(conn).expect("v9 migration should succeed");
+    }
+
+    /// Verifies that `apply_file_shares_v10_migration` migrates a version-9 schema to version 10,
+    /// creates an insertable `file_shares` table, and that `validate_manifest_meta` accepts v10.
+    #[test]
+    fn test_apply_file_shares_v10_migration_upgrades_version_9_to_10() {
+        let conn = Connection::open_in_memory().expect("in-memory connection should open");
+        migrate_through_v9(&conn);
+
+        apply_file_shares_v10_migration(&conn).expect("v10 migration should succeed");
+
+        let version: String = conn
+            .query_row(
+                "SELECT value FROM manifest_meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("schema_version should be readable");
+        assert_eq!(version, "10");
+
+        let result = validate_manifest_meta(&conn);
+        assert!(result.is_ok(), "validate_manifest_meta should accept v10");
+
+        conn.execute(
+            "INSERT INTO file_shares (file_share_id, share_file_id, share_file_key_wrapped, chunk_uuids, chunk_size, file_size, file_name, created_at)
+             VALUES ('fsid-1', 'sfid-1', X'00', '[\"a\"]', 4194304, 1, 'test.txt', 1000)",
+            [],
+        )
+        .expect("file_shares row should insert");
+    }
+
+    /// Verifies that `apply_file_shares_v10_migration` is idempotent when already at version 10.
+    #[test]
+    fn test_apply_file_shares_v10_migration_is_idempotent_when_already_at_version_10() {
+        let conn = Connection::open_in_memory().expect("in-memory connection should open");
+        migrate_through_v9(&conn);
+        apply_file_shares_v10_migration(&conn).expect("first v10 migration should succeed");
+
+        let result = apply_file_shares_v10_migration(&conn);
+        assert!(result.is_ok(), "second v10 migration should be idempotent");
     }
 }

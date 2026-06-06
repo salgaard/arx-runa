@@ -9,15 +9,21 @@
 use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
-use crate::crypto::KeyEncryptionKey;
+use crate::crypto::{
+    ChunkIndex, FileId, FileKey, KeyEncryptionKey, WrappedFileKey, encrypt_chunk,
+    generate_file_key, unwrap_file_key, wrap_file_key,
+};
 use crate::sharing::error::SharingError;
 use crate::sharing::packages::create_share_package;
-use crate::sharing::store::{ShareRecord, SharingStore};
+use crate::sharing::store::{FileShareSnapshot, ShareRecord, SharingStore};
 use crate::sharing::types::ContactId;
 use crate::storage::CloudTransport;
 use crate::storage::cloud::CloudTransportError;
 use crate::storage::metadata_store::MetadataStore;
+use crate::storage::pipeline::{decrypt_epoch_file_to_memory, decrypt_file_to_memory};
+use crate::storage::types::{ChunkRecord, NodeType};
 
 /// Output of a successful [`create_share`] call.
 pub(crate) struct CreateShareOutput {
@@ -40,14 +46,17 @@ pub(crate) struct CreateShareRequest {
 }
 /// Creates an outgoing file share for a single recipient.
 ///
-/// If an active share already exists for this file, the existing `file_share_id`
-/// and cloud blobs are reused and only the per-recipient package is generated.
-/// Otherwise, a new `file_share_id` is generated, each chunk blob is copied
-/// from staging into `shared/<file_share_id>/<uuid>.blob` on the cloud, and a
-/// new `ShareRecord` row is persisted.
+/// If an active share already exists for this file, the existing `file_share_id` and its
+/// re-encryption snapshot (key, share `file_id`, blob names) are reused and only the
+/// per-recipient package is generated. Otherwise the file is decrypted from the vault —
+/// regardless of whether it is stored standalone or packed into a cross-file epoch blob —
+/// re-encrypted under a fresh share file key and a fresh share `file_id` into standalone
+/// per-chunk blobs at `shared/<file_share_id>/<uuid>.blob`, and the snapshot plus a new
+/// `ShareRecord` row are persisted.
 ///
-/// Temporary local copies are stored as `shared-copy-<uuid>.blob` in
-/// `staging_directory` and are deleted on both success and failure.
+/// Re-encrypting (rather than copying vault blobs) is what preserves zero-knowledge: the
+/// recipient only ever receives a key scoped to this single file, never a vault epoch-blob
+/// key that could decrypt unrelated files sharing the same physical blob.
 pub(crate) async fn create_share(
     request: CreateShareRequest,
     metadata_store: &dyn MetadataStore,
@@ -68,97 +77,39 @@ pub(crate) async fn create_share(
         .list_active_shares_by_file(&file_id_str)
         .await?;
 
-    let (file_share_id, need_blob_copy) = if let Some(first) = active_shares.first() {
-        (first.file_share_id.clone(), false)
+    let (file_share_id, snapshot, share_file_key) = if let Some(first) = active_shares.first() {
+        let file_share_id = first.file_share_id.clone();
+        let snapshot = sharing_store
+            .get_file_share(&file_share_id)
+            .await?
+            .ok_or_else(|| {
+                SharingError::Backend("active share has no file_shares snapshot".to_owned())
+            })?;
+        let share_file_uuid = Uuid::parse_str(&snapshot.share_file_id).map_err(|_| {
+            SharingError::Backend("snapshot share_file_id is not a UUID".to_owned())
+        })?;
+        let share_file_key = unwrap_file_key(
+            &WrappedFileKey::new(snapshot.share_file_key_wrapped),
+            &FileId::from_uuid(share_file_uuid),
+            key_encryption_key,
+        )
+        .map_err(|_| SharingError::Backend("share file key unwrap failed".to_owned()))?;
+        (file_share_id, snapshot, share_file_key)
     } else {
-        (Uuid::new_v4().hyphenated().to_string(), true)
+        let file_share_id = Uuid::new_v4().hyphenated().to_string();
+        let (snapshot, share_file_key) = build_new_file_share(
+            file_id,
+            &file_share_id,
+            now_unix_seconds,
+            metadata_store,
+            cloud,
+            key_encryption_key,
+            staging_directory,
+        )
+        .await?;
+        sharing_store.insert_file_share(&snapshot).await?;
+        (file_share_id, snapshot, share_file_key)
     };
-
-    if need_blob_copy {
-        let mut chunks = metadata_store
-            .get_chunks(file_id)
-            .await
-            .map_err(|e| SharingError::Backend(e.to_string()))?;
-
-        chunks.sort_by_key(|c| c.chunk_index);
-
-        let mut uploaded_remote_paths: Vec<String> = Vec::new();
-        let mut temp_local_paths: Vec<PathBuf> = Vec::new();
-
-        for chunk in &chunks {
-            let temp_uuid = Uuid::new_v4().hyphenated().to_string();
-            let local_copy_path = staging_directory.join(format!("shared-copy-{}.blob", temp_uuid));
-            temp_local_paths.push(local_copy_path.clone());
-
-            let source_path = staging_directory.join(format!("{}.blob", chunk.blob_name));
-
-            // If the local staging blob was cleaned up after cloud sync, fetch it back.
-            if !source_path.exists() {
-                let remote = format!("vault/{}.blob", chunk.blob_name);
-                if let Err(e) = cloud.download_blob(&remote, &source_path).await {
-                    cleanup_temp_files(&temp_local_paths).await;
-                    for uploaded in &uploaded_remote_paths {
-                        let _ = cloud.delete_blob(uploaded).await;
-                    }
-                    return Err(SharingError::CloudOperation(format!(
-                        "blob not in staging and cloud download failed (chunk {}): {}",
-                        chunk.chunk_index, e
-                    )));
-                }
-            }
-
-            if let Err(io_err) = tokio::fs::copy(&source_path, &local_copy_path).await {
-                cleanup_temp_files(&temp_local_paths).await;
-                for remote in &uploaded_remote_paths {
-                    let _ = cloud.delete_blob(remote).await;
-                }
-                return Err(SharingError::CloudOperation(format!(
-                    "staging copy failed (chunk {}): {}",
-                    chunk.chunk_index, io_err
-                )));
-            }
-
-            let copy_bytes = match tokio::fs::read(&local_copy_path).await {
-                Ok(b) => b,
-                Err(e) => {
-                    cleanup_temp_files(&temp_local_paths).await;
-                    for remote in &uploaded_remote_paths {
-                        let _ = cloud.delete_blob(remote).await;
-                    }
-                    return Err(SharingError::CloudOperation(format!(
-                        "staging copy read-back failed (chunk {}): {}",
-                        chunk.chunk_index, e
-                    )));
-                }
-            };
-            if blake3::hash(&copy_bytes).as_bytes() != &chunk.blake3_checksum {
-                cleanup_temp_files(&temp_local_paths).await;
-                for remote in &uploaded_remote_paths {
-                    let _ = cloud.delete_blob(remote).await;
-                }
-                return Err(SharingError::CloudOperation(format!(
-                    "staging copy BLAKE3 mismatch (chunk {})",
-                    chunk.chunk_index
-                )));
-            }
-
-            let remote_path = format!("shared/{}/{}.blob", file_share_id, chunk.blob_name);
-
-            if let Err(transport_err) = cloud.upload_blob(&local_copy_path, &remote_path).await {
-                cleanup_temp_files(&temp_local_paths).await;
-                for remote in &uploaded_remote_paths {
-                    let _ = cloud.delete_blob(remote).await;
-                }
-                return Err(SharingError::CloudOperation(format!(
-                    "upload failed (chunk {}): {}",
-                    chunk.chunk_index, transport_err
-                )));
-            }
-
-            uploaded_remote_paths.push(remote_path);
-            let _ = tokio::fs::remove_file(&local_copy_path).await;
-        }
-    }
 
     let cloud_path_prefix = format!("shared/{}/", file_share_id);
 
@@ -201,13 +152,12 @@ pub(crate) async fn create_share(
         .map_err(|_| SharingError::ContactNotFound)?;
 
     let wire = create_share_package(
-        file_id,
         &recipient_contact.public_key,
         expires_at,
         cloud_endpoint,
-        metadata_store,
+        &snapshot,
+        &share_file_key,
         sharing_store,
-        key_encryption_key,
     )
     .await?;
 
@@ -234,6 +184,195 @@ pub(crate) async fn create_share(
         share_id,
         wire_bytes: wire,
     })
+}
+
+/// Builds a fresh re-encryption snapshot for a file that has not been shared yet.
+///
+/// Decrypts the file plaintext from the vault — transparently handling both standalone and
+/// epoch-packed storage — then re-encrypts each chunk under a fresh share file key and a fresh
+/// share `file_id`, uploading the standalone blobs to `shared/<file_share_id>/<uuid>.blob`.
+/// Returns the persisted snapshot together with the unwrapped share key used to seal recipient
+/// packages. On any upload failure, already-uploaded blobs are deleted before returning.
+#[allow(clippy::too_many_arguments)]
+async fn build_new_file_share(
+    file_id: Uuid,
+    file_share_id: &str,
+    now_unix_seconds: i64,
+    metadata_store: &dyn MetadataStore,
+    cloud: &dyn CloudTransport,
+    key_encryption_key: &KeyEncryptionKey,
+    staging_directory: &Path,
+) -> Result<(FileShareSnapshot, FileKey), SharingError> {
+    let node = metadata_store
+        .get_node(file_id)
+        .await
+        .map_err(|_| SharingError::Backend("file not found".to_owned()))?;
+    if node.node_type != NodeType::File {
+        return Err(SharingError::Backend("node is not a file".to_owned()));
+    }
+
+    let mut chunks = metadata_store
+        .get_chunks(file_id)
+        .await
+        .map_err(|e| SharingError::Backend(e.to_string()))?;
+    chunks.sort_by_key(|chunk| chunk.chunk_index);
+    if chunks.is_empty() {
+        return Err(SharingError::Backend("file has no chunks".to_owned()));
+    }
+
+    let chunk_size_text = metadata_store
+        .get_meta("chunk_size_bytes")
+        .await
+        .map_err(|_| SharingError::Backend("manifest meta lookup failed".to_owned()))?
+        .ok_or_else(|| SharingError::Backend("chunk_size_bytes not set".to_owned()))?;
+    let chunk_size: u32 = chunk_size_text
+        .parse()
+        .map_err(|_| SharingError::Backend("chunk_size_bytes is not a valid u32".to_owned()))?;
+
+    ensure_vault_blobs_local(&chunks, cloud, staging_directory).await?;
+
+    let plaintext = if chunks[0].epoch_blob_id.is_some() {
+        decrypt_epoch_file_to_memory(
+            &chunks[0],
+            key_encryption_key,
+            staging_directory,
+            metadata_store,
+            None,
+        )
+        .await
+        .map_err(|e| SharingError::Backend(e.to_string()))?
+    } else {
+        let wrapped = node
+            .file_key_wrapped
+            .ok_or_else(|| SharingError::Backend("file node has no wrapped key".to_owned()))?;
+        let file_key = unwrap_file_key(
+            &WrappedFileKey::new(wrapped),
+            &FileId::from_uuid(file_id),
+            key_encryption_key,
+        )
+        .map_err(|_| SharingError::Backend("file key unwrap failed".to_owned()))?;
+        decrypt_file_to_memory(
+            file_id,
+            &file_key,
+            node.size_bytes,
+            &chunks,
+            staging_directory,
+            metadata_store,
+            None,
+        )
+        .await
+        .map_err(|e| SharingError::Backend(e.to_string()))?
+    };
+
+    let file_size = plaintext.len() as u64;
+    let share_file_key = generate_file_key();
+    let share_file_uuid = Uuid::new_v4();
+    let share_file_id = FileId::from_uuid(share_file_uuid);
+    let chunk_size_usize = chunk_size as usize;
+    let chunk_count = if plaintext.is_empty() {
+        1
+    } else {
+        plaintext.len().div_ceil(chunk_size_usize)
+    };
+
+    let mut chunk_uuids: Vec<String> = Vec::with_capacity(chunk_count);
+    let mut uploaded_remote_paths: Vec<String> = Vec::new();
+
+    for index in 0..chunk_count {
+        let start = index * chunk_size_usize;
+        let end = ((index + 1) * chunk_size_usize).min(plaintext.len());
+        let mut padded = Zeroizing::new(vec![0u8; chunk_size_usize]);
+        padded[..end - start].copy_from_slice(&plaintext[start..end]);
+
+        let blob = encrypt_chunk(
+            padded,
+            &share_file_key,
+            &share_file_id,
+            ChunkIndex::new(index as u32),
+        )
+        .map_err(|e| SharingError::Backend(e.to_string()))?;
+
+        let blob_name = Uuid::new_v4().hyphenated().to_string();
+        let local_path = staging_directory.join(format!("shared-copy-{}.blob", blob_name));
+        let remote_path = format!("shared/{}/{}.blob", file_share_id, blob_name);
+
+        if let Err(error) = tokio::fs::write(&local_path, &blob).await {
+            let _ = tokio::fs::remove_file(&local_path).await;
+            for remote in &uploaded_remote_paths {
+                let _ = cloud.delete_blob(remote).await;
+            }
+            return Err(SharingError::CloudOperation(format!(
+                "share blob staging write failed (chunk {index}): {error}"
+            )));
+        }
+        if let Err(error) = cloud.upload_blob(&local_path, &remote_path).await {
+            let _ = tokio::fs::remove_file(&local_path).await;
+            for remote in &uploaded_remote_paths {
+                let _ = cloud.delete_blob(remote).await;
+            }
+            return Err(SharingError::CloudOperation(format!(
+                "share blob upload failed (chunk {index}): {error}"
+            )));
+        }
+        let _ = tokio::fs::remove_file(&local_path).await;
+        uploaded_remote_paths.push(remote_path);
+        chunk_uuids.push(blob_name);
+    }
+
+    let wrapped = wrap_file_key(&share_file_key, &share_file_id, key_encryption_key)
+        .map_err(|_| SharingError::Backend("share file key wrap failed".to_owned()))?;
+
+    let snapshot = FileShareSnapshot {
+        file_share_id: file_share_id.to_owned(),
+        share_file_id: share_file_uuid.hyphenated().to_string(),
+        share_file_key_wrapped: *wrapped.as_bytes(),
+        chunk_uuids,
+        chunk_size,
+        file_size,
+        file_name: node.name.clone(),
+        created_at: now_unix_seconds,
+    };
+
+    Ok((snapshot, share_file_key))
+}
+
+/// Ensures every physical vault blob backing `chunks` is present in `staging_directory`,
+/// downloading any that were cleaned up after a prior cloud sync.
+///
+/// For epoch-packed chunks `blob_name` already resolves (via `get_chunks`) to the shared epoch
+/// blob, so chunks that share a physical blob are de-duplicated and fetched once.
+async fn ensure_vault_blobs_local(
+    chunks: &[ChunkRecord],
+    cloud: &dyn CloudTransport,
+    staging_directory: &Path,
+) -> Result<(), SharingError> {
+    let mut seen: Vec<String> = Vec::new();
+    for chunk in chunks {
+        if seen.contains(&chunk.blob_name) {
+            continue;
+        }
+        seen.push(chunk.blob_name.clone());
+
+        let flat = staging_directory.join(format!("{}.blob", chunk.blob_name));
+        let pending = staging_directory
+            .join("pending")
+            .join(format!("{}.blob", chunk.blob_name));
+        let cache = staging_directory
+            .join("cache")
+            .join(format!("{}.blob", chunk.blob_name));
+        if flat.exists() || pending.exists() || cache.exists() {
+            continue;
+        }
+
+        let remote = format!("vault/{}.blob", chunk.blob_name);
+        cloud.download_blob(&remote, &flat).await.map_err(|error| {
+            SharingError::CloudOperation(format!(
+                "vault blob fetch failed ({}): {error}",
+                chunk.blob_name
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 /// Writes a temporary rclone conf and builds an `RcloneTransport` for a B2 shared download.
@@ -557,6 +696,24 @@ mod tests {
             _share_id: &str,
             _revoked_at: i64,
         ) -> Result<(), SharingError> {
+            unimplemented!()
+        }
+
+        async fn insert_file_share(
+            &self,
+            _snapshot: &crate::sharing::FileShareSnapshot,
+        ) -> Result<(), SharingError> {
+            unimplemented!()
+        }
+
+        async fn get_file_share(
+            &self,
+            _file_share_id: &str,
+        ) -> Result<Option<crate::sharing::FileShareSnapshot>, SharingError> {
+            unimplemented!()
+        }
+
+        async fn delete_file_share(&self, _file_share_id: &str) -> Result<(), SharingError> {
             unimplemented!()
         }
     }
