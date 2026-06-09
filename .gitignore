@@ -19,5 +19,17 @@ secrets/
 .cursor/
 # mdBook build output
 docs/book/
-docs/report/mermaid-tmp/
-docs/report/code-tmp/
+
+docs/report/mermaid-tmp
+docs/report/code-tmp
+.claude
+.github/instructions
+.github/hooks
+.github/plans
+docs/report
+docs/notes
+docs/design-reviews
+docs/deferred_items_handling
+docs/architecture-decisions
+docs/report-log
+docs/research-alternatives
