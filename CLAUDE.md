@@ -27,3 +27,11 @@ Targets Win/macOS/Linux; preserve behavior across all three; platform-specific c
 
 ## Report
 - when user report, rapport, rapporten, the report, bachelor rapporten. refer to docs/report/arx-runa-bachelorrapport.md.
+
+## Token Efficiency
+- Dont use any unnecessary filler words/sentences in replies to me.
+- Dont write any unnecessary summaries to me.
+- Be simple and precise in all output.
+- use jdocmunch-mcp to navigate .md files
+- when i say `index jdocmunch`, you should index this repo with `index_local` with `path: "C:\\Users\\chris\\source\\repos\\arx-runa"`
+- after we have made changes to .md files you should `index jdocmunch` automatically
