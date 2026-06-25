@@ -6,7 +6,7 @@
 // exercising the WebView2 layer directly.
 
 const assert = require("assert");
-const { LOADING_STATE_VAULT_NAME, createAndUnlockVault, lockVault } = require("../helpers/vault");
+const { LOADING_STATE_VAULT_NAME, createAndUnlockVault, lockVault, dismissDemoWarning } = require("../helpers/vault");
 
 describe("Loading states: vault creation", function () {
   // Each test in this suite operates on a fresh vault creation flow, so we
@@ -37,6 +37,10 @@ describe("Loading states: vault creation", function () {
       },
       { timeout: 30000, timeoutMsg: "Leptos WASM never mounted into <body>" },
     );
+
+    // Dismiss the demo-warning modal so it doesn't intercept the first click.
+    // No-op if an earlier suite already closed it in this shared session.
+    await dismissDemoWarning(browser);
   });
 
   it("submit button is disabled immediately after clicking create vault", async function () {

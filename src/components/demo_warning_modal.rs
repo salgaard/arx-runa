@@ -14,7 +14,7 @@ pub fn DemoWarningModal() -> impl IntoView {
 
     view! {
         <Modal open=Signal::derive(move || open.get()) on_close=on_close>
-            <h2 class="text-lg font-semibold text-amber-300 mb-3">
+            <h2 class="text-lg font-semibold text-amber-300 mb-3" data-testid="demo-warning-modal">
                 "\u{26A0} This is an early demo"
             </h2>
             <ul class="list-disc list-inside text-sm text-bone space-y-1 mb-5">
@@ -26,6 +26,7 @@ pub fn DemoWarningModal() -> impl IntoView {
             <div class="flex justify-end">
                 <button
                     class="px-4 py-2 rounded-lg bg-steel text-bone hover:bg-rune cursor-pointer"
+                    data-testid="demo-warning-dismiss"
                     on:click=move |_| open.set(false)
                 >
                     "I understand"
