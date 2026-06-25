@@ -205,7 +205,7 @@ pub fn LoginPage(
     };
 
     view! {
-        <div class="min-h-screen bg-iron flex items-center justify-center p-4">
+        <div class="min-h-full bg-iron flex items-center justify-center p-4">
             <div class="w-full max-w-md bg-stone border border-steel rounded-xl p-6 shadow-xl">
                 <h1 class="text-2xl text-bone text-center mb-2">
                     {"Unlock "}{vault_display_name}
@@ -465,9 +465,9 @@ pub fn VaultCreationPage(
     };
 
     view! {
-        <div class="min-h-screen bg-iron flex items-center justify-center p-4">
+        <div class="min-h-full bg-iron flex items-center justify-center p-4">
             <div class="w-full max-w-lg bg-stone border border-steel rounded-xl shadow-xl overflow-hidden">
-                <div class="p-6 overflow-y-auto max-h-screen">
+                <div class="p-6 overflow-y-auto max-h-full">
                     <h1 class="text-2xl text-bone text-center mb-8">"Create New Vault"</h1>
 
                     // ── Identity Section ──────────────────────────────────────────────
@@ -930,9 +930,9 @@ pub fn VaultRecoveryPage(
     };
 
     view! {
-        <div class="min-h-screen bg-iron flex items-center justify-center p-4">
+        <div class="min-h-full bg-iron flex items-center justify-center p-4">
             <div class="w-full max-w-lg bg-stone border border-steel rounded-xl shadow-xl overflow-hidden">
-                <div class="p-6 overflow-y-auto max-h-screen">
+                <div class="p-6 overflow-y-auto max-h-full">
                     <h1 class="text-2xl text-bone text-center mb-8">"Recover Vault from Cloud"</h1>
 
                     <div class="mb-8">
@@ -1188,9 +1188,9 @@ pub fn RecoverWithPhrasePage(
     };
 
     view! {
-        <div class="min-h-screen bg-iron flex items-center justify-center p-4">
+        <div class="min-h-full bg-iron flex items-center justify-center p-4">
             <div class="w-full max-w-lg bg-stone border border-steel rounded-xl shadow-xl overflow-hidden">
-                <div class="p-6 overflow-y-auto max-h-screen">
+                <div class="p-6 overflow-y-auto max-h-full">
                     <h1 class="text-2xl text-bone text-center mb-8">"Recover with Phrase"</h1>
 
                     <div class="mb-8">

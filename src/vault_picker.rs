@@ -36,7 +36,7 @@ pub fn VaultPicker(
     });
 
     view! {
-        <div class="min-h-screen bg-iron flex items-center justify-center p-4">
+        <div class="min-h-full bg-iron flex items-center justify-center p-4">
             <div class="w-full max-w-md">
                 <h1 class="text-3xl text-bone text-center mb-2">"Arx Runa"</h1>
                 <p class="text-text-secondary text-center text-sm mb-8">

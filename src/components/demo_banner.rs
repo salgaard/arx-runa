@@ -11,7 +11,7 @@ pub fn DemoBanner() -> impl IntoView {
     let version = env!("CARGO_PKG_VERSION");
 
     view! {
-        <div class="sticky top-0 z-40 bg-amber-900/40 border-b border-amber-600 text-amber-200 text-sm px-4 py-2 text-center">
+        <div class="shrink-0 bg-amber-900/40 border-b border-amber-600 text-amber-200 text-sm px-4 py-2 text-center">
             "\u{26A0} DEMO BUILD v"{version}" \u{2014} unaudited \u{B7} may lose data \u{B7} not for confidential files"
         </div>
     }

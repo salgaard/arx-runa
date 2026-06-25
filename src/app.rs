@@ -30,9 +30,17 @@ pub fn App() -> impl IntoView {
             <SessionProvider>
                 <VaultProvider>
                     <SyncProvider>
-                        <DemoBanner />
                         <DemoWarningModal />
-                        <AppRouter />
+                        // Lock the app to the viewport: the banner takes its
+                        // slice and the router fills the remainder, so screens
+                        // like AppShell keep their footer (lock button) on-screen
+                        // instead of overflowing below the fold.
+                        <div class="h-screen flex flex-col overflow-hidden">
+                            <DemoBanner />
+                            <div class="flex-1 min-h-0 overflow-y-auto">
+                                <AppRouter />
+                            </div>
+                        </div>
                     </SyncProvider>
                 </VaultProvider>
             </SessionProvider>
