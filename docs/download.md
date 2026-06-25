@@ -1,9 +1,11 @@
 # Download
 
 > ⚠️ **Early demo — expect bugs and data loss**
-> This is pre-release software. Encrypted vaults, keys, and file metadata may be lost or corrupted between versions. Do **not** rely on this as your only copy of important files.
+> This is pre-release software. Encrypted vaults, keys, and file metadata may be lost or corrupted between versions. Do **not** rely on this as your only copy of important files. The cryptography has **not been independently audited** — do not trust it with confidential data.
 
-All releases are available on GitHub. HOWEVER! i have only been able to test windows so far on real machines! so probably only windows that works atm.
+All releases are available on GitHub.
+
+> **Tested on Windows only.** The macOS and Linux builds are produced by CI but have not been verified on real hardware — treat them as untested.
 
 **[→ View all releases on GitHub](https://github.com/salgaard/arx-runa-releases/releases)**
 
@@ -19,6 +21,8 @@ Download the **NSIS installer** (`.exe`) from the latest release and run it.
 
 ## macOS
 
+> ⚠️ Untested on real hardware — may not launch or function correctly.
+
 Download the **disk image** (`.dmg`) from the latest release, open it, and drag Arx Runa to your Applications folder.
 
 > **Gatekeeper warning**: On first launch, macOS will block the app because it is not notarized. To open it:
@@ -30,6 +34,8 @@ Download the **disk image** (`.dmg`) from the latest release, open it, and drag 
 ---
 
 ## Linux
+
+> ⚠️ Untested on real hardware — may not launch or function correctly.
 
 Two formats are available from the latest release:
 

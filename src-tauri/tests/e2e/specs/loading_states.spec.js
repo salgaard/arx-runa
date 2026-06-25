@@ -6,7 +6,7 @@
 // exercising the WebView2 layer directly.
 
 const assert = require("assert");
-const { LOADING_STATE_VAULT_NAME, createAndUnlockVault, lockVault } = require("../helpers/vault");
+const { LOADING_STATE_VAULT_NAME, createAndUnlockVault, lockVault, dismissDemoWarning } = require("../helpers/vault");
 
 describe("Loading states: vault creation", function () {
   // Each test in this suite operates on a fresh vault creation flow, so we
@@ -37,6 +37,10 @@ describe("Loading states: vault creation", function () {
       },
       { timeout: 30000, timeoutMsg: "Leptos WASM never mounted into <body>" },
     );
+
+    // Dismiss the demo-warning modal so it doesn't intercept the first click.
+    // No-op if an earlier suite already closed it in this shared session.
+    await dismissDemoWarning(browser);
   });
 
   it("submit button is disabled immediately after clicking create vault", async function () {
@@ -113,14 +117,33 @@ describe("Loading states: vault creation", function () {
     // capture even a transient disabled state. On CI the stub rclone backend
     // returns almost instantly — the button may be disabled for <100 ms, well
     // under a single WebDriver round-trip, so polling alone cannot catch it.
+    //
+    // The callback must inspect the mutation *records*, not the live
+    // `btn.disabled` property: when the sync is fast (CI/WebKitGTK release),
+    // the disabled→enabled pair can be delivered to a single observer callback
+    // (microtask batching), at which point `btn.disabled` already reads false.
+    // We record a transition *into* the disabled state via attributeOldValue,
+    // and also capture the case where the button is already disabled at setup.
     await browser.execute(() => {
-      window.__syncDisabledObserved = false;
       const btn = document.querySelector('[data-testid="sync-button"]');
+      window.__syncDisabledObserved = !!(btn && btn.disabled);
       if (!btn) return;
-      const obs = new MutationObserver(() => {
-        if (btn.disabled) window.__syncDisabledObserved = true;
+      const obs = new MutationObserver((records) => {
+        for (const r of records) {
+          if (r.attributeName !== "disabled") continue;
+          // A record whose old value was null (attribute absent) marks the
+          // moment the button became disabled — present even if it has since
+          // flipped back to enabled within the same batch.
+          if (r.oldValue === null || btn.disabled) {
+            window.__syncDisabledObserved = true;
+          }
+        }
       });
-      obs.observe(btn, { attributes: true, attributeFilter: ["disabled"] });
+      obs.observe(btn, {
+        attributes: true,
+        attributeFilter: ["disabled"],
+        attributeOldValue: true,
+      });
       window.__syncObserver = obs;
     });
 

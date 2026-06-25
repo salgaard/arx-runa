@@ -199,7 +199,7 @@ pub fn SessionStatusBar() -> impl IntoView {
 #[component]
 pub fn AppShell(children: Children) -> impl IntoView {
     view! {
-        <div class="min-h-screen bg-iron text-bone flex flex-col">
+        <div class="h-full bg-iron text-bone flex flex-col">
             <Header />
             <main class="flex-1 p-6 overflow-auto">{children()}</main>
             <SessionStatusBar />

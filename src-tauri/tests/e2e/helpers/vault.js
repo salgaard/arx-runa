@@ -8,6 +8,22 @@ const TEST_VAULT_NAME = "e2e-test-vault";
 const LOADING_STATE_VAULT_NAME = "loading-state-test-vault";
 
 /**
+ * Dismisses the demo-warning modal that opens on every app launch.
+ *
+ * The modal owns a RAM-only signal, so it only appears once per app launch
+ * (the whole suite shares a single tauri-driver session). Its z-50 overlay
+ * intercepts clicks until dismissed. This is a no-op for later suites in the
+ * same session, once the modal has already been closed.
+ */
+async function dismissDemoWarning(browser) {
+  const dismiss = await browser.$('[data-testid="demo-warning-dismiss"]');
+  if (await dismiss.isExisting()) {
+    await dismiss.click();
+    await dismiss.waitForExist({ reverse: true, timeout: 5000 });
+  }
+}
+
+/**
  * Creates a new vault via the UI (Tier 1, password only) and leaves the
  * session unlocked. Expects the VaultPicker to be visible on entry.
  */
@@ -54,6 +70,11 @@ async function createAndUnlockVault(browser) {
 
   const createBtn = await browser.$('[data-testid="create-vault-button"]');
   await createBtn.waitForExist({ timeout: 15000 });
+
+  // The demo-warning modal overlays the picker on first launch; dismiss it
+  // before the click so it isn't intercepted.
+  await dismissDemoWarning(browser);
+
   await createBtn.click();
 
   // Fill vault name.
@@ -151,4 +172,4 @@ async function lockVault(browser) {
   );
 }
 
-module.exports = { TEST_VAULT_NAME, LOADING_STATE_VAULT_NAME, createAndUnlockVault, unlockExistingVault, lockVault };
+module.exports = { TEST_VAULT_NAME, LOADING_STATE_VAULT_NAME, createAndUnlockVault, unlockExistingVault, lockVault, dismissDemoWarning };

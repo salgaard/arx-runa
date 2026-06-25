@@ -5,6 +5,8 @@
 
 mod button;
 mod chunk_size_selector;
+mod demo_banner;
+mod demo_warning_modal;
 mod destination_selector;
 mod epoch_buffer_toggle;
 mod input;
@@ -17,6 +19,8 @@ mod toast;
 
 pub use button::Button;
 pub use chunk_size_selector::{CHUNK_MAX, CHUNK_MIN, ChunkSizeSelector, PRESETS, clamp_chunk_size};
+pub use demo_banner::DemoBanner;
+pub use demo_warning_modal::DemoWarningModal;
 pub use destination_selector::{DestinationKind, DestinationSelector};
 pub use epoch_buffer_toggle::EpochBufferToggle;
 pub use input::Input;

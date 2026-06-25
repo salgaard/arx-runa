@@ -3,7 +3,7 @@ use leptos_router::StaticSegment;
 use leptos_router::components::{Route, Router, Routes};
 
 use crate::auth::{LoginPage, RecoverWithPhrasePage, VaultCreationPage, VaultRecoveryPage};
-use crate::components::{ToastProvider, inject_toast_styles};
+use crate::components::{DemoBanner, DemoWarningModal, ToastProvider, inject_toast_styles};
 use crate::contacts::ContactList;
 use crate::destinations::DestinationList;
 use crate::ipc_types::VaultSummary;
@@ -30,7 +30,17 @@ pub fn App() -> impl IntoView {
             <SessionProvider>
                 <VaultProvider>
                     <SyncProvider>
-                        <AppRouter />
+                        <DemoWarningModal />
+                        // Lock the app to the viewport: the banner takes its
+                        // slice and the router fills the remainder, so screens
+                        // like AppShell keep their footer (lock button) on-screen
+                        // instead of overflowing below the fold.
+                        <div class="h-screen flex flex-col overflow-hidden">
+                            <DemoBanner />
+                            <div class="flex-1 min-h-0 overflow-y-auto">
+                                <AppRouter />
+                            </div>
+                        </div>
                     </SyncProvider>
                 </VaultProvider>
             </SessionProvider>
