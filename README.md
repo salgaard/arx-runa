@@ -16,7 +16,7 @@
 [![Gitlab Mirror](https://github.com/salgaard/arx-runa/actions/workflows/mirror.yml/badge.svg)](https://github.com/salgaard/arx-runa/actions/workflows/mirror.yml)
 ![Rust](https://img.shields.io/badge/rust-2024-orange?logo=rust)
 
-> ⚠️ **Early demo — expect bugs and data loss.** This is pre-release software. Encrypted vaults, keys, and file metadata may be lost or corrupted between versions. Do **not** rely on this as your only copy of important files.
+> ⚠️ **Early demo — expect bugs and data loss.** This is pre-release software. Encrypted vaults, keys, and file metadata may be lost or corrupted between versions. Do **not** rely on this as your only copy of important files. The cryptography has **not been independently audited** — do not trust it with confidential data.
 
 **Zero-knowledge file encryption tool** — files are encrypted on your device before upload. The cloud receives only opaque ciphertext. Keys never leave your machine.
 

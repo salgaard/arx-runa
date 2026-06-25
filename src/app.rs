@@ -3,7 +3,7 @@ use leptos_router::StaticSegment;
 use leptos_router::components::{Route, Router, Routes};
 
 use crate::auth::{LoginPage, RecoverWithPhrasePage, VaultCreationPage, VaultRecoveryPage};
-use crate::components::{ToastProvider, inject_toast_styles};
+use crate::components::{DemoBanner, DemoWarningModal, ToastProvider, inject_toast_styles};
 use crate::contacts::ContactList;
 use crate::destinations::DestinationList;
 use crate::ipc_types::VaultSummary;
@@ -30,6 +30,8 @@ pub fn App() -> impl IntoView {
             <SessionProvider>
                 <VaultProvider>
                     <SyncProvider>
+                        <DemoBanner />
+                        <DemoWarningModal />
                         <AppRouter />
                     </SyncProvider>
                 </VaultProvider>
